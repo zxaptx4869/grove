@@ -1,0 +1,313 @@
+"""项目与目录树 API。"""
+
+from typing import Annotated
+
+from fastapi import APIRouter, Depends, HTTPException, status
+from sqlalchemy import func, select
+
+from app.api.deps import DbSession, get_current_workspace
+from app.models import Node, Project, Workspace
+from app.schemas.project import (
+    NodeCreate,
+    NodeOut,
+    NodeReorderRequest,
+    NodeUpdate,
+    ProjectCreate,
+    ProjectOut,
+    ProjectUpdate,
+)
+from app.services.knowledge_tree import load_decoration_template, seed_project_nodes
+
+router = APIRouter(prefix="/api/projects", tags=["projects"])
+CurrentWorkspace = Annotated[Workspace, Depends(get_current_workspace)]
+
+
+async def _get_owned_project(db: DbSession, workspace_id: int, project_id: int) -> Project:
+    """按 Workspace 归属获取项目，不存在或越权返回 404。"""
+    project = await db.get(Project, project_id)
+    if project is None or project.workspace_id != workspace_id:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="项目不存在")
+    return project
+
+
+async def _get_project_node(db: DbSession, project_id: int, node_id: int) -> Node:
+    """获取项目内节点，不存在返回 404。"""
+    node = await db.get(Node, node_id)
+    if node is None or node.project_id != project_id:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="节点不存在")
+    return node
+
+
+async def _delete_node_subtree(db: DbSession, node_id: int) -> None:
+    """递归删除节点及其全部后代（应用层级联，兼容 SQLite 外键未启用）。"""
+    children = (
+        await db.execute(select(Node).where(Node.parent_id == node_id))
+    ).scalars().all()
+    for child in children:
+        await _delete_node_subtree(db, child.id)
+    node = await db.get(Node, node_id)
+    if node is not None:
+        await db.delete(node)
+
+
+def _build_tree(nodes: list[Node]) -> list[NodeOut]:
+    """按 parent_id 组装嵌套树（同级按 position 排序）。"""
+    by_parent: dict[int | None, list[Node]] = {}
+    for node in nodes:
+        by_parent.setdefault(node.parent_id, []).append(node)
+    for siblings in by_parent.values():
+        siblings.sort(key=lambda item: item.position)
+
+    def _children(parent_id: int | None) -> list[NodeOut]:
+        result: list[NodeOut] = []
+        for node in by_parent.get(parent_id, []):
+            result.append(
+                NodeOut(
+                    id=node.id,
+                    name=node.name,
+                    description=node.description,
+                    position=node.position,
+                    children=_children(node.id),
+                )
+            )
+        return result
+
+    return _children(None)
+
+
+@router.get("", response_model=list[ProjectOut])
+async def list_projects(db: DbSession, workspace: CurrentWorkspace) -> list[ProjectOut]:
+    """列出当前 Workspace 的项目（含节点数）。"""
+    projects = (
+        await db.execute(
+            select(Project)
+            .where(Project.workspace_id == workspace.id)
+            .order_by(Project.created_at)
+        )
+    ).scalars().all()
+
+    counts = dict(
+        (
+            await db.execute(
+                select(Node.project_id, func.count()).group_by(Node.project_id)
+            )
+        ).all()
+    )
+    return [
+        ProjectOut(
+            id=project.id,
+            name=project.name,
+            template=project.template,
+            node_count=counts.get(project.id, 0),
+            created_at=project.created_at,
+        )
+        for project in projects
+    ]
+
+
+@router.post("", status_code=status.HTTP_201_CREATED, response_model=ProjectOut)
+async def create_project(
+    payload: ProjectCreate,
+    db: DbSession,
+    workspace: CurrentWorkspace,
+) -> ProjectOut:
+    """创建项目；选择装修模板时生成完整目录树。"""
+    project = Project(workspace_id=workspace.id, name=payload.name, template=payload.template)
+    db.add(project)
+    await db.flush()
+
+    node_count = 0
+    if payload.template == "decoration":
+        node_count = await seed_project_nodes(db, project.id, load_decoration_template())
+
+    await db.commit()
+    await db.refresh(project)
+    return ProjectOut(
+        id=project.id,
+        name=project.name,
+        template=project.template,
+        node_count=node_count,
+        created_at=project.created_at,
+    )
+
+
+@router.patch("/{project_id}", response_model=ProjectOut)
+async def rename_project(
+    project_id: int,
+    payload: ProjectUpdate,
+    db: DbSession,
+    workspace: CurrentWorkspace,
+) -> ProjectOut:
+    """重命名项目。"""
+    project = await _get_owned_project(db, workspace.id, project_id)
+    project.name = payload.name
+    await db.commit()
+    await db.refresh(project)
+    node_count = (
+        await db.execute(
+            select(func.count())
+            .select_from(Node)
+            .where(Node.project_id == project.id)
+        )
+    ).scalar_one()
+    return ProjectOut(
+        id=project.id,
+        name=project.name,
+        template=project.template,
+        node_count=int(node_count),
+        created_at=project.created_at,
+    )
+
+
+@router.delete("/{project_id}")
+async def delete_project(
+    project_id: int,
+    db: DbSession,
+    workspace: CurrentWorkspace,
+) -> dict[str, bool]:
+    """删除项目并级联删除全部节点。"""
+    project = await _get_owned_project(db, workspace.id, project_id)
+    roots = (
+        await db.execute(
+            select(Node).where(
+                Node.project_id == project.id,
+                Node.parent_id.is_(None),
+            )
+        )
+    ).scalars().all()
+    for root in roots:
+        await _delete_node_subtree(db, root.id)
+    await db.delete(project)
+    await db.commit()
+    return {"ok": True}
+
+
+@router.get("/{project_id}/tree", response_model=list[NodeOut])
+async def get_project_tree(
+    project_id: int,
+    db: DbSession,
+    workspace: CurrentWorkspace,
+) -> list[NodeOut]:
+    """返回项目目录树（嵌套、按顺序）。"""
+    await _get_owned_project(db, workspace.id, project_id)
+    nodes = (
+        await db.execute(select(Node).where(Node.project_id == project_id))
+    ).scalars().all()
+    return _build_tree(list(nodes))
+
+
+@router.post(
+    "/{project_id}/nodes",
+    status_code=status.HTTP_201_CREATED,
+    response_model=NodeOut,
+)
+async def create_node(
+    project_id: int,
+    payload: NodeCreate,
+    db: DbSession,
+    workspace: CurrentWorkspace,
+) -> NodeOut:
+    """创建节点：根级或指定父节点下末尾。"""
+    await _get_owned_project(db, workspace.id, project_id)
+    parent_id = payload.parent_id
+    if parent_id is not None:
+        await _get_project_node(db, project_id, parent_id)
+
+    sibling_count = (
+        await db.execute(
+            select(func.count())
+            .select_from(Node)
+            .where(Node.project_id == project_id, Node.parent_id == parent_id)
+        )
+    ).scalar_one()
+    node = Node(
+        project_id=project_id,
+        parent_id=parent_id,
+        name=payload.name,
+        description=payload.description,
+        position=int(sibling_count),
+    )
+    db.add(node)
+    await db.commit()
+    await db.refresh(node)
+    return NodeOut(
+        id=node.id,
+        name=node.name,
+        description=node.description,
+        position=node.position,
+        children=[],
+    )
+
+
+@router.patch("/{project_id}/nodes/{node_id}", response_model=NodeOut)
+async def update_node(
+    project_id: int,
+    node_id: int,
+    payload: NodeUpdate,
+    db: DbSession,
+    workspace: CurrentWorkspace,
+) -> NodeOut:
+    """更新节点名称/描述。"""
+    await _get_owned_project(db, workspace.id, project_id)
+    node = await _get_project_node(db, project_id, node_id)
+    if payload.name is not None:
+        node.name = payload.name
+    if payload.description is not None:
+        node.description = payload.description
+    await db.commit()
+    return NodeOut(
+        id=node.id,
+        name=node.name,
+        description=node.description,
+        position=node.position,
+        children=[],
+    )
+
+
+@router.delete("/{project_id}/nodes/{node_id}")
+async def delete_node(
+    project_id: int,
+    node_id: int,
+    db: DbSession,
+    workspace: CurrentWorkspace,
+) -> dict[str, bool]:
+    """删除节点并级联删除后代。"""
+    await _get_owned_project(db, workspace.id, project_id)
+    node = await _get_project_node(db, project_id, node_id)
+    await _delete_node_subtree(db, node.id)
+    await db.commit()
+    return {"ok": True}
+
+
+@router.post("/{project_id}/nodes/reorder")
+async def reorder_nodes(
+    project_id: int,
+    payload: NodeReorderRequest,
+    db: DbSession,
+    workspace: CurrentWorkspace,
+) -> dict[str, bool]:
+    """调整同级节点顺序（ordered_ids 为该父节点下的完整新顺序）。"""
+    await _get_owned_project(db, workspace.id, project_id)
+    parent_id = payload.parent_id
+    if parent_id is not None:
+        await _get_project_node(db, project_id, parent_id)
+
+    siblings = (
+        await db.execute(
+            select(Node)
+            .where(Node.project_id == project_id, Node.parent_id == parent_id)
+            .order_by(Node.position)
+        )
+    ).scalars().all()
+    by_id = {node.id: node for node in siblings}
+
+    if sorted(payload.ordered_ids) != sorted(by_id.keys()):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="排序列表必须包含该父节点下的全部节点",
+        )
+
+    for position, node_id in enumerate(payload.ordered_ids):
+        by_id[node_id].position = position
+    await db.commit()
+    return {"ok": True}
