@@ -6,7 +6,7 @@
 
 - 后端新增 `project-management` 能力：Workspace 下**多项目**（装修只是案例），项目列表/创建/重命名/删除，创建可选用「装修模板」或「空目录」。
 - 后端新增 `node-tree` 能力：Node 自引用多级树（`parent_id` + `position` 排序字段），树读取、节点创建/重命名/删除/同父排序；不做跨父级移动。
-- 模板资产：`backend/app/templates/decoration_knowledge_tree.md`（149 节点装修知识目录）作为种子源，运行时解析为树；注册时自动创建「房子装修」示例项目。
+- 模板资产：`backend/app/templates/decoration_knowledge_tree.md`（149 节点装修知识目录）作为种子源，运行时解析为树；**注册不自动创建项目**，由用户首次手动创建（可选装修模板或空目录）。
 - 前端：项目管理页（列表/新建/重命名/删除）与项目页（NodeTree 真组件：展开/折叠、创建/重命名/删除、排序）；路由受登录守卫保护。
 - 数据库迁移：新增 `projects` / `nodes` 表（SQLite 与 MySQL 8 兼容）。
 
