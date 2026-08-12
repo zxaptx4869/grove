@@ -15,9 +15,7 @@ export function HealthPage() {
     <section className="space-y-4">
       <h1 className="text-2xl font-bold">健康检查</h1>
       {query.isLoading && <p className="text-muted-foreground">正在检查后端状态…</p>}
-      {query.isError && (
-        <p className="text-destructive">后端不可用：{query.error.message}</p>
-      )}
+      {query.isError && <p className="text-destructive">后端不可用：{query.error.message}</p>}
       {query.data && (
         <p>
           后端状态：

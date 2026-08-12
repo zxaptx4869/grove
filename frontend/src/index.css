@@ -1,4 +1,4 @@
-@import "tailwindcss";
+@import 'tailwindcss';
 
 @custom-variant dark (&:is(.dark *));
 
@@ -22,6 +22,19 @@
   --border: oklch(0.929 0.013 255.508);
   --input: oklch(0.929 0.013 255.508);
   --ring: oklch(0.704 0.04 256.788);
+  /* ---- Grove 语义色：AI 候选 / 正式记录 / 风险 / 成功 / 警告 / 错误 ---- */
+  --ai-candidate: oklch(0.541 0.281 293.009);
+  --ai-candidate-soft: oklch(0.969 0.016 293.756);
+  --confirmed: oklch(0.6 0.118 184.704);
+  --confirmed-soft: oklch(0.984 0.014 180.72);
+  --risk: oklch(0.666 0.179 58.318);
+  --risk-soft: oklch(0.987 0.022 95.277);
+  --success: oklch(0.627 0.194 149.214);
+  --success-soft: oklch(0.982 0.018 155.826);
+  --warning: oklch(0.681 0.162 75.834);
+  --warning-soft: oklch(0.987 0.026 102.212);
+  --error: oklch(0.577 0.245 27.325);
+  --error-soft: oklch(0.971 0.013 17.38);
 }
 
 @theme inline {
@@ -43,10 +56,47 @@
   --color-border: var(--border);
   --color-input: var(--input);
   --color-ring: var(--ring);
+  --color-ai-candidate: var(--ai-candidate);
+  --color-ai-candidate-soft: var(--ai-candidate-soft);
+  --color-confirmed: var(--confirmed);
+  --color-confirmed-soft: var(--confirmed-soft);
+  --color-risk: var(--risk);
+  --color-risk-soft: var(--risk-soft);
+  --color-success: var(--success);
+  --color-success-soft: var(--success-soft);
+  --color-warning: var(--warning);
+  --color-warning-soft: var(--warning-soft);
+  --color-error: var(--error);
+  --color-error-soft: var(--error-soft);
   --radius-sm: calc(var(--radius) - 4px);
   --radius-md: calc(var(--radius) - 2px);
   --radius-lg: var(--radius);
   --radius-xl: calc(var(--radius) + 4px);
+}
+
+@theme {
+  /* ---- 字号阶梯 ---- */
+  --text-caption: 0.75rem;
+  --text-caption--line-height: 1rem;
+  --text-body-sm: 0.8125rem;
+  --text-body-sm--line-height: 1.25rem;
+  --text-body: 0.875rem;
+  --text-body--line-height: 1.375rem;
+  --text-title: 1rem;
+  --text-title--line-height: 1.5rem;
+  --text-heading: 1.25rem;
+  --text-heading--line-height: 1.75rem;
+  --text-display: 1.5rem;
+  --text-display--line-height: 2rem;
+
+  /* ---- 阴影 ---- */
+  --shadow-card: 0 1px 2px 0 rgb(0 0 0 / 0.04), 0 1px 3px 0 rgb(0 0 0 / 0.06);
+  --shadow-pop: 0 8px 24px -6px rgb(0 0 0 / 0.14), 0 2px 8px -2px rgb(0 0 0 / 0.08);
+
+  /* ---- 动效时长 ---- */
+  --transition-duration-fast: 120ms;
+  --transition-duration-base: 200ms;
+  --transition-duration-slow: 300ms;
 }
 
 @layer base {
