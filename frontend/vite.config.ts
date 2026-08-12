@@ -14,6 +14,7 @@ export default defineConfig({
     // 开发环境将 /healthz 代理到本地后端，避免跨域
     proxy: {
       '/healthz': 'http://127.0.0.1:8000',
+      '/api': 'http://127.0.0.1:8000',
     },
   },
   test: {
