@@ -12,5 +12,6 @@ data/
 *.db
 *.sqlite3
 backend/.ruff_cache/
+*.egg-info/
 .pytest_cache/
 frontend/.eslintcache
