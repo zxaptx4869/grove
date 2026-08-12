@@ -14,6 +14,7 @@
 - 所有功能变更遵循 OpenSpec 流程：`proposal → specs → design → tasks → 实施 → validate → sync specs → archive → commit`。
 - 变更以 change 为单位：先创建 `openspec/changes/<name>/` 并写满四个工件，`openspec validate --all --strict` 通过后再动业务代码。
 - 实施完成后执行 `openspec archive <change>` 同步主规格，再提交代码。
+- **推送与合并必须经用户确认**：完成实现后先停留在本地分支（可提交、可 push 前待命），用户验证无问题并明确确认后，再推送远端或合并分支。
 - CLI 可用命令：`openspec list`、`openspec status --change <name>`、`openspec instructions <artifact> --change <name>`、`openspec validate --all --strict`、`openspec archive <change>`。
 
 ## 3. 工程约定
