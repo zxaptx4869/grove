@@ -12,13 +12,21 @@ export interface NodeTreeCallbacks {
 export interface NodeTreeProps {
   nodes: readonly TreeNodePayload[]
   callbacks: NodeTreeCallbacks
+  /** 当前选中节点（受控），用于内容区联动 */
+  selectedId?: number | null
+  onSelect?: (node: TreeNodePayload) => void
 }
 
 /**
  * 目录树真组件（数据驱动）：展开/折叠、增删改、排序。
  * 排序支持原生拖拽（桌面）与上移/下移按钮（键盘/触屏可达）。
  */
-export function NodeTree({ nodes, callbacks }: NodeTreeProps) {
+export function NodeTree({
+  nodes,
+  callbacks,
+  selectedId = null,
+  onSelect,
+}: NodeTreeProps) {
   const [collapsed, setCollapsed] = useState<ReadonlySet<number>>(new Set())
   const [draggingId, setDraggingId] = useState<number | null>(null)
 
@@ -99,7 +107,16 @@ export function NodeTree({ nodes, callbacks }: NodeTreeProps) {
             >
               {node.children.length > 0 ? (isCollapsed ? '▸' : '▾') : '·'}
             </button>
-            <span className="text-body-sm font-medium">{node.name}</span>
+            <button
+              type="button"
+              className={`min-w-0 flex-1 truncate rounded px-1 py-0.5 text-left text-body-sm font-medium ${
+                selectedId === node.id ? 'bg-ai-candidate-soft text-ai-candidate' : ''
+              }`}
+              onClick={() => onSelect?.(node)}
+              aria-selected={selectedId === node.id}
+            >
+              {node.name}
+            </button>
             <div className="ml-auto flex items-center gap-1">
               <Button
                 size="sm"
