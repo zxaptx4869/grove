@@ -47,7 +47,7 @@ flowchart LR
 
 ### 包含
 
-- **账号登录**：邮箱 + 密码，会话 Cookie；数据从一开始按 Workspace 隔离（为未来推广做准备）
+- **账号登录**：账号 + 密码，会话 Cookie；数据从一开始按 Workspace 隔离（为未来推广做准备，推广期再扩展邮箱/手机号/第三方登录）
 - 项目 + 目录树（装修场景起步目录模板）
 - 采集：拖拽/粘贴/上传/链接正文
 - 异步处理管道：OCR（云端多模态模型）→ AI 抽取 → 候选
@@ -116,7 +116,7 @@ flowchart LR
 | 任务管道 | 进程内 asyncio worker + DB 状态机 | 单用户起步够用 |
 | 附件存储 | 本地磁盘 → OSS | 复用 KnowStruct 经验 |
 | 搜索 | v1 数据库检索；Phase 2 向量检索 | 按需演进 |
-| 认证 | 邮箱 + 密码登录，会话 Cookie | 为推广准备，数据按 Workspace 隔离 |
+| 认证 | 账号 + 密码登录，会话 Cookie | v1 自用从简；推广期扩展邮箱/手机号/第三方，数据按 Workspace 隔离 |
 | 部署 | 本机 → ECS + Nginx | 待定 |
 | 移动端 | React Native (Expo) | Phase 4 预选 |
 | 工程管理 | Git + OpenSpec 工作流 | 沿用 KnowStruct 经验 |
@@ -153,7 +153,7 @@ flowchart LR
 6. 主动发现层放第二阶段
 7. AI 全部云端，无本地模式
 8. 复用 Source / ProcessingTask / Extraction / Entry 分层与候选确认铁律
-9. v1 包含邮箱 + 密码登录，数据按 Workspace 隔离（为推广准备）
+9. v1 包含账号 + 密码登录，数据按 Workspace 隔离（推广期扩展邮箱/手机号/第三方；见 2026-08-12 决策记录）
 10. 数据库：生产 MySQL 8，开发 / 测试 SQLite
 11. OCR 用云端多模态模型，供应商 Phase 1 评测后定
 12. CopilotKit 列为 Phase 2 对话 UI 候选，开工前 spike
