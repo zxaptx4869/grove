@@ -51,6 +51,8 @@ export class ApiError extends Error {
 async function request<T>(path: string, options?: RequestInit): Promise<T> {
   const response = await fetch(`${API_BASE_URL}${path}`, {
     ...options,
+    // 会话基于 Cookie：跨源部署时也需携带凭据
+    credentials: 'include',
     headers: {
       'Content-Type': 'application/json',
       ...options?.headers,

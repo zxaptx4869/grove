@@ -11,10 +11,10 @@ export default defineConfig({
     },
   },
   server: {
-    // 开发环境将 /healthz 代理到本地后端，避免跨域
+    // 开发环境将 /healthz 与 /api 代理到本地后端，保持同源，Cookie 会话才能正常工作
     proxy: {
-      '/healthz': 'http://127.0.0.1:8000',
-      '/api': 'http://127.0.0.1:8000',
+      '/healthz': process.env.VITE_API_PROXY_TARGET ?? 'http://127.0.0.1:8000',
+      '/api': process.env.VITE_API_PROXY_TARGET ?? 'http://127.0.0.1:8000',
     },
   },
   test: {
