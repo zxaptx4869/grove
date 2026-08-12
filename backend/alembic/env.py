@@ -12,6 +12,7 @@ from sqlalchemy import pool
 from sqlalchemy.engine import Connection
 from sqlalchemy.ext.asyncio import async_engine_from_config
 
+import app.models  # noqa: F401  确保所有 ORM 模型注册到 Base.metadata
 from alembic import context
 from app.core.config import get_settings
 from app.db.session import Base

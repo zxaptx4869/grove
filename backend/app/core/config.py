@@ -35,6 +35,11 @@ class Settings(BaseSettings):
     # AI 供应商：demo（默认）/ deepseek / doubao
     ai_provider: str = Field(default="demo", description="AI 供应商标识")
 
+    # ---- 会话与 Cookie ----
+    session_cookie_name: str = Field(default="grove_session", description="会话 Cookie 名称")
+    session_max_age_days: int = Field(default=30, description="会话有效期（天）")
+    cookie_secure: bool = Field(default=False, description="生产环境置 True，Cookie 仅 HTTPS 传输")
+
     # ---- 占位键：真实接入时填充，骨架阶段不连接外部服务 ----
     deepseek_api_key: str = ""
     deepseek_base_url: str = ""
