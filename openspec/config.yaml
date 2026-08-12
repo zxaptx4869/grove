@@ -1,0 +1,24 @@
+schema: spec-driven
+
+# 项目上下文：提供给 OpenSpec 生成工件时的背景
+context: |
+  知林 Grove：个人知识管家 Web 产品。把用户散落的收藏/截图/文档，通过 AI 提取整理为结构化知识库，人在确认后归档。
+  产品铁律：1) AI 输出永远是候选，人拥有最终决定权；2) 正式记录必须可溯源到原始材料；3) 数据按 Workspace 隔离。
+  技术栈（已锁定）：后端 FastAPI + Pydantic v2 + async SQLAlchemy 2 + Alembic（Python ≥3.12）；
+  前端 React 19 + TypeScript + Vite + Tailwind 4 + shadcn/ui + TanStack Query；
+  数据库开发 SQLite、生产 MySQL 8；AI 采用 AIProvider 抽象（deepseek/doubao/demo）。
+  工程规范：代码注释与文档用中文；环境变量用 pydantic-settings，.env 不入库；
+  前端保证 390px 移动宽度可用；提交信息用 Conventional Commits 风格。
+
+# 工件规则
+rules:
+  proposal:
+    - 必须包含 Why / What Changes / Capabilities / Impact 四节
+    - 明确 Non-Goals（不做什么），与 PROPOSAL.md 的范围保持一致
+  design:
+    - 记录关键决策与取舍，避免静默猜测
+    - 数据库、AI 抽象、工程结构的决策必须可追溯
+  specs:
+    - 每条需求以 REQUIREMENT 形式编号，与 change 的 proposal 能力一一对应
+  tasks:
+    - 任务按「骨架搭建 → 实现 → 验证」组织，每步给出可执行的验收命令

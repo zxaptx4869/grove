@@ -9,3 +9,8 @@ backend/.env
 frontend/.env
 data/
 *.log
+*.db
+*.sqlite3
+backend/.ruff_cache/
+.pytest_cache/
+frontend/.eslintcache
