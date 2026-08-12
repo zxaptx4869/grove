@@ -87,3 +87,86 @@ export const logoutUser = () =>
   request<{ ok: boolean }>('/api/auth/logout', { method: 'POST' })
 
 export const fetchMe = () => request<MePayload>('/api/me')
+
+export interface ProjectPayload {
+  id: number
+  name: string
+  template: string
+  node_count: number
+  created_at: string
+}
+
+export interface TreeNodePayload {
+  id: number
+  name: string
+  description: string | null
+  position: number
+  children: TreeNodePayload[]
+}
+
+export interface ProjectCreatePayload {
+  name: string
+  template: 'decoration' | 'empty'
+}
+
+export interface NodeCreatePayload {
+  name: string
+  description?: string | null
+  parent_id?: number | null
+}
+
+export interface NodeUpdatePayload {
+  name?: string
+  description?: string | null
+}
+
+export const fetchProjects = () => request<ProjectPayload[]>('/api/projects')
+
+export const createProject = (payload: ProjectCreatePayload) =>
+  request<ProjectPayload>('/api/projects', {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  })
+
+export const renameProject = (projectId: number, name: string) =>
+  request<ProjectPayload>(`/api/projects/${projectId}`, {
+    method: 'PATCH',
+    body: JSON.stringify({ name }),
+  })
+
+export const deleteProject = (projectId: number) =>
+  request<{ ok: boolean }>(`/api/projects/${projectId}`, { method: 'DELETE' })
+
+export const fetchProjectTree = (projectId: number) =>
+  request<TreeNodePayload[]>(`/api/projects/${projectId}/tree`)
+
+export const createNode = (projectId: number, payload: NodeCreatePayload) =>
+  request<TreeNodePayload>(`/api/projects/${projectId}/nodes`, {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  })
+
+export const updateNode = (
+  projectId: number,
+  nodeId: number,
+  payload: NodeUpdatePayload,
+) =>
+  request<TreeNodePayload>(`/api/projects/${projectId}/nodes/${nodeId}`, {
+    method: 'PATCH',
+    body: JSON.stringify(payload),
+  })
+
+export const deleteNode = (projectId: number, nodeId: number) =>
+  request<{ ok: boolean }>(`/api/projects/${projectId}/nodes/${nodeId}`, {
+    method: 'DELETE',
+  })
+
+export const reorderNodes = (
+  projectId: number,
+  parentId: number | null,
+  orderedIds: number[],
+) =>
+  request<{ ok: boolean }>(`/api/projects/${projectId}/nodes/reorder`, {
+    method: 'POST',
+    body: JSON.stringify({ parent_id: parentId, ordered_ids: orderedIds }),
+  })

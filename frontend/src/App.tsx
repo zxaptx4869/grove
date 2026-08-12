@@ -18,6 +18,12 @@ const LoginPage = lazy(() =>
 const RegisterPage = lazy(() =>
   import('@/pages/RegisterPage').then((module) => ({ default: module.RegisterPage })),
 )
+const ProjectsPage = lazy(() =>
+  import('@/pages/ProjectsPage').then((module) => ({ default: module.ProjectsPage })),
+)
+const ProjectPage = lazy(() =>
+  import('@/pages/ProjectPage').then((module) => ({ default: module.ProjectPage })),
+)
 
 /**
  * 应用根组件：全局布局 + 路由。
@@ -42,6 +48,9 @@ export default function App() {
         <nav className="mx-auto flex w-full max-w-5xl flex-wrap items-center gap-x-6 gap-y-2 px-4 py-3">
           <Link to="/" className="font-semibold">
             知林 Grove
+          </Link>
+          <Link to="/projects" className="text-sm text-muted-foreground hover:text-foreground">
+            项目
           </Link>
           <Link to="/health" className="text-sm text-muted-foreground hover:text-foreground">
             健康检查
@@ -103,6 +112,26 @@ export default function App() {
               <Suspense fallback={<p className="text-body-sm text-muted-foreground">加载中…</p>}>
                 <RegisterPage />
               </Suspense>
+            }
+          />
+          <Route
+            path="/projects"
+            element={
+              <ProtectedRoute>
+                <Suspense fallback={<p className="text-body-sm text-muted-foreground">加载中…</p>}>
+                  <ProjectsPage />
+                </Suspense>
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/projects/:projectId"
+            element={
+              <ProtectedRoute>
+                <Suspense fallback={<p className="text-body-sm text-muted-foreground">加载中…</p>}>
+                  <ProjectPage />
+                </Suspense>
+              </ProtectedRoute>
             }
           />
           <Route path="*" element={<Navigate to="/" replace />} />
