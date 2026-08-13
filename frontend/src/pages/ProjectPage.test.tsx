@@ -87,7 +87,7 @@ describe('ProjectPage', () => {
     expect(await screen.findByRole('heading', { name: '知识空间' })).toBeInTheDocument()
     expect(await screen.findByRole('button', { name: '装修准备' })).toBeInTheDocument()
     expect(screen.getByRole('button', { name: '需求确认' })).toBeInTheDocument()
-    expect(screen.getByRole('button', { name: '根节点' })).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: '根节点' })).not.toBeInTheDocument()
     expect(screen.getByRole('button', { name: '创建根节点' })).toBeInTheDocument()
     expect(screen.getByRole('button', { name: '与 AI 共创目录' })).toBeInTheDocument()
     expect(screen.getByRole('heading', { name: '这里还没有正式知识' })).toBeInTheDocument()

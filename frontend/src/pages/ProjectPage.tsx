@@ -374,15 +374,9 @@ export function ProjectPage() {
         </div>
         <div className="flex shrink-0 items-center gap-2">
           {isDirectoryView && nodes.length > 0 ? (
-            <>
-              <Button size="sm" onClick={() => openAddNode(null)}>
-                <Plus />
-                根节点
-              </Button>
-              <Button size="sm" variant="outline" onClick={() => setAiOpen(true)}>
-                <Sparkles />与 AI 共创目录
-              </Button>
-            </>
+            <Button size="sm" variant="outline" onClick={() => setAiOpen(true)}>
+              <Sparkles />与 AI 共创目录
+            </Button>
           ) : null}
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
