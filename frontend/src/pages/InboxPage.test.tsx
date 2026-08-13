@@ -62,7 +62,6 @@ describe('InboxPage', () => {
     expect(await screen.findByText('洗烘使用体验.png')).toBeInTheDocument()
     expect(screen.getByLabelText('来源列表')).toBeInTheDocument()
     expect(screen.getByText('等待处理')).toBeInTheDocument()
-    expect(screen.getByRole('button', { name: '开始处理' })).toBeInTheDocument()
     vi.unstubAllGlobals()
   })
 
@@ -81,7 +80,7 @@ describe('InboxPage', () => {
     vi.unstubAllGlobals()
   })
 
-  it('点击开始处理触发处理接口', async () => {
+  it('失败来源显示重试并可触发处理接口', async () => {
     const calls: Array<{ method: string; path: string }> = []
     vi.stubGlobal(
       'fetch',
@@ -100,7 +99,7 @@ describe('InboxPage', () => {
                 title: 'x',
                 note: null,
                 project_id: null,
-                status: 'waiting',
+                status: 'failed',
                 created_at: '',
                 updated_at: '',
                 attachments: [],
@@ -115,7 +114,7 @@ describe('InboxPage', () => {
                 title: 'x',
                 note: null,
                 project_id: null,
-                status: 'waiting',
+                status: 'failed',
                 created_at: '',
                 updated_at: '',
                 attachments: [],
@@ -129,7 +128,7 @@ describe('InboxPage', () => {
 
     renderInbox()
     await screen.findByText('x')
-    await userEvent.click(screen.getByRole('button', { name: '开始处理' }))
+    await userEvent.click(screen.getByRole('button', { name: '重试' }))
 
     expect(calls.some((call) => call.method === 'POST' && call.path === '/api/sources/1/process')).toBe(true)
     vi.unstubAllGlobals()

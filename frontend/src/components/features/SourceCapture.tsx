@@ -1,10 +1,11 @@
 import { useEffect, useRef, useState, type ChangeEvent } from 'react'
 import { ClipboardPaste, Images, Upload } from 'lucide-react'
+import { toast } from 'sonner'
 
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Textarea } from '@/components/ui/textarea'
-import { createSource } from '@/lib/api'
+import { createSource, triggerProcessing } from '@/lib/api'
 
 interface ProjectOption {
   id: number
@@ -77,7 +78,12 @@ export function SourceCapture({ projects, fixedProjectId, onCreated }: SourceCap
     setPending(true)
     setError('')
     try {
-      await createSource(form)
+      const created = await createSource(form)
+      try {
+        await triggerProcessing(created.id)
+      } catch {
+        toast.warning('来源已保存，但处理启动失败')
+      }
       reset()
       onCreated()
     } catch (err) {
@@ -194,7 +200,7 @@ export function SourceCapture({ projects, fixedProjectId, onCreated }: SourceCap
 
         <div className="flex justify-end">
           <Button onClick={handleSubmit} disabled={pending}>
-            {pending ? '采集中…' : '采集'}
+            {pending ? '采集中…' : '采集并处理'}
           </Button>
         </div>
       </div>

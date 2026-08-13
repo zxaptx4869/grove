@@ -91,14 +91,14 @@ export function SourceList({
             >
               {STATUS_LABELS[source.status]}
             </Badge>
-            {source.status === 'waiting' || source.status === 'failed' ? (
+            {source.status === 'failed' ? (
               <Button
                 size="sm"
-                variant={source.status === 'failed' ? 'outline' : 'default'}
+                variant="outline"
                 onClick={() => onTrigger(source.id)}
               >
-                {source.status === 'failed' ? <RotateCw className="size-3.5" /> : null}
-                {source.status === 'failed' ? '重试' : '开始处理'}
+                <RotateCw className="size-3.5" />
+                重试
               </Button>
             ) : null}
             <Button
