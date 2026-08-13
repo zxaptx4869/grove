@@ -1,9 +1,11 @@
 import { useMemo, useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import {
+  ArrowLeft,
   ChevronDown,
   FolderKanban,
   FolderTree,
+  House,
   Inbox,
   LogOut,
   Search,
@@ -83,22 +85,40 @@ function GlobalNavigation({ projects }: { projects: ProjectPayload[] }) {
 }
 
 function ProjectNavigation({ project }: { project?: ProjectPayload }) {
+  const location = useLocation()
+  const projectId = project?.id ?? Number(location.pathname.match(/^\/projects\/(\d+)/)?.[1])
+  const isDirectory = new URLSearchParams(location.search).get('view') === 'directory'
+  const statusLabel: Record<ProjectStatus, string> = {
+    active: '进行中',
+    paused: '暂停',
+    completed: '已完成',
+    archived: '已归档',
+  }
+
   return (
     <div className="flex min-h-0 flex-1 flex-col px-2 pb-3 pt-2">
-      <Link to="/projects" className="mb-2 flex min-h-[34px] items-center gap-1.5 rounded-md px-2.5 text-caption text-muted-foreground hover:bg-muted hover:text-foreground">
-        <span aria-hidden="true">←</span> 返回全部项目
+      <Link to="/projects" className="mb-2 flex min-h-[34px] items-center gap-2 rounded-md px-2.5 text-caption text-muted-foreground hover:bg-muted hover:text-foreground">
+        <ArrowLeft className="size-3.5" />返回全部项目
       </Link>
-      <div className="mb-4 px-2.5">
-        <p className="truncate text-title font-semibold">{project?.name ?? '项目工作台'}</p>
-        <p className="mt-1 text-caption text-muted-foreground">{project?.description || '尚未填写目标与背景'}</p>
+      <div className="mb-3 px-2.5 pb-1">
+        <p className="truncate text-[15px] font-[650] leading-6">{project?.name ?? '项目工作台'}</p>
+        <p className="mt-0.5 text-caption text-muted-foreground">{project ? statusLabel[project.status] : '加载中'}</p>
       </div>
       <nav aria-label="项目导航">
-        <a href="#project-overview" className="flex min-h-[38px] items-center gap-[9px] rounded-md bg-brand-soft px-2.5 text-body font-semibold text-brand">
-          <FolderKanban className="size-4" />项目首页
-        </a>
-        <a href="#project-directory" className="flex min-h-[38px] items-center gap-[9px] rounded-md px-2.5 text-body text-muted-foreground hover:bg-muted hover:text-foreground">
+        <Link
+          to={`/projects/${projectId}`}
+          aria-current={!isDirectory ? 'page' : undefined}
+          className={`flex min-h-[38px] items-center gap-[9px] rounded-md px-2.5 text-body ${!isDirectory ? 'bg-brand-soft font-semibold text-brand' : 'text-muted-foreground hover:bg-muted hover:text-foreground'}`}
+        >
+          <House className="size-4" />项目首页
+        </Link>
+        <Link
+          to={`/projects/${projectId}?view=directory`}
+          aria-current={isDirectory ? 'page' : undefined}
+          className={`flex min-h-[38px] items-center gap-[9px] rounded-md px-2.5 text-body ${isDirectory ? 'bg-brand-soft font-semibold text-brand' : 'text-muted-foreground hover:bg-muted hover:text-foreground'}`}
+        >
           <FolderTree className="size-4" />目录管理
-        </a>
+        </Link>
       </nav>
     </div>
   )

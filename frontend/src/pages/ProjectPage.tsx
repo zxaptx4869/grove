@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import {
+  ArrowRight,
   FolderPlus,
   FolderTree,
   MoreHorizontal,
@@ -9,7 +10,7 @@ import {
   Sparkles,
   Trash2,
 } from 'lucide-react'
-import { useNavigate, useParams } from 'react-router-dom'
+import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom'
 import { toast } from 'sonner'
 
 import { NodeTree } from '@/components/features/NodeTree'
@@ -110,7 +111,9 @@ function NodeFormDialog({
 
 export function ProjectPage() {
   const { projectId } = useParams()
+  const [searchParams] = useSearchParams()
   const id = Number(projectId)
+  const isDirectoryView = searchParams.get('view') === 'directory'
   const navigate = useNavigate()
   const queryClient = useQueryClient()
 
@@ -200,100 +203,133 @@ export function ProjectPage() {
     setEditProjectOpen(true)
   }
 
-  if (!Number.isFinite(id)) return <div role="alert" className="text-body-sm text-destructive">项目地址无效。</div>
-  if (projects.isLoading || tree.isLoading) return <div className="space-y-5" aria-label="项目加载中"><div className="h-16 animate-pulse bg-muted/60" /><div className="h-[420px] animate-pulse bg-muted/40" /></div>
-  if (projects.isError || tree.isError) return <div className="border-l-2 border-destructive px-4 py-3"><p className="text-body-sm">项目工作台加载失败，请重试。</p><Button className="mt-3" variant="outline" size="sm" onClick={() => { projects.refetch(); tree.refetch() }}>重试</Button></div>
-  if (!project) return <div className="border-l-2 border-destructive px-4 py-3 text-body-sm">项目不存在，或你无权访问该项目。</div>
+  if (!Number.isFinite(id)) return <div role="alert" className="px-6 py-[22px] text-body-sm text-destructive">项目地址无效。</div>
+  if (projects.isLoading || tree.isLoading) return <div className="space-y-5 px-6 py-[22px]" aria-label="项目加载中"><div className="h-[58px] animate-pulse bg-muted/60" /><div className="h-[520px] animate-pulse bg-muted/40" /></div>
+  if (projects.isError || tree.isError) return <div className="m-6 border-l-2 border-destructive px-4 py-3"><p className="text-body-sm">项目工作台加载失败，请重试。</p><Button className="mt-3" variant="outline" size="sm" onClick={() => { projects.refetch(); tree.refetch() }}>重试</Button></div>
+  if (!project) return <div className="m-6 border-l-2 border-destructive px-4 py-3 text-body-sm">项目不存在，或你无权访问该项目。</div>
 
   return (
-    <section id="project-overview" className="mx-auto w-full max-w-[1120px]">
-      <header className="mb-6 flex items-start justify-between gap-6 border-b pb-5">
+    <section className="w-full px-6 pb-[30px] pt-[22px]">
+      <header className="mb-5 flex min-h-[60px] items-start justify-between gap-6">
         <div className="min-w-0">
           <div className="flex items-center gap-2">
-            <h1 className="truncate text-display font-semibold">{project.name}</h1>
-            <Badge variant="outline" className="shrink-0">{PROJECT_STATUSES.find(({ key }) => key === project.status)?.label}</Badge>
+            <h1 className="truncate text-[22px] font-[650] leading-[30px]">{isDirectoryView ? '目录管理' : project.name}</h1>
+            {!isDirectoryView ? <Badge variant="outline" className="shrink-0">{PROJECT_STATUSES.find(({ key }) => key === project.status)?.label}</Badge> : null}
           </div>
-          <p className="mt-1 max-w-2xl text-body-sm text-muted-foreground">{project.description || '尚未填写项目目标与背景'}</p>
+          <p className="mt-0.5 max-w-2xl text-body text-muted-foreground">{isDirectoryView ? `${project.name} · 建立和维护项目的知识结构。` : project.description || '尚未填写项目目标与背景'}</p>
         </div>
-        <DropdownMenu>
-          <DropdownMenuTrigger asChild><Button size="icon-sm" variant="ghost" aria-label="项目更多操作"><MoreHorizontal /></Button></DropdownMenuTrigger>
-          <DropdownMenuContent align="end">
-            <DropdownMenuItem onSelect={openProjectEdit}><Pencil />编辑项目信息</DropdownMenuItem>
-            <DropdownMenuSeparator />
-            <DropdownMenuItem variant="destructive" onSelect={() => { setActionError(''); setDeleteProjectOpen(true) }}><Trash2 />删除项目</DropdownMenuItem>
-          </DropdownMenuContent>
-        </DropdownMenu>
+        <div className="flex shrink-0 items-center gap-2">
+          {isDirectoryView ? (
+            <>
+              {nodes.length > 0 ? <Button size="sm" onClick={() => openAddNode(null)}><Plus />根节点</Button> : null}
+              <Button size="sm" variant="outline" onClick={() => setAiOpen(true)}><Sparkles />与 AI 共创目录</Button>
+            </>
+          ) : null}
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild><Button size="icon-sm" variant="ghost" aria-label="项目更多操作"><MoreHorizontal /></Button></DropdownMenuTrigger>
+            <DropdownMenuContent align="end">
+              <DropdownMenuItem onSelect={openProjectEdit}><Pencil />编辑项目信息</DropdownMenuItem>
+              <DropdownMenuSeparator />
+              <DropdownMenuItem variant="destructive" onSelect={() => { setActionError(''); setDeleteProjectOpen(true) }}><Trash2 />删除项目</DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
+        </div>
       </header>
 
       {actionError && !nodeForm && !deleteNodeTarget && !moveTarget && !editProjectOpen && !deleteProjectOpen ? <div role="alert" className="mb-4 border-l-2 border-destructive bg-error-soft px-3 py-2 text-body-sm text-destructive">{actionError}</div> : null}
 
-      <div className="grid min-h-[520px] grid-cols-[minmax(0,1fr)_268px] gap-8">
-        <section id="project-directory" className="min-w-0">
-          <div className="mb-3 flex h-9 items-center justify-between">
-            <div><h2 className="text-title font-semibold">项目目录</h2><p className="text-caption text-muted-foreground">{project.node_count} 个节点</p></div>
-            {nodes.length > 0 ? <Button size="sm" onClick={() => openAddNode(null)}><Plus />根节点</Button> : null}
+      {isDirectoryView ? (
+        <div className="grid min-h-[604px] grid-cols-[250px_minmax(0,1fr)] border-t">
+          <aside className="min-w-0 border-r px-[10px] py-[14px]">
+            <div className="mb-2 flex h-[34px] items-center justify-between px-1">
+              <div className="flex min-w-0 items-baseline gap-2">
+                <h2 className="truncate text-body font-[650]">项目目录</h2>
+                <span className="text-caption text-muted-foreground">{project.node_count}</span>
+              </div>
+              {nodes.length > 0 ? <Button size="icon-xs" variant="ghost" onClick={() => openAddNode(null)} aria-label="创建根节点"><Plus /></Button> : null}
+            </div>
+            {nodes.length > 0 ? (
+              <NodeTree
+                nodes={nodes}
+                selectedId={selectedId}
+                onSelect={(node) => setSelectedId(node.id)}
+                callbacks={{
+                  onAddChild: openAddNode,
+                  onRename: (node) => { setActionError(''); setNodeForm({ mode: 'edit', parent: null, node }) },
+                  onMove: (node) => { setActionError(''); setMoveTarget(node); setMoveParentId(null) },
+                  onDelete: (node) => { setActionError(''); setDeleteNodeTarget(node) },
+                  onReorder: (parentId, orderedIds) => reorder.mutate({ parentId, orderedIds }),
+                }}
+              />
+            ) : <p className="px-1 py-2 text-caption text-muted-foreground">目录还是空的</p>}
+          </aside>
+          <div className="min-w-0 px-6 py-[28px]">
+            {nodes.length === 0 ? (
+              <div className="flex min-h-[500px] items-center justify-center text-center">
+                <div className="max-w-[380px]">
+                  <span className="mx-auto flex size-10 items-center justify-center rounded-md bg-muted"><FolderTree className="size-[18px] text-muted-foreground" /></span>
+                  <h2 className="mt-4 text-[16px] font-[650] leading-6">从空目录开始</h2>
+                  <p className="mt-1 text-body-sm leading-6 text-muted-foreground">按你的理解方式建立目录，后续可随时编辑、移动和排序。</p>
+                  <div className="mt-5 flex justify-center gap-2"><Button onClick={() => openAddNode(null)}><FolderPlus />手动创建</Button><Button variant="outline" onClick={() => setAiOpen(true)}><Sparkles />与 AI 共创目录</Button></div>
+                </div>
+              </div>
+            ) : selectedNode ? (
+              <div>
+                <p className="text-caption text-muted-foreground">{selectedPath?.map((node) => node.name).join(' / ')}</p>
+                <div className="mt-2 flex items-start justify-between gap-4 border-b pb-5">
+                  <div className="min-w-0">
+                    <h2 className="truncate text-[20px] font-[650] leading-7">{selectedNode.name}</h2>
+                    <p className="mt-1 text-body-sm leading-6 text-muted-foreground">{selectedNode.description || '尚未填写节点说明。'}</p>
+                  </div>
+                  <Button variant="outline" size="sm" onClick={() => setNodeForm({ mode: 'edit', parent: null, node: selectedNode })}><Pencil />编辑节点</Button>
+                </div>
+              </div>
+            ) : (
+              <div className="flex min-h-[500px] items-center justify-center text-center"><div><FolderTree className="mx-auto size-5 text-muted-foreground" /><p className="mt-2 text-body-sm text-muted-foreground">选择一个目录节点查看说明</p></div></div>
+            )}
+          </div>
+        </div>
+      ) : (
+        <div className="grid min-h-[604px] grid-cols-[minmax(0,1.4fr)_minmax(280px,.8fr)] gap-7">
+          <div className="min-w-0">
+            <section>
+              <div className="flex h-9 items-center justify-between">
+                <div className="flex items-baseline gap-2"><h2 className="text-[16px] font-[650] leading-6">项目目录</h2><span className="text-caption text-muted-foreground">{project.node_count} 个节点</span></div>
+                <Button asChild size="sm" variant="ghost"><Link to={`/projects/${id}?view=directory`}>管理目录<ArrowRight /></Link></Button>
+              </div>
+              <div className="mt-3 border-y">
+                <Link to={`/projects/${id}?view=directory`} className="group flex min-h-[76px] items-center gap-3 px-2 hover:bg-muted/50">
+                  <span className="flex size-9 shrink-0 items-center justify-center rounded-md bg-muted"><FolderTree className="size-[18px] text-brand" /></span>
+                  <span className="min-w-0 flex-1">
+                    <span className="block text-body font-[650]">{nodes.length > 0 ? '继续整理项目目录' : '目录还是空的'}</span>
+                    <span className="mt-0.5 block text-body-sm text-muted-foreground">{nodes.length > 0 ? `当前共有 ${project.node_count} 个目录节点` : '进入目录管理，创建第一个根节点。'}</span>
+                  </span>
+                  <ArrowRight className="size-4 shrink-0 text-muted-foreground transition-transform group-hover:translate-x-0.5" />
+                </Link>
+              </div>
+            </section>
+            <section className="mt-7 border-t pt-5">
+              <h2 className="text-[16px] font-[650] leading-6">项目目标与背景</h2>
+              <p className="mt-2 max-w-2xl text-body-sm leading-6 text-muted-foreground">{project.description || '尚未填写项目目标与背景。'}</p>
+              <Button className="mt-3" size="sm" variant="outline" onClick={openProjectEdit}><Pencil />编辑项目信息</Button>
+            </section>
           </div>
 
-          {nodes.length === 0 ? (
-            <div className="flex min-h-[400px] items-center justify-center border-y">
-              <div className="max-w-sm text-center">
-                <span className="mx-auto flex size-11 items-center justify-center rounded-md bg-muted"><FolderTree className="size-5 text-muted-foreground" /></span>
-                <h3 className="mt-4 text-title font-semibold">从空目录开始</h3>
-                <p className="mt-1 text-body-sm leading-6 text-muted-foreground">按你的理解方式建立目录，后续可随时编辑、移动和排序。</p>
-                <div className="mt-5 flex justify-center gap-2"><Button onClick={() => openAddNode(null)}><FolderPlus />手动创建</Button><Button variant="outline" onClick={() => setAiOpen(true)}><Sparkles />与 AI 共创目录</Button></div>
+          <aside className="border-l pl-[22px]">
+            <section>
+              <div className="flex h-9 items-center justify-between"><h2 className="text-body font-[650]">项目状态</h2></div>
+              <div className="mt-2 grid grid-cols-2 gap-1.5" role="group" aria-label="项目状态">
+                {PROJECT_STATUSES.map(({ key, label }) => <button key={key} type="button" disabled={changeStatus.isPending} onClick={() => changeStatus.mutate(key)} className={`h-8 rounded-md border text-caption transition-colors disabled:cursor-not-allowed disabled:opacity-50 ${project.status === key ? 'border-brand/30 bg-brand-soft font-semibold text-brand' : 'bg-white text-muted-foreground hover:bg-muted'}`}>{label}</button>)}
               </div>
-            </div>
-          ) : (
-            <div className="grid min-h-[430px] grid-cols-[300px_minmax(0,1fr)] border-y">
-              <div className="border-r py-3 pr-3">
-                <NodeTree
-                  nodes={nodes}
-                  selectedId={selectedId}
-                  onSelect={(node) => setSelectedId(node.id)}
-                  callbacks={{
-                    onAddChild: openAddNode,
-                    onRename: (node) => { setActionError(''); setNodeForm({ mode: 'edit', parent: null, node }) },
-                    onMove: (node) => { setActionError(''); setMoveTarget(node); setMoveParentId(null) },
-                    onDelete: (node) => { setActionError(''); setDeleteNodeTarget(node) },
-                    onReorder: (parentId, orderedIds) => reorder.mutate({ parentId, orderedIds }),
-                  }}
-                />
-              </div>
-              <div className="p-6">
-                {selectedNode ? (
-                  <div>
-                    <p className="text-caption text-muted-foreground">{selectedPath?.map((node) => node.name).join(' / ')}</p>
-                    <h3 className="mt-2 text-heading font-semibold">{selectedNode.name}</h3>
-                    <p className="mt-2 text-body-sm leading-6 text-muted-foreground">{selectedNode.description || '尚未填写节点说明。'}</p>
-                    <Button className="mt-5" variant="outline" size="sm" onClick={() => setNodeForm({ mode: 'edit', parent: null, node: selectedNode })}><Pencil />编辑节点</Button>
-                  </div>
-                ) : (
-                  <div className="flex min-h-[360px] items-center justify-center text-center"><div><FolderTree className="mx-auto size-5 text-muted-foreground" /><p className="mt-2 text-body-sm text-muted-foreground">选择一个目录节点查看说明</p></div></div>
-                )}
-              </div>
-            </div>
-          )}
-        </section>
-
-        <aside className="border-l pl-6">
-          <section>
-            <div className="flex items-center justify-between"><h2 className="text-body-sm font-semibold">项目状态</h2><Button size="icon-xs" variant="ghost" onClick={openProjectEdit} aria-label="编辑项目信息"><Pencil /></Button></div>
-            <div className="mt-3 grid grid-cols-2 gap-1" role="group" aria-label="项目状态">
-              {PROJECT_STATUSES.map(({ key, label }) => <button key={key} type="button" disabled={changeStatus.isPending} onClick={() => changeStatus.mutate(key)} className={`h-8 rounded-md border text-caption transition-colors disabled:opacity-50 ${project.status === key ? 'border-brand/30 bg-brand-soft font-medium text-brand' : 'bg-white text-muted-foreground hover:bg-muted'}`}>{label}</button>)}
-            </div>
-          </section>
-          <section className="mt-6 border-t pt-5">
-            <h2 className="text-body-sm font-semibold">目标与背景</h2>
-            <p className="mt-2 text-body-sm leading-6 text-muted-foreground">{project.description || '尚未填写。'}</p>
-            <Button className="mt-3" size="sm" variant="ghost" onClick={openProjectEdit}><Pencil />编辑</Button>
-          </section>
-          <section className="mt-6 border-t pt-5">
-            <h2 className="text-body-sm font-semibold">目录共创</h2>
-            <p className="mt-2 text-caption leading-5 text-muted-foreground">从项目目标出发，与 AI 一起讨论目录结构。</p>
-            <Button className="mt-3" size="sm" variant="outline" onClick={() => setAiOpen(true)}><Sparkles />与 AI 共创目录</Button>
-          </section>
-        </aside>
-      </div>
+            </section>
+            <section className="mt-6 border-t pt-5">
+              <h2 className="text-body font-[650]">目录共创</h2>
+              <p className="mt-2 text-body-sm leading-6 text-muted-foreground">从项目目标出发，与 AI 一起讨论目录结构。</p>
+              <Button className="mt-3" size="sm" variant="outline" onClick={() => setAiOpen(true)}><Sparkles />与 AI 共创目录</Button>
+            </section>
+          </aside>
+        </div>
+      )}
 
       <NodeFormDialog
         key={nodeForm ? `${nodeForm.mode}-${nodeForm.node?.id ?? nodeForm.parent?.id ?? 'root'}` : 'closed'}

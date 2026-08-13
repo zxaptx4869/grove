@@ -58,10 +58,10 @@ export function RegisterPage() {
   }
 
   return (
-    <section className="w-full space-y-7">
-      <div className="space-y-1.5">
-        <h1 className="text-display font-semibold">创建账号</h1>
-        <p className="text-body-sm text-muted-foreground">注册后会自动创建并进入你的 Workspace。</p>
+    <section className="w-full space-y-6">
+      <div className="space-y-1">
+        <h1 className="text-[22px] font-[650] leading-[30px]">创建账号</h1>
+        <p className="text-body text-muted-foreground">注册后会自动创建并进入你的 Workspace。</p>
       </div>
 
       <Form {...form}>
@@ -74,7 +74,7 @@ export function RegisterPage() {
               <FormItem>
                 <FormLabel>账号</FormLabel>
                 <FormControl>
-                  <Input className="h-10" placeholder="字母、数字或下划线" autoComplete="username" {...field} />
+                  <Input className="h-9" placeholder="字母、数字或下划线" autoComplete="username" {...field} />
                 </FormControl>
                 <FormMessage />
               </FormItem>
@@ -89,7 +89,7 @@ export function RegisterPage() {
                 <FormControl>
                   <Input
                     type="password"
-                    className="h-10"
+                    className="h-9"
                     placeholder="至少 8 位"
                     autoComplete="new-password"
                     {...field}
@@ -108,7 +108,7 @@ export function RegisterPage() {
                 <FormControl>
                   <Input
                     type="password"
-                    className="h-10"
+                    className="h-9"
                     placeholder="再次输入密码"
                     autoComplete="new-password"
                     {...field}
@@ -118,7 +118,7 @@ export function RegisterPage() {
               </FormItem>
             )}
           />
-          <Button type="submit" className="h-10 w-full" disabled={register.isPending}>
+          <Button type="submit" className="h-9 w-full" disabled={register.isPending}>
             {register.isPending ? '注册中…' : '注册'}
           </Button>
         </form>

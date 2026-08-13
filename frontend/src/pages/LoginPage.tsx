@@ -45,10 +45,10 @@ export function LoginPage() {
   }
 
   return (
-    <section className="w-full space-y-7">
-      <div className="space-y-1.5">
-        <h1 className="text-display font-semibold">登录</h1>
-        <p className="text-body-sm text-muted-foreground">进入你的 Workspace，继续整理项目。</p>
+    <section className="w-full space-y-6">
+      <div className="space-y-1">
+        <h1 className="text-[22px] font-[650] leading-[30px]">登录</h1>
+        <p className="text-body text-muted-foreground">进入你的 Workspace，继续整理项目。</p>
       </div>
 
       <Form {...form}>
@@ -61,7 +61,7 @@ export function LoginPage() {
               <FormItem>
                 <FormLabel>账号</FormLabel>
                 <FormControl>
-                  <Input className="h-10" placeholder="输入账号" autoComplete="username" {...field} />
+                  <Input className="h-9" placeholder="输入账号" autoComplete="username" {...field} />
                 </FormControl>
                 <FormMessage />
               </FormItem>
@@ -76,7 +76,7 @@ export function LoginPage() {
                 <FormControl>
                   <Input
                     type="password"
-                    className="h-10"
+                    className="h-9"
                     placeholder="输入密码"
                     autoComplete="current-password"
                     {...field}
@@ -86,7 +86,7 @@ export function LoginPage() {
               </FormItem>
             )}
           />
-          <Button type="submit" className="h-10 w-full" disabled={login.isPending}>
+          <Button type="submit" className="h-9 w-full" disabled={login.isPending}>
             {login.isPending ? '登录中…' : '登录'}
           </Button>
         </form>
