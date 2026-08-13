@@ -295,6 +295,7 @@ export function ProjectPage() {
     mutationFn: () => deleteProject(id),
     onSuccess: () => {
       invalidateProjects()
+      queryClient.invalidateQueries({ queryKey: ['sources'] })
       navigate('/projects', { replace: true })
       toast.success('项目已删除')
     },
