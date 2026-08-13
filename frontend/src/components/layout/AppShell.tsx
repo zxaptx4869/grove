@@ -7,7 +7,6 @@ import {
   Inbox,
   LogOut,
   Search,
-  Sprout,
   UserRound,
 } from 'lucide-react'
 import { Link, NavLink, Outlet, useLocation, useNavigate } from 'react-router-dom'
@@ -57,23 +56,22 @@ function GlobalNavigation({ projects }: { projects: ProjectPayload[] }) {
       <nav className="px-2 py-3" aria-label="全局导航">
         <NavLink
           to="/projects"
-          className={({ isActive }) => `flex h-8 items-center gap-2 rounded-md px-2 text-body-sm ${isActive ? 'bg-white font-medium shadow-xs' : 'text-muted-foreground hover:bg-white/70 hover:text-foreground'}`}
+          className={({ isActive }) => `flex min-h-[38px] items-center gap-[9px] rounded-md px-2.5 text-body ${isActive ? 'bg-brand-soft font-semibold text-brand' : 'text-muted-foreground hover:bg-muted hover:text-foreground'}`}
         >
           <FolderKanban className="size-4" />项目
         </NavLink>
-        <div className="mt-1 flex h-8 cursor-not-allowed items-center gap-2 rounded-md px-2 text-body-sm text-muted-foreground/45" aria-disabled="true">
+        <div className="flex min-h-[38px] cursor-not-allowed items-center gap-[9px] rounded-md px-2.5 text-body text-muted-foreground/45" aria-disabled="true">
           <Inbox className="size-4" />收集箱
         </div>
-        <div className="flex h-8 cursor-not-allowed items-center gap-2 rounded-md px-2 text-body-sm text-muted-foreground/45" aria-disabled="true">
+        <div className="flex min-h-[38px] cursor-not-allowed items-center gap-[9px] rounded-md px-2.5 text-body text-muted-foreground/45" aria-disabled="true">
           <Search className="size-4" />搜索
         </div>
       </nav>
-      <div className="mx-3 border-t" />
-      <div className="min-h-0 flex-1 px-2 py-3">
-        <p className="mb-1 px-2 text-caption font-medium text-muted-foreground">最近项目</p>
+      <div className="min-h-0 flex-1 px-2 pb-3">
+        <p className="px-2.5 pb-1.5 pt-[18px] text-[11px] font-normal text-muted-foreground">最近项目</p>
         {recentProjects.length > 0 ? recentProjects.map((project) => (
-          <Link key={project.id} to={`/projects/${project.id}`} className="flex h-8 items-center gap-2 rounded-md px-2 text-body-sm text-muted-foreground hover:bg-white/70 hover:text-foreground">
-            <FolderTree className="size-3.5" />
+          <Link key={project.id} to={`/projects/${project.id}`} className="flex min-h-[38px] items-center gap-[9px] rounded-md px-2.5 text-body text-muted-foreground hover:bg-muted hover:text-foreground">
+            <FolderTree className="size-4" />
             <span className="truncate">{project.name}</span>
           </Link>
         )) : (
@@ -86,19 +84,19 @@ function GlobalNavigation({ projects }: { projects: ProjectPayload[] }) {
 
 function ProjectNavigation({ project }: { project?: ProjectPayload }) {
   return (
-    <div className="flex min-h-0 flex-1 flex-col px-2 pb-3">
-      <Link to="/projects" className="mb-3 flex h-8 items-center gap-1.5 rounded-md px-2 text-caption text-muted-foreground hover:bg-white/70 hover:text-foreground">
+    <div className="flex min-h-0 flex-1 flex-col px-2 pb-3 pt-2">
+      <Link to="/projects" className="mb-2 flex min-h-[34px] items-center gap-1.5 rounded-md px-2.5 text-caption text-muted-foreground hover:bg-muted hover:text-foreground">
         <span aria-hidden="true">←</span> 返回全部项目
       </Link>
-      <div className="mb-4 px-2">
+      <div className="mb-4 px-2.5">
         <p className="truncate text-title font-semibold">{project?.name ?? '项目工作台'}</p>
         <p className="mt-1 text-caption text-muted-foreground">{project?.description || '尚未填写目标与背景'}</p>
       </div>
       <nav aria-label="项目导航">
-        <a href="#project-overview" className="flex h-8 items-center gap-2 rounded-md bg-white px-2 text-body-sm font-medium shadow-xs">
+        <a href="#project-overview" className="flex min-h-[38px] items-center gap-[9px] rounded-md bg-brand-soft px-2.5 text-body font-semibold text-brand">
           <FolderKanban className="size-4" />项目首页
         </a>
-        <a href="#project-directory" className="mt-1 flex h-8 items-center gap-2 rounded-md px-2 text-body-sm text-muted-foreground hover:bg-white/70 hover:text-foreground">
+        <a href="#project-directory" className="flex min-h-[38px] items-center gap-[9px] rounded-md px-2.5 text-body text-muted-foreground hover:bg-muted hover:text-foreground">
           <FolderTree className="size-4" />目录管理
         </a>
       </nav>
@@ -128,16 +126,16 @@ export function AppShell() {
 
   return (
     <div className="min-h-screen bg-background text-foreground">
-      <div className="mx-auto grid min-h-screen max-w-[1680px] grid-cols-[216px_minmax(0,1fr)] border-x bg-white max-[1120px]:grid-cols-[184px_minmax(0,1fr)]">
+      <div className="grid min-h-screen grid-cols-[216px_minmax(0,1fr)] max-[1119px]:grid-cols-[184px_minmax(0,1fr)]">
         <aside className="flex min-h-screen min-w-0 flex-col border-r bg-sidebar">
-          <Link to="/projects" className="flex h-14 shrink-0 items-center gap-2 px-4 text-body-sm font-semibold" aria-label="知林 Grove 项目">
-            <span className="flex size-7 items-center justify-center rounded-md bg-brand text-white"><Sprout className="size-4" /></span>
+          <Link to="/projects" className="flex h-[52px] shrink-0 items-center gap-2.5 border-b px-4 text-body font-[650]" aria-label="知林 Grove 项目">
+            <span className="flex size-7 items-center justify-center rounded-md bg-brand text-[13px] font-bold text-white" aria-hidden="true">G</span>
             <span>知林 Grove</span>
           </Link>
 
           {projectId ? <ProjectNavigation project={currentProject} /> : <GlobalNavigation projects={projects.data ?? []} />}
 
-          <div className="border-t p-2">
+          <div className="border-t px-2 pb-2 pt-1.5">
             <DropdownMenu>
               <DropdownMenuTrigger asChild>
                 <Button variant="ghost" className="h-11 w-full justify-start gap-2 px-2 font-normal">
@@ -157,8 +155,9 @@ export function AppShell() {
             </DropdownMenu>
           </div>
         </aside>
-        <main className="min-w-0 bg-white">
-          <div className="mx-auto w-full max-w-[1240px] px-8 py-8 max-[1120px]:px-6"><Outlet /></div>
+        <main className="flex min-w-0 flex-col bg-background">
+          <div className="h-[52px] shrink-0 border-b bg-card" aria-hidden="true" />
+          <div className="min-h-0 flex-1"><Outlet /></div>
         </main>
       </div>
 

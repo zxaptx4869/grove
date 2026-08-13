@@ -82,7 +82,7 @@ TBD - created by archiving change setup-project-foundation. Update Purpose after
 - **THEN** 校验成功且 skill 元数据与目录命名有效
 
 ### Requirement: 产品原型作为版本化设计参考
-仓库 MUST 在 `docs/prototypes/` 保存可直接访问的 Grove 产品原型及说明文档。说明文档 SHALL 记录原型版本、覆盖页面、运行方式和权威边界，并 SHALL 明确原型中的静态数据与模拟交互不代表正式功能已经实现。实施原型覆盖页面时 MUST 以截图对照验证页面结构、密度、对齐、控件和关键状态，不得只验证 DOM 存在或路由可达。
+仓库 MUST 在 `docs/prototypes/` 保存可直接访问的 Grove 产品原型及说明文档。说明文档 SHALL 记录原型版本、覆盖页面、运行方式和权威边界，并 SHALL 明确原型中的静态数据与模拟交互不代表正式功能已经实现。实施原型覆盖页面时 MUST 以同一视口截图对照验证页面结构、几何、颜色、字体、密度、对齐、控件形态和关键状态，不得只验证 DOM 存在、路由可达或大致结构相似。
 
 #### Scenario: 协作者访问当前产品原型
 - **WHEN** 协作者从 README 进入产品原型
@@ -98,7 +98,11 @@ TBD - created by archiving change setup-project-foundation. Update Purpose after
 
 #### Scenario: 关键页面视觉验收
 - **WHEN** 一个 change 完成原型所覆盖的关键桌面页面
-- **THEN** 在 1280px、1440px 和 1600px 生成正式页面与原型同视口截图，逐项核对结构、密度、对齐、控件和状态，并保存截图路径与有意偏离说明
+- **THEN** 在 1280px、1440px 和 1600px 生成正式页面与原型同视口截图，逐项核对侧栏与顶栏尺寸、内容起点、背景层级、字体、间距、行高、控件尺寸和交互状态，并保存截图路径与有意偏离说明
+
+#### Scenario: 原型包含未实现业务数据或动作
+- **WHEN** 原型截图包含当前 OpenSpec 尚未实现的统计、按钮或导航能力
+- **THEN** 正式页面保持相同的必要布局层级，但不以静态数据或可操作假入口填充，并在 change 设计中记录视觉偏离
 
 ### Requirement: 端侧产品边界可追溯
 仓库的产品蓝图、代理守则与 Grove UI skill MUST 一致声明：Web 只承担桌面完整业务流程，手机 Web 不属于业务流程验收范围；原生 App 上线前的小屏访问 SHALL 规划为统一的电脑访问提示，不提供简化版工作台或继续访问入口。
