@@ -192,6 +192,19 @@ def test_reject_too_many_images(client: TestClient) -> None:
     assert response.status_code == 400
 
 
+def test_reject_oversized_image(client: TestClient) -> None:
+    """单张超过 10MB 的图片应返回 400。"""
+    _register(client)
+    big = b"x" * (10 * 1024 * 1024 + 1)
+
+    response = client.post(
+        "/api/sources",
+        files=[("files", ("big.png", big, "image/png"))],
+    )
+
+    assert response.status_code == 400
+
+
 def test_reject_files_and_text(client: TestClient) -> None:
     """图片与文字同时提交应返回 400。"""
     _register(client)
