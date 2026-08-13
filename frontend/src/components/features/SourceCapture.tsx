@@ -1,4 +1,4 @@
-import { useRef, useState, type ChangeEvent, type ClipboardEvent } from 'react'
+import { useEffect, useRef, useState, type ChangeEvent } from 'react'
 import { ClipboardPaste, Images, Upload } from 'lucide-react'
 
 import { Button } from '@/components/ui/button'
@@ -30,6 +30,21 @@ export function SourceCapture({ projects, fixedProjectId, onCreated }: SourceCap
   const [error, setError] = useState('')
   const fileInputRef = useRef<HTMLInputElement>(null)
 
+  useEffect(() => {
+    function onWindowPaste(event: ClipboardEvent) {
+      const files = Array.from(event.clipboardData?.items ?? [])
+        .filter((item) => item.kind === 'file' && item.type.startsWith('image/'))
+        .map((item) => item.getAsFile())
+        .filter((file): file is File => file !== null)
+      if (files.length === 0) return
+      event.preventDefault()
+      setFiles((prev) => [...prev, ...files].slice(0, 5))
+      setMode('image')
+    }
+    window.addEventListener('paste', onWindowPaste)
+    return () => window.removeEventListener('paste', onWindowPaste)
+  }, [])
+
   function reset() {
     setFiles([])
     setText('')
@@ -45,16 +60,6 @@ export function SourceCapture({ projects, fixedProjectId, onCreated }: SourceCap
     }
     setFiles(picked)
     setError('')
-  }
-
-  function onPaste(event: ClipboardEvent<HTMLTextAreaElement>) {
-    const images = Array.from(event.clipboardData?.files ?? []).filter((file) =>
-      file.type.startsWith('image/'),
-    )
-    if (images.length === 0) return
-    event.preventDefault()
-    setFiles((prev) => [...prev, ...images].slice(0, 5))
-    setText('')
   }
 
   async function handleSubmit() {
@@ -138,7 +143,6 @@ export function SourceCapture({ projects, fixedProjectId, onCreated }: SourceCap
             <Textarea
               value={text}
               onChange={(event) => setText(event.target.value)}
-              onPaste={onPaste}
               aria-label="粘贴图片或文字"
               placeholder="在这里粘贴图片或文字…"
               rows={5}

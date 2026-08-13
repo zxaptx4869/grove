@@ -34,6 +34,7 @@ import {
 } from '@/components/ui/dropdown-menu'
 import { Input } from '@/components/ui/input'
 import { Textarea } from '@/components/ui/textarea'
+import { CaptureDialog } from '@/components/features/CaptureDialog'
 import { ProjectSources } from '@/pages/ProjectSources'
 import {
   createNode,
@@ -192,6 +193,7 @@ export function ProjectPage() {
   const [projectDescription, setProjectDescription] = useState('')
   const [deleteProjectOpen, setDeleteProjectOpen] = useState(false)
   const [aiOpen, setAiOpen] = useState(false)
+  const [captureOpen, setCaptureOpen] = useState(false)
   const [actionError, setActionError] = useState('')
 
   const invalidateTree = () => queryClient.invalidateQueries({ queryKey: ['project-tree', id] })
@@ -377,6 +379,12 @@ export function ProjectPage() {
           </p>
         </div>
         <div className="flex shrink-0 items-center gap-2">
+          {isSourcesView ? (
+            <Button size="sm" onClick={() => setCaptureOpen(true)}>
+              <Plus />
+              采集到项目
+            </Button>
+          ) : null}
           {isDirectoryView && nodes.length > 0 ? (
             <Button size="sm" variant="outline" onClick={() => setAiOpen(true)}>
               <Sparkles />与 AI 共创目录
@@ -422,6 +430,14 @@ export function ProjectPage() {
           {actionError}
         </div>
       ) : null}
+
+      <CaptureDialog
+        open={captureOpen}
+        onOpenChange={setCaptureOpen}
+        projects={[]}
+        fixedProjectId={id}
+        onCreated={() => queryClient.invalidateQueries({ queryKey: ['sources'] })}
+      />
 
       {isSourcesView ? (
         <ProjectSources projectId={id} />

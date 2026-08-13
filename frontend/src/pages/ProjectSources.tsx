@@ -1,7 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { toast } from 'sonner'
 
-import { SourceCapture } from '@/components/features/SourceCapture'
 import { SourceList } from '@/components/features/SourceList'
 import { Button } from '@/components/ui/button'
 import {
@@ -54,8 +53,7 @@ export function ProjectSources({ projectId }: { projectId: number }) {
   }))
 
   return (
-    <div className="space-y-5">
-      <SourceCapture projects={projectOptions} fixedProjectId={projectId} onCreated={invalidate} />
+    <div>
       {sources.isLoading ? (
         <div className="space-y-2 border-t" aria-label="来源加载中">
           {[1, 2, 3].map((item) => (

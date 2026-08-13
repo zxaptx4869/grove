@@ -65,47 +65,51 @@ export function InboxPage() {
         </p>
       </header>
 
-      <SourceCapture projects={projectOptions} onCreated={invalidate} />
+      <div className="grid grid-cols-[minmax(360px,0.9fr)_minmax(0,1.1fr)] items-start gap-6">
+        <SourceCapture projects={projectOptions} onCreated={invalidate} />
 
-      <div className="mt-6 flex h-[34px] items-center gap-1.5" role="tablist" aria-label="来源筛选">
-        {([
-          ['all', '全部'],
-          ['unassigned', '未归属'],
-        ] as const).map(([key, label]) => (
-          <button
-            key={key}
-            type="button"
-            role="tab"
-            aria-selected={filter === key}
-            onClick={() => setFilter(key)}
-            className={`flex h-[34px] items-center rounded-md px-2.5 text-body transition-colors ${filter === key ? 'bg-card text-foreground shadow-[0_1px_2px_rgb(0_0_0/0.06)]' : 'text-muted-foreground hover:bg-muted hover:text-foreground'}`}
-          >
-            {label}
-          </button>
-        ))}
+        <div className="min-w-0">
+          <div className="mb-2 flex h-[34px] items-center gap-1.5" role="tablist" aria-label="来源筛选">
+            {([
+              ['all', '全部'],
+              ['unassigned', '未归属'],
+            ] as const).map(([key, label]) => (
+              <button
+                key={key}
+                type="button"
+                role="tab"
+                aria-selected={filter === key}
+                onClick={() => setFilter(key)}
+                className={`flex h-[34px] items-center rounded-md px-2.5 text-body transition-colors ${filter === key ? 'bg-card text-foreground shadow-[0_1px_2px_rgb(0_0_0/0.06)]' : 'text-muted-foreground hover:bg-muted hover:text-foreground'}`}
+              >
+                {label}
+              </button>
+            ))}
+          </div>
+
+          {sources.isLoading ? (
+            <div className="divide-y border-t" aria-label="来源加载中">
+              {[1, 2, 3].map((item) => (
+                <div key={item} className="h-[64px] animate-pulse bg-muted/50" />
+              ))}
+            </div>
+          ) : sources.isError ? (
+            <div className="border-t pt-4">
+              <p className="text-body-sm">来源列表加载失败，请重试。</p>
+              <Button className="mt-3" variant="outline" size="sm" onClick={() => sources.refetch()}>
+                重试
+              </Button>
+            </div>
+          ) : (
+            <SourceList
+              sources={sources.data ?? []}
+              projects={projectOptions}
+              onAssign={(id, projectId) => assign.mutate({ id, projectId })}
+              onDelete={(id) => remove.mutate(id)}
+            />
+          )}
+        </div>
       </div>
-
-      {sources.isLoading ? (
-        <div className="mt-2 divide-y border-t" aria-label="来源加载中">
-          {[1, 2, 3].map((item) => (
-            <div key={item} className="h-[64px] animate-pulse bg-muted/50" />
-          ))}
-        </div>
-      ) : sources.isError ? (
-        <div className="mt-2 border-t pt-4">
-          <p className="text-body-sm">来源列表加载失败，请重试。</p>
-          <Button className="mt-3" variant="outline" size="sm" onClick={() => sources.refetch()}>
-            重试
-          </Button>
-        </div>
-      ) : (
-        <SourceList
-          sources={sources.data ?? []}
-          projects={projectOptions}
-          onAssign={(id, projectId) => assign.mutate({ id, projectId })}
-          onDelete={(id) => remove.mutate(id)}
-        />
-      )}
     </section>
   )
 }
