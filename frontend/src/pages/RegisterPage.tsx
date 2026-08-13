@@ -1,4 +1,5 @@
 import { zodResolver } from '@hookform/resolvers/zod'
+import { useState } from 'react'
 import { useForm } from 'react-hook-form'
 import { Link, useNavigate } from 'react-router-dom'
 import { toast } from 'sonner'
@@ -36,12 +37,14 @@ type RegisterFormValues = z.infer<typeof registerSchema>
 export function RegisterPage() {
   const navigate = useNavigate()
   const register = useRegister()
+  const [submitError, setSubmitError] = useState('')
   const form = useForm<RegisterFormValues>({
     resolver: zodResolver(registerSchema),
     defaultValues: { username: '', password: '', confirmPassword: '' },
   })
 
   async function onSubmit(values: RegisterFormValues) {
+    setSubmitError('')
     try {
       await register.mutateAsync({
         username: values.username,
@@ -50,19 +53,20 @@ export function RegisterPage() {
       toast.success('注册成功，已自动登录')
       navigate('/', { replace: true })
     } catch (error) {
-      toast.error(error instanceof Error ? error.message : '注册失败')
+      setSubmitError(error instanceof Error ? error.message : '注册失败，请重试')
     }
   }
 
   return (
-    <section className="mx-auto w-full max-w-sm space-y-6">
-      <div className="space-y-1 text-center">
-        <h1 className="text-heading font-bold">注册知林 Grove</h1>
-        <p className="text-body-sm text-muted-foreground">注册即拥有自己的知识库空间。</p>
+    <section className="w-full space-y-7">
+      <div className="space-y-1.5">
+        <h1 className="text-display font-semibold">创建账号</h1>
+        <p className="text-body-sm text-muted-foreground">注册后会自动创建并进入你的 Workspace。</p>
       </div>
 
       <Form {...form}>
         <form className="space-y-4" onSubmit={form.handleSubmit(onSubmit)}>
+          {submitError ? <div role="alert" className="rounded-md border border-destructive/20 bg-error-soft px-3 py-2 text-body-sm text-destructive">{submitError}</div> : null}
           <FormField
             control={form.control}
             name="username"
@@ -70,7 +74,7 @@ export function RegisterPage() {
               <FormItem>
                 <FormLabel>账号</FormLabel>
                 <FormControl>
-                  <Input placeholder="字母、数字或下划线" autoComplete="username" {...field} />
+                  <Input className="h-10" placeholder="字母、数字或下划线" autoComplete="username" {...field} />
                 </FormControl>
                 <FormMessage />
               </FormItem>
@@ -85,6 +89,7 @@ export function RegisterPage() {
                 <FormControl>
                   <Input
                     type="password"
+                    className="h-10"
                     placeholder="至少 8 位"
                     autoComplete="new-password"
                     {...field}
@@ -103,6 +108,7 @@ export function RegisterPage() {
                 <FormControl>
                   <Input
                     type="password"
+                    className="h-10"
                     placeholder="再次输入密码"
                     autoComplete="new-password"
                     {...field}
@@ -112,13 +118,13 @@ export function RegisterPage() {
               </FormItem>
             )}
           />
-          <Button type="submit" className="w-full" disabled={register.isPending}>
+          <Button type="submit" className="h-10 w-full" disabled={register.isPending}>
             {register.isPending ? '注册中…' : '注册'}
           </Button>
         </form>
       </Form>
 
-      <p className="text-center text-body-sm text-muted-foreground">
+      <p className="text-body-sm text-muted-foreground">
         已有账号？{' '}
         <Link to="/login" className="text-primary underline-offset-4 hover:underline">
           去登录

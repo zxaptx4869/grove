@@ -1,8 +1,10 @@
 import { lazy, Suspense, useEffect, useState, type ReactNode } from 'react'
 import { Navigate, Route, Routes } from 'react-router-dom'
 import { AppShell } from '@/components/layout/AppShell'
+import { AuthLayout } from '@/components/layout/AuthLayout'
 import { ProtectedRoute } from '@/components/auth/ProtectedRoute'
 import { Toaster } from '@/components/ui/sonner'
+import { TooltipProvider } from '@/components/ui/tooltip'
 import { HealthPage } from '@/pages/HealthPage'
 
 // 业务页面按需加载，避免首屏主包过大
@@ -49,7 +51,7 @@ function DesktopBoundary({ children }: { children: ReactNode }) {
  */
 export default function App() {
   return (
-    <DesktopBoundary><>
+    <DesktopBoundary><TooltipProvider>
       <Routes>
         <Route
           element={
@@ -64,8 +66,8 @@ export default function App() {
           <Route path="/search" element={<Suspense fallback={<PageFallback />}><SearchPage /></Suspense>} />
         </Route>
 
-        <Route path="/login" element={<Suspense fallback={<PageFallback />}><LoginPage /></Suspense>} />
-        <Route path="/register" element={<Suspense fallback={<PageFallback />}><RegisterPage /></Suspense>} />
+        <Route path="/login" element={<AuthLayout><Suspense fallback={<PageFallback />}><LoginPage /></Suspense></AuthLayout>} />
+        <Route path="/register" element={<AuthLayout><Suspense fallback={<PageFallback />}><RegisterPage /></Suspense></AuthLayout>} />
 
         {/* 开发调试页：不进产品导航，可直接访问 */}
         <Route path="/health" element={<HealthPage />} />
@@ -75,6 +77,6 @@ export default function App() {
       </Routes>
       {/* Sonner 全局提示：主题跟随设计令牌（richColors 使用语义色） */}
       <Toaster position="bottom-right" richColors />
-    </></DesktopBoundary>
+    </TooltipProvider></DesktopBoundary>
   )
 }

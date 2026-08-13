@@ -11,7 +11,7 @@ TBD - created by archiving change setup-project-foundation. Update Purpose after
 - **THEN** 命令成功退出并生成 `dist/` 产物
 
 ### Requirement: 样式体系与基础组件
-产品业务页面 SHALL 使用 React 19、Tailwind 4、shadcn/ui 和 Lucide，采用安静紧凑的桌面工作台布局；从 1024px 起完整可用，低于 1024px 由 `product-shell` 规格阻断。
+产品业务页面 SHALL 使用 React 19、Tailwind 4、shadcn/ui 和 Lucide，采用安静紧凑的桌面工作台布局；从 1024px 起完整可用，低于 1024px 由 `product-shell` 规格阻断。按钮 SHALL 使用图标表达熟悉操作，目录与项目行的次级操作 SHALL 收纳到上下文菜单，不得平铺工程缩写文字按钮。
 
 #### Scenario: 桌面项目工作台宽度可用
 - **WHEN** 以 1280px、1440px 或 1600px 视口渲染项目页面
@@ -20,6 +20,10 @@ TBD - created by archiving change setup-project-foundation. Update Purpose after
 #### Scenario: 桌面工作台宽度可用
 - **WHEN** 以 1280px 视口宽度渲染产品业务页面
 - **THEN** 页面无非预期横向滚动，核心内容、导航和操作完整可见
+
+#### Scenario: 目录操作紧凑且可理解
+- **WHEN** 用户浏览非空目录树
+- **THEN** 节点行显示展开、名称和必要的状态，新增、编辑、移动、排序与删除通过图标或上下文菜单进入，且图标具有可访问名称
 
 ### Requirement: 路由与页面
 前端 MUST 使用 React Router；认证路由包含 `/login` 与 `/register`，受保护的桌面路由包含 `/projects` 和 `/projects/:projectId`，全局壳提供项目、收集箱、搜索、账户导航。`/health` 保持健康检查页。
@@ -78,7 +82,7 @@ TBD - created by archiving change setup-project-foundation. Update Purpose after
 - **THEN** 校验成功且 skill 元数据与目录命名有效
 
 ### Requirement: 产品原型作为版本化设计参考
-仓库 MUST 在 `docs/prototypes/` 保存可直接访问的 Grove 产品原型及说明文档。说明文档 SHALL 记录原型版本、覆盖页面、运行方式和权威边界，并 SHALL 明确原型中的静态数据与模拟交互不代表正式功能已经实现。
+仓库 MUST 在 `docs/prototypes/` 保存可直接访问的 Grove 产品原型及说明文档。说明文档 SHALL 记录原型版本、覆盖页面、运行方式和权威边界，并 SHALL 明确原型中的静态数据与模拟交互不代表正式功能已经实现。实施原型覆盖页面时 MUST 以截图对照验证页面结构、密度、对齐、控件和关键状态，不得只验证 DOM 存在或路由可达。
 
 #### Scenario: 协作者访问当前产品原型
 - **WHEN** 协作者从 README 进入产品原型
@@ -94,7 +98,7 @@ TBD - created by archiving change setup-project-foundation. Update Purpose after
 
 #### Scenario: 关键页面视觉验收
 - **WHEN** 一个 change 完成原型所覆盖的关键桌面页面
-- **THEN** 在该 change 范围内使用 1280px、1440px 和 1600px 视口与原型对照，并对有意差异保留可追溯说明
+- **THEN** 在 1280px、1440px 和 1600px 生成正式页面与原型同视口截图，逐项核对结构、密度、对齐、控件和状态，并保存截图路径与有意偏离说明
 
 ### Requirement: 端侧产品边界可追溯
 仓库的产品蓝图、代理守则与 Grove UI skill MUST 一致声明：Web 只承担桌面完整业务流程，手机 Web 不属于业务流程验收范围；原生 App 上线前的小屏访问 SHALL 规划为统一的电脑访问提示，不提供简化版工作台或继续访问入口。

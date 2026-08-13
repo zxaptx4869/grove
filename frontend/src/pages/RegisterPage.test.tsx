@@ -15,7 +15,7 @@ describe('RegisterPage', () => {
       </QueryClientProvider>,
     )
 
-    expect(screen.getByRole('heading', { name: '注册知林 Grove' })).toBeInTheDocument()
+    expect(screen.getByRole('heading', { name: '创建账号' })).toBeInTheDocument()
     expect(screen.getByLabelText('账号')).toBeInTheDocument()
     expect(screen.getByLabelText('密码')).toBeInTheDocument()
     expect(screen.getByRole('button', { name: '注册' })).toBeInTheDocument()

@@ -3,25 +3,28 @@
 @custom-variant dark (&:is(.dark *));
 
 :root {
-  --radius: 0.625rem;
-  --background: oklch(1 0 0);
-  --foreground: oklch(0.129 0.042 264.695);
+  --radius: 0.5rem;
+  --background: oklch(0.982 0.003 247);
+  --foreground: oklch(0.22 0.018 255);
   --card: oklch(1 0 0);
   --card-foreground: oklch(0.129 0.042 264.695);
   --popover: oklch(1 0 0);
   --popover-foreground: oklch(0.129 0.042 264.695);
-  --primary: oklch(0.208 0.042 265.755);
-  --primary-foreground: oklch(0.984 0.003 247.858);
+  --primary: oklch(0.51 0.128 151);
+  --primary-foreground: oklch(0.985 0.006 150);
   --secondary: oklch(0.968 0.007 247.896);
   --secondary-foreground: oklch(0.208 0.042 265.755);
-  --muted: oklch(0.968 0.007 247.896);
-  --muted-foreground: oklch(0.554 0.046 257.417);
-  --accent: oklch(0.968 0.007 247.896);
+  --muted: oklch(0.956 0.005 247);
+  --muted-foreground: oklch(0.5 0.025 255);
+  --accent: oklch(0.948 0.008 247);
   --accent-foreground: oklch(0.208 0.042 265.755);
   --destructive: oklch(0.577 0.245 27.325);
-  --border: oklch(0.929 0.013 255.508);
-  --input: oklch(0.929 0.013 255.508);
-  --ring: oklch(0.704 0.04 256.788);
+  --border: oklch(0.9 0.008 247);
+  --input: oklch(0.88 0.01 247);
+  --ring: oklch(0.58 0.12 151);
+  --brand: oklch(0.51 0.128 151);
+  --brand-soft: oklch(0.94 0.035 151);
+  --sidebar: oklch(0.958 0.007 247);
   /* ---- Grove 语义色：AI 候选 / 正式记录 / 风险 / 成功 / 警告 / 错误 ---- */
   --ai-candidate: oklch(0.541 0.281 293.009);
   --ai-candidate-soft: oklch(0.969 0.016 293.756);
@@ -56,6 +59,9 @@
   --color-border: var(--border);
   --color-input: var(--input);
   --color-ring: var(--ring);
+  --color-brand: var(--brand);
+  --color-brand-soft: var(--brand-soft);
+  --color-sidebar: var(--sidebar);
   --color-ai-candidate: var(--ai-candidate);
   --color-ai-candidate-soft: var(--ai-candidate-soft);
   --color-confirmed: var(--confirmed);
@@ -104,6 +110,7 @@
     @apply border-border outline-ring/50;
   }
   body {
-    @apply bg-background text-foreground;
+    @apply bg-background text-foreground antialiased;
+    letter-spacing: 0;
   }
 }

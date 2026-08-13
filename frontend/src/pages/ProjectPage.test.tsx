@@ -24,9 +24,10 @@ describe('ProjectPage', () => {
             ],
           })
         }
+        const status = new URL(url, 'http://localhost').searchParams.get('status_filter')
         return Promise.resolve({
           ok: true,
-          json: async () => [{ id: 1, name: '房子装修', template: 'decoration', node_count: 2, created_at: '' }],
+          json: async () => status === 'active' ? [{ id: 1, name: '房子装修', description: '完成新家装修', status: 'active', template: 'blank', node_count: 2, created_at: '' }] : [],
         })
       }),
     )
@@ -45,7 +46,8 @@ describe('ProjectPage', () => {
     expect(await screen.findByText('房子装修')).toBeInTheDocument()
     expect(await screen.findByText('装修准备')).toBeInTheDocument()
     expect(screen.getByText('需求确认')).toBeInTheDocument()
-    expect(screen.getByRole('button', { name: '添加根节点' })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: '根节点' })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: '与 AI 共创目录' })).toBeInTheDocument()
     vi.unstubAllGlobals()
   })
 })

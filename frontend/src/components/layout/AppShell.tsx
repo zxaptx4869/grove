@@ -1,22 +1,179 @@
-import { FolderKanban, Inbox, LogOut, Search, Settings2, Sparkles } from 'lucide-react'
-import { NavLink, Outlet, Link, useNavigate } from 'react-router-dom'
+import { useMemo, useState } from 'react'
+import { useQuery } from '@tanstack/react-query'
+import {
+  ChevronDown,
+  FolderKanban,
+  FolderTree,
+  Inbox,
+  LogOut,
+  Search,
+  Sprout,
+  UserRound,
+} from 'lucide-react'
+import { Link, NavLink, Outlet, useLocation, useNavigate } from 'react-router-dom'
 import { toast } from 'sonner'
-import { Button } from '@/components/ui/button'
-import { useLogout, useMe } from '@/hooks/useAuth'
 
-const NAV_ITEMS: Array<{ to: string; label: string; icon: typeof FolderKanban; disabled?: boolean }> = [
-  { to: '/projects', label: '项目', icon: FolderKanban },
-  { to: '/inbox', label: '收集箱', icon: Inbox, disabled: true },
-  { to: '/search', label: '搜索', icon: Search, disabled: true },
-] as const
+import { Button } from '@/components/ui/button'
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog'
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuLabel,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu'
+import { useLogout, useMe } from '@/hooks/useAuth'
+import { fetchProjects, type ProjectPayload, type ProjectStatus } from '@/lib/api'
+
+const PROJECT_STATUSES: ProjectStatus[] = ['active', 'paused', 'completed', 'archived']
+
+function useAllProjects() {
+  return useQuery({
+    queryKey: ['projects', 'all-statuses'],
+    queryFn: async () => {
+      const groups = await Promise.all(PROJECT_STATUSES.map((status) => fetchProjects(status)))
+      return groups.flat()
+    },
+    staleTime: 30_000,
+  })
+}
+
+function GlobalNavigation({ projects }: { projects: ProjectPayload[] }) {
+  const recentProjects = useMemo(
+    () => projects.filter((project) => project.status !== 'archived').slice(0, 5),
+    [projects],
+  )
+
+  return (
+    <>
+      <nav className="px-2 py-3" aria-label="全局导航">
+        <NavLink
+          to="/projects"
+          className={({ isActive }) => `flex h-8 items-center gap-2 rounded-md px-2 text-body-sm ${isActive ? 'bg-white font-medium shadow-xs' : 'text-muted-foreground hover:bg-white/70 hover:text-foreground'}`}
+        >
+          <FolderKanban className="size-4" />项目
+        </NavLink>
+        <div className="mt-1 flex h-8 cursor-not-allowed items-center gap-2 rounded-md px-2 text-body-sm text-muted-foreground/45" aria-disabled="true">
+          <Inbox className="size-4" />收集箱
+        </div>
+        <div className="flex h-8 cursor-not-allowed items-center gap-2 rounded-md px-2 text-body-sm text-muted-foreground/45" aria-disabled="true">
+          <Search className="size-4" />搜索
+        </div>
+      </nav>
+      <div className="mx-3 border-t" />
+      <div className="min-h-0 flex-1 px-2 py-3">
+        <p className="mb-1 px-2 text-caption font-medium text-muted-foreground">最近项目</p>
+        {recentProjects.length > 0 ? recentProjects.map((project) => (
+          <Link key={project.id} to={`/projects/${project.id}`} className="flex h-8 items-center gap-2 rounded-md px-2 text-body-sm text-muted-foreground hover:bg-white/70 hover:text-foreground">
+            <FolderTree className="size-3.5" />
+            <span className="truncate">{project.name}</span>
+          </Link>
+        )) : (
+          <p className="px-2 py-2 text-caption text-muted-foreground/70">还没有项目</p>
+        )}
+      </div>
+    </>
+  )
+}
+
+function ProjectNavigation({ project }: { project?: ProjectPayload }) {
+  return (
+    <div className="flex min-h-0 flex-1 flex-col px-2 pb-3">
+      <Link to="/projects" className="mb-3 flex h-8 items-center gap-1.5 rounded-md px-2 text-caption text-muted-foreground hover:bg-white/70 hover:text-foreground">
+        <span aria-hidden="true">←</span> 返回全部项目
+      </Link>
+      <div className="mb-4 px-2">
+        <p className="truncate text-title font-semibold">{project?.name ?? '项目工作台'}</p>
+        <p className="mt-1 text-caption text-muted-foreground">{project?.description || '尚未填写目标与背景'}</p>
+      </div>
+      <nav aria-label="项目导航">
+        <a href="#project-overview" className="flex h-8 items-center gap-2 rounded-md bg-white px-2 text-body-sm font-medium shadow-xs">
+          <FolderKanban className="size-4" />项目首页
+        </a>
+        <a href="#project-directory" className="mt-1 flex h-8 items-center gap-2 rounded-md px-2 text-body-sm text-muted-foreground hover:bg-white/70 hover:text-foreground">
+          <FolderTree className="size-4" />目录管理
+        </a>
+      </nav>
+    </div>
+  )
+}
 
 export function AppShell() {
   const me = useMe()
+  const projects = useAllProjects()
   const logout = useLogout()
   const navigate = useNavigate()
+  const location = useLocation()
+  const [logoutOpen, setLogoutOpen] = useState(false)
+  const projectId = Number(location.pathname.match(/^\/projects\/(\d+)/)?.[1]) || null
+  const currentProject = projects.data?.find((project) => project.id === projectId)
+
   async function handleLogout() {
-    try { await logout.mutateAsync(); navigate('/login', { replace: true }); toast.success('已退出登录') }
-    catch { toast.error('退出失败，请重试') }
+    try {
+      await logout.mutateAsync()
+      navigate('/login', { replace: true })
+      toast.success('已退出登录')
+    } catch {
+      toast.error('退出失败，请重试')
+    }
   }
-  return <div className="min-h-screen bg-background text-foreground"><div className="mx-auto flex min-h-screen max-w-[1600px] border-x"><aside className="flex w-60 shrink-0 flex-col border-r bg-muted/20"><Link to="/projects" className="flex h-16 items-center gap-2 border-b px-5 font-semibold"><span className="flex size-7 items-center justify-center rounded-md bg-foreground text-background"><Sparkles className="size-4" /></span>知林 Grove</Link><nav className="flex-1 space-y-1 p-3" aria-label="全局导航">{NAV_ITEMS.map(({ to, label, icon: Icon, disabled }) => disabled ? <div key={to} className="flex cursor-not-allowed items-center gap-3 rounded-md px-3 py-2 text-body-sm text-muted-foreground/50" aria-disabled="true"><Icon className="size-4" />{label}<span className="ml-auto text-caption">后续</span></div> : <NavLink key={to} to={to} className={({ isActive }) => `flex items-center gap-3 rounded-md px-3 py-2 text-body-sm ${isActive ? 'bg-background font-medium shadow-sm' : 'text-muted-foreground hover:bg-background/70 hover:text-foreground'}`}><Icon className="size-4" />{label}</NavLink>)}<div className="my-4 border-t" /><p className="px-3 text-caption font-medium uppercase tracking-[0.14em] text-muted-foreground">最近项目</p></nav><div className="border-t p-4"><p className="truncate text-body-sm font-medium">{me.data?.user.username ?? '当前账户'}</p><p className="mt-1 truncate text-caption text-muted-foreground">{me.data?.workspace.name ?? 'Workspace'}</p><Button className="mt-3 w-full justify-start" variant="ghost" size="sm" onClick={handleLogout} disabled={logout.isPending}><LogOut className="mr-2 size-4" />{logout.isPending ? '退出中…' : '退出登录'}</Button></div></aside><main className="min-w-0 flex-1"><header className="flex h-16 items-center justify-end border-b px-8"><Button variant="ghost" size="sm" disabled><Settings2 className="mr-2 size-4" />账户设置</Button></header><div className="px-8 py-8"><Outlet /></div></main></div></div>
+
+  return (
+    <div className="min-h-screen bg-background text-foreground">
+      <div className="mx-auto grid min-h-screen max-w-[1680px] grid-cols-[216px_minmax(0,1fr)] border-x bg-white max-[1120px]:grid-cols-[184px_minmax(0,1fr)]">
+        <aside className="flex min-h-screen min-w-0 flex-col border-r bg-sidebar">
+          <Link to="/projects" className="flex h-14 shrink-0 items-center gap-2 px-4 text-body-sm font-semibold" aria-label="知林 Grove 项目">
+            <span className="flex size-7 items-center justify-center rounded-md bg-brand text-white"><Sprout className="size-4" /></span>
+            <span>知林 Grove</span>
+          </Link>
+
+          {projectId ? <ProjectNavigation project={currentProject} /> : <GlobalNavigation projects={projects.data ?? []} />}
+
+          <div className="border-t p-2">
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <Button variant="ghost" className="h-11 w-full justify-start gap-2 px-2 font-normal">
+                  <span className="flex size-7 items-center justify-center rounded-md border bg-white"><UserRound className="size-4" /></span>
+                  <span className="min-w-0 flex-1 text-left">
+                    <span className="block truncate text-body-sm font-medium">{me.data?.user.username ?? '当前账户'}</span>
+                    <span className="block truncate text-caption text-muted-foreground">{me.data?.workspace.name ?? 'Workspace'}</span>
+                  </span>
+                  <ChevronDown className="size-3.5 text-muted-foreground" />
+                </Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="start" side="top" className="w-[200px]">
+                <DropdownMenuLabel>{me.data?.workspace.name ?? '当前 Workspace'}</DropdownMenuLabel>
+                <DropdownMenuSeparator />
+                <DropdownMenuItem onSelect={() => setLogoutOpen(true)}><LogOut />退出登录</DropdownMenuItem>
+              </DropdownMenuContent>
+            </DropdownMenu>
+          </div>
+        </aside>
+        <main className="min-w-0 bg-white">
+          <div className="mx-auto w-full max-w-[1240px] px-8 py-8 max-[1120px]:px-6"><Outlet /></div>
+        </main>
+      </div>
+
+      <Dialog open={logoutOpen} onOpenChange={setLogoutOpen}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>退出登录？</DialogTitle>
+            <DialogDescription>退出后需要重新输入账号密码才能访问当前 Workspace。</DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setLogoutOpen(false)}>取消</Button>
+            <Button onClick={handleLogout} disabled={logout.isPending}>{logout.isPending ? '退出中…' : '确认退出'}</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+    </div>
+  )
 }

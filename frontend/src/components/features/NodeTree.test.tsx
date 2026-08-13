@@ -19,14 +19,15 @@ describe('NodeTree', () => {
     }
     render(<NodeTree nodes={NODES} callbacks={callbacks} />)
 
-    await userEvent.click(screen.getByRole('button', { name: '下移 节点1' }))
+    await userEvent.click(screen.getByRole('button', { name: '节点1 更多操作' }))
+    await userEvent.click(await screen.findByRole('menuitem', { name: '下移' }))
 
     expect(callbacks.onReorder).toHaveBeenCalledWith(null, [2, 1])
   })
 
-  it('渲染空目录提示', () => {
+  it('空目录不渲染伪节点', () => {
     render(<NodeTree nodes={[]} callbacks={{ onAddChild: vi.fn(), onRename: vi.fn(), onMove: vi.fn(), onDelete: vi.fn(), onReorder: vi.fn() }} />)
 
-    expect(screen.getByText(/目录为空/)).toBeInTheDocument()
+    expect(screen.queryByRole('treeitem')).not.toBeInTheDocument()
   })
 })
