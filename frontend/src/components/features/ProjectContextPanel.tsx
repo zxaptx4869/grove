@@ -29,6 +29,8 @@ const STATUS_LABELS: Record<ProjectContextStatus, string> = {
   failed: '生成失败',
 }
 
+const MAX_TOPIC_BADGES = 8
+
 function statusClass(status: ProjectContextStatus) {
   if (status === 'ready') return 'bg-confirmed-soft text-confirmed'
   if (status === 'failed') return 'bg-error-soft text-destructive'
@@ -157,11 +159,16 @@ export function ProjectContextPanel({ projectId }: { projectId: number }) {
           <p className="text-caption font-medium text-muted-foreground">目录主题</p>
           {data.directory_topics.length > 0 ? (
             <div className="mt-1.5 flex flex-wrap gap-1.5">
-              {data.directory_topics.map((topic) => (
+              {data.directory_topics.slice(0, MAX_TOPIC_BADGES).map((topic) => (
                 <Badge key={topic} variant="outline" className="bg-muted/40 text-muted-foreground">
                   {topic}
                 </Badge>
               ))}
+              {data.directory_topics.length > MAX_TOPIC_BADGES ? (
+                <Badge variant="outline" className="bg-muted/40 text-muted-foreground">
+                  +{data.directory_topics.length - MAX_TOPIC_BADGES}
+                </Badge>
+              ) : null}
             </div>
           ) : (
             <p className="mt-0.5">目录还是空的</p>

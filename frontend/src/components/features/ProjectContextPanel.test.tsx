@@ -149,4 +149,36 @@ describe('ProjectContextPanel', () => {
       ),
     ).toBe(true)
   })
+
+  it('目录主题过多时折叠展示并提示剩余数量', async () => {
+    const topics = Array.from({ length: 10 }, (_, index) => `主题${index + 1}`)
+    vi.stubGlobal(
+      'fetch',
+      vi.fn((input: RequestInfo | URL) => {
+        const url = new URL(String(input), 'http://localhost')
+        expect(url.pathname).toBe('/api/projects/7/context')
+        return Promise.resolve({
+          ok: true,
+          json: async () => ({
+            project_id: 7,
+            user_description: '装修',
+            project_summary: '概要',
+            current_focus: '关注',
+            directory_topics: topics,
+            lifecycle_status: 'active',
+            generated_at: '2026-08-13T00:00:00Z',
+            status: 'ready',
+            error: null,
+            corrections: { project_summary: null, current_focus: null },
+          }),
+        })
+      }),
+    )
+
+    renderPanel()
+
+    expect(await screen.findByText('+2')).toBeInTheDocument()
+    expect(screen.getByText('主题8')).toBeInTheDocument()
+    expect(screen.queryByText('主题9')).not.toBeInTheDocument()
+  })
 })

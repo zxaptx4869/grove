@@ -136,7 +136,7 @@ async def test_manual_refresh_generates_initial_summary(
     data = response.json()
     assert data["status"] == READY
     assert "整理新家装修" in data["project_summary"]
-    assert data["directory_topics"] == ["装修准备", "需求确认"]
+    assert data["directory_topics"] == ["装修准备"]
     assert data["lifecycle_status"] == "active"
     assert data["generated_at"] is not None
 

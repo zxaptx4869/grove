@@ -22,7 +22,7 @@ class DemoProjectContextGenerator(ProjectContextGenerator):
         """根据项目说明与正式目录生成固定格式的上下文草稿。"""
         corrections = corrections or ProjectContextCorrections()
         description = (project.description or "").strip() or "未填写项目说明"
-        topics = [node.name for node in nodes]
+        topics = [node.name for node in nodes if node.parent_id is None]
 
         project_summary = corrections.project_summary or (
             f"围绕「{description}」进行知识整理，当前目录包含 {len(nodes)} 个节点。"
