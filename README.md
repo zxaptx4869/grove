@@ -8,13 +8,13 @@ README 是仓库的唯一文档导航入口：
 
 | 文档 | 用途 |
 |---|---|
-| [产品蓝图与功能优先级](docs/产品蓝图与功能优先级.md) | 当前产品定义、核心对象、Agent 边界、技术基线、功能优先级和 change 顺序 |
+| [产品蓝图索引](docs/产品蓝图.md) | 稳定产品基线、阅读规则，以及任务到七份权威专题的路由 |
 | [代理工作守则](AGENTS.md) | 产品铁律、OpenSpec 流程、工程规范和沟通约定 |
 | [OpenSpec 主规格](openspec/specs/) | 已归档能力的当前可验证行为 |
 | [OpenSpec 活动变更](openspec/changes/) | 正在规划或实施的 proposal、specs、design 和 tasks |
 | [Grove UI 规范](.codex/skills/grove-ui-conventions/SKILL.md) | 产品组件、交互状态、桌面布局、小屏边界与验收规则 |
 
-阅读顺序：先读产品蓝图与 `AGENTS.md`；实施功能时再读取相关主规格、活动 change 和代码。`openspec/changes/archive/` 是历史记录，不作为当前产品范围入口。
+阅读顺序：先读 `AGENTS.md` 与产品蓝图索引，再按索引只读取当前任务相关的 1 至 2 份专题，最后读取相关主规格、活动 change 和代码。除跨领域审计或修改蓝图结构外，不默认加载全部产品专题。`openspec/changes/archive/` 是历史记录，不作为当前产品范围入口。
 
 ## 目录结构
 
@@ -22,7 +22,9 @@ README 是仓库的唯一文档导航入口：
 grove/
 ├── AGENTS.md          # 代理工作守则（产品铁律 + 工程约定）
 ├── README.md          # 唯一文档导航与本地开发入口
-├── docs/              # 产品蓝图
+├── docs/
+│   ├── 产品蓝图.md    # 产品基线与按任务阅读路由
+│   └── 产品蓝图/      # 七份权威产品专题
 ├── openspec/          # OpenSpec 工作流（changes/ 与 specs/）
 ├── backend/           # FastAPI 后端（Python ≥3.12）
 └── frontend/          # React 19 + TypeScript + Vite 前端
@@ -83,4 +85,4 @@ openspec validate --all --strict
 
 所有功能变更遵循 OpenSpec 流程：`proposal → specs → design → tasks → 实施 → validate → sync specs → archive → commit`。详见 [AGENTS.md](AGENTS.md)。
 
-开始一个 change 前，应先确认它对应[产品蓝图第 18 节](docs/产品蓝图与功能优先级.md#18-建议的-openspec-change-顺序)中的哪一项；一次只实施一个 change，不顺带扩张后续阶段能力。
+开始一个 change 前，应先确认它对应[建议的 OpenSpec Change 顺序](docs/产品蓝图/功能优先级与Change顺序.md#建议的-openspec-change-顺序)中的哪一项；一次只实施一个 change，不顺带扩张后续阶段能力。

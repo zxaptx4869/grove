@@ -24,7 +24,7 @@
 - 环境变量统一走 pydantic-settings，密钥类配置只放占位键，`backend/.env.example` 提供模板，不得提交 `.env`。
 - Grove Web 是桌面知识整理工作台，从 1024px 视口宽度开始支持完整业务流程；低于该宽度时只显示电脑访问提示，不实现手机 Web 业务界面。
 - 提交信息用中文、遵循 Conventional Commits 风格（feat/fix/docs/chore/refactor）。
-- 产品范围与优先级以 `docs/产品蓝图与功能优先级.md` 为准；遇到跨 change 的产品分歧先更新蓝图，具体技术取舍记录到对应 change 的 `design.md`，不要静默猜测。
+- 产品范围与优先级从 `docs/产品蓝图.md` 路由到对应权威专题；先读索引，再只读取任务相关的 1 至 2 份专题，不默认加载全部产品专题。遇到跨 change 的产品分歧先更新对应专题，具体技术取舍记录到对应 change 的 `design.md`，不要静默猜测。
 
 ## 4. 代码注释与沟通语言
 
