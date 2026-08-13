@@ -151,6 +151,25 @@ def test_delete_source_cleans_up(client: TestClient) -> None:
     assert client.get(f"/api/sources/{source_id}").status_code == 404
 
 
+def test_delete_project_keeps_sources_unassigned(client: TestClient) -> None:
+    """删除项目后，其 Source 应转为未归属且保留。"""
+    _register(client)
+    project = _create_project(client)
+    source = client.post(
+        "/api/sources",
+        files=[("files", ("a.png", PNG_BYTES, "image/png"))],
+        data={"project_id": str(project["id"])},
+    ).json()
+    assert source["project_id"] == project["id"]
+
+    assert client.delete(f"/api/projects/{project['id']}").status_code == 200
+
+    sources = client.get("/api/sources?unassigned=true").json()
+    assert len(sources) == 1
+    assert sources[0]["id"] == source["id"]
+    assert sources[0]["project_id"] is None
+
+
 def test_reject_non_image(client: TestClient) -> None:
     """非图片文件应返回 400。"""
     _register(client)

@@ -25,7 +25,9 @@ class Source(Base):
         BigInteger, ForeignKey("workspaces.id", ondelete="CASCADE"), index=True, nullable=False
     )
     project_id: Mapped[int | None] = mapped_column(
-        BigInteger, ForeignKey("projects.id", ondelete="CASCADE"), index=True, nullable=True
+        # 删除项目时由应用层先把 Source 置为未归属，保留原始材料；
+        # 数据库层用 SET NULL 兜底，避免误删证据。
+        BigInteger, ForeignKey("projects.id", ondelete="SET NULL"), index=True, nullable=True
     )
     title: Mapped[str] = mapped_column(String(255), nullable=False)
     note: Mapped[str | None] = mapped_column(Text, nullable=True)

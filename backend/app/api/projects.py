@@ -6,7 +6,7 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy import func, select
 
 from app.api.deps import DbSession, get_current_workspace
-from app.models import Node, Project, Workspace
+from app.models import Node, Project, Source, Workspace
 from app.schemas.project import (
     NodeCreate,
     NodeOut,
@@ -221,6 +221,13 @@ async def delete_project(
 ) -> dict[str, bool]:
     """删除项目并级联删除全部节点。"""
     project = await _get_owned_project(db, workspace.id, project_id)
+    # 删除项目前，把其 Source 置为未归属，保留原始材料与证据
+    sources = (
+        await db.execute(select(Source).where(Source.project_id == project.id))
+    ).scalars().all()
+    for source in sources:
+        source.project_id = None
+
     roots = (
         await db.execute(
             select(Node).where(
