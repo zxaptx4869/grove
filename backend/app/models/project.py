@@ -24,6 +24,9 @@ class Project(Base):
         BigInteger, ForeignKey("workspaces.id", ondelete="CASCADE"), index=True, nullable=False
     )
     name: Mapped[str] = mapped_column(String(64), nullable=False)
+    description: Mapped[str | None] = mapped_column(Text, nullable=True)
+    status: Mapped[str] = mapped_column(String(16), default="active", nullable=False)
+    # 保留旧字段用于历史数据兼容，新建项目不再依赖模板。
     template: Mapped[str] = mapped_column(String(16), default="empty", nullable=False)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False

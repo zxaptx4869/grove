@@ -7,16 +7,27 @@ from pydantic import BaseModel, Field
 
 
 class ProjectCreate(BaseModel):
-    """创建项目：模板可选装修（decoration）或空目录（empty）。"""
+    """创建项目：新路径默认空目录，template 仅兼容旧客户端。"""
 
     name: str = Field(min_length=1, max_length=64)
-    template: Literal["decoration", "empty"] = "empty"
+    description: str | None = Field(default=None, max_length=4000)
+    template: Literal["decoration", "empty"] | None = None
 
 
 class ProjectUpdate(BaseModel):
-    """重命名项目。"""
+    """修改项目名称与可选说明。"""
 
-    name: str = Field(min_length=1, max_length=64)
+    name: str | None = Field(default=None, min_length=1, max_length=64)
+    description: str | None = Field(default=None, max_length=4000)
+
+
+ProjectStatus = Literal["active", "paused", "completed", "archived"]
+
+
+class ProjectStatusUpdate(BaseModel):
+    """修改项目生命周期状态。"""
+
+    status: ProjectStatus
 
 
 class ProjectOut(BaseModel):
@@ -24,6 +35,8 @@ class ProjectOut(BaseModel):
 
     id: int
     name: str
+    description: str | None
+    status: str
     template: str
     node_count: int
     created_at: datetime
@@ -55,6 +68,7 @@ class NodeUpdate(BaseModel):
 
     name: str | None = Field(default=None, min_length=1, max_length=128)
     description: str | None = Field(default=None, max_length=2000)
+    parent_id: int | None = None
 
 
 class NodeReorderRequest(BaseModel):

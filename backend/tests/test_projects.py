@@ -58,8 +58,31 @@ def test_create_empty_project(client: TestClient) -> None:
 
     assert project["name"] == "装修"
     assert project["node_count"] == 0
+    assert project["status"] == "active"
     tree = client.get(f"/api/projects/{project['id']}/tree")
     assert tree.json() == []
+
+
+def test_project_lifecycle_filter_and_restore(client: TestClient) -> None:
+    """项目状态可更新、筛选，归档默认隐藏且可恢复。"""
+    _register(client)
+    project = _create_project(client, "生命周期")
+    paused = client.patch(
+        f"/api/projects/{project['id']}/status", json={"status": "paused"}
+    )
+    assert paused.status_code == 200
+    assert client.get("/api/projects?status_filter=active").json() == []
+    assert client.get("/api/projects?status_filter=paused").json()[0]["status"] == "paused"
+    archived = client.patch(
+        f"/api/projects/{project['id']}/status", json={"status": "archived"}
+    )
+    assert archived.status_code == 200
+    assert client.get("/api/projects").json() == []
+    restored = client.patch(
+        f"/api/projects/{project['id']}/status", json={"status": "active"}
+    )
+    assert restored.status_code == 200
+    assert client.get("/api/projects").json()[0]["status"] == "active"
 
 
 def test_create_decoration_project_seeds_full_tree(client: TestClient) -> None:
@@ -138,6 +161,21 @@ def test_node_rename_and_description(client: TestClient) -> None:
     assert response.json()["name"] == "新名"
     tree = client.get(f"/api/projects/{project['id']}/tree").json()
     assert tree[0]["name"] == "新名"
+
+
+def test_node_move_rejects_descendant(client: TestClient) -> None:
+    """节点不能移动到自身后代。"""
+    _register(client)
+    project = _create_project(client, "移动")
+    parent = client.post(f"/api/projects/{project['id']}/nodes", json={"name": "父"}).json()
+    child = client.post(
+        f"/api/projects/{project['id']}/nodes", json={"name": "子", "parent_id": parent["id"]}
+    ).json()
+    response = client.patch(
+        f"/api/projects/{project['id']}/nodes/{parent['id']}",
+        json={"parent_id": child["id"]},
+    )
+    assert response.status_code == 400
 
 
 def test_node_delete_cascades(client: TestClient) -> None:

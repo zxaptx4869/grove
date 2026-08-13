@@ -6,6 +6,7 @@ export interface NodeTreeCallbacks {
   onAddChild: (parent: TreeNodePayload | null) => void
   onRename: (node: TreeNodePayload) => void
   onDelete: (node: TreeNodePayload) => void
+  onMove: (node: TreeNodePayload) => void
   onReorder: (parentId: number | null, orderedIds: number[]) => void
 }
 
@@ -133,6 +134,14 @@ export function NodeTree({
                 aria-label={`重命名 ${node.name}`}
               >
                 改
+              </Button>
+              <Button
+                size="sm"
+                variant="ghost"
+                onClick={() => callbacks.onMove(node)}
+                aria-label={`移动 ${node.name}`}
+              >
+                移
               </Button>
               <Button
                 size="sm"

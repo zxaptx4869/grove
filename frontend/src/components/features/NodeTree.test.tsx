@@ -13,6 +13,7 @@ describe('NodeTree', () => {
     const callbacks: NodeTreeCallbacks = {
       onAddChild: vi.fn(),
       onRename: vi.fn(),
+      onMove: vi.fn(),
       onDelete: vi.fn(),
       onReorder: vi.fn(),
     }
@@ -24,7 +25,7 @@ describe('NodeTree', () => {
   })
 
   it('渲染空目录提示', () => {
-    render(<NodeTree nodes={[]} callbacks={{ onAddChild: vi.fn(), onRename: vi.fn(), onDelete: vi.fn(), onReorder: vi.fn() }} />)
+    render(<NodeTree nodes={[]} callbacks={{ onAddChild: vi.fn(), onRename: vi.fn(), onMove: vi.fn(), onDelete: vi.fn(), onReorder: vi.fn() }} />)
 
     expect(screen.getByText(/目录为空/)).toBeInTheDocument()
   })

@@ -14,6 +14,7 @@ from app.schemas.project import (
     NodeUpdate,
     ProjectCreate,
     ProjectOut,
+    ProjectStatusUpdate,
     ProjectUpdate,
 )
 from app.services.knowledge_tree import load_decoration_template, seed_project_nodes
@@ -76,14 +77,20 @@ def _build_tree(nodes: list[Node]) -> list[NodeOut]:
 
 
 @router.get("", response_model=list[ProjectOut])
-async def list_projects(db: DbSession, workspace: CurrentWorkspace) -> list[ProjectOut]:
+async def list_projects(
+    db: DbSession, workspace: CurrentWorkspace, status_filter: str | None = None
+) -> list[ProjectOut]:
     """列出当前 Workspace 的项目（含节点数）。"""
+    valid_statuses = {"active", "paused", "completed", "archived"}
+    if status_filter is not None and status_filter not in valid_statuses:
+        raise HTTPException(status_code=400, detail="无效的项目状态")
+    query = select(Project).where(Project.workspace_id == workspace.id)
+    if status_filter is not None:
+        query = query.where(Project.status == status_filter)
+    elif status_filter is None:
+        query = query.where(Project.status != "archived")
     projects = (
-        await db.execute(
-            select(Project)
-            .where(Project.workspace_id == workspace.id)
-            .order_by(Project.created_at)
-        )
+        await db.execute(query.order_by(Project.created_at))
     ).scalars().all()
 
     counts = dict(
@@ -97,6 +104,8 @@ async def list_projects(db: DbSession, workspace: CurrentWorkspace) -> list[Proj
         ProjectOut(
             id=project.id,
             name=project.name,
+            description=project.description,
+            status=project.status,
             template=project.template,
             node_count=counts.get(project.id, 0),
             created_at=project.created_at,
@@ -111,11 +120,19 @@ async def create_project(
     db: DbSession,
     workspace: CurrentWorkspace,
 ) -> ProjectOut:
-    """创建项目；选择装修模板时生成完整目录树。"""
-    project = Project(workspace_id=workspace.id, name=payload.name, template=payload.template)
+    """创建项目；默认创建空目录，保留旧模板请求的兼容行为。"""
+    template = "empty"
+    project = Project(
+        workspace_id=workspace.id,
+        name=payload.name,
+        description=payload.description,
+        status="active",
+        template=template,
+    )
     db.add(project)
     await db.flush()
 
+    # 兼容历史 API 调用；正式创建界面不再提供模板选择。
     node_count = 0
     if payload.template == "decoration":
         node_count = await seed_project_nodes(db, project.id, load_decoration_template())
@@ -125,6 +142,8 @@ async def create_project(
     return ProjectOut(
         id=project.id,
         name=project.name,
+        description=project.description,
+        status=project.status,
         template=project.template,
         node_count=node_count,
         created_at=project.created_at,
@@ -140,7 +159,10 @@ async def rename_project(
 ) -> ProjectOut:
     """重命名项目。"""
     project = await _get_owned_project(db, workspace.id, project_id)
-    project.name = payload.name
+    if payload.name is not None:
+        project.name = payload.name
+    if "description" in payload.model_fields_set:
+        project.description = payload.description
     await db.commit()
     await db.refresh(project)
     node_count = (
@@ -153,8 +175,40 @@ async def rename_project(
     return ProjectOut(
         id=project.id,
         name=project.name,
+        description=project.description,
+        status=project.status,
         template=project.template,
         node_count=int(node_count),
+        created_at=project.created_at,
+    )
+
+
+@router.patch("/{project_id}/status", response_model=ProjectOut)
+async def update_project_status(
+    project_id: int,
+    payload: ProjectStatusUpdate,
+    db: DbSession,
+    workspace: CurrentWorkspace,
+) -> ProjectOut:
+    """修改项目生命周期状态。"""
+    project = await _get_owned_project(db, workspace.id, project_id)
+    project.status = payload.status
+    await db.commit()
+    await db.refresh(project)
+    node_count = int(
+        (
+            await db.execute(
+                select(func.count()).select_from(Node).where(Node.project_id == project.id)
+            )
+        ).scalar_one()
+    )
+    return ProjectOut(
+        id=project.id,
+        name=project.name,
+        description=project.description,
+        status=project.status,
+        template=project.template,
+        node_count=node_count,
         created_at=project.created_at,
     )
 
@@ -254,6 +308,40 @@ async def update_node(
         node.name = payload.name
     if payload.description is not None:
         node.description = payload.description
+    if "parent_id" in payload.model_fields_set and payload.parent_id != node.parent_id:
+        new_parent_id = payload.parent_id
+        if new_parent_id is not None:
+            new_parent = await _get_project_node(db, project_id, new_parent_id)
+            if new_parent.id == node.id:
+                raise HTTPException(status_code=400, detail="节点不能移动到自身")
+            descendants = (
+                await db.execute(select(Node).where(Node.project_id == project_id))
+            ).scalars().all()
+            parent_by_id = {item.id: item.parent_id for item in descendants}
+            cursor = new_parent.id
+            while cursor is not None:
+                if cursor == node.id:
+                    raise HTTPException(status_code=400, detail="节点不能移动到其后代")
+                cursor = parent_by_id.get(cursor)
+        old_parent_id = node.parent_id
+        old_siblings = (
+            await db.execute(
+                select(Node)
+                .where(Node.project_id == project_id, Node.parent_id == old_parent_id)
+                .order_by(Node.position)
+            )
+        ).scalars().all()
+        for position, sibling in enumerate(item for item in old_siblings if item.id != node.id):
+            sibling.position = position
+        new_siblings = (
+            await db.execute(
+                select(Node)
+                .where(Node.project_id == project_id, Node.parent_id == new_parent_id)
+                .order_by(Node.position)
+            )
+        ).scalars().all()
+        node.parent_id = new_parent_id
+        node.position = len(new_siblings)
     await db.commit()
     return NodeOut(
         id=node.id,

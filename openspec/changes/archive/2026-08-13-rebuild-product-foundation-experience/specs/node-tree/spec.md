@@ -1,8 +1,5 @@
-# node-tree Specification
+## MODIFIED Requirements
 
-## Purpose
-TBD - created by archiving change add-projects. Update Purpose after archive.
-## Requirements
 ### Requirement: 目录树读取
 系统 MUST 提供项目目录树的读取接口，返回按 `position` 顺序嵌套的多级节点树，并且每次读取都校验项目属于当前 Workspace。
 
@@ -50,11 +47,3 @@ TBD - created by archiving change add-projects. Update Purpose after archive.
 #### Scenario: 删除后子树消失
 - **WHEN** 用户删除一个含子节点的节点
 - **THEN** 该节点及其全部后代从树中消失
-
-### Requirement: 同级节点排序
-系统 MUST 支持调整同一父节点下子节点的顺序，顺序变更 MUST 持久化并在树读取中生效。
-
-#### Scenario: 调整顺序后生效
-- **WHEN** 用户调整同父节点的顺序
-- **THEN** 树读取按新顺序返回，且刷新后保持一致
-

@@ -90,9 +90,13 @@ export const logoutUser = () =>
 
 export const fetchMe = () => request<MePayload>('/api/me')
 
+export type ProjectStatus = 'active' | 'paused' | 'completed' | 'archived'
+
 export interface ProjectPayload {
   id: number
   name: string
+  description: string | null
+  status: ProjectStatus
   template: string
   node_count: number
   created_at: string
@@ -108,7 +112,7 @@ export interface TreeNodePayload {
 
 export interface ProjectCreatePayload {
   name: string
-  template: 'decoration' | 'empty'
+  description?: string | null
 }
 
 export interface NodeCreatePayload {
@@ -120,9 +124,13 @@ export interface NodeCreatePayload {
 export interface NodeUpdatePayload {
   name?: string
   description?: string | null
+  parent_id?: number | null
 }
 
-export const fetchProjects = () => request<ProjectPayload[]>('/api/projects')
+export const fetchProjects = (status?: ProjectStatus | 'all') =>
+  request<ProjectPayload[]>(
+    `/api/projects${status && status !== 'all' ? `?status_filter=${status}` : ''}`,
+  )
 
 export const createProject = (payload: ProjectCreatePayload) =>
   request<ProjectPayload>('/api/projects', {
@@ -134,6 +142,18 @@ export const renameProject = (projectId: number, name: string) =>
   request<ProjectPayload>(`/api/projects/${projectId}`, {
     method: 'PATCH',
     body: JSON.stringify({ name }),
+  })
+
+export const updateProject = (projectId: number, payload: { name?: string; description?: string | null }) =>
+  request<ProjectPayload>(`/api/projects/${projectId}`, {
+    method: 'PATCH',
+    body: JSON.stringify(payload),
+  })
+
+export const updateProjectStatus = (projectId: number, status: ProjectStatus) =>
+  request<ProjectPayload>(`/api/projects/${projectId}/status`, {
+    method: 'PATCH',
+    body: JSON.stringify({ status }),
   })
 
 export const deleteProject = (projectId: number) =>

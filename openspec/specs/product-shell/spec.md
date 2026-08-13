@@ -1,0 +1,31 @@
+# product-shell Specification
+
+## Purpose
+TBD - created by archiving change rebuild-product-foundation-experience. Update Purpose after archive.
+## Requirements
+### Requirement: 认证工作流与全局应用壳
+前端 SHALL 提供登录、注册、退出页面与操作，并在认证成功后进入统一的桌面应用壳。应用壳 SHALL 提供项目、收集箱、搜索和账户四个全局导航位置；本轮未实现的导航位置必须显示为不可用状态或不提供业务页面，不得使用静态假数据冒充功能。
+
+#### Scenario: 登录成功进入项目
+- **WHEN** 用户提交有效账号密码
+- **THEN** 前端调用真实登录接口、刷新当前用户查询并进入项目列表
+
+#### Scenario: 退出后清理工作台
+- **WHEN** 已登录用户确认退出
+- **THEN** 前端调用真实退出接口、清理当前用户缓存并回到登录页
+
+#### Scenario: 认证错误可恢复
+- **WHEN** 登录或注册接口返回错误
+- **THEN** 页面保留表单内容，显示邻近错误信息，提交按钮恢复可用并允许重试
+
+### Requirement: 桌面端边界阻断
+Web SHALL 从 1024px 视口宽度开始加载完整业务工作台；视口宽度低于 1024px 时 SHALL 不加载业务页面和业务数据，只显示电脑访问提示，不提供继续访问入口。
+
+#### Scenario: 1023px 阻断
+- **WHEN** 浏览器视口宽度为 1023px
+- **THEN** 页面只显示电脑访问提示，且不发起项目或目录业务查询
+
+#### Scenario: 1024px 可用
+- **WHEN** 浏览器视口宽度为 1024px 或更宽
+- **THEN** 页面允许加载认证状态和对应的桌面业务路由
+

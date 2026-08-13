@@ -1,4 +1,4 @@
-import { lazy, Suspense } from 'react'
+import { lazy, Suspense, useEffect, useState, type ReactNode } from 'react'
 import { Navigate, Route, Routes } from 'react-router-dom'
 import { AppShell } from '@/components/layout/AppShell'
 import { ProtectedRoute } from '@/components/auth/ProtectedRoute'
@@ -29,7 +29,18 @@ const BasicsPage = lazy(() =>
 )
 
 function PageFallback() {
-  return <p className="text-body-sm text-muted-foreground">加载中…</p>
+  return <div className="mx-auto max-w-6xl py-16 text-body-sm text-muted-foreground" role="status">加载中…</div>
+}
+
+function DesktopBoundary({ children }: { children: ReactNode }) {
+  const [blocked, setBlocked] = useState(() => window.innerWidth < 1024)
+  useEffect(() => {
+    const update = () => setBlocked(window.innerWidth < 1024)
+    window.addEventListener('resize', update)
+    return () => window.removeEventListener('resize', update)
+  }, [])
+  if (blocked) return <main className="flex min-h-screen items-center justify-center bg-muted/30 px-6"><div className="max-w-md text-center"><div className="mx-auto mb-5 flex size-12 items-center justify-center rounded-xl bg-foreground text-background">G</div><h1 className="text-heading font-semibold">请在电脑端打开 Grove</h1><p className="mt-2 text-body-sm leading-6 text-muted-foreground">Grove 是面向桌面的知识整理工作台，当前浏览器宽度不足以安全完成项目和目录管理。</p></div></main>
+  return <>{children}</>
 }
 
 /**
@@ -38,7 +49,7 @@ function PageFallback() {
  */
 export default function App() {
   return (
-    <>
+    <DesktopBoundary><>
       <Routes>
         <Route
           element={
@@ -64,6 +75,6 @@ export default function App() {
       </Routes>
       {/* Sonner 全局提示：主题跟随设计令牌（richColors 使用语义色） */}
       <Toaster position="bottom-right" richColors />
-    </>
+    </></DesktopBoundary>
   )
 }

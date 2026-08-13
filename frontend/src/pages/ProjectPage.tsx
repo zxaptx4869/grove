@@ -17,6 +17,7 @@ import { Textarea } from '@/components/ui/textarea'
 import { Separator } from '@/components/ui/separator'
 import { EmptyState } from '@/components/features/EmptyState'
 import { NodeTree } from '@/components/features/NodeTree'
+import { Sparkles } from 'lucide-react'
 import {
   createNode,
   deleteNode,
@@ -25,8 +26,11 @@ import {
   fetchProjects,
   renameProject,
   reorderNodes,
+  updateProject,
+  updateProjectStatus,
   updateNode,
   type ProjectPayload,
+  type ProjectStatus,
   type TreeNodePayload,
 } from '@/lib/api'
 
@@ -52,6 +56,10 @@ function findNodeWithPath(
 
 function countNodes(nodes: readonly TreeNodePayload[]): number {
   return nodes.reduce((sum, node) => sum + 1 + countNodes(node.children), 0)
+}
+
+function flattenNodes(nodes: readonly TreeNodePayload[], depth = 0): Array<{ node: TreeNodePayload; depth: number }> {
+  return nodes.flatMap((node) => [{ node, depth }, ...flattenNodes(node.children, depth + 1)])
 }
 
 /** 项目重命名对话框。 */
@@ -227,7 +235,7 @@ export function ProjectPage() {
     queryFn: () => fetchProjectTree(id),
     enabled: Number.isFinite(id),
   })
-  const projects = useQuery({ queryKey: ['projects'], queryFn: fetchProjects })
+  const projects = useQuery({ queryKey: ['projects'], queryFn: () => fetchProjects() })
   const project = projects.data?.find((item) => item.id === id)
 
   const [nodeForm, setNodeForm] = useState<NodeFormState | null>(null)
@@ -235,7 +243,10 @@ export function ProjectPage() {
   const [renameTarget, setRenameTarget] = useState<ProjectPayload | null>(null)
   const [deleteProjectTarget, setDeleteProjectTarget] = useState<ProjectPayload | null>(null)
   const [selectedId, setSelectedId] = useState<number | null>(null)
-  const [treeOpen, setTreeOpen] = useState(false)
+  const [moveTarget, setMoveTarget] = useState<TreeNodePayload | null>(null)
+  const [moveParentId, setMoveParentId] = useState<number | null>(null)
+  const [projectEditOpen, setProjectEditOpen] = useState(false)
+  const [projectDescription, setProjectDescription] = useState('')
 
   const invalidateTree = () =>
     queryClient.invalidateQueries({ queryKey: ['project-tree', id] })
@@ -293,12 +304,30 @@ export function ProjectPage() {
     onError: (error) => toast.error(error instanceof Error ? error.message : '排序失败'),
   })
 
+  const move = useMutation({
+    mutationFn: () => updateNode(id, moveTarget!.id, { parent_id: moveParentId }),
+    onSuccess: () => { invalidateTree(); setMoveTarget(null); toast.success('节点已移动') },
+    onError: (error) => toast.error(error instanceof Error ? error.message : '移动失败'),
+  })
+
+  const editProject = useMutation({
+    mutationFn: () => updateProject(id, { description: projectDescription.trim() || null }),
+    onSuccess: () => { queryClient.invalidateQueries({ queryKey: ['projects'] }); setProjectEditOpen(false); toast.success('项目说明已更新') },
+    onError: (error) => toast.error(error instanceof Error ? error.message : '保存失败'),
+  })
+
+  const changeProjectStatus = useMutation({
+    mutationFn: (status: ProjectStatus) => updateProjectStatus(id, status),
+    onSuccess: () => { queryClient.invalidateQueries({ queryKey: ['projects'] }); toast.success('项目状态已更新') },
+    onError: (error) => toast.error(error instanceof Error ? error.message : '状态更新失败'),
+  })
+
   const nodes = tree.data ?? []
   const nodeCount = project?.node_count ?? countNodes(nodes)
   const selectedPath = selectedId ? findNodeWithPath(nodes, selectedId) : null
   const selectedNode = selectedPath?.[selectedPath.length - 1] ?? null
 
-  function handleNodeSubmit(values: { name: string; description: string }) {
+  function handleNodeSubmit(values: { name: string; description: string; parentId?: number | null }) {
     if (!nodeForm) return
     if (nodeForm.mode === 'edit' && nodeForm.node) {
       update.mutate({ nodeId: nodeForm.node.id, ...values })
@@ -309,7 +338,6 @@ export function ProjectPage() {
 
   function openAddChild(parent: TreeNodePayload | null) {
     setNodeForm({ mode: 'create', parent, node: null })
-    setTreeOpen(false)
   }
 
   return (
@@ -325,14 +353,25 @@ export function ProjectPage() {
         <div className="min-w-0 flex-1">
           <div className="flex flex-wrap items-center gap-2">
             <h1 className="text-title font-bold">{project?.name ?? '项目'}</h1>
-            <Badge variant="outline">{project?.template === 'decoration' ? '装修模板' : '空目录'}</Badge>
+            <Badge variant="outline">{project ? ({ active: '进行中', paused: '暂停', completed: '已完成', archived: '已归档' } as Record<string, string>)[project.status] : '项目'}</Badge>
           </div>
           <p className="text-caption text-muted-foreground">{nodeCount} 个目录节点</p>
+          <p className="mt-1 max-w-2xl truncate text-body-sm text-muted-foreground">{project?.description || '尚未填写项目目标与背景'}</p>
         </div>
         <div className="flex items-center gap-2">
           <Button size="sm" onClick={() => openAddChild(null)}>
             添加根节点
           </Button>
+          <Button
+            size="sm"
+            variant="ghost"
+            onClick={() => { setProjectDescription(project?.description ?? ''); setProjectEditOpen(true) }}
+          >
+            编辑说明
+          </Button>
+          <select aria-label="项目状态" className="h-9 rounded-md border bg-background px-2 text-body-sm" value={project?.status ?? 'active'} disabled={!project || changeProjectStatus.isPending} onChange={(event) => changeProjectStatus.mutate(event.target.value as ProjectStatus)}>
+            <option value="active">进行中</option><option value="paused">暂停</option><option value="completed">已完成</option><option value="archived">已归档</option>
+          </select>
           <Button
             size="sm"
             variant="ghost"
@@ -351,23 +390,11 @@ export function ProjectPage() {
         </div>
       </header>
 
-      {/* 移动端：目录开关 */}
-      <div className="mb-3 md:hidden">
-        <Button
-          variant="outline"
-          size="sm"
-          className="w-full"
-          onClick={() => setTreeOpen((value) => !value)}
-        >
-          {treeOpen ? '收起目录' : '展开目录'}
-        </Button>
-      </div>
-
       <div className="flex flex-col gap-6 md:flex-row">
         {/* 左侧：知识目录 */}
         <aside className="md:w-72 md:shrink-0 md:border-r md:pr-4">
           <div
-            className={`space-y-2 ${treeOpen ? 'block' : 'hidden'} md:block`}
+            className="space-y-2"
           >
             <div className="hidden items-center justify-between md:flex">
               <h2 className="text-title font-semibold">知识目录</h2>
@@ -379,19 +406,24 @@ export function ProjectPage() {
               <p className="text-body-sm text-muted-foreground">加载中…</p>
             ) : tree.isError ? (
               <p className="text-body-sm text-error">目录加载失败</p>
-            ) : (
-              <NodeTree
+            ) : nodes.length === 0 ? (
+                <div className="space-y-3 border-y py-5">
+                  <p className="text-body-sm text-muted-foreground">这是一个空目录，从你的心智模型开始组织。</p>
+                  <Button size="sm" onClick={() => openAddChild(null)}>创建第一个节点</Button>
+                  <Button size="sm" variant="outline" disabled title="目录 Agent 将在后续版本提供"><Sparkles className="mr-2 size-4" />与 AI 共创目录</Button>
+                </div>
+              ) : <NodeTree
                 nodes={nodes}
                 selectedId={selectedId}
                 onSelect={(node) => setSelectedId(node.id)}
                 callbacks={{
                   onAddChild: (parent) => openAddChild(parent),
                   onRename: (node) => setNodeForm({ mode: 'edit', parent: null, node }),
+                  onMove: (node) => { setMoveTarget(node); setMoveParentId(null) },
                   onDelete: (node) => setDeleteTarget(node),
                   onReorder: (parentId, orderedIds) => reorder.mutate({ parentId, orderedIds }),
                 }}
-              />
-            )}
+              />}
           </div>
         </aside>
 
@@ -409,7 +441,7 @@ export function ProjectPage() {
               <Separator />
               <EmptyState
                 title="该节点还没有内容"
-                description="后续切片将在此展示节点下的正式记录、采集素材与 AI 候选确认。"
+                  description="后续能力将在此展示节点下的正式知识与来源。"
               />
             </div>
           ) : (
@@ -421,19 +453,8 @@ export function ProjectPage() {
                 </p>
               </div>
               <div className="grid gap-3 sm:grid-cols-2">
-                <EmptyState
-                  title="采集箱"
-                  description="拖拽、粘贴、上传素材（下一切片）。"
-                  action={
-                    <Button asChild variant="outline" size="sm">
-                      <Link to="/inbox">去采集</Link>
-                    </Button>
-                  }
-                />
-                <EmptyState
-                  title="候选确认"
-                  description="AI 抽取的候选将在此批量采纳或拒绝。"
-                />
+                <EmptyState title="目录工作台" description="先建立符合你理解方式的目录结构，再开始整理材料。" />
+                <EmptyState title="来源与知识" description="采集、确认和正式知识会在后续能力中接入。" />
               </div>
             </div>
           )}
@@ -476,6 +497,10 @@ export function ProjectPage() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      <Dialog open={moveTarget !== null} onOpenChange={(open) => !open && setMoveTarget(null)}><DialogContent className="sm:max-w-md"><DialogHeader><DialogTitle>移动目录节点</DialogTitle><DialogDescription>选择「{moveTarget?.name}」的新位置。</DialogDescription></DialogHeader><select aria-label="新父节点" className="h-10 rounded-md border bg-background px-3 text-body-sm" value={moveParentId ?? ''} onChange={(event) => setMoveParentId(event.target.value ? Number(event.target.value) : null)}><option value="">根目录</option>{flattenNodes(nodes).filter(({ node }) => node.id !== moveTarget?.id && !findNodeWithPath(moveTarget?.children ?? [], node.id)).map(({ node, depth }) => <option key={node.id} value={node.id}>{'　'.repeat(depth)}{node.name}</option>)}</select><DialogFooter><Button variant="outline" onClick={() => setMoveTarget(null)}>取消</Button><Button disabled={move.isPending} onClick={() => move.mutate()}>{move.isPending ? '移动中…' : '确认移动'}</Button></DialogFooter></DialogContent></Dialog>
+
+      <Dialog open={projectEditOpen} onOpenChange={setProjectEditOpen}><DialogContent className="sm:max-w-lg"><DialogHeader><DialogTitle>项目目标与背景</DialogTitle><DialogDescription>这个字段可留空，后续会帮助你和 AI 理解项目边界。</DialogDescription></DialogHeader><Textarea value={projectDescription} onChange={(event) => setProjectDescription(event.target.value)} rows={5} placeholder="写下项目目标、当前阶段或重要背景" /><DialogFooter><Button variant="outline" onClick={() => setProjectEditOpen(false)}>取消</Button><Button disabled={editProject.isPending} onClick={() => editProject.mutate()}>{editProject.isPending ? '保存中…' : '保存'}</Button></DialogFooter></DialogContent></Dialog>
 
       <RenameProjectDialog
         key={renameTarget?.id ?? 'none'}
