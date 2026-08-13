@@ -24,7 +24,7 @@
 - 环境变量统一走 pydantic-settings，密钥类配置只放占位键，`backend/.env.example` 提供模板，不得提交 `.env`。
 - 前端需保证 390px 移动宽度可用。
 - 提交信息用中文、遵循 Conventional Commits 风格（feat/fix/docs/chore/refactor）。
-- 遇到方案分歧先记录决策到 `docs/项目上下文与文档路由.md` 或对应设计文档，不要静默猜测。
+- 产品范围与优先级以 `docs/产品蓝图与功能优先级.md` 为准；遇到跨 change 的产品分歧先更新蓝图，具体技术取舍记录到对应 change 的 `design.md`，不要静默猜测。
 
 ## 4. 代码注释与沟通语言
 

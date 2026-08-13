@@ -17,10 +17,13 @@ TBD - created by archiving change setup-project-foundation. Update Purpose after
 - **WHEN** 在仓库根目录执行 `openspec validate --all --strict`
 - **THEN** 命令成功退出且输出无错误
 
-### Requirement: 文档路由可寻址
-仓库 MUST 包含 `docs/项目上下文与文档路由.md`，其中 SHALL 登记 PROPOSAL.md、AGENTS.md、openspec/ 等主要文档的路径与用途，并 SHALL 说明目录结构。
+### Requirement: README 文档入口可寻址
+仓库根目录 MUST 包含 `README.md`，其中 SHALL 登记当前产品蓝图、`AGENTS.md`、OpenSpec 主规格与活动变更目录的路径和用途，并 SHALL 说明仓库目录结构与常用开发、验证命令。
 
-#### Scenario: 新协作者找到文档入口
-- **WHEN** 新协作者阅读 `docs/项目上下文与文档路由.md`
-- **THEN** 能从文档路由表中定位产品提案、工作守则与 OpenSpec 变更目录
+#### Scenario: 新协作者找到权威文档入口
+- **WHEN** 新协作者阅读仓库根目录的 `README.md`
+- **THEN** 能定位当前产品蓝图、代理工作守则、OpenSpec 主规格和活动变更目录
 
+#### Scenario: 新协作者找到开发与验证命令
+- **WHEN** 新协作者准备启动或验证项目
+- **THEN** 能从 `README.md` 找到前后端启动命令、质量检查命令和 OpenSpec 工作流说明

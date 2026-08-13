@@ -14,7 +14,7 @@ context: |
 rules:
   proposal:
     - 必须包含 Why / What Changes / Capabilities / Impact 四节
-    - 明确 Non-Goals（不做什么），与 PROPOSAL.md 的范围保持一致
+    - 明确 Non-Goals（不做什么），与 docs/产品蓝图与功能优先级.md 的范围和阶段保持一致
   design:
     - 记录关键决策与取舍，避免静默猜测
     - 数据库、AI 抽象、工程结构的决策必须可追溯
