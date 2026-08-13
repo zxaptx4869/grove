@@ -192,3 +192,66 @@ export const reorderNodes = (
     method: 'POST',
     body: JSON.stringify({ parent_id: parentId, ordered_ids: orderedIds }),
   })
+
+export type AttachmentKind = 'image' | 'text'
+
+export interface AttachmentPayload {
+  id: number
+  kind: AttachmentKind
+  position: number
+  mime_type: string | null
+  file_name: string | null
+  text_content: string | null
+}
+
+export interface SourcePayload {
+  id: number
+  title: string
+  note: string | null
+  project_id: number | null
+  created_at: string
+  updated_at: string
+  attachments: AttachmentPayload[]
+}
+
+export const fetchSources = (params?: { projectId?: number; unassigned?: boolean }) => {
+  const search = new URLSearchParams()
+  if (params?.projectId != null) search.set('project_id', String(params.projectId))
+  if (params?.unassigned) search.set('unassigned', 'true')
+  const query = search.toString()
+  return request<SourcePayload[]>(`/api/sources${query ? `?${query}` : ''}`)
+}
+
+export const createSource = async (formData: FormData): Promise<SourcePayload> => {
+  const response = await fetch(`${API_BASE_URL}/api/sources`, {
+    method: 'POST',
+    credentials: 'include',
+    body: formData,
+  })
+  if (!response.ok) {
+    let detail = `HTTP ${response.status}`
+    try {
+      const data = (await response.json()) as { detail?: string }
+      if (data?.detail) detail = String(data.detail)
+    } catch {
+      // 响应体不是 JSON 时保留默认信息
+    }
+    throw new ApiError(detail, response.status)
+  }
+  return (await response.json()) as SourcePayload
+}
+
+export const updateSource = (
+  sourceId: number,
+  payload: { note?: string | null; project_id?: number | null },
+) =>
+  request<SourcePayload>(`/api/sources/${sourceId}`, {
+    method: 'PATCH',
+    body: JSON.stringify(payload),
+  })
+
+export const deleteSource = (sourceId: number) =>
+  request<{ ok: boolean }>(`/api/sources/${sourceId}`, { method: 'DELETE' })
+
+export const sourceImageUrl = (sourceId: number, attachmentId: number) =>
+  `${API_BASE_URL}/api/sources/${sourceId}/attachments/${attachmentId}/file`

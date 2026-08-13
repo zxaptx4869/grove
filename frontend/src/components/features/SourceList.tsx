@@ -1,0 +1,81 @@
+import { FileText, ImageIcon, Trash2 } from 'lucide-react'
+
+import { Button } from '@/components/ui/button'
+import type { SourcePayload } from '@/lib/api'
+
+interface ProjectOption {
+  id: number
+  name: string
+}
+
+interface SourceListProps {
+  sources: SourcePayload[]
+  projects: ProjectOption[]
+  onAssign: (sourceId: number, projectId: number | null) => void
+  onDelete: (sourceId: number) => void
+}
+
+function attachmentSummary(source: SourcePayload) {
+  const images = source.attachments.filter((item) => item.kind === 'image').length
+  const texts = source.attachments.filter((item) => item.kind === 'text').length
+  const parts: string[] = []
+  if (images > 0) parts.push(`${images} 张图片`)
+  if (texts > 0) parts.push('文字')
+  return parts.length > 0 ? ` · ${parts.join('、')}` : ''
+}
+
+/** Source 列表：展示类型、标题、说明、项目归属与操作。 */
+export function SourceList({ sources, projects, onAssign, onDelete }: SourceListProps) {
+  if (sources.length === 0) {
+    return <p className="px-1 py-6 text-center text-body-sm text-muted-foreground">还没有来源</p>
+  }
+
+  return (
+    <ul className="divide-y border-t" aria-label="来源列表">
+      {sources.map((source) => {
+        const firstKind = source.attachments[0]?.kind ?? 'text'
+        return (
+          <li key={source.id} className="flex min-h-[64px] items-center gap-3 px-1 py-2.5">
+            <span className="flex size-[34px] shrink-0 items-center justify-center rounded-md bg-muted">
+              {firstKind === 'image' ? (
+                <ImageIcon className="size-4 text-brand" />
+              ) : (
+                <FileText className="size-4 text-brand" />
+              )}
+            </span>
+            <div className="min-w-0 flex-1">
+              <p className="truncate text-body font-medium">{source.title}</p>
+              <p className="mt-[3px] truncate text-caption text-muted-foreground">
+                {source.note || '无采集说明'}
+                {attachmentSummary(source)}
+              </p>
+            </div>
+            <select
+              aria-label={`${source.title} 所属项目`}
+              value={source.project_id != null ? String(source.project_id) : ''}
+              onChange={(event) =>
+                onAssign(source.id, event.target.value ? Number(event.target.value) : null)
+              }
+              className="h-8 w-40 shrink-0 rounded-md border border-input bg-white px-2 text-caption"
+            >
+              <option value="">未归属</option>
+              {projects.map((project) => (
+                <option key={project.id} value={String(project.id)}>
+                  {project.name}
+                </option>
+              ))}
+            </select>
+            <Button
+              size="icon-sm"
+              variant="ghost"
+              aria-label={`删除 ${source.title}`}
+              onClick={() => onDelete(source.id)}
+            >
+              <Trash2 className="size-4" />
+            </Button>
+          </li>
+        )
+      })}
+    </ul>
+  )
+}

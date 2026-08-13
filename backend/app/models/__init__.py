@@ -2,7 +2,17 @@
 
 from app.models.project import Node, Project
 from app.models.session import Session
+from app.models.source import Attachment, Source
 from app.models.user import User
 from app.models.workspace import Workspace, WorkspaceMember
 
-__all__ = ["Node", "Project", "Session", "User", "Workspace", "WorkspaceMember"]
+__all__ = [
+    "Attachment",
+    "Node",
+    "Project",
+    "Session",
+    "Source",
+    "User",
+    "Workspace",
+    "WorkspaceMember",
+]

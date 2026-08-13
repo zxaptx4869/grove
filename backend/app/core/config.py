@@ -35,6 +35,9 @@ class Settings(BaseSettings):
     # AI 供应商：demo（默认）/ deepseek / doubao
     ai_provider: str = Field(default="demo", description="AI 供应商标识")
 
+    # 附件存储目录：默认相对 backend 运行目录，由存储服务解析
+    attachment_dir: str = Field(default="uploads", description="本地附件存储目录")
+
     # ---- 会话与 Cookie ----
     session_cookie_name: str = Field(default="grove_session", description="会话 Cookie 名称")
     session_max_age_days: int = Field(default=30, description="会话有效期（天）")

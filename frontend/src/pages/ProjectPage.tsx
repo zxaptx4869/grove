@@ -34,6 +34,7 @@ import {
 } from '@/components/ui/dropdown-menu'
 import { Input } from '@/components/ui/input'
 import { Textarea } from '@/components/ui/textarea'
+import { ProjectSources } from '@/pages/ProjectSources'
 import {
   createNode,
   deleteNode,
@@ -162,6 +163,7 @@ export function ProjectPage() {
   const [searchParams] = useSearchParams()
   const id = Number(projectId)
   const isDirectoryView = searchParams.get('view') === 'directory'
+  const isSourcesView = searchParams.get('view') === 'sources'
   const navigate = useNavigate()
   const queryClient = useQueryClient()
 
@@ -358,16 +360,18 @@ export function ProjectPage() {
         <div className="min-w-0">
           <div className="flex items-center gap-2">
             <h1 className="truncate text-[22px] font-[650] leading-[30px]">
-              {isDirectoryView ? '知识空间' : project.name}
+              {isSourcesView ? '采集与来源' : isDirectoryView ? '知识空间' : project.name}
             </h1>
-            {!isDirectoryView ? (
+            {!isDirectoryView && !isSourcesView ? (
               <Badge variant="outline" className="shrink-0">
                 {PROJECT_STATUSES.find(({ key }) => key === project.status)?.label}
               </Badge>
             ) : null}
           </div>
           <p className="mt-0.5 max-w-2xl text-body text-muted-foreground">
-            {isDirectoryView
+            {isSourcesView
+              ? `${project.name} · 管理这个项目的原始材料。`
+              : isDirectoryView
               ? `${project.name} · 按目录浏览和维护项目知识。`
               : project.description || '尚未填写项目目标与背景'}
           </p>
@@ -419,7 +423,9 @@ export function ProjectPage() {
         </div>
       ) : null}
 
-      {isDirectoryView ? (
+      {isSourcesView ? (
+        <ProjectSources projectId={id} />
+      ) : isDirectoryView ? (
         <div
           data-testid="knowledge-layout"
           className="grid min-h-[604px] grid-cols-[250px_minmax(0,1fr)] border-t"

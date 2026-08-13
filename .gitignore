@@ -8,6 +8,7 @@ __pycache__/
 backend/.env
 frontend/.env
 data/
+backend/uploads/
 *.log
 *.db
 *.sqlite3

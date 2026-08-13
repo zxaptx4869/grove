@@ -6,6 +6,7 @@ import {
   FolderKanban,
   FolderTree,
   House,
+  Images,
   Inbox,
   LogOut,
   Search,
@@ -62,9 +63,12 @@ function GlobalNavigation({ projects }: { projects: ProjectPayload[] }) {
         >
           <FolderKanban className="size-4" />项目
         </NavLink>
-        <div className="flex min-h-[38px] cursor-not-allowed items-center gap-[9px] rounded-md px-2.5 text-body text-muted-foreground/45" aria-disabled="true">
+        <NavLink
+          to="/inbox"
+          className={({ isActive }) => `flex min-h-[38px] items-center gap-[9px] rounded-md px-2.5 text-body ${isActive ? 'bg-brand-soft font-semibold text-brand' : 'text-muted-foreground hover:bg-muted hover:text-foreground'}`}
+        >
           <Inbox className="size-4" />收集箱
-        </div>
+        </NavLink>
         <div className="flex min-h-[38px] cursor-not-allowed items-center gap-[9px] rounded-md px-2.5 text-body text-muted-foreground/45" aria-disabled="true">
           <Search className="size-4" />搜索
         </div>
@@ -88,6 +92,7 @@ function ProjectNavigation({ project }: { project?: ProjectPayload }) {
   const location = useLocation()
   const projectId = project?.id ?? Number(location.pathname.match(/^\/projects\/(\d+)/)?.[1])
   const isDirectory = new URLSearchParams(location.search).get('view') === 'directory'
+  const isSources = new URLSearchParams(location.search).get('view') === 'sources'
   const statusLabel: Record<ProjectStatus, string> = {
     active: '进行中',
     paused: '暂停',
@@ -118,6 +123,13 @@ function ProjectNavigation({ project }: { project?: ProjectPayload }) {
           className={`flex min-h-[38px] items-center gap-[9px] rounded-md px-2.5 text-body ${isDirectory ? 'bg-brand-soft font-semibold text-brand' : 'text-muted-foreground hover:bg-muted hover:text-foreground'}`}
         >
           <FolderTree className="size-4" />知识空间
+        </Link>
+        <Link
+          to={`/projects/${projectId}?view=sources`}
+          aria-current={isSources ? 'page' : undefined}
+          className={`flex min-h-[38px] items-center gap-[9px] rounded-md px-2.5 text-body ${isSources ? 'bg-brand-soft font-semibold text-brand' : 'text-muted-foreground hover:bg-muted hover:text-foreground'}`}
+        >
+          <Images className="size-4" />采集与来源
         </Link>
       </nav>
     </div>
