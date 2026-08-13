@@ -115,7 +115,7 @@ export function NodeTree({ nodes, callbacks, selectedId = null, onSelect }: Node
             </button>
             <DropdownMenu>
               <DropdownMenuTrigger asChild>
-                <Button size="icon-xs" variant="ghost" className="opacity-0 group-hover:opacity-100 data-[state=open]:opacity-100" aria-label={`${node.name} 更多操作`}><MoreHorizontal /></Button>
+                <Button size="icon-xs" variant="ghost" className="opacity-0 group-focus-within:opacity-100 group-hover:opacity-100 data-[state=open]:opacity-100" aria-label={`${node.name} 更多操作`}><MoreHorizontal /></Button>
               </DropdownMenuTrigger>
               <DropdownMenuContent align="start" className="w-40">
                 <DropdownMenuItem onSelect={() => callbacks.onAddChild(node)}><Plus />添加子节点</DropdownMenuItem>

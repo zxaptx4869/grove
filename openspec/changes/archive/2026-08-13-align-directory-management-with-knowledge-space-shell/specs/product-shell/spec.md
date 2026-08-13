@@ -1,8 +1,5 @@
-# product-shell Specification
+## MODIFIED Requirements
 
-## Purpose
-TBD - created by archiving change rebuild-product-foundation-experience. Update Purpose after archive.
-## Requirements
 ### Requirement: 认证工作流与全局应用壳
 前端 SHALL 提供安静、非营销式的登录与注册页面，表单使用一致的 52px 品牌栏、360px 桌面宽度、稳定顶部间距、22px/650 标题、36px 输入与按钮、字段间距和焦点状态；认证成功后进入统一的桌面应用壳。应用壳 SHALL 按原型的信息层级提供 216px 全局侧栏、52px 品牌栏与主顶栏、项目/收集箱/搜索全局导航、最近项目、账户入口和铺满剩余宽度的主内容区；从 1024px 到 1119px 时侧栏 SHALL 收窄为 184px。项目上下文 SHALL 提供可导航的项目首页和知识空间入口，并根据真实 URL 显示当前激活状态。未实现入口必须呈现不可用状态或不提供业务路由，不得以静态假数据冒充功能。
 
@@ -33,14 +30,3 @@ TBD - created by archiving change rebuild-product-foundation-experience. Update 
 #### Scenario: 未实现全局能力
 - **WHEN** 收集箱、搜索或快速采集尚无当前 OpenSpec 实现
 - **THEN** 应用壳不提供可进入的假业务页面、不展示静态计数，并允许省略对应顶栏动作而保留 52px 壳层几何
-
-### Requirement: 桌面端边界阻断
-Web SHALL 从 1024px 视口宽度开始加载完整业务工作台；视口宽度低于 1024px 时 SHALL 不加载业务页面和业务数据，只显示电脑访问提示，不提供继续访问入口。
-
-#### Scenario: 1023px 阻断
-- **WHEN** 浏览器视口宽度为 1023px
-- **THEN** 页面只显示电脑访问提示，且不发起项目或目录业务查询
-
-#### Scenario: 1024px 可用
-- **WHEN** 浏览器视口宽度为 1024px 或更宽
-- **THEN** 页面允许加载认证状态和对应的桌面业务路由

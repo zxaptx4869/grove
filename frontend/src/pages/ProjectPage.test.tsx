@@ -1,10 +1,11 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { render, screen } from '@testing-library/react'
+import userEvent from '@testing-library/user-event'
 import { MemoryRouter, Route, Routes } from 'react-router-dom'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { ProjectPage } from './ProjectPage'
 
-function mockProjectApi() {
+function mockProjectApi({ emptyTree = false }: { emptyTree?: boolean } = {}) {
   vi.stubGlobal(
     'fetch',
     vi.fn((input: RequestInfo | URL) => {
@@ -12,21 +13,39 @@ function mockProjectApi() {
       if (url.includes('/api/projects/1/tree')) {
         return Promise.resolve({
           ok: true,
-          json: async () => [
-            {
-              id: 1,
-              name: '装修准备',
-              description: null,
-              position: 0,
-              children: [{ id: 2, name: '需求确认', description: null, position: 0, children: [] }],
-            },
-          ],
+          json: async () =>
+            emptyTree
+              ? []
+              : [
+                  {
+                    id: 1,
+                    name: '装修准备',
+                    description: null,
+                    position: 0,
+                    children: [
+                      { id: 2, name: '需求确认', description: null, position: 0, children: [] },
+                    ],
+                  },
+                ],
         })
       }
       const status = new URL(url, 'http://localhost').searchParams.get('status_filter')
       return Promise.resolve({
         ok: true,
-        json: async () => status === 'active' ? [{ id: 1, name: '房子装修', description: '完成新家装修', status: 'active', template: 'blank', node_count: 2, created_at: '' }] : [],
+        json: async () =>
+          status === 'active'
+            ? [
+                {
+                  id: 1,
+                  name: '房子装修',
+                  description: '完成新家装修',
+                  status: 'active',
+                  template: 'blank',
+                  node_count: emptyTree ? 0 : 2,
+                  created_at: '',
+                },
+              ]
+            : [],
       })
     }),
   )
@@ -54,19 +73,72 @@ describe('ProjectPage', () => {
 
     expect(await screen.findByRole('heading', { name: '房子装修' })).toBeInTheDocument()
     expect(screen.getByText('当前共有 2 个目录节点')).toBeInTheDocument()
-    expect(screen.getByRole('link', { name: /管理目录/ })).toHaveAttribute('href', '/projects/1?view=directory')
+    expect(screen.getByRole('link', { name: /进入知识空间/ })).toHaveAttribute(
+      'href',
+      '/projects/1?view=directory',
+    )
     expect(screen.getByRole('group', { name: '项目状态' })).toBeInTheDocument()
   })
 
-  it('通过 URL 渲染目录树和已有操作入口', async () => {
+  it('通过兼容 URL 渲染知识空间并默认选择第一个根节点', async () => {
     mockProjectApi()
     renderProject('/projects/1?view=directory')
 
-    expect(await screen.findByRole('heading', { name: '目录管理' })).toBeInTheDocument()
-    expect(await screen.findByText('装修准备')).toBeInTheDocument()
-    expect(screen.getByText('需求确认')).toBeInTheDocument()
+    expect(await screen.findByRole('heading', { name: '知识空间' })).toBeInTheDocument()
+    expect(await screen.findByRole('button', { name: '装修准备' })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: '需求确认' })).toBeInTheDocument()
     expect(screen.getByRole('button', { name: '根节点' })).toBeInTheDocument()
     expect(screen.getByRole('button', { name: '创建根节点' })).toBeInTheDocument()
     expect(screen.getByRole('button', { name: '与 AI 共创目录' })).toBeInTheDocument()
+    expect(screen.getByRole('heading', { name: '这里还没有正式知识' })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: '装修准备' })).toHaveAttribute(
+      'aria-selected',
+      'true',
+    )
+    expect(screen.queryByText('思维导图')).not.toBeInTheDocument()
+    expect(screen.queryByText('正式知识', { exact: true })).not.toBeInTheDocument()
+  })
+
+  it('切换目录节点后同步更新当前范围', async () => {
+    mockProjectApi()
+    renderProject('/projects/1?view=directory')
+
+    await userEvent.click(await screen.findByRole('button', { name: '需求确认' }))
+
+    expect(screen.getByRole('button', { name: '需求确认' })).toHaveAttribute(
+      'aria-selected',
+      'true',
+    )
+    expect(screen.getByText('装修准备 / 需求确认')).toBeInTheDocument()
+  })
+
+  it('空知识空间保留两个平等的目录起点', async () => {
+    mockProjectApi({ emptyTree: true })
+    renderProject('/projects/1?view=directory')
+
+    expect(await screen.findByRole('heading', { name: '从空目录开始' })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: '手动创建' })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: '与 AI 共创目录' })).toBeInTheDocument()
+    expect(screen.queryByRole('heading', { name: '这里还没有正式知识' })).not.toBeInTheDocument()
+  })
+
+  it('AI 共创入口明确保持未实现状态', async () => {
+    mockProjectApi()
+    renderProject('/projects/1?view=directory')
+
+    await userEvent.click(await screen.findByRole('button', { name: '与 AI 共创目录' }))
+
+    expect(screen.getByRole('dialog')).toHaveTextContent('Directory Agent 不在本轮实现范围内')
+  })
+
+  it('目录节点删除仍要求二次确认并说明子树影响', async () => {
+    mockProjectApi()
+    renderProject('/projects/1?view=directory')
+
+    await userEvent.click(await screen.findByRole('button', { name: '装修准备 更多操作' }))
+    await userEvent.click(await screen.findByRole('menuitem', { name: '删除节点' }))
+
+    expect(screen.getByRole('dialog')).toHaveTextContent('将删除「装修准备」及其全部子节点')
+    expect(screen.getByRole('button', { name: '确认删除' })).toBeEnabled()
   })
 })
