@@ -14,6 +14,7 @@ description: 知林 Grove 产品前端实现与验收规范。Use when implement
 3. 当前 OpenSpec change 与 `openspec/specs/`：本次必须实现和明确不做的行为。
 4. `frontend/src/index.css`：颜色、字号、圆角、阴影和动效令牌。
 5. 相关页面与组件代码：现有接口和交互模式。
+6. `docs/prototypes/README.md` 与对应原型页面：仅在当前 change 涉及的页面需要视觉或信息层级参考时读取。
 
 常见 UI 任务路由：
 
@@ -25,6 +26,8 @@ description: 知林 Grove 产品前端实现与验收规范。Use when implement
 除跨页面产品审计或调整蓝图结构外，不读取全部产品专题。
 
 冲突时依次遵循 OpenSpec、相关产品专题、实际主题和现有代码。不要在本 skill 维护第二套产品决策、组件 API 或令牌值；修改主题后再检查本 skill 是否仍准确。
+
+原型只提供视觉与交互参考，不证明功能已经实现。正式开发使用现有 React、Tailwind 4、shadcn/ui 和 Lucide 重新实现，不复制原型的内联样式、包装 iframe、演示脚本或静态业务状态；有意偏离项记录到当前 change 的 `design.md`。
 
 ## 实施方式
 
@@ -83,3 +86,4 @@ description: 知林 Grove 产品前端实现与验收规范。Use when implement
 4. loading、empty、error、partial、retry 和破坏性操作状态完整。
 5. 键盘、焦点、对比度和图标标签可用。
 6. 运行相关前端测试、`npm run lint` 和 `npm run build`；关键界面通过浏览器截图检查。
+7. 若当前 change 对应产品原型页面，在 1280px、1440px 和 1600px 对照原型检查，并确认只实现了本次规格范围内的行为。

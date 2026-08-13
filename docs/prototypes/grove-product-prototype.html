@@ -1,0 +1,1775 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="referrer" content="no-referrer">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'unsafe-inline' 'unsafe-eval' 'wasm-unsafe-eval' blob: data: https://cdnjs.cloudflare.com https://cdn.jsdelivr.net https://esm.sh https://fonts.bunny.net https://fonts.googleapis.com https://fonts.gstatic.com https://unpkg.com; style-src 'unsafe-inline' blob: data: https://cdnjs.cloudflare.com https://cdn.jsdelivr.net https://esm.sh https://fonts.bunny.net https://fonts.googleapis.com https://fonts.gstatic.com https://unpkg.com; img-src blob: data: https://cdnjs.cloudflare.com https://cdn.jsdelivr.net https://esm.sh https://fonts.bunny.net https://fonts.googleapis.com https://fonts.gstatic.com https://unpkg.com; font-src blob: data: https://cdnjs.cloudflare.com https://cdn.jsdelivr.net https://esm.sh https://fonts.bunny.net https://fonts.googleapis.com https://fonts.gstatic.com https://unpkg.com; media-src blob: data: https://cdnjs.cloudflare.com https://cdn.jsdelivr.net https://esm.sh https://fonts.bunny.net https://fonts.googleapis.com https://fonts.gstatic.com https://unpkg.com; worker-src blob:; connect-src blob: data:; frame-src 'self'; object-src 'none'; base-uri 'none'; form-action 'none'">
+<title>Grove Product Prototype</title>
+<style>:root{color-scheme:light dark;background:light-dark(rgb(255 255 255), rgb(24 24 24))}html,body{margin:0}body{box-sizing:border-box;padding:1rem;background:inherit;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Microsoft YaHei",sans-serif}.desktop-required{display:none}iframe{display:block;width:100%;height:calc(100vh - 2rem);margin:0 auto;border:0}@media(max-width:1023px){body{padding:0}.desktop-required{min-height:100vh;display:grid;place-items:center;padding:32px;text-align:center;color:light-dark(rgb(23 32 28),rgb(243 246 244));background:light-dark(rgb(247 248 247),rgb(21 24 23))}.desktop-required-mark{width:48px;height:48px;display:grid;place-items:center;margin:0 auto 20px;border-radius:8px;background:light-dark(rgb(35 103 72),rgb(117 196 156));color:white;font-weight:700}.desktop-required h1{margin:0;font-size:24px;line-height:1.4}.desktop-required p{max-width:420px;margin:10px auto 0;color:light-dark(rgb(102 113 107),rgb(170 180 175));font-size:15px;line-height:1.7}iframe{display:none}}</style>
+</head>
+<body>
+<main class="desktop-required">
+  <div>
+    <div class="desktop-required-mark" aria-hidden="true">G</div>
+    <h1>请在电脑端打开 Grove</h1>
+    <p>Grove 是面向桌面的知识整理工作台，当前浏览器宽度不足以安全完成确认、目录管理和批量处理。</p>
+  </div>
+</main>
+<iframe sandbox="allow-scripts" referrerpolicy="no-referrer" title="Grove Product Prototype" srcdoc="&lt;!doctype html&gt;
+&lt;html lang=&quot;en&quot;&gt;
+&lt;head&gt;
+&lt;meta charset=&quot;utf-8&quot;&gt;
+&lt;meta name=&quot;viewport&quot; content=&quot;width=device-width, initial-scale=1&quot;&gt;
+&lt;meta name=&quot;referrer&quot; content=&quot;no-referrer&quot;&gt;
+&lt;meta http-equiv=&quot;Content-Security-Policy&quot; content=&quot;default-src &#x27;none&#x27;; script-src &#x27;unsafe-inline&#x27; &#x27;unsafe-eval&#x27; &#x27;wasm-unsafe-eval&#x27; blob: data: https://cdnjs.cloudflare.com https://cdn.jsdelivr.net https://esm.sh https://fonts.bunny.net https://fonts.googleapis.com https://fonts.gstatic.com https://unpkg.com; style-src &#x27;unsafe-inline&#x27; blob: data: https://cdnjs.cloudflare.com https://cdn.jsdelivr.net https://esm.sh https://fonts.bunny.net https://fonts.googleapis.com https://fonts.gstatic.com https://unpkg.com; img-src blob: data: https://cdnjs.cloudflare.com https://cdn.jsdelivr.net https://esm.sh https://fonts.bunny.net https://fonts.googleapis.com https://fonts.gstatic.com https://unpkg.com; font-src blob: data: https://cdnjs.cloudflare.com https://cdn.jsdelivr.net https://esm.sh https://fonts.bunny.net https://fonts.googleapis.com https://fonts.gstatic.com https://unpkg.com; media-src blob: data: https://cdnjs.cloudflare.com https://cdn.jsdelivr.net https://esm.sh https://fonts.bunny.net https://fonts.googleapis.com https://fonts.gstatic.com https://unpkg.com; worker-src blob:; connect-src blob: data:; frame-src &#x27;none&#x27;; object-src &#x27;none&#x27;; base-uri &#x27;none&#x27;; form-action &#x27;none&#x27;&quot;&gt;
+&lt;title&gt;Grove Product Prototype&lt;/title&gt;
+&lt;style&gt;:root {
+  color-scheme: light dark;
+  background-color: var(
+    --background,
+    var(--color-background-primary, light-dark(rgb(255 255 255), rgb(24 24 24)))
+  ) !important;
+
+  /* Agent-facing contract; keep in sync with SKILL.md. */
+  --background: var(
+    --color-background-primary,
+    light-dark(rgb(255 255 255), rgb(24 24 24))
+  );
+  --foreground: var(
+    --color-text-primary,
+    light-dark(rgb(26 28 31), rgb(255 255 255))
+  );
+  --card: color-mix(in oklab, var(--foreground) 5%, var(--background));
+  --card-foreground: var(
+    --color-text-primary,
+    light-dark(rgb(26 28 31), rgb(255 255 255))
+  );
+  --popover: var(
+    --color-background-secondary,
+    light-dark(rgb(255 255 255), rgb(45 45 45))
+  );
+  --popover-foreground: var(
+    --color-text-primary,
+    light-dark(rgb(26 28 31), rgb(255 255 255))
+  );
+  --primary: var(
+    --color-text-info,
+    light-dark(rgb(51 156 255), rgb(131 195 255))
+  );
+  --primary-foreground: var(
+    --color-text-inverse,
+    light-dark(rgb(255 255 255), rgb(13 13 13))
+  );
+  --secondary: var(
+    --color-background-secondary,
+    light-dark(rgb(255 255 255 / 96%), rgb(54 54 54 / 96%))
+  );
+  --secondary-foreground: var(
+    --color-text-primary,
+    light-dark(rgb(26 28 31), rgb(255 255 255))
+  );
+  --muted: color-mix(in srgb, var(--foreground) 10%, transparent);
+  --muted-foreground: var(
+    --color-text-secondary,
+    light-dark(rgb(26 28 31 / 49.4%), rgb(255 255 255 / 49.8%))
+  );
+  --accent: var(
+    --color-background-info,
+    light-dark(rgb(229 242 255), rgb(13 39 63))
+  );
+  --accent-foreground: var(
+    --color-text-info,
+    light-dark(rgb(51 156 255), rgb(131 195 255))
+  );
+  --destructive: var(
+    --color-text-warning,
+    light-dark(rgb(226 85 7), rgb(255 133 73))
+  );
+  --border: var(
+    --color-border-secondary,
+    light-dark(rgb(26 28 31 / 8%), rgb(255 255 255 / 8.2%))
+  );
+  --input: var(
+    --color-border-primary,
+    light-dark(
+      rgb(26 28 31 / 11.8%),
+      color-mix(in oklab, rgb(0 0 0) 10%, transparent)
+    )
+  );
+  --ring: var(
+    --color-ring-primary,
+    light-dark(rgb(51 156 255), rgb(131 195 255 / 76%))
+  );
+  --font-size-base: var(--font-text-md-size, 14px);
+  --blue: light-dark(rgb(51 156 255), rgb(51 156 255));
+  --orange: light-dark(rgb(226 85 7), rgb(251 106 34));
+  --green: light-dark(rgb(0 162 64), rgb(64 201 119));
+  --red: light-dark(rgb(224 46 42), rgb(255 103 100));
+  --purple: light-dark(rgb(146 79 247), rgb(173 123 249));
+  --yellow: light-dark(rgb(255 195 0), rgb(255 210 64));
+  --viz-series-1: var(--primary);
+  --viz-series-2: light-dark(rgb(243 136 59), rgb(245 154 86));
+  --viz-series-3: light-dark(rgb(93 201 119), rgb(116 213 139));
+  --viz-series-4: light-dark(rgb(235 119 177), rgb(240 143 192));
+  --viz-series-5: light-dark(rgb(155 121 236), rgb(170 145 239));
+  --viz-series-6: light-dark(rgb(58 185 177), rgb(90 203 194));
+
+  /* Internal implementation variables; not part of the agent contract. */
+  --font-sans: -apple-system, system-ui, &quot;Segoe UI&quot;, sans-serif;
+  --font-mono:
+    ui-monospace, SFMono-Regular, &quot;SF Mono&quot;, Menlo, Consolas, &quot;Liberation Mono&quot;,
+    monospace;
+  --font-size-normal: max(11px, var(--font-size-base));
+  --font-size-tooltip: calc(var(--font-size-base) - 1px);
+  --font-size-small: max(11px, calc(var(--font-size-base) - 2px));
+  --font-size-h1: calc(var(--font-size-normal) * 1.7142857143);
+  --font-size-h2: calc(var(--font-size-normal) * 1.4285714286);
+  --font-size-h3: calc(var(--font-size-normal) * 1.2857142857);
+  --font-weight-normal: 430;
+  --font-weight-medium: 500;
+  --line-height-normal: calc(var(--font-size-normal) * 1.5);
+  --line-height-tooltip: calc(var(--font-size-tooltip) * 1.4285714286);
+  --line-height-small: calc(var(--font-size-small) + 4px);
+  --radius: var(--border-radius-lg, 12.5px);
+  --radius-sm: calc(var(--radius) * 0.6);
+  --radius-md: calc(var(--radius) * 0.8);
+  --radius-lg: var(--radius);
+  --radius-2xl: calc(var(--radius) * 1.6);
+  --radius-full: 9999px;
+  --shadow-sm: 0 1px 2px -1px rgb(0 0 0 / 8%);
+  --checkmark-image: url(&quot;data:image/svg+xml,%3Csvg xmlns=&#x27;http://www.w3.org/2000/svg&#x27; viewBox=&#x27;0 0 17 17&#x27;%3E%3Cpath d=&#x27;M12.8961 3.64101C13.1297 3.41418 13.4984 3.37523 13.7779 3.56581C14.0571 3.75635 14.1554 4.11331 14.0299 4.41347L13.9615 4.53847L7.71151 13.7045C7.59411 13.8767 7.4063 13.9877 7.19881 14.0072C6.99136 14.0267 6.78564 13.9533 6.63826 13.806L2.88826 10.056L2.79842 9.9457C2.6192 9.67407 2.64927 9.30496 2.88826 9.06581C3.12738 8.82669 3.49647 8.79676 3.76815 8.97597L3.8785 9.06581L7.03084 12.2182L12.8053 3.74941L12.8961 3.64101Z&#x27;/%3E%3C/svg%3E&quot;);
+
+  /* Legacy aliases; not part of the current agent contract. */
+  --viz-bg: transparent;
+  --viz-panel: var(--card);
+  --viz-border: var(--border);
+  --viz-text: var(--foreground);
+  --viz-muted: var(--muted-foreground);
+  --viz-accent: var(--primary);
+  --viz-accent-text: var(--primary-foreground);
+  --viz-accent-bg: var(--accent);
+  --viz-font-size: var(--font-size-base);
+  --viz-warning: var(--destructive);
+}
+
+:root[data-theme=&quot;light&quot;] {
+  color-scheme: light;
+}
+
+:root[data-theme=&quot;dark&quot;] {
+  color-scheme: dark;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html &gt; body {
+  /* Preserve MCP aliases for older inline renderers without creating :root cycles. */
+  --color-background-primary: var(
+    --background,
+    light-dark(rgb(255 255 255), rgb(24 24 24))
+  );
+  --color-text-primary: var(
+    --foreground,
+    light-dark(rgb(26 28 31), rgb(255 255 255))
+  );
+  --color-border-secondary: var(
+    --border,
+    light-dark(rgb(26 28 31 / 8%), rgb(255 255 255 / 8.2%))
+  );
+
+  margin: 0;
+  padding: 5px;
+  color: var(--foreground);
+  background: transparent !important;
+  font-family: var(--font-sans);
+  font-size: var(--font-size-normal);
+  font-weight: var(--font-weight-normal);
+  line-height: var(--line-height-normal);
+}
+
+a {
+  color: color-mix(in srgb, var(--viz-accent) 80%, var(--viz-text) 20%);
+  cursor: pointer;
+  font-weight: var(--font-weight-medium, 500);
+  text-decoration: none;
+  text-underline-offset: 2px;
+}
+
+a:is(:hover, :focus-visible) {
+  text-decoration-line: underline;
+  text-decoration-style: dashed;
+  text-decoration-thickness: 0.5px;
+}
+
+h1,
+h2,
+h3,
+h4,
+h5,
+h6,
+p {
+  margin-block: 0;
+}
+
+h1 {
+  font-size: var(--font-size-h1);
+  font-weight: var(--font-weight-medium);
+  line-height: 1.25;
+}
+
+h2 {
+  font-size: var(--font-size-h2);
+  font-weight: var(--font-weight-medium);
+  line-height: 1.25;
+}
+
+h3,
+h4,
+h5,
+h6 {
+  font-size: var(--font-size-h3);
+  font-weight: var(--font-weight-medium);
+  line-height: 1.3;
+}
+
+b,
+strong,
+th {
+  font-weight: var(--font-weight-medium);
+}
+
+code:not(pre code) {
+  display: inline;
+  padding: 1px 6px;
+  border-radius: var(--radius-sm);
+  corner-shape: superellipse(1.5);
+  background: var(--muted);
+  font-family: var(--font-mono);
+  font-size: 0.92em;
+  overflow-wrap: anywhere;
+  -webkit-box-decoration-break: clone;
+  box-decoration-break: clone;
+  word-break: break-word;
+}
+
+.table-responsive {
+  width: 100%;
+  overflow-x: auto;
+  scrollbar-width: thin;
+}
+
+.table {
+  width: 100%;
+  border-collapse: collapse;
+  color: var(--foreground);
+  font: inherit;
+  text-align: start;
+}
+
+.table :is(th, td) {
+  padding-block: 10px;
+  padding-inline: 0 24px;
+  overflow-wrap: anywhere;
+  border-bottom: 1px solid var(--border);
+  text-align: start;
+  vertical-align: top;
+}
+
+.table-responsive &gt; .table :is(th, td) {
+  overflow-wrap: break-word;
+}
+
+.table :is(th, td):last-child {
+  padding-inline-end: 0;
+}
+
+.table :is(caption, thead th) {
+  font-weight: 600;
+}
+
+.table thead th {
+  padding-block: 8px;
+  border-bottom-color: color-mix(in srgb, var(--foreground) 16%, transparent);
+}
+
+.table tbody tr:last-child :is(th, td) {
+  border-bottom: 0;
+}
+
+.table.table-sm :is(th, td) {
+  padding-block: 6px;
+}
+
+.table.table-sm :is(th, td):not(:last-child) {
+  padding-inline-end: 16px;
+}
+
+.table :is(.text-end, [align=&quot;right&quot;]) {
+  text-align: end;
+  font-variant-numeric: tabular-nums;
+}
+
+.table :is(.text-center, [align=&quot;center&quot;]) {
+  text-align: center;
+}
+
+.table .text-nowrap {
+  white-space: nowrap;
+}
+
+#widget {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  width: 100%;
+  padding: 0;
+  background: transparent !important;
+}
+
+.card {
+  min-width: 0;
+  padding: 12px;
+  overflow: hidden;
+  overflow-wrap: break-word;
+  border-radius: var(--radius-2xl);
+  corner-shape: superellipse(1.5);
+  color: var(--card-foreground);
+  background: var(--card);
+}
+
+#widget &gt; :not(.card) {
+  width: 100% !important;
+  max-width: none !important;
+  margin: 0 !important;
+  padding: 0 !important;
+  border: 0 !important;
+  border-radius: 0 !important;
+  background: transparent !important;
+  box-shadow: none !important;
+}
+
+.tooltip {
+  position: fixed;
+  z-index: 50;
+  top: 0;
+  left: 0;
+  width: max-content;
+  max-width: min(
+    20rem,
+    var(--tooltip-available-width, calc(100vw - 10px)),
+    calc(100vw - 10px)
+  );
+  max-height: min(
+    var(--tooltip-available-height, calc(100vh - 10px)),
+    calc(100vh - 10px)
+  );
+  padding: 4px 8px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  corner-shape: superellipse(1.5);
+  color: var(--popover-foreground);
+  background: var(--popover);
+  box-shadow: none;
+  font-size: var(--font-size-tooltip);
+  line-height: var(--line-height-tooltip);
+  overflow-wrap: break-word;
+  white-space: normal;
+  pointer-events: none;
+  user-select: none;
+}
+
+.viz-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(max(180px, 24%), 1fr));
+  gap: 10px;
+}
+
+.viz-stat {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.viz-stat-value {
+  font-size: var(--font-size-h2);
+  font-weight: var(--font-weight-medium);
+  line-height: 1.25;
+}
+
+.viz-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+}
+
+.viz-badge {
+  padding: 3px 8px;
+  border-radius: var(--radius-full);
+  color: var(--accent-foreground);
+  background: var(--accent);
+  font-weight: var(--font-weight-medium);
+}
+
+small,
+.text-small,
+.viz-badge {
+  font-size: var(--font-size-small);
+  line-height: var(--line-height-small);
+}
+
+.text-muted {
+  color: var(--muted-foreground);
+}
+
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+.viz-controls {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
+.viz-controls &gt; .form-label {
+  display: grid;
+  min-width: min(100%, 260px);
+  flex: 1 1 280px;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: baseline;
+  gap: 2px 12px;
+  margin-bottom: 0;
+}
+
+.viz-controls &gt; .form-label &gt; :is(.form-control, .form-range, .form-select) {
+  grid-column: 1 / -1;
+}
+
+.btn,
+.form-check-input,
+.form-control,
+.form-range,
+.form-select {
+  font: inherit;
+}
+
+.btn {
+  appearance: button;
+  display: inline-flex;
+  inline-size: fit-content;
+  max-inline-size: 100%;
+  min-height: 28px;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  margin: 0;
+  padding: 0 8px;
+  -webkit-app-region: no-drag;
+  border: 1px solid var(--input);
+  border-radius: var(--radius-lg);
+  corner-shape: superellipse(1.5);
+  color: var(--secondary-foreground);
+  background: var(--secondary);
+  cursor: var(--cursor-interaction, pointer);
+  text-align: center;
+  text-decoration: none;
+  white-space: nowrap;
+  user-select: none;
+  -webkit-font-smoothing: antialiased;
+}
+
+.btn:is(.btn-block, .viz-tile) {
+  inline-size: 100%;
+}
+
+.btn.viz-tile {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  white-space: normal;
+}
+
+a.btn {
+  cursor: pointer;
+  text-decoration: none;
+}
+
+.btn:not(:disabled):hover {
+  background: color-mix(in srgb, var(--foreground) 6%, var(--secondary));
+}
+
+.btn-primary {
+  border-color: transparent;
+  color: var(--primary-foreground);
+  background: var(--foreground);
+  background-clip: padding-box;
+}
+
+.btn-primary .text-muted {
+  color: color-mix(in srgb, var(--primary-foreground) 50%, transparent);
+}
+
+.btn-primary:not(:disabled):hover {
+  background: color-mix(in srgb, var(--foreground) 80%, transparent);
+  background-clip: padding-box;
+}
+
+.btn-ghost {
+  border-color: transparent;
+  color: var(--muted-foreground);
+  background: transparent;
+}
+
+.btn-ghost:not(:disabled):hover {
+  color: var(--foreground);
+  background: color-mix(in srgb, var(--foreground) 6%, var(--secondary));
+}
+
+.btn:disabled {
+  cursor: not-allowed;
+  opacity: 0.4;
+}
+
+[data-lucide] {
+  stroke-width: 1.6;
+}
+
+.form-label {
+  display: block;
+  margin-bottom: 6px;
+  color: var(--foreground);
+}
+
+.form-control {
+  display: block;
+  width: 100%;
+  min-height: 28px;
+  padding: 0 8px;
+  outline: none;
+  border: 1px solid var(--input);
+  border-radius: var(--radius-lg);
+  corner-shape: superellipse(1.5);
+  color: var(--foreground);
+  background: var(--secondary);
+}
+
+.form-control::placeholder {
+  color: var(--muted-foreground);
+}
+
+.form-control[type=&quot;file&quot;] {
+  padding: 0;
+  overflow: hidden;
+  cursor: var(--cursor-interaction, pointer);
+}
+
+.form-control[type=&quot;file&quot;]::file-selector-button {
+  min-height: 26px;
+  margin-right: 8px;
+  padding: 0 8px;
+  border: 0;
+  border-right: 1px solid var(--input);
+  color: var(--secondary-foreground);
+  background: var(--secondary);
+  cursor: inherit;
+  font: inherit;
+}
+
+.form-control[type=&quot;file&quot;]:not(:disabled):hover::file-selector-button {
+  background: color-mix(in srgb, var(--foreground) 6%, var(--secondary));
+}
+
+.form-control-color[type=&quot;color&quot;] {
+  width: 40px;
+  height: 28px;
+  padding: 3px;
+  cursor: var(--cursor-interaction, pointer);
+}
+
+.form-control-color[type=&quot;color&quot;]::-webkit-color-swatch-wrapper {
+  padding: 0;
+}
+
+.form-control-color[type=&quot;color&quot;]::-webkit-color-swatch {
+  border: 0;
+  border-radius: calc(var(--radius-lg) - 4px);
+  corner-shape: superellipse(1.5);
+}
+
+textarea.form-control {
+  height: auto;
+  min-height: 72px;
+  padding: 8px 10px;
+  resize: vertical;
+}
+
+.form-control:focus-visible {
+  border-color: var(--ring);
+  box-shadow: inset 0 0 0 1px var(--ring);
+}
+
+.form-control:disabled,
+.form-select:disabled {
+  cursor: not-allowed;
+  opacity: 0.4;
+}
+
+.form-select {
+  appearance: none;
+  display: block;
+  width: 100%;
+  min-height: 28px;
+  margin: 0;
+  padding: 0 32px 0 8px;
+  outline: none;
+  border: 1px solid var(--input);
+  border-radius: var(--radius-lg);
+  corner-shape: superellipse(1.5);
+  color: var(--foreground);
+  background-color: var(--secondary);
+  background-image:
+    linear-gradient(45deg, transparent 50%, var(--muted-foreground) 50%),
+    linear-gradient(135deg, var(--muted-foreground) 50%, transparent 50%);
+  background-position:
+    calc(100% - 14px) 50%,
+    calc(100% - 10px) 50%;
+  background-repeat: no-repeat;
+  background-size: 4px 4px;
+  cursor: var(--cursor-interaction, default);
+}
+
+.form-select:not(:disabled):hover {
+  background-color: color-mix(in srgb, var(--foreground) 6%, var(--secondary));
+}
+
+.form-select:focus-visible {
+  border-color: var(--ring);
+  box-shadow: inset 0 0 0 1px var(--ring);
+}
+
+.form-check {
+  display: flex;
+  min-height: 20px;
+  align-items: center;
+  gap: 6px;
+}
+
+.form-check-input {
+  appearance: none;
+  width: 14px;
+  height: 14px;
+  flex: 0 0 auto;
+  margin: 0;
+  border: 1px solid var(--input);
+  color: var(--primary-foreground);
+  background-color: transparent;
+  cursor: var(--cursor-interaction, default);
+  transition:
+    background-color 150ms,
+    border-color 150ms,
+    box-shadow 150ms;
+}
+
+.form-check:not(.form-switch) .form-check-input[type=&quot;checkbox&quot;] {
+  border-color: var(--input);
+  border-radius: var(--radius-sm);
+  corner-shape: superellipse(1.5);
+  background-color: var(--secondary);
+  box-shadow: var(--shadow-sm);
+}
+
+.form-check:not(.form-switch)
+  .form-check-input:not(:disabled):not(:checked):hover {
+  background-color: var(--card);
+}
+
+.form-check:not(.form-switch) .form-check-input[type=&quot;checkbox&quot;]:checked {
+  border-color: var(--primary);
+  background-color: var(--primary);
+}
+
+.form-check:not(.form-switch)
+  .form-check-input[type=&quot;checkbox&quot;]:checked::before {
+  display: block;
+  width: 100%;
+  height: 100%;
+  background: var(--primary-foreground);
+  content: &quot;&quot;;
+  mask: var(--checkmark-image) center / 12px 12px no-repeat;
+}
+
+.form-check-input[type=&quot;radio&quot;] {
+  width: 14px;
+  height: 14px;
+  border-radius: var(--radius-full);
+}
+
+.form-check-input[type=&quot;radio&quot;]:checked {
+  border: 2px solid var(--primary);
+  background:
+    radial-gradient(circle, var(--primary-foreground) 0 2.5px, transparent 3px),
+    var(--primary);
+}
+
+.form-check:not(.form-switch) .form-check-input:focus-visible {
+  outline: 2px solid var(--ring);
+  outline-offset: 2px;
+}
+
+.form-check:not(.form-switch) .form-check-input:disabled {
+  cursor: not-allowed;
+  pointer-events: none;
+}
+
+.form-check:not(.form-switch) .form-check-input:disabled + .form-check-label {
+  cursor: not-allowed;
+}
+
+.form-switch .form-check-input:disabled,
+.form-switch .form-check-input:disabled + .form-check-label {
+  cursor: not-allowed;
+  opacity: 0.6;
+}
+
+.form-check-label {
+  color: var(--foreground);
+  cursor: var(--cursor-interaction, default);
+}
+
+.form-switch .form-check-input {
+  position: relative;
+  width: 32px;
+  height: 20px;
+  border: 0;
+  border-radius: var(--radius-full);
+  background: var(--muted);
+  box-shadow: none;
+  transition: background-color 200ms cubic-bezier(0, 0, 0.2, 1);
+}
+
+.form-switch .form-check-input::before {
+  position: absolute;
+  top: 50%;
+  left: 0;
+  width: 16px;
+  height: 16px;
+  box-sizing: border-box;
+  border: 1px solid light-dark(var(--primary-foreground), var(--foreground));
+  border-radius: var(--radius-full);
+  background: light-dark(var(--primary-foreground), var(--foreground));
+  box-shadow: var(--shadow-sm);
+  content: &quot;&quot;;
+  transform: translate(2px, -50%);
+  transition: transform 200ms cubic-bezier(0, 0, 0.2, 1);
+}
+
+.form-switch .form-check-input:checked {
+  background: var(--primary);
+}
+
+.form-switch .form-check-input:checked::before {
+  transform: translate(14px, -50%);
+}
+
+.form-switch .form-check-input:focus-visible {
+  box-shadow: 0 0 0 2px var(--ring);
+}
+
+.form-range {
+  appearance: none;
+  display: block;
+  width: 100%;
+  height: 28px;
+  flex: 1;
+  margin: 0;
+  padding: 0;
+  outline: none;
+  border: 0;
+  accent-color: var(--primary);
+  background: linear-gradient(
+      color-mix(in srgb, var(--foreground) 7%, transparent),
+      color-mix(in srgb, var(--foreground) 7%, transparent)
+    )
+    center / 100% 2px no-repeat;
+}
+
+.form-range::-webkit-slider-runnable-track {
+  height: 28px;
+  background: transparent;
+}
+
+.form-range::-webkit-slider-thumb {
+  appearance: none;
+  width: 20px;
+  height: 20px;
+  margin-top: 4px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-full);
+  background: light-dark(var(--primary-foreground), var(--foreground));
+}
+
+.form-range:focus-visible::-webkit-slider-thumb {
+  border-color: var(--ring);
+  box-shadow: inset 0 0 0 1px var(--ring);
+}
+
+.form-range::-moz-range-track {
+  height: 28px;
+  background: transparent;
+}
+
+.form-range::-moz-range-thumb {
+  width: 20px;
+  height: 20px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-full);
+  background: light-dark(var(--primary-foreground), var(--foreground));
+}
+
+.form-range:focus-visible::-moz-range-thumb {
+  border-color: var(--ring);
+  box-shadow: inset 0 0 0 1px var(--ring);
+}
+
+.form-range:disabled {
+  cursor: not-allowed;
+  opacity: 0.4;
+}
+
+.btn:not(.btn-primary, .viz-tile):is(
+    [aria-pressed=&quot;true&quot;],
+    [aria-selected=&quot;true&quot;],
+    .is-selected
+  ) {
+  border-color: var(--primary);
+  color: var(--primary-foreground);
+  background: var(--primary);
+}
+
+.btn.viz-tile:is([aria-pressed=&quot;true&quot;], [aria-selected=&quot;true&quot;], .is-selected) {
+  border-color: var(--primary);
+  box-shadow: inset 0 0 0 1px var(--primary);
+}
+
+.btn:focus-visible {
+  outline: 2px solid var(--ring);
+  outline-offset: 2px;
+}
+
+svg {
+  display: block;
+  max-width: 100%;
+  height: auto;
+}
+
+#widget &gt; svg {
+  width: 100%;
+}
+
+/* Model-authored chart rules can otherwise stretch icons after these styles load. */
+svg.lucide {
+  display: block;
+  width: 16px !important;
+  height: 16px !important;
+  flex: none;
+  margin: 0 !important;
+  stroke-width: 1.6;
+}
+
+.text-warning,
+.text-destructive {
+  color: var(--destructive);
+}
+
+html&gt;body{padding:0}&lt;/style&gt;
+&lt;/head&gt;
+&lt;body&gt;
+&lt;div id=&quot;grove-product-prototype&quot;&gt;
+  &lt;style&gt;
+    #grove-product-prototype {
+      --g-bg: light-dark(rgb(247 248 247), rgb(21 24 23));
+      --g-surface: light-dark(rgb(255 255 255), rgb(28 33 31));
+      --g-soft: light-dark(rgb(241 244 242), rgb(37 43 40));
+      --g-ink: light-dark(rgb(23 32 28), rgb(243 246 244));
+      --g-muted: light-dark(rgb(102 113 107), rgb(170 180 175));
+      --g-border: light-dark(rgb(221 227 223), rgb(52 60 56));
+      --g-green: light-dark(rgb(35 103 72), rgb(117 196 156));
+      --g-green-soft: light-dark(rgb(232 243 237), rgb(31 56 46));
+      --g-ai: light-dark(rgb(114 81 165), rgb(184 154 221));
+      --g-ai-soft: light-dark(rgb(242 237 248), rgb(48 39 60));
+      --g-ai-border: light-dark(rgb(218 204 237), rgb(88 70 110));
+      --g-confirmed: light-dark(rgb(24 124 114), rgb(99 197 186));
+      --g-confirmed-soft: light-dark(rgb(231 245 242), rgb(27 57 53));
+      --g-risk: light-dark(rgb(154 100 25), rgb(229 175 91));
+      --g-risk-soft: light-dark(rgb(255 245 223), rgb(64 50 29));
+      --g-error: light-dark(rgb(180 60 60), rgb(239 136 136));
+      --g-error-soft: light-dark(rgb(252 237 237), rgb(65 37 39));
+      --g-success: light-dark(rgb(47 125 77), rgb(120 197 143));
+      --g-success-soft: light-dark(rgb(234 245 237), rgb(33 55 42));
+      color: var(--g-ink);
+      font-family: -apple-system, BlinkMacSystemFont, &quot;Segoe UI&quot;, &quot;PingFang SC&quot;, &quot;Microsoft YaHei&quot;, sans-serif;
+      font-size: 14px;
+      line-height: 1.5;
+      letter-spacing: 0;
+    }
+    #grove-product-prototype * { box-sizing: border-box; letter-spacing: 0; }
+    #grove-product-prototype button,
+    #grove-product-prototype input,
+    #grove-product-prototype textarea,
+    #grove-product-prototype select { font: inherit; color: inherit; }
+    #grove-product-prototype button { cursor: pointer; }
+    #grove-product-prototype h1,
+    #grove-product-prototype h2,
+    #grove-product-prototype h3,
+    #grove-product-prototype p { margin: 0; }
+    #grove-product-prototype h1 { font-size: 22px; font-weight: 650; line-height: 1.35; }
+    #grove-product-prototype h2 { font-size: 16px; font-weight: 650; line-height: 1.4; }
+    #grove-product-prototype h3 { font-size: 14px; font-weight: 650; line-height: 1.45; }
+    #grove-product-prototype svg { width: 16px; height: 16px; stroke-width: 1.8; flex: 0 0 auto; }
+    #grove-product-prototype .proto-bar {
+      display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 8px; margin-bottom: 12px;
+      border: 1px solid var(--g-border); border-radius: 7px; background: var(--g-surface);
+    }
+    #grove-product-prototype .proto-pages { display: flex; align-items: center; gap: 4px; flex-wrap: wrap; }
+    #grove-product-prototype .proto-tab {
+      min-height: 34px; display: inline-flex; align-items: center; justify-content: center; gap: 6px; padding: 0 10px;
+      border: 0; border-radius: 5px; background: transparent; color: var(--g-muted); white-space: nowrap;
+    }
+    #grove-product-prototype .proto-tab[aria-selected=&quot;true&quot;] { background: var(--g-soft); color: var(--g-ink); box-shadow: inset 0 0 0 1px var(--g-border); }
+    #grove-product-prototype .stage { display: flex; justify-content: center; }
+    #grove-product-prototype .app-window {
+      width: 100%; max-width: 1440px; min-height: 780px; overflow: hidden; border: 1px solid var(--g-border); border-radius: 7px;
+      background: var(--g-bg); box-shadow: 0 10px 30px light-dark(rgb(20 40 30 / 7%), rgb(0 0 0 / 22%)); transition: width .2s ease;
+    }
+    #grove-product-prototype .app-shell { min-height: 780px; display: grid; grid-template-columns: 208px minmax(0, 1fr); }
+    #grove-product-prototype .global-sidebar { display: flex; flex-direction: column; border-right: 1px solid var(--g-border); background: var(--g-surface); }
+    #grove-product-prototype .brand { height: 52px; display: flex; align-items: center; gap: 10px; padding: 0 16px; border-bottom: 1px solid var(--g-border); font-weight: 650; }
+    #grove-product-prototype .brand-mark { width: 28px; height: 28px; display: grid; place-items: center; border-radius: 6px; background: var(--g-green); color: #fff; font-size: 13px; }
+    #grove-product-prototype .global-nav { padding: 12px 8px; }
+    #grove-product-prototype .nav-button,
+    #grove-product-prototype .project-nav-button {
+      width: 100%; min-height: 38px; display: flex; align-items: center; gap: 9px; padding: 0 10px; border: 0; border-radius: 6px;
+      background: transparent; color: var(--g-muted); text-align: left;
+    }
+    #grove-product-prototype .nav-button:hover,
+    #grove-product-prototype .project-nav-button:hover { background: var(--g-soft); color: var(--g-ink); }
+    #grove-product-prototype .nav-button.active,
+    #grove-product-prototype .project-nav-button.active { background: var(--g-green-soft); color: var(--g-green); font-weight: 600; }
+    #grove-product-prototype .nav-count { margin-left: auto; min-width: 22px; height: 20px; display: inline-grid; place-items: center; border-radius: 10px; background: var(--g-ai-soft); color: var(--g-ai); font-size: 11px; }
+    #grove-product-prototype .side-label { display: block; padding: 18px 10px 6px; color: var(--g-muted); font-size: 11px; }
+    #grove-product-prototype .account-button { margin: auto 8px 10px; min-height: 44px; }
+    #grove-product-prototype .avatar { width: 26px; height: 26px; display: grid; place-items: center; border-radius: 50%; background: var(--g-soft); color: var(--g-ink); font-size: 12px; }
+    #grove-product-prototype .app-main { min-width: 0; display: flex; flex-direction: column; }
+    #grove-product-prototype .app-topbar { height: 52px; display: flex; align-items: center; gap: 10px; padding: 0 20px; border-bottom: 1px solid var(--g-border); background: var(--g-surface); }
+    #grove-product-prototype .top-title { min-width: 0; margin-right: auto; }
+    #grove-product-prototype .top-title strong { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 14px; }
+    #grove-product-prototype .top-title span { display: block; color: var(--g-muted); font-size: 11px; }
+    #grove-product-prototype .project-status { height: 28px; display: flex; align-items: center; gap: 6px; padding: 0 9px; border: 1px solid var(--g-border); border-radius: 5px; background: var(--g-surface); }
+    #grove-product-prototype .project-status .dot { width: 7px; height: 7px; border-radius: 50%; background: var(--g-success); }
+    #grove-product-prototype .button,
+    #grove-product-prototype .icon-button,
+    #grove-product-prototype .text-button {
+      min-height: 34px; display: inline-flex; align-items: center; justify-content: center; gap: 7px; border-radius: 6px; white-space: nowrap;
+    }
+    #grove-product-prototype .button { padding: 0 11px; border: 1px solid var(--g-border); background: var(--g-surface); }
+    #grove-product-prototype .button.primary { border-color: var(--g-green); background: var(--g-green); color: rgb(255 255 255); }
+    #grove-product-prototype .button.ai { border-color: var(--g-ai-border); background: var(--g-ai-soft); color: var(--g-ai); }
+    #grove-product-prototype .button.danger { border-color: light-dark(#efcaca, #644043); background: var(--g-error-soft); color: var(--g-error); }
+    #grove-product-prototype .icon-button { width: 34px; padding: 0; border: 1px solid var(--g-border); background: var(--g-surface); }
+    #grove-product-prototype .text-button { padding: 0 5px; border: 0; background: transparent; color: var(--g-muted); }
+    #grove-product-prototype .button:hover,
+    #grove-product-prototype .icon-button:hover,
+    #grove-product-prototype .text-button:hover { filter: brightness(.98); color: var(--g-ink); }
+    #grove-product-prototype .button:focus-visible,
+    #grove-product-prototype .icon-button:focus-visible,
+    #grove-product-prototype .text-button:focus-visible,
+    #grove-product-prototype .nav-button:focus-visible,
+    #grove-product-prototype .project-nav-button:focus-visible { outline: 2px solid var(--g-ai); outline-offset: 2px; }
+    #grove-product-prototype .project-shell { min-height: 718px; display: grid; grid-template-columns: 174px minmax(0, 1fr); }
+    #grove-product-prototype .project-sidebar { padding: 14px 8px; border-right: 1px solid var(--g-border); background: color-mix(in srgb, var(--g-surface) 75%, var(--g-bg)); }
+    #grove-product-prototype .project-sidebar-title { padding: 3px 10px 10px; color: var(--g-muted); font-size: 11px; }
+    #grove-product-prototype .page { display: none; min-width: 0; }
+    #grove-product-prototype .page.active { display: block; }
+    #grove-product-prototype .page-scroll { min-height: 718px; padding: 22px 24px 30px; }
+    #grove-product-prototype .page[data-page=&quot;review&quot;] &gt; .page-scroll,
+    #grove-product-prototype .page[data-page=&quot;knowledge&quot;] &gt; .page-scroll { min-height: 0; }
+    #grove-product-prototype .page-heading { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; margin-bottom: 20px; }
+    #grove-product-prototype .page-heading p { margin-top: 4px; color: var(--g-muted); }
+    #grove-product-prototype .heading-actions,
+    #grove-product-prototype .toolbar,
+    #grove-product-prototype .segmented { display: flex; align-items: center; gap: 7px; flex-wrap: wrap; }
+    #grove-product-prototype .segmented { padding: 3px; border: 1px solid var(--g-border); border-radius: 6px; background: var(--g-soft); }
+    #grove-product-prototype .segment { min-height: 30px; padding: 0 9px; border: 0; border-radius: 4px; background: transparent; color: var(--g-muted); }
+    #grove-product-prototype .segment.active { background: var(--g-surface); color: var(--g-ink); box-shadow: 0 1px 2px rgb(0 0 0 / 6%); }
+    #grove-product-prototype .section { margin-top: 24px; }
+    #grove-product-prototype .section-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; min-height: 34px; margin-bottom: 8px; }
+    #grove-product-prototype .muted { color: var(--g-muted); }
+    #grove-product-prototype .small { font-size: 12px; }
+    #grove-product-prototype .tiny { font-size: 11px; }
+    #grove-product-prototype .badge { min-height: 22px; display: inline-flex; align-items: center; gap: 5px; padding: 2px 7px; border-radius: 4px; font-size: 11px; font-weight: 600; white-space: nowrap; }
+    #grove-product-prototype .badge.ai { background: var(--g-ai-soft); color: var(--g-ai); }
+    #grove-product-prototype .badge.confirmed { background: var(--g-confirmed-soft); color: var(--g-confirmed); }
+    #grove-product-prototype .badge.risk { background: var(--g-risk-soft); color: var(--g-risk); }
+    #grove-product-prototype .badge.error { background: var(--g-error-soft); color: var(--g-error); }
+    #grove-product-prototype .badge.success { background: var(--g-success-soft); color: var(--g-success); }
+    #grove-product-prototype .badge.neutral { background: var(--g-soft); color: var(--g-muted); }
+    #grove-product-prototype .list-frame { border-top: 1px solid var(--g-border); }
+    #grove-product-prototype .list-row { min-height: 58px; display: flex; align-items: center; gap: 12px; padding: 10px 4px; border-bottom: 1px solid var(--g-border); }
+    #grove-product-prototype .list-row .row-main { min-width: 0; flex: 1; }
+    #grove-product-prototype .list-row strong { display: block; overflow-wrap: anywhere; }
+    #grove-product-prototype .list-row p { margin-top: 3px; color: var(--g-muted); font-size: 12px; }
+    #grove-product-prototype .task-row { min-height: 66px; }
+    #grove-product-prototype .task-icon { width: 34px; height: 34px; display: grid; place-items: center; border-radius: 6px; background: var(--g-soft); color: var(--g-muted); }
+    #grove-product-prototype .home-layout { display: grid; grid-template-columns: minmax(0, 1.4fr) minmax(280px, .8fr); gap: 28px; }
+    #grove-product-prototype .understanding { padding-left: 22px; border-left: 1px solid var(--g-border); }
+    #grove-product-prototype .understanding-copy { margin-top: 10px; color: var(--g-muted); }
+    #grove-product-prototype .understanding-list { margin: 14px 0 0; padding-left: 18px; color: var(--g-muted); }
+    #grove-product-prototype .knowledge-row { align-items: flex-start; }
+    #grove-product-prototype .capture-grid { display: grid; grid-template-columns: minmax(300px, .85fr) minmax(440px, 1.15fr); gap: 24px; }
+    #grove-product-prototype .capture-box { border: 1px solid var(--g-border); border-radius: 7px; background: var(--g-surface); }
+    #grove-product-prototype .capture-tabs { display: grid; grid-template-columns: 1fr 1fr; border-bottom: 1px solid var(--g-border); }
+    #grove-product-prototype .capture-tab { min-height: 40px; border: 0; border-bottom: 2px solid transparent; background: transparent; color: var(--g-muted); }
+    #grove-product-prototype .capture-tab.active { border-bottom-color: var(--g-green); color: var(--g-ink); }
+    #grove-product-prototype .capture-body { min-height: 230px; padding: 20px; display: flex; flex-direction: column; align-items: center; justify-content: center; text-align: center; }
+    #grove-product-prototype .capture-body .capture-symbol { width: 44px; height: 44px; display: grid; place-items: center; margin-bottom: 12px; border-radius: 7px; background: var(--g-green-soft); color: var(--g-green); }
+    #grove-product-prototype .capture-body p { max-width: 310px; margin: 5px 0 14px; color: var(--g-muted); font-size: 12px; }
+    #grove-product-prototype .paste-area { width: 100%; min-height: 140px; resize: vertical; padding: 10px; border: 1px solid var(--g-border); border-radius: 6px; background: var(--g-bg); }
+    #grove-product-prototype .capture-fields { padding: 12px; border-top: 1px solid var(--g-border); }
+    #grove-product-prototype .field { display: grid; gap: 6px; margin-top: 12px; }
+    #grove-product-prototype .field:first-child { margin-top: 0; }
+    #grove-product-prototype .field label { color: var(--g-muted); font-size: 11px; }
+    #grove-product-prototype .input,
+    #grove-product-prototype .select,
+    #grove-product-prototype .textarea { width: 100%; border: 1px solid var(--g-border); border-radius: 6px; background: var(--g-surface); }
+    #grove-product-prototype .input,
+    #grove-product-prototype .select { height: 36px; padding: 0 10px; }
+    #grove-product-prototype .textarea { min-height: 86px; padding: 9px 10px; resize: vertical; }
+    #grove-product-prototype .capture-footer { display: flex; justify-content: flex-end; gap: 8px; padding-top: 12px; }
+    #grove-product-prototype .source-filter-bar { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; margin-bottom: 8px; }
+    #grove-product-prototype .progress-line { width: 104px; height: 4px; margin-top: 7px; overflow: hidden; border-radius: 3px; background: var(--g-border); }
+    #grove-product-prototype .progress-line span { display: block; width: 62%; height: 100%; background: var(--g-green); }
+    #grove-product-prototype .review-tabs { margin-bottom: 12px; }
+    #grove-product-prototype .review-layout { height: 642px; display: grid; grid-template-columns: minmax(340px, .85fr) minmax(500px, 1.15fr); border-top: 1px solid var(--g-border); }
+    #grove-product-prototype .review-pane { min-width: 0; overflow: auto; background: var(--g-surface); }
+    #grove-product-prototype .review-pane + .review-pane { border-left: 1px solid var(--g-border); }
+    #grove-product-prototype .pane-head { min-height: 50px; display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 0 14px; border-bottom: 1px solid var(--g-border); position: sticky; top: 0; z-index: 2; background: var(--g-surface); }
+    #grove-product-prototype .source-list-row,
+    #grove-product-prototype .candidate-mini { width: 100%; display: block; padding: 12px 14px; border: 0; border-bottom: 1px solid var(--g-border); background: transparent; text-align: left; }
+    #grove-product-prototype .source-list-row.active,
+    #grove-product-prototype .candidate-mini.active { background: var(--g-ai-soft); box-shadow: inset 3px 0 0 var(--g-ai); }
+    #grove-product-prototype .source-list-row p,
+    #grove-product-prototype .candidate-mini p { margin-top: 4px; color: var(--g-muted); font-size: 11px; }
+    #grove-product-prototype .source-material { padding: 14px; }
+    #grove-product-prototype .source-quote { margin-top: 12px; padding: 14px; border-left: 3px solid var(--g-ai); background: var(--g-ai-soft); line-height: 1.75; }
+    #grove-product-prototype .source-quote mark { background: light-dark(#eadff7, #49385c); color: var(--g-ink); padding: 1px 2px; }
+    #grove-product-prototype .source-note { margin-top: 12px; padding-top: 12px; border-top: 1px solid var(--g-border); color: var(--g-muted); font-size: 12px; }
+    #grove-product-prototype .candidate-nav { display: flex; align-items: center; gap: 8px; }
+    #grove-product-prototype .candidate-nav .icon-button { width: 30px; min-height: 30px; }
+    #grove-product-prototype .candidate-scroll { min-height: 0; flex: 1; overflow: auto; padding: 18px 20px 110px; }
+    #grove-product-prototype .candidate-current-head { display: flex; align-items: flex-start; gap: 10px; padding-bottom: 16px; border-bottom: 1px solid var(--g-border); }
+    #grove-product-prototype .candidate-current-head &gt; div { min-width: 0; flex: 1; }
+    #grove-product-prototype .candidate-current-head p { margin-top: 5px; color: var(--g-muted); font-size: 12px; }
+    #grove-product-prototype .candidate-fields { padding: 0; }
+    #grove-product-prototype .candidate-compact { width: 100%; min-height: 62px; display: flex; align-items: flex-start; gap: 9px; margin-top: 18px; padding: 12px 0; border: 0; border-top: 1px solid var(--g-border); border-bottom: 1px solid var(--g-border); border-radius: 0; background: transparent; text-align: left; }
+    #grove-product-prototype .candidate-compact &gt; div { min-width: 0; flex: 1; }
+    #grove-product-prototype .candidate-compact p { margin-top: 4px; color: var(--g-muted); font-size: 12px; }
+    #grove-product-prototype .candidate-compact .summary-chevron { color: var(--g-muted); }
+    #grove-product-prototype .recommendation { padding: 9px 10px; border: 1px solid var(--g-ai-border); border-radius: 6px; background: var(--g-ai-soft); }
+    #grove-product-prototype .recommendation .path { display: block; margin-top: 4px; color: var(--g-ai); font-weight: 600; overflow-wrap: anywhere; }
+    #grove-product-prototype .candidate-actions { position: absolute; right: 0; bottom: 0; left: 0; z-index: 3; display: flex; align-items: center; justify-content: flex-end; gap: 6px; padding: 12px 20px; border-top: 1px solid var(--g-border); background: var(--g-surface); }
+    #grove-product-prototype .batch-view { display: none; }
+    #grove-product-prototype .batch-view.active { display: block; }
+    #grove-product-prototype .source-view.hidden { display: none; }
+    #grove-product-prototype .batch-toolbar { min-height: 52px; display: flex; align-items: center; gap: 8px; flex-wrap: wrap; padding: 8px 12px; border-top: 1px solid var(--g-border); border-bottom: 1px solid var(--g-border); background: var(--g-surface); }
+    #grove-product-prototype .batch-groups { padding: 14px 18px 24px; }
+    #grove-product-prototype .batch-group { margin-bottom: 20px; }
+    #grove-product-prototype .batch-group-title { display: flex; align-items: center; gap: 8px; min-height: 36px; padding-bottom: 6px; border-bottom: 1px solid var(--g-border); }
+    #grove-product-prototype .batch-candidate { min-height: 62px; display: grid; grid-template-columns: 26px minmax(0, 1fr) auto auto; gap: 10px; align-items: center; border-bottom: 1px solid var(--g-border); }
+    #grove-product-prototype .batch-candidate p { color: var(--g-muted); font-size: 11px; }
+    #grove-product-prototype .batch-candidate.risky { background: var(--g-risk-soft); }
+    #grove-product-prototype .knowledge-layout { display: grid; grid-template-columns: 244px minmax(0, 1fr); min-height: 642px; border-top: 1px solid var(--g-border); }
+    #grove-product-prototype .directory-tree { padding: 12px 8px; border-right: 1px solid var(--g-border); background: var(--g-surface); }
+    #grove-product-prototype .tree-search { margin: 0 4px 8px; width: calc(100% - 8px); }
+    #grove-product-prototype .tree-item { width: 100%; min-height: 34px; display: grid; grid-template-columns: 18px minmax(0, 1fr) auto; gap: 5px; align-items: center; padding: 0 7px; border: 0; border-radius: 5px; background: transparent; text-align: left; }
+    #grove-product-prototype .tree-item.active { background: var(--g-green-soft); color: var(--g-green); }
+    #grove-product-prototype .tree-item.child { padding-left: 24px; }
+    #grove-product-prototype .tree-count { display: flex; gap: 4px; color: var(--g-muted); font-size: 10px; }
+    #grove-product-prototype .knowledge-content { min-width: 0; padding: 18px 20px 28px; }
+    #grove-product-prototype .knowledge-toolbar { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-bottom: 14px; }
+    #grove-product-prototype .entry-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
+    #grove-product-prototype .entry-card { min-height: 178px; display: flex; flex-direction: column; padding: 14px; border: 1px solid var(--g-border); border-radius: 7px; background: var(--g-surface); }
+    #grove-product-prototype .entry-card p { margin-top: 8px; color: var(--g-muted); }
+    #grove-product-prototype .entry-meta { margin-top: auto; padding-top: 14px; display: flex; align-items: center; gap: 8px; flex-wrap: wrap; color: var(--g-muted); font-size: 11px; }
+    #grove-product-prototype .entry-list { display: none; border-top: 1px solid var(--g-border); }
+    #grove-product-prototype .entry-list.active { display: block; }
+    #grove-product-prototype .entry-grid.hidden { display: none; }
+    #grove-product-prototype .entry-list-row { min-height: 54px; display: grid; grid-template-columns: minmax(0, 1fr) 100px 130px 80px 34px; gap: 10px; align-items: center; border-bottom: 1px solid var(--g-border); }
+    #grove-product-prototype .entry-list-row.header { min-height: 38px; color: var(--g-muted); font-size: 11px; }
+    #grove-product-prototype .mindmap { display: none; min-height: 520px; grid-template-columns: minmax(0, 1fr) 280px; border-top: 1px solid var(--g-border); }
+    #grove-product-prototype .mindmap.active { display: grid; }
+    #grove-product-prototype .map-canvas { position: relative; min-height: 520px; overflow: hidden; background-image: linear-gradient(var(--g-border) 1px, transparent 1px), linear-gradient(90deg, var(--g-border) 1px, transparent 1px); background-size: 28px 28px; }
+    #grove-product-prototype .map-line { position: absolute; height: 1px; background: var(--g-border); transform-origin: left center; }
+    #grove-product-prototype .map-node { position: absolute; min-height: 36px; display: flex; align-items: center; gap: 6px; padding: 0 10px; border: 1px solid var(--g-border); border-radius: 6px; background: var(--g-surface); box-shadow: 0 2px 6px rgb(0 0 0 / 5%); }
+    #grove-product-prototype .map-node.active,
+    #grove-product-prototype .map-node.highlight { border-color: var(--g-green); background: var(--g-green-soft); color: var(--g-green); }
+    #grove-product-prototype .map-side { padding: 16px; border-left: 1px solid var(--g-border); background: var(--g-surface); }
+    #grove-product-prototype .drawer-overlay { display: none; position: absolute; inset: 0; z-index: 20; background: rgb(12 18 15 / 24%); }
+    #grove-product-prototype .drawer-overlay.open { display: block; }
+    #grove-product-prototype .directory-assistant { position: absolute; inset: 12px 12px 12px auto; width: min(760px, calc(100% - 24px)); display: grid; grid-template-columns: 250px minmax(0, 1fr); overflow: hidden; border: 1px solid var(--g-border); border-radius: 7px; background: var(--g-surface); box-shadow: 0 18px 48px rgb(0 0 0 / 18%); }
+    #grove-product-prototype .assistant-chat { padding: 16px; border-right: 1px solid var(--g-border); }
+    #grove-product-prototype .chat-message { margin-top: 12px; padding: 9px 10px; border-radius: 6px; background: var(--g-soft); }
+    #grove-product-prototype .chat-message.user { margin-left: 22px; background: var(--g-green-soft); }
+    #grove-product-prototype .chat-compose { display: flex; gap: 6px; margin-top: 14px; }
+    #grove-product-prototype .draft-panel { padding: 16px; }
+    #grove-product-prototype .draft-tree { margin-top: 12px; border-top: 1px solid var(--g-border); }
+    #grove-product-prototype .draft-row { min-height: 40px; display: grid; grid-template-columns: 20px minmax(0, 1fr) auto; gap: 8px; align-items: center; border-bottom: 1px solid var(--g-border); }
+    #grove-product-prototype .draft-row.child { padding-left: 24px; }
+    #grove-product-prototype .draft-row.remove { color: var(--g-muted); }
+    #grove-product-prototype .reader-layout { display: grid; grid-template-columns: 300px minmax(0, 1fr); gap: 24px; }
+    #grove-product-prototype .reader-context { padding-right: 20px; border-right: 1px solid var(--g-border); }
+    #grove-product-prototype .scope-option { min-height: 48px; display: flex; align-items: flex-start; gap: 9px; padding: 9px 0; border-bottom: 1px solid var(--g-border); }
+    #grove-product-prototype .reader-thread { min-width: 0; }
+    #grove-product-prototype .reader-answer { margin-top: 14px; padding-left: 14px; border-left: 3px solid var(--g-green); }
+    #grove-product-prototype .reader-answer p + p { margin-top: 10px; }
+    #grove-product-prototype .citation { display: inline-flex; align-items: center; gap: 4px; padding: 1px 5px; border: 1px solid var(--g-border); border-radius: 4px; background: var(--g-soft); color: var(--g-green); font-size: 11px; vertical-align: baseline; }
+    #grove-product-prototype .insufficient { margin-top: 14px; padding: 10px 12px; border-left: 3px solid var(--g-risk); background: var(--g-risk-soft); color: var(--g-risk); }
+    #grove-product-prototype .reader-compose { display: flex; gap: 8px; margin-top: 22px; }
+    #grove-product-prototype .search-results { max-width: 900px; }
+    #grove-product-prototype .account-panel { max-width: 700px; }
+    #grove-product-prototype .toast { position: absolute; right: 16px; bottom: 16px; z-index: 50; max-width: 320px; padding: 10px 12px; border: 1px solid var(--g-border); border-radius: 6px; background: var(--g-surface); box-shadow: 0 8px 24px rgb(0 0 0 / 16%); opacity: 0; transform: translateY(8px); pointer-events: none; transition: .2s ease; }
+    #grove-product-prototype .toast.show { opacity: 1; transform: translateY(0); }
+    @media (max-width: 1120px) {
+      #grove-product-prototype .review-layout { grid-template-columns: minmax(280px, .92fr) minmax(380px, 1.08fr); }
+      #grove-product-prototype .global-sidebar { width: 184px; }
+      #grove-product-prototype .app-shell { grid-template-columns: 184px minmax(0, 1fr); }
+    }
+
+    /* 2026-08-13: desktop workbench hierarchy refinement */
+    #grove-product-prototype .app-window { max-width: 1600px; }
+    #grove-product-prototype .app-shell { grid-template-columns: 216px minmax(0, 1fr); }
+    #grove-product-prototype .global-sidebar { min-width: 0; }
+    #grove-product-prototype .sidebar-back { margin: 8px 8px 2px; }
+    #grove-product-prototype .sidebar-project { padding: 12px 16px 10px; }
+    #grove-product-prototype .sidebar-project strong { display: block; font-size: 15px; }
+    #grove-product-prototype .sidebar-project .badge { margin-top: 6px; }
+    #grove-product-prototype .sidebar-divider { margin: 10px 10px; border-top: 1px solid var(--g-border); }
+    #grove-product-prototype .global-context { display: none; }
+    #grove-product-prototype .global-sidebar.is-global .project-context { display: none; }
+    #grove-product-prototype .global-sidebar.is-global .global-context { display: block; }
+    #grove-product-prototype .global-sidebar.is-global .sidebar-back,
+    #grove-product-prototype .global-sidebar.is-global .sidebar-project { display: none; }
+    #grove-product-prototype .app-topbar { justify-content: flex-end; }
+    #grove-product-prototype .topbar-spacer { flex: 1; }
+    #grove-product-prototype .project-shell { min-height: 718px; display: block; }
+    #grove-product-prototype .project-sidebar { display: none; }
+
+    #grove-product-prototype .workbench-heading { align-items: center; margin-bottom: 14px; }
+    #grove-product-prototype .workbench-heading .heading-center { margin-left: auto; margin-right: auto; }
+    #grove-product-prototype .review-context-bar {
+      min-height: 54px; display: flex; align-items: center; gap: 12px; padding: 0 24px;
+      border-top: 1px solid var(--g-border); border-bottom: 1px solid var(--g-border); background: var(--g-surface);
+    }
+    #grove-product-prototype .review-context-bar .source-identity { min-width: 0; flex: 1; }
+    #grove-product-prototype .review-context-bar .source-identity strong { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    #grove-product-prototype .review-context-bar .source-identity span { color: var(--g-muted); font-size: 11px; }
+    #grove-product-prototype .source-view { position: relative; }
+    #grove-product-prototype .review-layout { height: 570px; grid-template-columns: minmax(300px, .92fr) minmax(420px, 1.08fr); border-top: 0; }
+    #grove-product-prototype .review-pane { background: transparent; }
+    #grove-product-prototype .review-pane + .review-pane { border-left: 1px solid var(--g-border); }
+    #grove-product-prototype .review-layout .pane-head { min-height: 46px; padding: 0 18px; background: var(--g-bg); }
+    #grove-product-prototype .source-material { padding: 18px 22px; }
+    #grove-product-prototype .source-quote { background: transparent; }
+    #grove-product-prototype .evidence-pane { overflow: auto; }
+    #grove-product-prototype .candidate-pane { position: relative; display: flex; flex-direction: column; overflow: hidden; }
+    #grove-product-prototype .candidate-workbench { min-height: 0; flex: 1; display: flex; flex-direction: column; }
+    #grove-product-prototype .candidate-fields { padding: 2px 0 0; }
+    #grove-product-prototype .candidate-fields .field { padding: 13px 0 0; }
+    #grove-product-prototype .candidate-field-row { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+    #grove-product-prototype .recommendation { padding: 8px 0 4px; border: 0; border-radius: 0; background: transparent; }
+    #grove-product-prototype .recommendation .path { margin-top: 6px; }
+    #grove-product-prototype .decision-note { margin-top: 12px; padding-top: 12px; border-top: 1px solid var(--g-border); color: var(--g-muted); font-size: 12px; }
+    #grove-product-prototype .candidate-actions { margin-top: auto; }
+    #grove-product-prototype .review-queue-overlay { display: none; position: absolute; inset: 0; z-index: 24; background: rgb(12 18 15 / 22%); }
+    #grove-product-prototype .review-queue-overlay.open { display: block; }
+    #grove-product-prototype .review-queue-drawer { width: 340px; height: 100%; padding: 12px 0; border-right: 1px solid var(--g-border); background: var(--g-surface); box-shadow: 12px 0 28px rgb(0 0 0 / 12%); }
+    #grove-product-prototype .review-queue-drawer .section-head { padding: 0 14px 8px; }
+    #grove-product-prototype .review-queue-drawer .source-list-row { padding-left: 16px; padding-right: 16px; }
+    #grove-product-prototype .batch-toolbar { border-top: 0; padding-left: 24px; padding-right: 24px; }
+    #grove-product-prototype .batch-groups { padding-left: 24px; padding-right: 24px; }
+    #grove-product-prototype .batch-candidate.risky { background: transparent; box-shadow: inset 3px 0 0 var(--g-risk); padding-left: 10px; }
+
+    #grove-product-prototype .knowledge-page-head { margin-bottom: 10px; }
+    #grove-product-prototype .knowledge-view-tabs { padding: 0 24px 10px; border-bottom: 1px solid var(--g-border); }
+    #grove-product-prototype .knowledge-view-tabs .segmented { padding: 0; border: 0; background: transparent; }
+    #grove-product-prototype .knowledge-view-tabs .segment { min-height: 34px; border-radius: 0; }
+    #grove-product-prototype .knowledge-view-tabs .segment.active { border-bottom: 2px solid var(--g-green); background: transparent; color: var(--g-green); box-shadow: none; }
+    #grove-product-prototype .knowledge-layout { grid-template-columns: 250px minmax(0, 1fr); min-height: 604px; border-top: 0; }
+    #grove-product-prototype .directory-tree { padding: 14px 10px; background: transparent; }
+    #grove-product-prototype .directory-tree-head { display: flex; align-items: center; justify-content: space-between; min-height: 34px; padding: 0 6px 8px; }
+    #grove-product-prototype .knowledge-content { padding: 14px 24px 28px; }
+    #grove-product-prototype .knowledge-toolbar { min-height: 50px; margin-bottom: 10px; border-bottom: 1px solid var(--g-border); }
+    #grove-product-prototype .knowledge-toolbar-main { min-width: 0; display: flex; align-items: center; gap: 10px; }
+    #grove-product-prototype .knowledge-toolbar-main p { color: var(--g-muted); font-size: 12px; }
+    #grove-product-prototype .entry-view-switch { padding: 0; border: 0; background: transparent; }
+    #grove-product-prototype .entry-view-switch .segment.active { background: var(--g-soft); box-shadow: none; }
+    #grove-product-prototype .mindmap { min-height: 604px; border-top: 0; }
+    #grove-product-prototype .map-canvas { min-height: 604px; }
+    #grove-product-prototype .map-side { background: transparent; }
+
+  &lt;/style&gt;
+
+  &lt;div class=&quot;proto-bar&quot;&gt;
+    &lt;div class=&quot;proto-pages&quot; role=&quot;tablist&quot; aria-label=&quot;原型页面&quot;&gt;
+      &lt;button class=&quot;proto-tab&quot; role=&quot;tab&quot; aria-selected=&quot;true&quot; data-go=&quot;project-home&quot;&gt;项目首页&lt;/button&gt;
+      &lt;button class=&quot;proto-tab&quot; role=&quot;tab&quot; aria-selected=&quot;false&quot; data-go=&quot;inbox&quot;&gt;收集箱&lt;/button&gt;
+      &lt;button class=&quot;proto-tab&quot; role=&quot;tab&quot; aria-selected=&quot;false&quot; data-go=&quot;review&quot;&gt;确认台&lt;/button&gt;
+      &lt;button class=&quot;proto-tab&quot; role=&quot;tab&quot; aria-selected=&quot;false&quot; data-go=&quot;knowledge&quot;&gt;知识空间&lt;/button&gt;
+      &lt;button class=&quot;proto-tab&quot; role=&quot;tab&quot; aria-selected=&quot;false&quot; data-go=&quot;directory&quot;&gt;目录共创&lt;/button&gt;
+      &lt;button class=&quot;proto-tab&quot; role=&quot;tab&quot; aria-selected=&quot;false&quot; data-go=&quot;reader&quot;&gt;AI 阅读&lt;/button&gt;
+    &lt;/div&gt;
+  &lt;/div&gt;
+
+  &lt;div class=&quot;stage&quot;&gt;
+    &lt;div class=&quot;app-window&quot;&gt;
+      &lt;div class=&quot;app-shell&quot;&gt;
+        &lt;aside class=&quot;global-sidebar&quot;&gt;
+          &lt;div class=&quot;brand&quot;&gt;&lt;span class=&quot;brand-mark&quot;&gt;G&lt;/span&gt;&lt;span&gt;知林 Grove&lt;/span&gt;&lt;/div&gt;
+          &lt;button class=&quot;nav-button sidebar-back&quot; data-global=&quot;projects&quot;&gt;&lt;i data-lucide=&quot;arrow-left&quot; aria-hidden=&quot;true&quot;&gt;&lt;/i&gt;返回全部项目&lt;/button&gt;
+          &lt;div class=&quot;sidebar-project&quot;&gt;&lt;strong&gt;房子装修&lt;/strong&gt;&lt;span class=&quot;badge success&quot;&gt;&lt;span data-status-label&gt;进行中&lt;/span&gt;&lt;/span&gt;&lt;/div&gt;
+          &lt;nav class=&quot;global-nav project-context&quot; aria-label=&quot;项目导航&quot;&gt;
+            &lt;button class=&quot;project-nav-button active&quot; data-project-nav=&quot;project-home&quot;&gt;&lt;i data-lucide=&quot;house&quot;&gt;&lt;/i&gt;项目首页&lt;/button&gt;
+            &lt;button class=&quot;project-nav-button&quot; data-project-nav=&quot;knowledge&quot;&gt;&lt;i data-lucide=&quot;folder-tree&quot;&gt;&lt;/i&gt;知识空间&lt;/button&gt;
+            &lt;button class=&quot;project-nav-button&quot; data-project-nav=&quot;review&quot;&gt;&lt;i data-lucide=&quot;list-checks&quot;&gt;&lt;/i&gt;确认台&lt;span class=&quot;nav-count&quot;&gt;6&lt;/span&gt;&lt;/button&gt;
+            &lt;button class=&quot;project-nav-button&quot; data-project-nav=&quot;sources&quot;&gt;&lt;i data-lucide=&quot;images&quot;&gt;&lt;/i&gt;采集与来源&lt;/button&gt;
+            &lt;button class=&quot;project-nav-button&quot; data-project-nav=&quot;reader&quot;&gt;&lt;i data-lucide=&quot;book-open-check&quot;&gt;&lt;/i&gt;AI 阅读&lt;/button&gt;
+            &lt;div class=&quot;sidebar-divider&quot;&gt;&lt;/div&gt;
+            &lt;button class=&quot;nav-button&quot; data-global=&quot;inbox&quot;&gt;&lt;i data-lucide=&quot;inbox&quot; aria-hidden=&quot;true&quot;&gt;&lt;/i&gt;收集箱&lt;span class=&quot;nav-count&quot;&gt;7&lt;/span&gt;&lt;/button&gt;
+            &lt;button class=&quot;nav-button&quot; data-global=&quot;search&quot;&gt;&lt;i data-lucide=&quot;search&quot; aria-hidden=&quot;true&quot;&gt;&lt;/i&gt;搜索&lt;/button&gt;
+            &lt;button class=&quot;nav-button&quot; data-global=&quot;account&quot;&gt;&lt;i data-lucide=&quot;user-round&quot; aria-hidden=&quot;true&quot;&gt;&lt;/i&gt;账户&lt;/button&gt;
+          &lt;/nav&gt;
+          &lt;nav class=&quot;global-nav global-context&quot; aria-label=&quot;全局导航&quot;&gt;
+            &lt;button class=&quot;nav-button active&quot; data-global=&quot;projects&quot;&gt;&lt;i data-lucide=&quot;folder-kanban&quot; aria-hidden=&quot;true&quot;&gt;&lt;/i&gt;项目&lt;/button&gt;
+            &lt;button class=&quot;nav-button&quot; data-global=&quot;inbox&quot;&gt;&lt;i data-lucide=&quot;inbox&quot; aria-hidden=&quot;true&quot;&gt;&lt;/i&gt;收集箱&lt;span class=&quot;nav-count&quot;&gt;7&lt;/span&gt;&lt;/button&gt;
+            &lt;button class=&quot;nav-button&quot; data-global=&quot;search&quot;&gt;&lt;i data-lucide=&quot;search&quot; aria-hidden=&quot;true&quot;&gt;&lt;/i&gt;搜索&lt;/button&gt;
+            &lt;button class=&quot;nav-button&quot; data-global=&quot;account&quot;&gt;&lt;i data-lucide=&quot;user-round&quot; aria-hidden=&quot;true&quot;&gt;&lt;/i&gt;账户&lt;/button&gt;
+            &lt;span class=&quot;side-label&quot;&gt;最近项目&lt;/span&gt;
+            &lt;button class=&quot;nav-button&quot; data-open-project&gt;&lt;i data-lucide=&quot;home&quot; aria-hidden=&quot;true&quot;&gt;&lt;/i&gt;房子装修&lt;/button&gt;
+            &lt;button class=&quot;nav-button&quot;&gt;&lt;i data-lucide=&quot;book-open&quot; aria-hidden=&quot;true&quot;&gt;&lt;/i&gt;个人健康&lt;/button&gt;
+          &lt;/nav&gt;
+        &lt;/aside&gt;
+
+        &lt;div class=&quot;app-main&quot;&gt;
+          &lt;header class=&quot;app-topbar&quot;&gt;
+            &lt;div class=&quot;topbar-spacer&quot;&gt;&lt;/div&gt;
+            &lt;button class=&quot;button&quot; data-global=&quot;search&quot;&gt;&lt;i data-lucide=&quot;search&quot; aria-hidden=&quot;true&quot;&gt;&lt;/i&gt;搜索&lt;/button&gt;
+            &lt;button class=&quot;button&quot; data-go=&quot;sources&quot;&gt;&lt;i data-lucide=&quot;plus&quot; aria-hidden=&quot;true&quot;&gt;&lt;/i&gt;快速采集&lt;/button&gt;
+          &lt;/header&gt;
+
+          &lt;div class=&quot;project-shell&quot;&gt;
+            &lt;aside class=&quot;project-sidebar&quot; aria-hidden=&quot;true&quot;&gt;&lt;/aside&gt;
+
+            &lt;main class=&quot;page&quot; data-page=&quot;projects&quot;&gt;
+              &lt;div class=&quot;page-scroll&quot;&gt;
+                &lt;div class=&quot;page-heading&quot;&gt;&lt;div&gt;&lt;h1&gt;项目&lt;/h1&gt;&lt;p&gt;按状态查看和继续你的知识整理项目。&lt;/p&gt;&lt;/div&gt;&lt;button class=&quot;button primary&quot;&gt;&lt;i data-lucide=&quot;plus&quot;&gt;&lt;/i&gt;新建项目&lt;/button&gt;&lt;/div&gt;
+                &lt;div class=&quot;source-filter-bar&quot;&gt;&lt;button class=&quot;segment active&quot;&gt;进行中 2&lt;/button&gt;&lt;button class=&quot;segment&quot;&gt;暂停 1&lt;/button&gt;&lt;button class=&quot;segment&quot;&gt;已完成 3&lt;/button&gt;&lt;button class=&quot;segment&quot;&gt;已归档&lt;/button&gt;&lt;/div&gt;
+	                &lt;div class=&quot;list-frame&quot;&gt;&lt;div class=&quot;list-row task-row&quot;&gt;&lt;span class=&quot;task-icon&quot; style=&quot;color:var(--g-green)&quot;&gt;&lt;i data-lucide=&quot;home&quot;&gt;&lt;/i&gt;&lt;/span&gt;&lt;div class=&quot;row-main&quot;&gt;&lt;strong&gt;房子装修&lt;/strong&gt;&lt;p&gt;38 条正式知识 · 6 条候选待确认 · 最近更新于今天&lt;/p&gt;&lt;/div&gt;&lt;span class=&quot;badge success&quot;&gt;进行中&lt;/span&gt;&lt;button class=&quot;button&quot; data-open-project&gt;进入项目&lt;/button&gt;&lt;/div&gt;&lt;div class=&quot;list-row task-row&quot;&gt;&lt;span class=&quot;task-icon&quot;&gt;&lt;i data-lucide=&quot;heart-pulse&quot;&gt;&lt;/i&gt;&lt;/span&gt;&lt;div class=&quot;row-main&quot;&gt;&lt;strong&gt;个人健康&lt;/strong&gt;&lt;p&gt;12 条正式知识 · 最近更新于 8 月 9 日&lt;/p&gt;&lt;/div&gt;&lt;span class=&quot;badge success&quot;&gt;进行中&lt;/span&gt;&lt;button class=&quot;button&quot;&gt;进入项目&lt;/button&gt;&lt;/div&gt;&lt;/div&gt;
+              &lt;/div&gt;
+            &lt;/main&gt;
+
+            &lt;main class=&quot;page active&quot; data-page=&quot;project-home&quot;&gt;
+              &lt;div class=&quot;page-scroll&quot;&gt;
+                &lt;div class=&quot;page-heading&quot;&gt;&lt;div&gt;&lt;h1&gt;房子装修&lt;/h1&gt;&lt;p&gt;下一步先处理需要人工决定的候选，再继续补充施工与选购知识。&lt;/p&gt;&lt;/div&gt;&lt;div class=&quot;heading-actions&quot;&gt;&lt;button class=&quot;button primary&quot; data-go=&quot;review&quot;&gt;&lt;i data-lucide=&quot;list-checks&quot;&gt;&lt;/i&gt;处理 6 条待确认&lt;/button&gt;&lt;/div&gt;&lt;/div&gt;
+                &lt;div class=&quot;home-layout&quot;&gt;
+                  &lt;div&gt;
+                    &lt;section&gt;
+                      &lt;div class=&quot;section-head&quot;&gt;&lt;h2&gt;下一步需要处理&lt;/h2&gt;&lt;span class=&quot;badge ai&quot;&gt;6 条 AI 候选待确认&lt;/span&gt;&lt;/div&gt;
+                      &lt;div class=&quot;list-frame&quot;&gt;
+                        &lt;div class=&quot;list-row task-row&quot;&gt;&lt;span class=&quot;task-icon&quot; style=&quot;color:var(--g-ai)&quot;&gt;&lt;i data-lucide=&quot;sparkles&quot;&gt;&lt;/i&gt;&lt;/span&gt;&lt;div class=&quot;row-main&quot;&gt;&lt;strong&gt;审阅“烘干程序使用体验”&lt;/strong&gt;&lt;p&gt;1 条推荐候选，1 条其他发现 · 推荐归入 家电 / 洗烘设备&lt;/p&gt;&lt;/div&gt;&lt;span class=&quot;badge ai&quot;&gt;推荐明确&lt;/span&gt;&lt;button class=&quot;button&quot; data-go=&quot;review&quot;&gt;开始&lt;/button&gt;&lt;/div&gt;
+                        &lt;div class=&quot;list-row task-row&quot;&gt;&lt;span class=&quot;task-icon&quot; style=&quot;color:var(--g-risk)&quot;&gt;&lt;i data-lucide=&quot;triangle-alert&quot;&gt;&lt;/i&gt;&lt;/span&gt;&lt;div class=&quot;row-main&quot;&gt;&lt;strong&gt;精审 2 条关系异常候选&lt;/strong&gt;&lt;p&gt;1 条可能冲突，1 条疑似重复，不参与批量快速确认&lt;/p&gt;&lt;/div&gt;&lt;span class=&quot;badge risk&quot;&gt;需精审&lt;/span&gt;&lt;button class=&quot;button&quot; data-go=&quot;review-batch&quot;&gt;查看&lt;/button&gt;&lt;/div&gt;
+                        &lt;div class=&quot;list-row task-row&quot;&gt;&lt;span class=&quot;task-icon&quot;&gt;&lt;i data-lucide=&quot;rotate-cw&quot;&gt;&lt;/i&gt;&lt;/span&gt;&lt;div class=&quot;row-main&quot;&gt;&lt;strong&gt;重试 1 条处理失败的来源&lt;/strong&gt;&lt;p&gt;OCR 解析超时，已保留原始截图与采集说明&lt;/p&gt;&lt;/div&gt;&lt;span class=&quot;badge error&quot;&gt;失败&lt;/span&gt;&lt;button class=&quot;button&quot; data-go=&quot;sources&quot;&gt;处理&lt;/button&gt;&lt;/div&gt;
+                      &lt;/div&gt;
+                    &lt;/section&gt;
+                    &lt;section class=&quot;section&quot;&gt;
+	                      &lt;div class=&quot;section-head&quot;&gt;&lt;h2&gt;最近形成的知识&lt;/h2&gt;&lt;button class=&quot;text-button&quot; data-go=&quot;knowledge&quot;&gt;查看知识空间&lt;i data-lucide=&quot;arrow-right&quot;&gt;&lt;/i&gt;&lt;/button&gt;&lt;/div&gt;
+                      &lt;div class=&quot;list-frame&quot;&gt;
+	                        &lt;div class=&quot;list-row knowledge-row&quot;&gt;&lt;span class=&quot;task-icon&quot; style=&quot;color:var(--g-confirmed)&quot;&gt;&lt;i data-lucide=&quot;circle-check&quot;&gt;&lt;/i&gt;&lt;/span&gt;&lt;div class=&quot;row-main&quot;&gt;&lt;strong&gt;晶蕾烘干使用时需要手动勾选&lt;/strong&gt;&lt;p&gt;家电 / 洗烘设备 · 提醒 · 2 个来源&lt;/p&gt;&lt;/div&gt;&lt;span class=&quot;badge confirmed&quot;&gt;正式知识&lt;/span&gt;&lt;/div&gt;
+	                        &lt;div class=&quot;list-row knowledge-row&quot;&gt;&lt;span class=&quot;task-icon&quot; style=&quot;color:var(--g-confirmed)&quot;&gt;&lt;i data-lucide=&quot;circle-check&quot;&gt;&lt;/i&gt;&lt;/span&gt;&lt;div class=&quot;row-main&quot;&gt;&lt;strong&gt;窗帘盒应预留电机检修空间&lt;/strong&gt;&lt;p&gt;空间规划 / 客厅 · 参数 · 1 个来源&lt;/p&gt;&lt;/div&gt;&lt;span class=&quot;badge confirmed&quot;&gt;正式知识&lt;/span&gt;&lt;/div&gt;
+	                        &lt;div class=&quot;list-row knowledge-row&quot;&gt;&lt;span class=&quot;task-icon&quot; style=&quot;color:var(--g-confirmed)&quot;&gt;&lt;i data-lucide=&quot;circle-check&quot;&gt;&lt;/i&gt;&lt;/span&gt;&lt;div class=&quot;row-main&quot;&gt;&lt;strong&gt;闭水试验完成后再验收防水层&lt;/strong&gt;&lt;p&gt;施工 / 防水 · 方法 · 2 个来源&lt;/p&gt;&lt;/div&gt;&lt;span class=&quot;badge confirmed&quot;&gt;正式知识&lt;/span&gt;&lt;/div&gt;
+                      &lt;/div&gt;
+                    &lt;/section&gt;
+                  &lt;/div&gt;
+                  &lt;aside class=&quot;understanding&quot;&gt;
+                    &lt;div class=&quot;section-head&quot;&gt;&lt;h2&gt;AI 项目理解&lt;/h2&gt;&lt;button class=&quot;icon-button&quot; aria-label=&quot;纠正项目理解&quot; data-correct-understanding&gt;&lt;i data-lucide=&quot;pencil&quot;&gt;&lt;/i&gt;&lt;/button&gt;&lt;/div&gt;
+                    &lt;span class=&quot;badge ai&quot;&gt;&lt;i data-lucide=&quot;sparkles&quot;&gt;&lt;/i&gt;基于正式目录与 38 条已确认知识&lt;/span&gt;
+                    &lt;p class=&quot;understanding-copy&quot;&gt;这是一个自住房装修项目，当前重点是水电与家电选型。你更关注可验证的参数、施工风险和真实使用体验。&lt;/p&gt;
+                    &lt;ul class=&quot;understanding-list&quot;&gt;&lt;li&gt;当前阶段：水电定位与设备预选&lt;/li&gt;&lt;li&gt;近期主题：洗烘设备、客厅照明、防水验收&lt;/li&gt;&lt;li&gt;知识缺口：洗烘叠放尺寸尚缺可靠来源&lt;/li&gt;&lt;/ul&gt;
+                    &lt;button class=&quot;text-button&quot; style=&quot;margin-top:12px&quot; data-correct-understanding&gt;查看并纠正&lt;i data-lucide=&quot;arrow-right&quot;&gt;&lt;/i&gt;&lt;/button&gt;
+                    &lt;section class=&quot;section&quot;&gt;&lt;div class=&quot;section-head&quot;&gt;&lt;h2&gt;项目状态&lt;/h2&gt;&lt;/div&gt;&lt;div class=&quot;segmented&quot; style=&quot;display:grid;grid-template-columns:1fr 1fr&quot;&gt;&lt;button class=&quot;segment active&quot; data-set-status=&quot;进行中&quot;&gt;进行中&lt;/button&gt;&lt;button class=&quot;segment&quot; data-set-status=&quot;暂停&quot;&gt;暂停&lt;/button&gt;&lt;button class=&quot;segment&quot; data-set-status=&quot;已完成&quot;&gt;已完成&lt;/button&gt;&lt;button class=&quot;segment&quot; data-set-status=&quot;已归档&quot;&gt;已归档&lt;/button&gt;&lt;/div&gt;&lt;/section&gt;
+                  &lt;/aside&gt;
+                &lt;/div&gt;
+              &lt;/div&gt;
+            &lt;/main&gt;
+
+            &lt;main class=&quot;page&quot; data-page=&quot;inbox&quot;&gt;
+              &lt;div class=&quot;page-scroll&quot;&gt;
+                &lt;div class=&quot;page-heading&quot;&gt;&lt;div&gt;&lt;h1&gt;收集箱&lt;/h1&gt;&lt;p&gt;先放进来，稍后再归属项目。AI 项目推荐仍需你确认。&lt;/p&gt;&lt;/div&gt;&lt;div class=&quot;heading-actions&quot;&gt;&lt;button class=&quot;button primary&quot; data-capture-mode=&quot;image&quot;&gt;&lt;i data-lucide=&quot;images&quot;&gt;&lt;/i&gt;批量上传&lt;/button&gt;&lt;/div&gt;&lt;/div&gt;
+                &lt;div class=&quot;capture-grid&quot;&gt;
+                  &lt;section class=&quot;capture-box&quot;&gt;
+                    &lt;div class=&quot;capture-tabs&quot;&gt;&lt;button class=&quot;capture-tab active&quot; data-capture-mode=&quot;image&quot;&gt;&lt;i data-lucide=&quot;images&quot;&gt;&lt;/i&gt; 图片 / 截图&lt;/button&gt;&lt;button class=&quot;capture-tab&quot; data-capture-mode=&quot;paste&quot;&gt;&lt;i data-lucide=&quot;clipboard-paste&quot;&gt;&lt;/i&gt; 粘贴内容&lt;/button&gt;&lt;/div&gt;
+                    &lt;div class=&quot;capture-body&quot; data-capture-panel=&quot;image&quot;&gt;&lt;span class=&quot;capture-symbol&quot;&gt;&lt;i data-lucide=&quot;image-up&quot;&gt;&lt;/i&gt;&lt;/span&gt;&lt;h2&gt;批量放入截图&lt;/h2&gt;&lt;p&gt;可选择或直接粘贴多张图片。采集阶段不强制选择项目和目录。&lt;/p&gt;&lt;button class=&quot;button&quot;&gt;&lt;i data-lucide=&quot;folder-open&quot;&gt;&lt;/i&gt;选择图片&lt;/button&gt;&lt;/div&gt;
+                    &lt;div class=&quot;capture-body&quot; data-capture-panel=&quot;paste&quot; hidden&gt;&lt;textarea class=&quot;paste-area&quot; aria-label=&quot;粘贴图片或文字&quot; placeholder=&quot;在这里粘贴图片或文字…&quot;&gt;&lt;/textarea&gt;&lt;p&gt;检测到图片时会按图片处理；纯文字直接进入解析。&lt;/p&gt;&lt;/div&gt;
+                    &lt;div class=&quot;capture-fields&quot;&gt;
+                      &lt;div class=&quot;field&quot;&gt;&lt;label for=&quot;inbox-project&quot;&gt;所属项目（可选）&lt;/label&gt;&lt;select class=&quot;select&quot; id=&quot;inbox-project&quot;&gt;&lt;option&gt;暂不选择，由 AI 推荐&lt;/option&gt;&lt;option&gt;房子装修&lt;/option&gt;&lt;option&gt;个人健康&lt;/option&gt;&lt;/select&gt;&lt;/div&gt;
+                      &lt;div class=&quot;field&quot;&gt;&lt;label for=&quot;capture-note&quot;&gt;补充说明（可选）&lt;/label&gt;&lt;input class=&quot;input&quot; id=&quot;capture-note&quot; placeholder=&quot;例如：重点看看烘干程序是不是默认开启&quot;&gt;&lt;/div&gt;
+                      &lt;div class=&quot;capture-footer&quot;&gt;&lt;button class=&quot;button&quot; data-start-capture&gt;&lt;i data-lucide=&quot;sparkles&quot;&gt;&lt;/i&gt;开始处理&lt;/button&gt;&lt;/div&gt;
+                    &lt;/div&gt;
+                  &lt;/section&gt;
+                  &lt;section&gt;
+	                    &lt;div class=&quot;section-head&quot;&gt;&lt;h2&gt;未归属与处理状态&lt;/h2&gt;&lt;span class=&quot;small muted&quot;&gt;7 条来源&lt;/span&gt;&lt;/div&gt;
+                    &lt;div class=&quot;source-filter-bar&quot;&gt;&lt;button class=&quot;segment active&quot;&gt;全部 7&lt;/button&gt;&lt;button class=&quot;segment&quot;&gt;未归属 3&lt;/button&gt;&lt;button class=&quot;segment&quot;&gt;处理中 2&lt;/button&gt;&lt;button class=&quot;segment&quot;&gt;失败 1&lt;/button&gt;&lt;/div&gt;
+                    &lt;div class=&quot;list-frame&quot;&gt;
+	                      &lt;div class=&quot;list-row task-row&quot;&gt;&lt;span class=&quot;task-icon&quot;&gt;&lt;i data-lucide=&quot;image&quot;&gt;&lt;/i&gt;&lt;/span&gt;&lt;div class=&quot;row-main&quot;&gt;&lt;strong&gt;洗烘使用体验.png&lt;/strong&gt;&lt;p&gt;未归属 · 采集说明：关注烘干默认设置&lt;/p&gt;&lt;/div&gt;&lt;span class=&quot;badge ai&quot;&gt;推荐：房子装修&lt;/span&gt;&lt;button class=&quot;button&quot; data-accept-project&gt;确认项目&lt;/button&gt;&lt;/div&gt;
+                      &lt;div class=&quot;list-row task-row&quot;&gt;&lt;span class=&quot;task-icon&quot;&gt;&lt;i data-lucide=&quot;type&quot;&gt;&lt;/i&gt;&lt;/span&gt;&lt;div class=&quot;row-main&quot;&gt;&lt;strong&gt;周末徒步路线备忘&lt;/strong&gt;&lt;p&gt;未归属 · AI 无法判断与现有项目的关系&lt;/p&gt;&lt;/div&gt;&lt;span class=&quot;badge risk&quot;&gt;需要确认&lt;/span&gt;&lt;button class=&quot;button&quot;&gt;选择项目&lt;/button&gt;&lt;/div&gt;
+                      &lt;div class=&quot;list-row task-row&quot;&gt;&lt;span class=&quot;task-icon&quot;&gt;&lt;i data-lucide=&quot;images&quot;&gt;&lt;/i&gt;&lt;/span&gt;&lt;div class=&quot;row-main&quot;&gt;&lt;strong&gt;厨房插座参考（4 张）&lt;/strong&gt;&lt;p&gt;正在提取候选 · 房子装修&lt;/p&gt;&lt;div class=&quot;progress-line&quot;&gt;&lt;span&gt;&lt;/span&gt;&lt;/div&gt;&lt;/div&gt;&lt;span class=&quot;badge neutral&quot;&gt;处理中&lt;/span&gt;&lt;/div&gt;
+                      &lt;div class=&quot;list-row task-row&quot;&gt;&lt;span class=&quot;task-icon&quot;&gt;&lt;i data-lucide=&quot;image-off&quot;&gt;&lt;/i&gt;&lt;/span&gt;&lt;div class=&quot;row-main&quot;&gt;&lt;strong&gt;防水验收长图.png&lt;/strong&gt;&lt;p style=&quot;color:var(--g-error)&quot;&gt;图片分辨率过低，文字区域无法可靠识别&lt;/p&gt;&lt;/div&gt;&lt;span class=&quot;badge error&quot;&gt;失败&lt;/span&gt;&lt;button class=&quot;button danger&quot; data-retry&gt;&lt;i data-lucide=&quot;rotate-cw&quot;&gt;&lt;/i&gt;重试&lt;/button&gt;&lt;/div&gt;
+                    &lt;/div&gt;
+                  &lt;/section&gt;
+                &lt;/div&gt;
+              &lt;/div&gt;
+            &lt;/main&gt;
+
+            &lt;main class=&quot;page&quot; data-page=&quot;sources&quot;&gt;
+              &lt;div class=&quot;page-scroll&quot;&gt;
+	                &lt;div class=&quot;page-heading&quot;&gt;&lt;div&gt;&lt;h1&gt;采集与来源&lt;/h1&gt;&lt;p&gt;管理“房子装修”的原始材料、处理任务与失败重试。&lt;/p&gt;&lt;/div&gt;&lt;div class=&quot;heading-actions&quot;&gt;&lt;button class=&quot;button primary&quot; data-start-capture&gt;&lt;i data-lucide=&quot;plus&quot;&gt;&lt;/i&gt;采集到项目&lt;/button&gt;&lt;/div&gt;&lt;/div&gt;
+                &lt;div class=&quot;source-filter-bar&quot;&gt;&lt;button class=&quot;segment active&quot;&gt;全部 12&lt;/button&gt;&lt;button class=&quot;segment&quot;&gt;待处理 1&lt;/button&gt;&lt;button class=&quot;segment&quot;&gt;处理中 2&lt;/button&gt;&lt;button class=&quot;segment&quot;&gt;待确认 6&lt;/button&gt;&lt;button class=&quot;segment&quot;&gt;失败 1&lt;/button&gt;&lt;button class=&quot;segment&quot;&gt;已处理 2&lt;/button&gt;&lt;/div&gt;
+                &lt;div class=&quot;list-frame&quot;&gt;
+                  &lt;div class=&quot;list-row task-row&quot;&gt;&lt;span class=&quot;task-icon&quot;&gt;&lt;i data-lucide=&quot;image&quot;&gt;&lt;/i&gt;&lt;/span&gt;&lt;div class=&quot;row-main&quot;&gt;&lt;strong&gt;洗烘使用体验.png&lt;/strong&gt;&lt;p&gt;生成 1 条推荐候选、1 条其他发现 · 有采集说明&lt;/p&gt;&lt;/div&gt;&lt;span class=&quot;badge ai&quot;&gt;待确认&lt;/span&gt;&lt;button class=&quot;button&quot; data-go=&quot;review&quot;&gt;审阅&lt;/button&gt;&lt;/div&gt;
+                  &lt;div class=&quot;list-row task-row&quot;&gt;&lt;span class=&quot;task-icon&quot;&gt;&lt;i data-lucide=&quot;images&quot;&gt;&lt;/i&gt;&lt;/span&gt;&lt;div class=&quot;row-main&quot;&gt;&lt;strong&gt;厨房插座参考（4 张）&lt;/strong&gt;&lt;p&gt;正在推荐真实目录节点&lt;/p&gt;&lt;div class=&quot;progress-line&quot;&gt;&lt;span&gt;&lt;/span&gt;&lt;/div&gt;&lt;/div&gt;&lt;span class=&quot;badge neutral&quot;&gt;处理中&lt;/span&gt;&lt;/div&gt;
+                  &lt;div class=&quot;list-row task-row&quot;&gt;&lt;span class=&quot;task-icon&quot;&gt;&lt;i data-lucide=&quot;image-off&quot;&gt;&lt;/i&gt;&lt;/span&gt;&lt;div class=&quot;row-main&quot;&gt;&lt;strong&gt;防水验收长图.png&lt;/strong&gt;&lt;p style=&quot;color:var(--g-error)&quot;&gt;失败步骤：解析材料 · 分辨率过低&lt;/p&gt;&lt;/div&gt;&lt;span class=&quot;badge error&quot;&gt;失败&lt;/span&gt;&lt;button class=&quot;button danger&quot; data-retry&gt;&lt;i data-lucide=&quot;rotate-cw&quot;&gt;&lt;/i&gt;从此步重试&lt;/button&gt;&lt;/div&gt;
+	                  &lt;div class=&quot;list-row task-row&quot;&gt;&lt;span class=&quot;task-icon&quot;&gt;&lt;i data-lucide=&quot;type&quot;&gt;&lt;/i&gt;&lt;/span&gt;&lt;div class=&quot;row-main&quot;&gt;&lt;strong&gt;窗帘盒预留笔记&lt;/strong&gt;&lt;p&gt;已确认 2 条候选，形成 2 条正式知识&lt;/p&gt;&lt;/div&gt;&lt;span class=&quot;badge confirmed&quot;&gt;已处理&lt;/span&gt;&lt;button class=&quot;button&quot;&gt;查看来源&lt;/button&gt;&lt;/div&gt;
+                &lt;/div&gt;
+              &lt;/div&gt;
+            &lt;/main&gt;
+
+            &lt;main class=&quot;page&quot; data-page=&quot;review&quot;&gt;
+              &lt;div class=&quot;page-scroll&quot; style=&quot;padding-bottom:0&quot;&gt;
+                &lt;div class=&quot;page-heading workbench-heading&quot;&gt;&lt;h1&gt;确认台&lt;/h1&gt;&lt;div class=&quot;segmented heading-center&quot;&gt;&lt;button class=&quot;segment active&quot; data-review-mode=&quot;source&quot;&gt;按采集审阅&lt;/button&gt;&lt;button class=&quot;segment&quot; data-review-mode=&quot;batch&quot;&gt;批量处理&lt;/button&gt;&lt;/div&gt;&lt;strong class=&quot;small&quot;&gt;6 条待确认&lt;/strong&gt;&lt;/div&gt;
+              &lt;/div&gt;
+              &lt;div class=&quot;source-view&quot;&gt;
+	                &lt;div class=&quot;review-context-bar&quot;&gt;&lt;div class=&quot;source-identity&quot;&gt;&lt;span&gt;当前来源&lt;/span&gt;&lt;strong&gt;洗烘使用体验.png&lt;/strong&gt;&lt;/div&gt;&lt;span class=&quot;small muted&quot; data-source-progress&gt;来源进度 1 / 3&lt;/span&gt;&lt;button class=&quot;button&quot; data-source-prev&gt;&lt;i data-lucide=&quot;chevron-left&quot;&gt;&lt;/i&gt;上一来源&lt;/button&gt;&lt;button class=&quot;button&quot; data-source-next&gt;下一来源&lt;i data-lucide=&quot;chevron-right&quot;&gt;&lt;/i&gt;&lt;/button&gt;&lt;button class=&quot;button&quot; data-open-review-queue&gt;&lt;i data-lucide=&quot;list&quot;&gt;&lt;/i&gt;待处理来源 3&lt;/button&gt;&lt;/div&gt;
+                &lt;div class=&quot;review-layout&quot;&gt;
+                  &lt;section class=&quot;review-pane evidence-pane&quot;&gt;
+                    &lt;div class=&quot;pane-head&quot;&gt;&lt;h2&gt;原始材料与证据&lt;/h2&gt;&lt;span class=&quot;small muted&quot;&gt;图片 · 微信截图&lt;/span&gt;&lt;/div&gt;
+	                    &lt;div class=&quot;source-material&quot;&gt;&lt;span class=&quot;badge ai&quot;&gt;当前证据已高亮&lt;/span&gt;&lt;h3 style=&quot;margin-top:14px&quot;&gt;洗烘一体机真实使用反馈&lt;/h3&gt;&lt;div class=&quot;source-quote&quot;&gt;“我家的是晶蕾，但是每次&lt;mark&gt;晶蕾烘干的话，你得自己勾选。它默认是普通烘干&lt;/mark&gt;，我试试看发现好像没啥区别。”&lt;/div&gt;&lt;p class=&quot;source-note&quot;&gt;&lt;strong&gt;采集说明：&lt;/strong&gt;重点看看晶蕾烘干是不是默认开启。&lt;/p&gt;&lt;div class=&quot;section&quot;&gt;&lt;h3&gt;来源上下文&lt;/h3&gt;&lt;p class=&quot;small muted&quot; style=&quot;margin-top:6px&quot;&gt;AI 推荐所属项目：房子装修。当前候选仅引用高亮片段，未把个人体验泛化为事实。&lt;/p&gt;&lt;/div&gt;&lt;/div&gt;
+                  &lt;/section&gt;
+	                  &lt;section class=&quot;review-pane candidate-pane&quot;&gt;
+	                    &lt;div class=&quot;pane-head&quot;&gt;&lt;h2&gt;AI 候选&lt;/h2&gt;&lt;div class=&quot;candidate-nav&quot;&gt;&lt;button class=&quot;icon-button&quot; aria-label=&quot;上一候选&quot; data-candidate-prev&gt;&lt;i data-lucide=&quot;chevron-left&quot;&gt;&lt;/i&gt;&lt;/button&gt;&lt;span class=&quot;small muted&quot; data-candidate-progress&gt;当前候选 1 / 2&lt;/span&gt;&lt;button class=&quot;icon-button&quot; aria-label=&quot;下一候选&quot; data-candidate-next&gt;&lt;i data-lucide=&quot;chevron-right&quot;&gt;&lt;/i&gt;&lt;/button&gt;&lt;/div&gt;&lt;/div&gt;
+	                    &lt;div class=&quot;candidate-workbench&quot;&gt;
+	                      &lt;div class=&quot;candidate-scroll&quot;&gt;
+	                        &lt;div class=&quot;candidate-current-head&quot;&gt;&lt;span class=&quot;badge ai&quot; data-current-badge&gt;推荐候选&lt;/span&gt;&lt;div&gt;&lt;h3 data-current-title&gt;晶蕾烘干使用时需要手动勾选&lt;/h3&gt;&lt;p data-current-subtitle&gt;推荐明确 · 家电 / 洗烘设备 / 使用与维护&lt;/p&gt;&lt;/div&gt;&lt;/div&gt;
+	                        &lt;div class=&quot;candidate-fields&quot;&gt;
+	                          &lt;div class=&quot;field&quot;&gt;&lt;label for=&quot;candidate-content&quot;&gt;内容&lt;/label&gt;&lt;textarea class=&quot;textarea&quot; id=&quot;candidate-content&quot; data-current-content&gt;晶蕾烘干不是默认程序，使用时需要手动勾选。&lt;/textarea&gt;&lt;/div&gt;
+	                          &lt;div class=&quot;candidate-field-row&quot;&gt;&lt;div class=&quot;field&quot;&gt;&lt;label for=&quot;candidate-type&quot;&gt;主类型&lt;/label&gt;&lt;select class=&quot;select&quot; id=&quot;candidate-type&quot;&gt;&lt;option&gt;提醒&lt;/option&gt;&lt;option&gt;知识&lt;/option&gt;&lt;option&gt;方法&lt;/option&gt;&lt;option&gt;参数&lt;/option&gt;&lt;/select&gt;&lt;/div&gt;&lt;div class=&quot;field&quot;&gt;&lt;label for=&quot;candidate-project&quot;&gt;所属项目&lt;/label&gt;&lt;select class=&quot;select&quot; id=&quot;candidate-project&quot;&gt;&lt;option&gt;房子装修&lt;/option&gt;&lt;option&gt;个人健康&lt;/option&gt;&lt;/select&gt;&lt;/div&gt;&lt;/div&gt;
+	                          &lt;div class=&quot;field&quot;&gt;&lt;label&gt;AI 推荐目录&lt;/label&gt;&lt;div class=&quot;recommendation&quot;&gt;&lt;span class=&quot;badge ai&quot;&gt;推荐明确&lt;/span&gt;&lt;span class=&quot;path&quot;&gt;家电 / 洗烘设备 / 使用与维护&lt;/span&gt;&lt;span class=&quot;tiny muted&quot;&gt;与“烘干模式及使用方法”节点说明高度匹配&lt;/span&gt;&lt;button class=&quot;text-button&quot; data-change-directory&gt;更改目录&lt;/button&gt;&lt;/div&gt;&lt;/div&gt;
+	                          &lt;div class=&quot;field&quot;&gt;&lt;label&gt;与已有正式知识的关系&lt;/label&gt;&lt;select class=&quot;select&quot;&gt;&lt;option&gt;创建新的正式知识&lt;/option&gt;&lt;option&gt;补充已有正式知识&lt;/option&gt;&lt;option&gt;合并到已有正式知识&lt;/option&gt;&lt;/select&gt;&lt;/div&gt;
+	                          &lt;p class=&quot;decision-note&quot;&gt;&lt;strong&gt;推荐理由与风险：&lt;/strong&gt;证据直接支持“需要手动勾选”；“效果差异不明显”属于个人体验，已放入其他发现。&lt;/p&gt;
+	                          &lt;button class=&quot;candidate-compact&quot; data-candidate-select=&quot;1&quot;&gt;&lt;span class=&quot;badge ai&quot;&gt;推荐候选&lt;/span&gt;&lt;div&gt;&lt;h3&gt;烘干效果差异需要结合实际负载判断&lt;/h3&gt;&lt;p&gt;需要确认 · 家电 / 洗烘设备 / 使用与维护&lt;/p&gt;&lt;/div&gt;&lt;i class=&quot;summary-chevron&quot; data-lucide=&quot;chevron-right&quot;&gt;&lt;/i&gt;&lt;/button&gt;
+	                        &lt;/div&gt;
+	                      &lt;/div&gt;
+	                      &lt;div class=&quot;candidate-actions&quot;&gt;&lt;button class=&quot;button danger&quot; data-decide=&quot;拒绝&quot;&gt;拒绝&lt;/button&gt;&lt;button class=&quot;button&quot; data-decide=&quot;暂缓&quot;&gt;暂缓&lt;/button&gt;&lt;button class=&quot;button primary&quot; data-decide=&quot;确认并归档&quot;&gt;&lt;i data-lucide=&quot;check&quot;&gt;&lt;/i&gt;确认并归档&lt;/button&gt;&lt;/div&gt;
+	                    &lt;/div&gt;
+	                  &lt;/section&gt;
+                &lt;/div&gt;
+	                &lt;div class=&quot;review-queue-overlay&quot;&gt;&lt;aside class=&quot;review-queue-drawer&quot;&gt;&lt;div class=&quot;section-head&quot;&gt;&lt;div&gt;&lt;h2&gt;待处理来源&lt;/h2&gt;&lt;span class=&quot;small muted&quot;&gt;来源进度 1 / 3&lt;/span&gt;&lt;/div&gt;&lt;button class=&quot;icon-button&quot; aria-label=&quot;关闭待处理来源&quot; data-close-review-queue&gt;&lt;i data-lucide=&quot;x&quot;&gt;&lt;/i&gt;&lt;/button&gt;&lt;/div&gt;&lt;button class=&quot;source-list-row active&quot; data-source-row data-source-index=&quot;0&quot;&gt;&lt;strong&gt;洗烘使用体验.png&lt;/strong&gt;&lt;p&gt;2 条候选 · 当前&lt;/p&gt;&lt;span class=&quot;badge ai&quot; style=&quot;margin-top:7px&quot;&gt;待确认&lt;/span&gt;&lt;/button&gt;&lt;button class=&quot;source-list-row&quot; data-source-row data-source-index=&quot;1&quot;&gt;&lt;strong&gt;窗帘盒参考图&lt;/strong&gt;&lt;p&gt;2 条候选 · 部分确认&lt;/p&gt;&lt;span class=&quot;badge risk&quot; style=&quot;margin-top:7px&quot;&gt;部分确认&lt;/span&gt;&lt;/button&gt;&lt;button class=&quot;source-list-row&quot; data-source-row data-source-index=&quot;2&quot;&gt;&lt;strong&gt;防水验收标准&lt;/strong&gt;&lt;p&gt;1 条冲突候选&lt;/p&gt;&lt;span class=&quot;badge risk&quot; style=&quot;margin-top:7px&quot;&gt;需精审&lt;/span&gt;&lt;/button&gt;&lt;/aside&gt;&lt;/div&gt;
+              &lt;/div&gt;
+              &lt;div class=&quot;batch-view&quot;&gt;
+	                &lt;div class=&quot;batch-toolbar&quot;&gt;&lt;strong&gt;已选 3 条低风险候选&lt;/strong&gt;&lt;button class=&quot;button primary&quot; data-batch-action=&quot;确认并归档&quot;&gt;&lt;i data-lucide=&quot;check-check&quot;&gt;&lt;/i&gt;批量确认并归档&lt;/button&gt;&lt;button class=&quot;button danger&quot; data-batch-action=&quot;拒绝&quot;&gt;&lt;i data-lucide=&quot;x&quot;&gt;&lt;/i&gt;批量拒绝&lt;/button&gt;&lt;button class=&quot;button&quot; data-batch-action=&quot;修改目录&quot;&gt;&lt;i data-lucide=&quot;folder-input&quot;&gt;&lt;/i&gt;修改目录&lt;/button&gt;&lt;span class=&quot;small muted&quot; style=&quot;margin-left:auto&quot;&gt;冲突、重复、证据不足和高风险已自动分流精审&lt;/span&gt;&lt;/div&gt;
+                &lt;div class=&quot;batch-groups&quot;&gt;
+                  &lt;section class=&quot;batch-group&quot;&gt;&lt;div class=&quot;batch-group-title&quot;&gt;&lt;i data-lucide=&quot;folder&quot;&gt;&lt;/i&gt;&lt;h2&gt;空间规划 / 客厅&lt;/h2&gt;&lt;span class=&quot;badge ai&quot;&gt;推荐明确 · 2&lt;/span&gt;&lt;/div&gt;&lt;label class=&quot;batch-candidate&quot;&gt;&lt;input type=&quot;checkbox&quot; checked&gt;&lt;div&gt;&lt;strong&gt;窗帘盒应预留电机检修空间&lt;/strong&gt;&lt;p&gt;来自：窗帘盒参考图 · 参数&lt;/p&gt;&lt;/div&gt;&lt;span class=&quot;badge ai&quot;&gt;新知识&lt;/span&gt;&lt;button class=&quot;text-button&quot; data-expand-source&gt;展开来源&lt;/button&gt;&lt;/label&gt;&lt;label class=&quot;batch-candidate&quot;&gt;&lt;input type=&quot;checkbox&quot; checked&gt;&lt;div&gt;&lt;strong&gt;无主灯布局先确定主要使用场景&lt;/strong&gt;&lt;p&gt;来自：客厅灯光笔记 · 方法&lt;/p&gt;&lt;/div&gt;&lt;span class=&quot;badge ai&quot;&gt;新知识&lt;/span&gt;&lt;button class=&quot;text-button&quot; data-expand-source&gt;展开来源&lt;/button&gt;&lt;/label&gt;&lt;/section&gt;
+                  &lt;section class=&quot;batch-group&quot;&gt;&lt;div class=&quot;batch-group-title&quot;&gt;&lt;i data-lucide=&quot;folder&quot;&gt;&lt;/i&gt;&lt;h2&gt;家电 / 洗烘设备 / 使用与维护&lt;/h2&gt;&lt;span class=&quot;badge ai&quot;&gt;推荐明确 · 1&lt;/span&gt;&lt;/div&gt;&lt;label class=&quot;batch-candidate&quot;&gt;&lt;input type=&quot;checkbox&quot; checked&gt;&lt;div&gt;&lt;strong&gt;晶蕾烘干使用时需要手动勾选&lt;/strong&gt;&lt;p&gt;来自：洗烘使用体验.png · 提醒&lt;/p&gt;&lt;/div&gt;&lt;span class=&quot;badge ai&quot;&gt;新知识&lt;/span&gt;&lt;button class=&quot;text-button&quot; data-expand-source&gt;展开来源&lt;/button&gt;&lt;/label&gt;&lt;/section&gt;
+	                  &lt;section class=&quot;batch-group&quot;&gt;&lt;div class=&quot;batch-group-title&quot;&gt;&lt;i data-lucide=&quot;shield-alert&quot;&gt;&lt;/i&gt;&lt;h2&gt;已分流精审&lt;/h2&gt;&lt;span class=&quot;badge risk&quot;&gt;2 条不参与快审&lt;/span&gt;&lt;/div&gt;&lt;div class=&quot;batch-candidate risky&quot;&gt;&lt;input type=&quot;checkbox&quot; disabled&gt;&lt;div&gt;&lt;strong&gt;防水层允许局部空鼓&lt;/strong&gt;&lt;p&gt;可能与已有正式知识冲突 · 证据表述不完整&lt;/p&gt;&lt;/div&gt;&lt;span class=&quot;badge risk&quot;&gt;可能冲突&lt;/span&gt;&lt;button class=&quot;button&quot; data-review-mode-source&gt;精审&lt;/button&gt;&lt;/div&gt;&lt;div class=&quot;batch-candidate risky&quot;&gt;&lt;input type=&quot;checkbox&quot; disabled&gt;&lt;div&gt;&lt;strong&gt;电视墙插座预留高度&lt;/strong&gt;&lt;p&gt;与已有正式知识高度相似，建议仅补充来源&lt;/p&gt;&lt;/div&gt;&lt;span class=&quot;badge risk&quot;&gt;疑似重复&lt;/span&gt;&lt;button class=&quot;button&quot; data-review-mode-source&gt;精审&lt;/button&gt;&lt;/div&gt;&lt;/section&gt;
+                &lt;/div&gt;
+              &lt;/div&gt;
+            &lt;/main&gt;
+
+            &lt;main class=&quot;page&quot; data-page=&quot;knowledge&quot; style=&quot;position:relative&quot;&gt;
+              &lt;div class=&quot;page-scroll&quot; style=&quot;padding-bottom:0&quot;&gt;
+                &lt;div class=&quot;page-heading knowledge-page-head&quot;&gt;&lt;h1&gt;知识空间&lt;/h1&gt;&lt;div class=&quot;heading-actions&quot;&gt;&lt;button class=&quot;button ai&quot; data-open-assistant&gt;&lt;i data-lucide=&quot;sparkles&quot;&gt;&lt;/i&gt;目录助手&lt;/button&gt;&lt;/div&gt;&lt;/div&gt;
+              &lt;/div&gt;
+              &lt;div class=&quot;knowledge-view-tabs&quot;&gt;&lt;div class=&quot;segmented&quot;&gt;&lt;button class=&quot;segment active&quot; data-knowledge-mode=&quot;entries&quot;&gt;目录浏览&lt;/button&gt;&lt;button class=&quot;segment&quot; data-knowledge-mode=&quot;mindmap&quot;&gt;思维导图&lt;/button&gt;&lt;/div&gt;&lt;/div&gt;
+              &lt;div class=&quot;knowledge-entries&quot;&gt;
+                &lt;div class=&quot;knowledge-layout&quot;&gt;
+	                  &lt;aside class=&quot;directory-tree&quot;&gt;&lt;div class=&quot;directory-tree-head&quot;&gt;&lt;strong&gt;目录树&lt;/strong&gt;&lt;button class=&quot;icon-button&quot; aria-label=&quot;目录树菜单&quot; data-tooltip=&quot;目录树菜单：新建、排序和显示设置&quot; data-entry-action=&quot;目录树&quot;&gt;&lt;i data-lucide=&quot;ellipsis&quot;&gt;&lt;/i&gt;&lt;/button&gt;&lt;/div&gt;&lt;input class=&quot;input tree-search&quot; placeholder=&quot;搜索目录&quot; aria-label=&quot;搜索目录&quot;&gt;&lt;button class=&quot;tree-item&quot;&gt;&lt;i data-lucide=&quot;chevron-down&quot;&gt;&lt;/i&gt;&lt;span&gt;空间规划&lt;/span&gt;&lt;span class=&quot;tree-count&quot;&gt;&lt;b&gt;4&lt;/b&gt;/18&lt;/span&gt;&lt;/button&gt;&lt;button class=&quot;tree-item child active&quot; data-tree-node&gt;&lt;i data-lucide=&quot;folder-open&quot;&gt;&lt;/i&gt;&lt;span&gt;客厅&lt;/span&gt;&lt;span class=&quot;tree-count&quot;&gt;&lt;b&gt;4&lt;/b&gt;/4&lt;/span&gt;&lt;/button&gt;&lt;button class=&quot;tree-item child&quot; data-tree-node&gt;&lt;i data-lucide=&quot;folder&quot;&gt;&lt;/i&gt;&lt;span&gt;厨房&lt;/span&gt;&lt;span class=&quot;tree-count&quot;&gt;&lt;b&gt;3&lt;/b&gt;/3&lt;/span&gt;&lt;/button&gt;&lt;button class=&quot;tree-item&quot;&gt;&lt;i data-lucide=&quot;chevron-down&quot;&gt;&lt;/i&gt;&lt;span&gt;施工&lt;/span&gt;&lt;span class=&quot;tree-count&quot;&gt;&lt;b&gt;5&lt;/b&gt;/16&lt;/span&gt;&lt;/button&gt;&lt;button class=&quot;tree-item child&quot; data-tree-node&gt;&lt;i data-lucide=&quot;folder&quot;&gt;&lt;/i&gt;&lt;span&gt;防水&lt;/span&gt;&lt;span class=&quot;tree-count&quot;&gt;&lt;b&gt;3&lt;/b&gt;/3&lt;/span&gt;&lt;/button&gt;&lt;button class=&quot;tree-item&quot;&gt;&lt;i data-lucide=&quot;chevron-down&quot;&gt;&lt;/i&gt;&lt;span&gt;家电&lt;/span&gt;&lt;span class=&quot;tree-count&quot;&gt;&lt;b&gt;2&lt;/b&gt;/12&lt;/span&gt;&lt;/button&gt;&lt;button class=&quot;tree-item child&quot; data-tree-node&gt;&lt;i data-lucide=&quot;folder&quot;&gt;&lt;/i&gt;&lt;span&gt;洗烘设备&lt;/span&gt;&lt;span class=&quot;tree-count&quot;&gt;&lt;b&gt;2&lt;/b&gt;/6&lt;/span&gt;&lt;/button&gt;&lt;p class=&quot;tiny muted&quot; style=&quot;padding:12px 8px&quot;&gt;直接知识 / 子树知识&lt;/p&gt;&lt;/aside&gt;
+	                  &lt;section class=&quot;knowledge-content&quot;&gt;&lt;div class=&quot;knowledge-toolbar&quot;&gt;&lt;div class=&quot;knowledge-toolbar-main&quot;&gt;&lt;h2&gt;客厅&lt;/h2&gt;&lt;p&gt;4 条直接知识 · 4 条包含子树&lt;/p&gt;&lt;button class=&quot;icon-button&quot; aria-label=&quot;当前节点菜单&quot; data-tooltip=&quot;当前节点菜单：编辑、移动或删除客厅&quot; data-entry-action=&quot;当前节点&quot;&gt;&lt;i data-lucide=&quot;ellipsis&quot;&gt;&lt;/i&gt;&lt;/button&gt;&lt;/div&gt;&lt;div class=&quot;segmented entry-view-switch&quot;&gt;&lt;button class=&quot;segment active&quot; data-entry-view=&quot;cards&quot;&gt;&lt;i data-lucide=&quot;layout-grid&quot;&gt;&lt;/i&gt;卡片&lt;/button&gt;&lt;button class=&quot;segment&quot; data-entry-view=&quot;list&quot;&gt;&lt;i data-lucide=&quot;list&quot;&gt;&lt;/i&gt;列表&lt;/button&gt;&lt;/div&gt;&lt;/div&gt;
+	                    &lt;div class=&quot;entry-grid&quot;&gt;&lt;article class=&quot;entry-card&quot;&gt;&lt;span class=&quot;badge confirmed&quot;&gt;&lt;i data-lucide=&quot;circle-check&quot;&gt;&lt;/i&gt;正式知识&lt;/span&gt;&lt;h3 style=&quot;margin-top:10px&quot;&gt;窗帘盒应预留电机检修空间&lt;/h3&gt;&lt;p&gt;计划安装电动窗帘时，除双轨宽度外还应预留电源与电机检修空间。&lt;/p&gt;&lt;div class=&quot;entry-meta&quot;&gt;&lt;span&gt;参数&lt;/span&gt;&lt;button class=&quot;text-button&quot; data-open-source-entry&gt;&lt;i data-lucide=&quot;paperclip&quot;&gt;&lt;/i&gt;2 个来源&lt;/button&gt;&lt;span&gt;昨天更新&lt;/span&gt;&lt;/div&gt;&lt;/article&gt;&lt;article class=&quot;entry-card&quot;&gt;&lt;span class=&quot;badge confirmed&quot;&gt;&lt;i data-lucide=&quot;circle-check&quot;&gt;&lt;/i&gt;正式知识&lt;/span&gt;&lt;h3 style=&quot;margin-top:10px&quot;&gt;无主灯布局先确定使用场景&lt;/h3&gt;&lt;p&gt;区分观影、会客和日常活动，再决定筒灯、射灯与灯带组合。&lt;/p&gt;&lt;div class=&quot;entry-meta&quot;&gt;&lt;span&gt;方法&lt;/span&gt;&lt;button class=&quot;text-button&quot; data-open-source-entry&gt;&lt;i data-lucide=&quot;paperclip&quot;&gt;&lt;/i&gt;1 个来源&lt;/button&gt;&lt;span&gt;8 月 10 日&lt;/span&gt;&lt;/div&gt;&lt;/article&gt;&lt;/div&gt;
+	                    &lt;div class=&quot;entry-list&quot;&gt;&lt;div class=&quot;entry-list-row header&quot;&gt;&lt;span&gt;标题&lt;/span&gt;&lt;span&gt;类型&lt;/span&gt;&lt;span&gt;目录&lt;/span&gt;&lt;span&gt;来源&lt;/span&gt;&lt;span&gt;&lt;/span&gt;&lt;/div&gt;&lt;div class=&quot;entry-list-row&quot;&gt;&lt;strong&gt;窗帘盒应预留电机检修空间&lt;/strong&gt;&lt;span&gt;参数&lt;/span&gt;&lt;span&gt;客厅&lt;/span&gt;&lt;button class=&quot;text-button&quot; data-open-source-entry&gt;2 个来源&lt;/button&gt;&lt;button class=&quot;icon-button&quot; aria-label=&quot;打开正式知识&quot;&gt;&lt;i data-lucide=&quot;chevron-right&quot;&gt;&lt;/i&gt;&lt;/button&gt;&lt;/div&gt;&lt;div class=&quot;entry-list-row&quot;&gt;&lt;strong&gt;无主灯布局先确定使用场景&lt;/strong&gt;&lt;span&gt;方法&lt;/span&gt;&lt;span&gt;客厅&lt;/span&gt;&lt;button class=&quot;text-button&quot; data-open-source-entry&gt;1 个来源&lt;/button&gt;&lt;button class=&quot;icon-button&quot; aria-label=&quot;打开正式知识&quot;&gt;&lt;i data-lucide=&quot;chevron-right&quot;&gt;&lt;/i&gt;&lt;/button&gt;&lt;/div&gt;&lt;/div&gt;
+                  &lt;/section&gt;
+                &lt;/div&gt;
+              &lt;/div&gt;
+	              &lt;div class=&quot;mindmap&quot;&gt;&lt;div class=&quot;map-canvas&quot;&gt;&lt;div class=&quot;map-line&quot; style=&quot;left:25%;top:49%;width:25%;transform:rotate(-18deg)&quot;&gt;&lt;/div&gt;&lt;div class=&quot;map-line&quot; style=&quot;left:25%;top:49%;width:25%;transform:rotate(18deg)&quot;&gt;&lt;/div&gt;&lt;div class=&quot;map-line&quot; style=&quot;left:50%;top:36%;width:22%;transform:rotate(-14deg)&quot;&gt;&lt;/div&gt;&lt;button class=&quot;map-node active&quot; style=&quot;left:18%;top:45%&quot; data-map-node=&quot;房子装修&quot;&gt;&lt;i data-lucide=&quot;focus&quot;&gt;&lt;/i&gt;房子装修 &lt;span class=&quot;tiny&quot;&gt;12 / 38&lt;/span&gt;&lt;/button&gt;&lt;button class=&quot;map-node&quot; style=&quot;left:47%;top:27%&quot; data-map-node=&quot;空间规划&quot;&gt;&lt;i data-lucide=&quot;minus-square&quot;&gt;&lt;/i&gt;空间规划 &lt;span class=&quot;tiny&quot;&gt;4 / 18&lt;/span&gt;&lt;/button&gt;&lt;button class=&quot;map-node&quot; style=&quot;left:47%;top:62%&quot; data-map-node=&quot;施工&quot;&gt;&lt;i data-lucide=&quot;plus-square&quot;&gt;&lt;/i&gt;施工 &lt;span class=&quot;tiny&quot;&gt;5 / 16&lt;/span&gt;&lt;/button&gt;&lt;button class=&quot;map-node highlight&quot; style=&quot;left:72%;top:17%&quot; data-map-node=&quot;客厅&quot;&gt;&lt;i data-lucide=&quot;folder&quot;&gt;&lt;/i&gt;客厅 &lt;span class=&quot;tiny&quot;&gt;4 / 4&lt;/span&gt;&lt;/button&gt;&lt;div class=&quot;toolbar&quot; style=&quot;position:absolute;left:14px;top:14px&quot;&gt;&lt;button class=&quot;button&quot; data-map-action=&quot;展开&quot;&gt;&lt;i data-lucide=&quot;unfold-vertical&quot;&gt;&lt;/i&gt;展开&lt;/button&gt;&lt;button class=&quot;button&quot; data-map-action=&quot;收起&quot;&gt;&lt;i data-lucide=&quot;fold-vertical&quot;&gt;&lt;/i&gt;收起&lt;/button&gt;&lt;button class=&quot;button&quot; data-map-action=&quot;聚焦子树&quot;&gt;&lt;i data-lucide=&quot;focus&quot;&gt;&lt;/i&gt;聚焦子树&lt;/button&gt;&lt;input class=&quot;input&quot; style=&quot;width:150px&quot; placeholder=&quot;搜索并高亮&quot; data-map-search&gt;&lt;/div&gt;&lt;/div&gt;&lt;aside class=&quot;map-side&quot;&gt;&lt;span class=&quot;tiny muted&quot;&gt;当前节点&lt;/span&gt;&lt;h2 data-map-title&gt;房子装修&lt;/h2&gt;&lt;label class=&quot;scope-option&quot;&gt;&lt;input type=&quot;checkbox&quot; checked&gt;&lt;span&gt;&lt;strong&gt;包含子树&lt;/strong&gt;&lt;span class=&quot;small muted&quot; style=&quot;display:block&quot;&gt;共 38 条正式知识&lt;/span&gt;&lt;/span&gt;&lt;/label&gt;&lt;div class=&quot;list-frame&quot; style=&quot;margin-top:10px&quot;&gt;&lt;div class=&quot;list-row&quot;&gt;&lt;div class=&quot;row-main&quot;&gt;&lt;strong&gt;窗帘盒应预留电机检修空间&lt;/strong&gt;&lt;p&gt;空间规划 / 客厅&lt;/p&gt;&lt;/div&gt;&lt;/div&gt;&lt;div class=&quot;list-row&quot;&gt;&lt;div class=&quot;row-main&quot;&gt;&lt;strong&gt;晶蕾烘干使用时需要手动勾选&lt;/strong&gt;&lt;p&gt;家电 / 洗烘设备&lt;/p&gt;&lt;/div&gt;&lt;/div&gt;&lt;/div&gt;&lt;/aside&gt;&lt;/div&gt;
+	              &lt;div class=&quot;drawer-overlay&quot;&gt;&lt;div class=&quot;directory-assistant&quot;&gt;&lt;section class=&quot;assistant-chat&quot;&gt;&lt;div class=&quot;section-head&quot;&gt;&lt;h2&gt;目录助手&lt;/h2&gt;&lt;button class=&quot;icon-button&quot; aria-label=&quot;关闭目录助手&quot; data-close-assistant&gt;&lt;i data-lucide=&quot;x&quot;&gt;&lt;/i&gt;&lt;/button&gt;&lt;/div&gt;&lt;span class=&quot;badge ai&quot;&gt;&lt;i data-lucide=&quot;sparkles&quot;&gt;&lt;/i&gt;AI 只修改目录草稿&lt;/span&gt;&lt;div class=&quot;chat-message&quot;&gt;你想先补齐哪一部分目录？是否要把“家电”按选购、安装、使用来组织？&lt;/div&gt;&lt;div class=&quot;chat-message user&quot;&gt;拓展洗烘设备，重点关注选购和使用维护。&lt;/div&gt;&lt;div class=&quot;chat-message&quot;&gt;已在草稿中新增 3 个节点，并建议把“烘干模式”移动到“使用与维护”。正式目录尚未改变。&lt;/div&gt;&lt;div class=&quot;chat-compose&quot;&gt;&lt;input class=&quot;input&quot; placeholder=&quot;继续调整目录草稿&quot;&gt;&lt;button class=&quot;icon-button&quot; aria-label=&quot;发送调整&quot; data-adjust-draft&gt;&lt;i data-lucide=&quot;send&quot;&gt;&lt;/i&gt;&lt;/button&gt;&lt;/div&gt;&lt;/section&gt;&lt;section class=&quot;draft-panel&quot;&gt;&lt;div class=&quot;section-head&quot;&gt;&lt;div&gt;&lt;span class=&quot;tiny muted&quot;&gt;目录草稿&lt;/span&gt;&lt;h2&gt;家电 / 洗烘设备&lt;/h2&gt;&lt;/div&gt;&lt;button class=&quot;button primary&quot; data-apply-draft&gt;&lt;i data-lucide=&quot;check&quot;&gt;&lt;/i&gt;确认应用&lt;/button&gt;&lt;/div&gt;&lt;div class=&quot;toolbar&quot;&gt;&lt;span class=&quot;badge success&quot;&gt;新增 3&lt;/span&gt;&lt;span class=&quot;badge ai&quot;&gt;改名 1&lt;/span&gt;&lt;span class=&quot;badge risk&quot;&gt;移动 1&lt;/span&gt;&lt;span class=&quot;badge error&quot;&gt;建议删除 1&lt;/span&gt;&lt;/div&gt;&lt;div class=&quot;draft-tree&quot;&gt;&lt;div class=&quot;draft-row&quot;&gt;&lt;i data-lucide=&quot;chevron-down&quot;&gt;&lt;/i&gt;&lt;strong&gt;洗烘设备&lt;/strong&gt;&lt;span class=&quot;badge neutral&quot;&gt;现有&lt;/span&gt;&lt;/div&gt;&lt;div class=&quot;draft-row child&quot;&gt;&lt;i data-lucide=&quot;plus&quot;&gt;&lt;/i&gt;&lt;strong&gt;选购与容量&lt;/strong&gt;&lt;span class=&quot;badge success&quot;&gt;新增&lt;/span&gt;&lt;/div&gt;&lt;div class=&quot;draft-row child&quot;&gt;&lt;i data-lucide=&quot;plus&quot;&gt;&lt;/i&gt;&lt;strong&gt;安装与空间&lt;/strong&gt;&lt;span class=&quot;badge success&quot;&gt;新增&lt;/span&gt;&lt;/div&gt;&lt;div class=&quot;draft-row child&quot;&gt;&lt;i data-lucide=&quot;move-right&quot;&gt;&lt;/i&gt;&lt;strong&gt;使用与维护&lt;/strong&gt;&lt;span class=&quot;badge risk&quot;&gt;移动 1 个节点&lt;/span&gt;&lt;/div&gt;&lt;label class=&quot;draft-row child remove&quot;&gt;&lt;input type=&quot;checkbox&quot;&gt;&lt;strong&gt;常见品牌&lt;/strong&gt;&lt;span class=&quot;badge error&quot;&gt;建议删除 · 影响 4 条正式知识&lt;/span&gt;&lt;/label&gt;&lt;/div&gt;&lt;p class=&quot;tiny muted&quot; style=&quot;margin-top:12px&quot;&gt;建议删除默认不选中。应用前会再次校验受影响的正式知识与节点。&lt;/p&gt;&lt;/section&gt;&lt;/div&gt;&lt;/div&gt;
+            &lt;/main&gt;
+
+            &lt;main class=&quot;page&quot; data-page=&quot;directory&quot;&gt;&lt;/main&gt;
+
+            &lt;main class=&quot;page&quot; data-page=&quot;reader&quot;&gt;
+              &lt;div class=&quot;page-scroll&quot;&gt;
+	                &lt;div class=&quot;page-heading&quot;&gt;&lt;div&gt;&lt;h1&gt;AI 帮我读知识库&lt;/h1&gt;&lt;p&gt;只基于已确认的正式知识回答，关键结论附知识与来源引用。&lt;/p&gt;&lt;/div&gt;&lt;span class=&quot;badge confirmed&quot;&gt;仅我的知识库&lt;/span&gt;&lt;/div&gt;
+                &lt;div class=&quot;reader-layout&quot;&gt;
+	                  &lt;aside class=&quot;reader-context&quot;&gt;&lt;h2&gt;阅读范围&lt;/h2&gt;&lt;label class=&quot;scope-option&quot;&gt;&lt;input type=&quot;radio&quot; name=&quot;reader-scope&quot; checked&gt;&lt;span&gt;&lt;strong&gt;当前节点及子树&lt;/strong&gt;&lt;span class=&quot;small muted&quot; style=&quot;display:block&quot;&gt;家电 / 洗烘设备 · 6 条知识&lt;/span&gt;&lt;/span&gt;&lt;/label&gt;&lt;label class=&quot;scope-option&quot;&gt;&lt;input type=&quot;radio&quot; name=&quot;reader-scope&quot;&gt;&lt;span&gt;&lt;strong&gt;整个项目&lt;/strong&gt;&lt;span class=&quot;small muted&quot; style=&quot;display:block&quot;&gt;房子装修 · 38 条知识&lt;/span&gt;&lt;/span&gt;&lt;/label&gt;&lt;section class=&quot;section&quot;&gt;&lt;h3&gt;本次可引用&lt;/h3&gt;&lt;p class=&quot;small muted&quot; style=&quot;margin-top:6px&quot;&gt;6 条正式知识，关联 9 个来源。待确认候选不会进入回答。&lt;/p&gt;&lt;/section&gt;&lt;/aside&gt;
+	                  &lt;section class=&quot;reader-thread&quot;&gt;&lt;div class=&quot;chat-message user&quot; style=&quot;margin-left:20%&quot;&gt;晶蕾烘干在使用和安装上有哪些需要注意的？&lt;/div&gt;&lt;div class=&quot;reader-answer&quot;&gt;&lt;span class=&quot;badge confirmed&quot;&gt;&lt;i data-lucide=&quot;book-open-check&quot;&gt;&lt;/i&gt;3 条知识 · 2 个来源&lt;/span&gt;&lt;p&gt;使用时，晶蕾烘干不是默认程序，需要手动勾选；如果经常使用，建议把它加入固定操作检查。&lt;button class=&quot;citation&quot; data-citation&gt;知识 ① · 来源 2&lt;/button&gt;&lt;/p&gt;&lt;p&gt;安装上，当前知识库只确认了洗烘叠放需要提前核对设备总高度和柜体散热空间。&lt;button class=&quot;citation&quot; data-citation&gt;知识 ② · 来源 1&lt;/button&gt;&lt;/p&gt;&lt;div class=&quot;insufficient&quot;&gt;&lt;strong&gt;知识不足：&lt;/strong&gt;目前没有已确认知识说明晶蕾烘干对排水、电源或通风有额外要求。我不会用模型常识补齐这一部分。&lt;/div&gt;&lt;div class=&quot;toolbar&quot; style=&quot;margin-top:14px&quot;&gt;&lt;button class=&quot;button&quot; data-save-answer&gt;&lt;i data-lucide=&quot;sparkles&quot;&gt;&lt;/i&gt;转为 AI 候选&lt;/button&gt;&lt;button class=&quot;text-button&quot; data-citation&gt;&lt;i data-lucide=&quot;quote&quot;&gt;&lt;/i&gt;查看全部引用&lt;/button&gt;&lt;/div&gt;&lt;/div&gt;&lt;div class=&quot;reader-compose&quot;&gt;&lt;input class=&quot;input&quot; placeholder=&quot;继续询问已确认知识…&quot; aria-label=&quot;向知识库提问&quot;&gt;&lt;button class=&quot;button primary&quot; data-reader-send&gt;&lt;i data-lucide=&quot;send&quot;&gt;&lt;/i&gt;提问&lt;/button&gt;&lt;/div&gt;&lt;/section&gt;
+                &lt;/div&gt;
+              &lt;/div&gt;
+            &lt;/main&gt;
+
+	            &lt;main class=&quot;page&quot; data-page=&quot;search&quot;&gt;&lt;div class=&quot;page-scroll&quot;&gt;&lt;div class=&quot;page-heading&quot;&gt;&lt;div&gt;&lt;h1&gt;搜索&lt;/h1&gt;&lt;p&gt;跨项目搜索已确认的正式知识，不混入待确认候选。&lt;/p&gt;&lt;/div&gt;&lt;/div&gt;&lt;div class=&quot;search-results&quot;&gt;&lt;div class=&quot;field&quot;&gt;&lt;label for=&quot;global-search&quot;&gt;关键词&lt;/label&gt;&lt;div style=&quot;display:flex;gap:8px&quot;&gt;&lt;input id=&quot;global-search&quot; class=&quot;input&quot; value=&quot;烘干&quot;&gt;&lt;button class=&quot;button primary&quot; data-search-run&gt;&lt;i data-lucide=&quot;search&quot;&gt;&lt;/i&gt;搜索&lt;/button&gt;&lt;/div&gt;&lt;/div&gt;&lt;div class=&quot;list-frame section&quot;&gt;&lt;div class=&quot;list-row&quot;&gt;&lt;span class=&quot;task-icon&quot; style=&quot;color:var(--g-confirmed)&quot;&gt;&lt;i data-lucide=&quot;circle-check&quot;&gt;&lt;/i&gt;&lt;/span&gt;&lt;div class=&quot;row-main&quot;&gt;&lt;strong&gt;晶蕾烘干使用时需要手动勾选&lt;/strong&gt;&lt;p&gt;房子装修 / 家电 / 洗烘设备 · 2 个来源&lt;/p&gt;&lt;/div&gt;&lt;span class=&quot;badge confirmed&quot;&gt;正式知识&lt;/span&gt;&lt;/div&gt;&lt;div class=&quot;list-row&quot;&gt;&lt;span class=&quot;task-icon&quot; style=&quot;color:var(--g-confirmed)&quot;&gt;&lt;i data-lucide=&quot;circle-check&quot;&gt;&lt;/i&gt;&lt;/span&gt;&lt;div class=&quot;row-main&quot;&gt;&lt;strong&gt;洗烘叠放需核对总高度与散热空间&lt;/strong&gt;&lt;p&gt;房子装修 / 家电 / 洗烘设备 · 1 个来源&lt;/p&gt;&lt;/div&gt;&lt;span class=&quot;badge confirmed&quot;&gt;正式知识&lt;/span&gt;&lt;/div&gt;&lt;/div&gt;&lt;/div&gt;&lt;/div&gt;&lt;/main&gt;
+
+            &lt;main class=&quot;page&quot; data-page=&quot;account&quot;&gt;&lt;div class=&quot;page-scroll&quot;&gt;&lt;div class=&quot;page-heading&quot;&gt;&lt;div&gt;&lt;h1&gt;账户&lt;/h1&gt;&lt;p&gt;个人设置、AI Provider 与数据管理。&lt;/p&gt;&lt;/div&gt;&lt;/div&gt;&lt;div class=&quot;account-panel&quot;&gt;&lt;div class=&quot;list-frame&quot;&gt;&lt;div class=&quot;list-row&quot;&gt;&lt;span class=&quot;task-icon&quot;&gt;&lt;i data-lucide=&quot;user-round&quot;&gt;&lt;/i&gt;&lt;/span&gt;&lt;div class=&quot;row-main&quot;&gt;&lt;strong&gt;hujun&lt;/strong&gt;&lt;p&gt;个人 Workspace&lt;/p&gt;&lt;/div&gt;&lt;button class=&quot;button&quot;&gt;编辑&lt;/button&gt;&lt;/div&gt;&lt;div class=&quot;list-row&quot;&gt;&lt;span class=&quot;task-icon&quot;&gt;&lt;i data-lucide=&quot;cpu&quot;&gt;&lt;/i&gt;&lt;/span&gt;&lt;div class=&quot;row-main&quot;&gt;&lt;strong&gt;AI Provider&lt;/strong&gt;&lt;p&gt;当前使用 Demo Provider · 原型不发送真实数据&lt;/p&gt;&lt;/div&gt;&lt;button class=&quot;button&quot;&gt;管理&lt;/button&gt;&lt;/div&gt;&lt;div class=&quot;list-row&quot;&gt;&lt;span class=&quot;task-icon&quot;&gt;&lt;i data-lucide=&quot;database&quot;&gt;&lt;/i&gt;&lt;/span&gt;&lt;div class=&quot;row-main&quot;&gt;&lt;strong&gt;数据管理&lt;/strong&gt;&lt;p&gt;导出与彻底删除将在后续阶段补充&lt;/p&gt;&lt;/div&gt;&lt;span class=&quot;badge neutral&quot;&gt;后续&lt;/span&gt;&lt;/div&gt;&lt;/div&gt;&lt;/div&gt;&lt;/div&gt;&lt;/main&gt;
+          &lt;/div&gt;
+        &lt;/div&gt;
+      &lt;/div&gt;
+      &lt;div class=&quot;toast&quot; role=&quot;status&quot; aria-live=&quot;polite&quot;&gt;&lt;/div&gt;
+    &lt;/div&gt;
+  &lt;/div&gt;
+
+  &lt;script&gt;
+    (() =&gt; {
+      const root = document.getElementById(&#x27;grove-product-prototype&#x27;);
+      const pages = [...root.querySelectorAll(&#x27;[data-page]&#x27;)];
+      const prototypeTabs = [...root.querySelectorAll(&#x27;.proto-tab&#x27;)];
+      const projectNav = [...root.querySelectorAll(&#x27;[data-project-nav]&#x27;)];
+      const globalButtons = [...root.querySelectorAll(&#x27;[data-global]&#x27;)];
+      const sidebar = root.querySelector(&#x27;.global-sidebar&#x27;);
+      let toastTimer;
+      const toast = (message) =&gt; { const el = root.querySelector(&#x27;.toast&#x27;); el.textContent = message; el.classList.add(&#x27;show&#x27;); clearTimeout(toastTimer); toastTimer = setTimeout(() =&gt; el.classList.remove(&#x27;show&#x27;), 2200); };
+      const refreshIcons = () =&gt; globalThis.lucide?.createIcons({ attrs: { width: 16, height: 16 } });
+      function showPage(name) {
+	        if (name === &#x27;directory&#x27;) { showPage(&#x27;knowledge&#x27;); prototypeTabs.forEach(tab =&gt; tab.setAttribute(&#x27;aria-selected&#x27;, String(tab.dataset.go === &#x27;directory&#x27;))); setTimeout(() =&gt; root.querySelector(&#x27;[data-open-assistant]&#x27;).click(), 0); return; }
+        if (name === &#x27;review-batch&#x27;) { showPage(&#x27;review&#x27;); setTimeout(() =&gt; root.querySelector(&#x27;[data-review-mode=&quot;batch&quot;]&#x27;).click(), 0); return; }
+        pages.forEach(page =&gt; page.classList.toggle(&#x27;active&#x27;, page.dataset.page === name));
+	        prototypeTabs.forEach(tab =&gt; tab.setAttribute(&#x27;aria-selected&#x27;, String(tab.dataset.go === name)));
+        projectNav.forEach(button =&gt; button.classList.toggle(&#x27;active&#x27;, button.dataset.projectNav === name));
+        globalButtons.forEach(button =&gt; button.classList.toggle(&#x27;active&#x27;, button.dataset.global === name));
+        sidebar.classList.toggle(&#x27;is-global&#x27;, [&#x27;projects&#x27;,&#x27;inbox&#x27;,&#x27;search&#x27;,&#x27;account&#x27;].includes(name));
+        refreshIcons();
+      }
+      root.querySelectorAll(&#x27;[data-go]&#x27;).forEach(button =&gt; button.addEventListener(&#x27;click&#x27;, () =&gt; showPage(button.dataset.go)));
+      projectNav.forEach(button =&gt; button.addEventListener(&#x27;click&#x27;, () =&gt; showPage(button.dataset.projectNav)));
+      root.querySelectorAll(&#x27;[data-open-project]&#x27;).forEach(button =&gt; button.addEventListener(&#x27;click&#x27;, () =&gt; showPage(&#x27;project-home&#x27;)));
+      globalButtons.forEach(button =&gt; button.addEventListener(&#x27;click&#x27;, () =&gt; showPage(button.dataset.global)));
+      root.querySelectorAll(&#x27;[data-set-status]&#x27;).forEach(button =&gt; button.addEventListener(&#x27;click&#x27;, () =&gt; setStatus(button.dataset.setStatus)));
+      function setStatus(status) { root.querySelectorAll(&#x27;[data-status-label]&#x27;).forEach(label =&gt; label.textContent = status); root.querySelectorAll(&#x27;[data-set-status]&#x27;).forEach(button =&gt; button.classList.toggle(&#x27;active&#x27;, button.dataset.setStatus === status)); toast(`项目状态已设为“${status}”`); }
+      root.querySelectorAll(&#x27;[data-capture-mode]&#x27;).forEach(button =&gt; button.addEventListener(&#x27;click&#x27;, () =&gt; { const mode = button.dataset.captureMode; root.querySelectorAll(&#x27;.capture-tab&#x27;).forEach(tab =&gt; tab.classList.toggle(&#x27;active&#x27;, tab.dataset.captureMode === mode)); root.querySelectorAll(&#x27;[data-capture-panel]&#x27;).forEach(panel =&gt; panel.hidden = panel.dataset.capturePanel !== mode); }));
+      root.querySelectorAll(&#x27;[data-start-capture]&#x27;).forEach(button =&gt; button.addEventListener(&#x27;click&#x27;, () =&gt; toast(&#x27;已加入处理队列；这里只使用模拟数据&#x27;)));
+	      root.querySelectorAll(&#x27;[data-accept-project]&#x27;).forEach(button =&gt; button.addEventListener(&#x27;click&#x27;, () =&gt; { button.closest(&#x27;.list-row&#x27;).querySelector(&#x27;.badge&#x27;).textContent = &#x27;已确认：房子装修&#x27;; button.remove(); toast(&#x27;已确认 AI 项目推荐&#x27;); }));
+	      root.querySelectorAll(&#x27;[data-retry]&#x27;).forEach(button =&gt; button.addEventListener(&#x27;click&#x27;, () =&gt; { const row = button.closest(&#x27;.list-row&#x27;); row.querySelector(&#x27;.badge&#x27;).className = &#x27;badge neutral&#x27;; row.querySelector(&#x27;.badge&#x27;).textContent = &#x27;重试中&#x27;; row.querySelector(&#x27;p&#x27;).textContent = &#x27;已从失败步骤重新开始，原始材料未复制&#x27;; button.remove(); toast(&#x27;已重新开始处理&#x27;); }));
+      root.querySelectorAll(&#x27;[data-review-mode]&#x27;).forEach(button =&gt; button.addEventListener(&#x27;click&#x27;, () =&gt; { const batch = button.dataset.reviewMode === &#x27;batch&#x27;; root.querySelectorAll(&#x27;[data-review-mode]&#x27;).forEach(item =&gt; item.classList.toggle(&#x27;active&#x27;, item === button)); root.querySelector(&#x27;.source-view&#x27;).classList.toggle(&#x27;hidden&#x27;, batch); root.querySelector(&#x27;.batch-view&#x27;).classList.toggle(&#x27;active&#x27;, batch); }));
+      root.querySelectorAll(&#x27;[data-review-mode-source]&#x27;).forEach(button =&gt; button.addEventListener(&#x27;click&#x27;, () =&gt; root.querySelector(&#x27;[data-review-mode=&quot;source&quot;]&#x27;).click()));
+      const reviewQueue = root.querySelector(&#x27;.review-queue-overlay&#x27;);
+      root.querySelector(&#x27;[data-open-review-queue]&#x27;).addEventListener(&#x27;click&#x27;, () =&gt; reviewQueue.classList.add(&#x27;open&#x27;));
+      root.querySelector(&#x27;[data-close-review-queue]&#x27;).addEventListener(&#x27;click&#x27;, () =&gt; reviewQueue.classList.remove(&#x27;open&#x27;));
+	      root.querySelectorAll(&#x27;[data-source-row]&#x27;).forEach(button =&gt; button.addEventListener(&#x27;click&#x27;, () =&gt; { root.querySelectorAll(&#x27;[data-source-row]&#x27;).forEach(row =&gt; row.classList.toggle(&#x27;active&#x27;, row === button)); const index = Number(button.dataset.sourceIndex || 0) + 1; root.querySelector(&#x27;[data-source-progress]&#x27;).textContent = `来源进度 ${index} / 3`; root.querySelector(&#x27;.source-identity strong&#x27;).textContent = button.querySelector(&#x27;strong&#x27;).textContent; reviewQueue.classList.remove(&#x27;open&#x27;); toast(`已切换到 ${button.querySelector(&#x27;strong&#x27;).textContent}`); }));
+      root.querySelector(&#x27;[data-source-prev]&#x27;).addEventListener(&#x27;click&#x27;, () =&gt; toast(&#x27;已经是第一条待处理来源&#x27;));
+      root.querySelector(&#x27;[data-source-next]&#x27;).addEventListener(&#x27;click&#x27;, () =&gt; toast(&#x27;已切换到下一条待处理来源&#x27;));
+	      const sourceCandidates = [
+	        { title: &#x27;晶蕾烘干使用时需要手动勾选&#x27;, subtitle: &#x27;推荐明确 · 家电 / 洗烘设备 / 使用与维护&#x27;, content: &#x27;晶蕾烘干不是默认程序，使用时需要手动勾选。&#x27; },
+	        { title: &#x27;烘干效果差异需要结合实际负载判断&#x27;, subtitle: &#x27;需要确认 · 家电 / 洗烘设备 / 使用与维护&#x27;, content: &#x27;该用户认为晶蕾烘干与普通烘干的实际效果差异不明显，但尚缺少可复核的使用条件。&#x27; }
+	      ];
+	      let candidateIndex = 0;
+	      function showCandidate(index) {
+	        candidateIndex = Math.max(0, Math.min(sourceCandidates.length - 1, index));
+	        const candidate = sourceCandidates[candidateIndex];
+	        root.querySelector(&#x27;[data-current-title]&#x27;).textContent = candidate.title;
+	        root.querySelector(&#x27;[data-current-subtitle]&#x27;).textContent = candidate.subtitle;
+	        root.querySelector(&#x27;[data-current-content]&#x27;).value = candidate.content;
+	        root.querySelector(&#x27;[data-candidate-progress]&#x27;).textContent = `当前候选 ${candidateIndex + 1} / ${sourceCandidates.length}`;
+	        const compact = root.querySelector(&#x27;[data-candidate-select]&#x27;);
+	        compact.style.display = candidateIndex === 0 ? &#x27;flex&#x27; : &#x27;none&#x27;;
+	        root.querySelector(&#x27;[data-candidate-prev]&#x27;).disabled = candidateIndex === 0;
+	        root.querySelector(&#x27;[data-candidate-next]&#x27;).disabled = candidateIndex === sourceCandidates.length - 1;
+	      }
+	      root.querySelector(&#x27;[data-candidate-prev]&#x27;).addEventListener(&#x27;click&#x27;, () =&gt; showCandidate(candidateIndex - 1));
+	      root.querySelector(&#x27;[data-candidate-next]&#x27;).addEventListener(&#x27;click&#x27;, () =&gt; showCandidate(candidateIndex + 1));
+	      root.querySelector(&#x27;[data-candidate-select]&#x27;).addEventListener(&#x27;click&#x27;, () =&gt; showCandidate(1));
+	      root.querySelectorAll(&#x27;[data-decide]&#x27;).forEach(button =&gt; button.addEventListener(&#x27;click&#x27;, () =&gt; { const decision = button.dataset.decide; toast(decision === &#x27;确认并归档&#x27; ? &#x27;候选已确认并形成正式知识&#x27; : `候选已${decision}`); }));
+	      root.querySelectorAll(&#x27;[data-batch-action]&#x27;).forEach(button =&gt; button.addEventListener(&#x27;click&#x27;, () =&gt; toast(`已模拟“批量${button.dataset.batchAction}”3 条低风险候选`)));
+	      root.querySelectorAll(&#x27;[data-expand-source]&#x27;).forEach(button =&gt; button.addEventListener(&#x27;click&#x27;, () =&gt; { const row = button.closest(&#x27;.batch-candidate&#x27;); const detail = document.createElement(&#x27;p&#x27;); detail.textContent = &#x27;来源原文已展开：对应证据片段与采集说明。&#x27;; detail.style.gridColumn = &#x27;2 / -1&#x27;; detail.style.paddingBottom = &#x27;8px&#x27;; row.appendChild(detail); button.disabled = true; }));
+      root.querySelectorAll(&#x27;[data-entry-view]&#x27;).forEach(button =&gt; button.addEventListener(&#x27;click&#x27;, () =&gt; { const list = button.dataset.entryView === &#x27;list&#x27;; root.querySelectorAll(&#x27;[data-entry-view]&#x27;).forEach(item =&gt; item.classList.toggle(&#x27;active&#x27;, item === button)); root.querySelector(&#x27;.entry-grid&#x27;).classList.toggle(&#x27;hidden&#x27;, list); root.querySelector(&#x27;.entry-list&#x27;).classList.toggle(&#x27;active&#x27;, list); }));
+      root.querySelectorAll(&#x27;[data-tree-node]&#x27;).forEach(button =&gt; button.addEventListener(&#x27;click&#x27;, () =&gt; root.querySelectorAll(&#x27;[data-tree-node]&#x27;).forEach(item =&gt; item.classList.toggle(&#x27;active&#x27;, item === button))));
+      root.querySelectorAll(&#x27;[data-knowledge-mode]&#x27;).forEach(button =&gt; button.addEventListener(&#x27;click&#x27;, () =&gt; { const map = button.dataset.knowledgeMode === &#x27;mindmap&#x27;; root.querySelectorAll(&#x27;[data-knowledge-mode]&#x27;).forEach(item =&gt; item.classList.toggle(&#x27;active&#x27;, item === button)); root.querySelector(&#x27;.knowledge-entries&#x27;).style.display = map ? &#x27;none&#x27; : &#x27;block&#x27;; root.querySelector(&#x27;.mindmap&#x27;).classList.toggle(&#x27;active&#x27;, map); }));
+      root.querySelectorAll(&#x27;[data-map-node]&#x27;).forEach(button =&gt; button.addEventListener(&#x27;click&#x27;, () =&gt; { root.querySelectorAll(&#x27;[data-map-node]&#x27;).forEach(item =&gt; item.classList.toggle(&#x27;active&#x27;, item === button)); root.querySelector(&#x27;[data-map-title]&#x27;).textContent = button.dataset.mapNode; }));
+      root.querySelectorAll(&#x27;[data-map-action]&#x27;).forEach(button =&gt; button.addEventListener(&#x27;click&#x27;, () =&gt; toast(`思维导图已${button.dataset.mapAction}`)));
+      root.querySelector(&#x27;[data-map-search]&#x27;).addEventListener(&#x27;input&#x27;, event =&gt; { const query = event.target.value.trim(); root.querySelectorAll(&#x27;[data-map-node]&#x27;).forEach(node =&gt; node.classList.toggle(&#x27;highlight&#x27;, query &amp;&amp; node.textContent.includes(query))); });
+      const overlay = root.querySelector(&#x27;.drawer-overlay&#x27;);
+      root.querySelectorAll(&#x27;[data-open-assistant]&#x27;).forEach(button =&gt; button.addEventListener(&#x27;click&#x27;, () =&gt; overlay.classList.add(&#x27;open&#x27;)));
+	      root.querySelector(&#x27;[data-close-assistant]&#x27;).addEventListener(&#x27;click&#x27;, () =&gt; { overlay.classList.remove(&#x27;open&#x27;); prototypeTabs.forEach(tab =&gt; tab.setAttribute(&#x27;aria-selected&#x27;, String(tab.dataset.go === &#x27;knowledge&#x27;))); });
+	      root.querySelector(&#x27;[data-adjust-draft]&#x27;).addEventListener(&#x27;click&#x27;, () =&gt; toast(&#x27;目录草稿已更新，正式目录未改变&#x27;));
+	      root.querySelector(&#x27;[data-apply-draft]&#x27;).addEventListener(&#x27;click&#x27;, () =&gt; { overlay.classList.remove(&#x27;open&#x27;); prototypeTabs.forEach(tab =&gt; tab.setAttribute(&#x27;aria-selected&#x27;, String(tab.dataset.go === &#x27;knowledge&#x27;))); toast(&#x27;已明确确认并应用目录草稿&#x27;); });
+	      root.querySelectorAll(&#x27;[data-save-answer]&#x27;).forEach(button =&gt; button.addEventListener(&#x27;click&#x27;, () =&gt; { showPage(&#x27;review&#x27;); toast(&#x27;回答已转成 AI 候选，等待人工确认&#x27;); }));
+	      root.querySelectorAll(&#x27;[data-citation], [data-open-source-entry]&#x27;).forEach(button =&gt; button.addEventListener(&#x27;click&#x27;, () =&gt; toast(&#x27;已打开正式知识与来源证据&#x27;)));
+	      root.querySelectorAll(&#x27;[data-entry-action]&#x27;).forEach(button =&gt; button.addEventListener(&#x27;click&#x27;, () =&gt; toast(`已打开${button.dataset.entryAction}操作面板`)));
+	      root.querySelectorAll(&#x27;[data-reader-send]&#x27;).forEach(button =&gt; button.addEventListener(&#x27;click&#x27;, () =&gt; toast(&#x27;已基于当前范围的正式知识重新回答&#x27;)));
+	      root.querySelectorAll(&#x27;[data-search-run]&#x27;).forEach(button =&gt; button.addEventListener(&#x27;click&#x27;, () =&gt; toast(&#x27;找到 2 条正式知识&#x27;)));
+      root.querySelectorAll(&#x27;[data-correct-understanding]&#x27;).forEach(button =&gt; button.addEventListener(&#x27;click&#x27;, () =&gt; toast(&#x27;已打开项目理解纠正入口&#x27;)));
+      root.querySelectorAll(&#x27;[data-change-directory]&#x27;).forEach(button =&gt; button.addEventListener(&#x27;click&#x27;, () =&gt; { if (button.dataset.createNode === &#x27;true&#x27;) { toast(&#x27;将明确创建“使用与维护”节点并原子归档&#x27;); return; } button.closest(&#x27;.recommendation&#x27;).querySelector(&#x27;.path&#x27;).textContent = &#x27;暂无合适位置&#x27;; button.textContent = &#x27;新增节点并归档&#x27;; button.dataset.createNode = &#x27;true&#x27;; }));
+	      showCandidate(0);
+	      refreshIcons();
+    })();
+  &lt;/script&gt;
+&lt;/div&gt;
+
+&lt;script src=&quot;https://unpkg.com/@floating-ui/core@1.7.3/dist/floating-ui.core.umd.min.js&quot;&gt;&lt;/script&gt;
+&lt;script src=&quot;https://unpkg.com/@floating-ui/dom@1.7.4/dist/floating-ui.dom.umd.min.js&quot;&gt;&lt;/script&gt;
+&lt;script&gt;
+(() =&gt; {
+  if (window.FloatingUIDOM == null) {
+    return;
+  }
+  const { autoUpdate, computePosition, flip, offset, shift, size } =
+    window.FloatingUIDOM;
+  const tooltipPlacements = new Set([&quot;top&quot;, &quot;right&quot;, &quot;bottom&quot;, &quot;left&quot;]);
+  const tooltipId = `codex-visualization-tooltip-${
+    window.crypto?.randomUUID?.() ?? Date.now().toString(36)
+  }`;
+  const tooltipGap = 5;
+  const hoverDelay = 700;
+  const skipDelay = 300;
+  let activeTrigger = null;
+  let pendingTrigger = null;
+  let tooltip = null;
+  let openTimeout = null;
+  let autoUpdateCleanup = null;
+  let positionRequest = 0;
+  let skipDelayUntil = 0;
+
+  const getTrigger = (target) =&gt;
+    target?.nodeType === Node.ELEMENT_NODE
+      ? target.closest(&quot;[data-tooltip]&quot;)
+      : null;
+  const containsTarget = (trigger, target) =&gt;
+    target?.nodeType != null &amp;&amp; trigger.contains(target);
+  const getContent = (trigger) =&gt;
+    trigger.getAttribute(&quot;data-tooltip&quot;)?.trim() ?? &quot;&quot;;
+  const getPlacement = (trigger) =&gt; {
+    const placement = trigger.getAttribute(&quot;data-tooltip-placement&quot;);
+    return tooltipPlacements.has(placement) ? placement : &quot;top&quot;;
+  };
+  const getTooltip = () =&gt; {
+    if (tooltip == null) {
+      tooltip = document.createElement(&quot;div&quot;);
+      tooltip.id = tooltipId;
+      tooltip.className = &quot;tooltip&quot;;
+      tooltip.setAttribute(&quot;role&quot;, &quot;tooltip&quot;);
+    }
+    return tooltip;
+  };
+  const setDescribedBy = (trigger, described) =&gt; {
+    const ids = new Set(
+      (trigger.getAttribute(&quot;aria-describedby&quot;) ?? &quot;&quot;)
+        .split(/\s+/)
+        .filter(Boolean),
+    );
+    if (described) {
+      ids.add(tooltipId);
+    } else {
+      ids.delete(tooltipId);
+    }
+    if (ids.size === 0) {
+      trigger.removeAttribute(&quot;aria-describedby&quot;);
+    } else {
+      trigger.setAttribute(&quot;aria-describedby&quot;, [...ids].join(&quot; &quot;));
+    }
+  };
+  const clearOpenTimeout = () =&gt; {
+    if (openTimeout != null) {
+      window.clearTimeout(openTimeout);
+      openTimeout = null;
+    }
+    pendingTrigger = null;
+  };
+  const closeTooltip = (activateSkipDelay = true) =&gt; {
+    clearOpenTimeout();
+    positionRequest += 1;
+    autoUpdateCleanup?.();
+    autoUpdateCleanup = null;
+    if (activeTrigger == null) {
+      return;
+    }
+    setDescribedBy(activeTrigger, false);
+    activeTrigger = null;
+    tooltip?.remove();
+    if (activateSkipDelay) {
+      skipDelayUntil = Date.now() + skipDelay;
+    }
+  };
+  const updatePosition = (trigger, floating) =&gt; {
+    const request = ++positionRequest;
+    void computePosition(trigger, floating, {
+      middleware: [
+        offset(tooltipGap),
+        flip({ padding: tooltipGap }),
+        shift({ padding: tooltipGap }),
+        size({
+          padding: tooltipGap,
+          apply({ availableHeight, availableWidth, elements }) {
+            elements.floating.style.setProperty(
+              &quot;--tooltip-available-width&quot;,
+              `${Math.max(0, availableWidth)}px`,
+            );
+            elements.floating.style.setProperty(
+              &quot;--tooltip-available-height&quot;,
+              `${Math.max(0, availableHeight)}px`,
+            );
+          },
+        }),
+      ],
+      placement: getPlacement(trigger),
+      strategy: &quot;fixed&quot;,
+    })
+      .then(({ x, y }) =&gt; {
+        if (activeTrigger !== trigger || request !== positionRequest) {
+          return;
+        }
+        const scale = window.devicePixelRatio || 1;
+        floating.style.transform = `translate(${Math.round(x * scale) / scale}px, ${Math.round(y * scale) / scale}px)`;
+        floating.style.visibility = &quot;visible&quot;;
+      })
+      .catch(() =&gt; {
+        if (activeTrigger === trigger &amp;&amp; request === positionRequest) {
+          closeTooltip(false);
+        }
+      });
+  };
+  const openTooltip = (trigger) =&gt; {
+    const content = getContent(trigger);
+    if (!trigger.isConnected || content.length === 0) {
+      return;
+    }
+    clearOpenTimeout();
+    if (activeTrigger === trigger) {
+      return;
+    }
+    closeTooltip();
+    const floating = getTooltip();
+    floating.textContent = content;
+    floating.style.visibility = &quot;hidden&quot;;
+    floating.style.transform = &quot;translate(0, 0)&quot;;
+    document.body.appendChild(floating);
+    activeTrigger = trigger;
+    setDescribedBy(trigger, true);
+    autoUpdateCleanup = autoUpdate(trigger, floating, () =&gt; {
+      updatePosition(trigger, floating);
+    });
+  };
+  const requestOpen = (trigger, immediate = false) =&gt; {
+    if (
+      getContent(trigger).length === 0 ||
+      activeTrigger === trigger ||
+      pendingTrigger === trigger
+    ) {
+      return;
+    }
+    clearOpenTimeout();
+    pendingTrigger = trigger;
+    const delay =
+      immediate || activeTrigger != null || Date.now() &lt; skipDelayUntil
+        ? 0
+        : hoverDelay;
+    if (delay === 0) {
+      openTooltip(trigger);
+      return;
+    }
+    openTimeout = window.setTimeout(() =&gt; {
+      openTimeout = null;
+      pendingTrigger = null;
+      openTooltip(trigger);
+    }, delay);
+  };
+  const handlePointerOpen = (event) =&gt; {
+    if (event.pointerType === &quot;touch&quot;) {
+      return;
+    }
+    const trigger = getTrigger(event.target);
+    if (trigger == null || containsTarget(trigger, event.relatedTarget)) {
+      return;
+    }
+    requestOpen(trigger);
+  };
+  const handleLeave = (event) =&gt; {
+    const trigger = getTrigger(event.target);
+    if (trigger == null || containsTarget(trigger, event.relatedTarget)) {
+      return;
+    }
+    if (activeTrigger === trigger || pendingTrigger === trigger) {
+      closeTooltip();
+    }
+  };
+  const handleFocusIn = (event) =&gt; {
+    const trigger = getTrigger(event.target);
+    if (trigger?.matches(&quot;:focus-visible&quot;)) {
+      requestOpen(trigger, true);
+    }
+  };
+  const handleKeyDown = (event) =&gt; {
+    if (event.key === &quot;Escape&quot;) {
+      closeTooltip();
+    }
+  };
+  const handleContextMenu = (event) =&gt; {
+    const trigger = getTrigger(event.target);
+    if (activeTrigger === trigger || pendingTrigger === trigger) {
+      closeTooltip();
+    }
+  };
+  const destroy = () =&gt; {
+    closeTooltip(false);
+    document.removeEventListener(&quot;pointerover&quot;, handlePointerOpen);
+    document.removeEventListener(&quot;pointerout&quot;, handleLeave);
+    document.removeEventListener(&quot;focusin&quot;, handleFocusIn);
+    document.removeEventListener(&quot;focusout&quot;, handleLeave);
+    document.removeEventListener(&quot;keydown&quot;, handleKeyDown);
+    document.removeEventListener(&quot;contextmenu&quot;, handleContextMenu);
+    tooltip = null;
+  };
+
+  document.addEventListener(&quot;pointerover&quot;, handlePointerOpen);
+  document.addEventListener(&quot;pointerout&quot;, handleLeave);
+  document.addEventListener(&quot;focusin&quot;, handleFocusIn);
+  document.addEventListener(&quot;focusout&quot;, handleLeave);
+  document.addEventListener(&quot;keydown&quot;, handleKeyDown);
+  document.addEventListener(&quot;contextmenu&quot;, handleContextMenu);
+  window.addEventListener(&quot;pagehide&quot;, destroy, { once: true });
+})();
+&lt;/script&gt;
+&lt;script id=&quot;codex-visualization-lucide&quot; async src=&quot;https://unpkg.com/lucide@1.17.0/dist/umd/lucide.js&quot;&gt;&lt;/script&gt;
+&lt;script&gt;
+(() =&gt; {
+  const initialize = () =&gt; {
+    globalThis.lucide?.createIcons({ attrs: { width: 16, height: 16 } });
+  };
+  if (globalThis.lucide != null) {
+    initialize();
+    return;
+  }
+  document
+    .getElementById(&quot;codex-visualization-lucide&quot;)
+    ?.addEventListener(&quot;load&quot;, initialize, { once: true });
+})();
+&lt;/script&gt;
+
+&lt;/body&gt;
+&lt;/html&gt;
+"></iframe>
+</body>
+</html>

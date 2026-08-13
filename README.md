@@ -13,6 +13,7 @@ README 是仓库的唯一文档导航入口：
 | [OpenSpec 主规格](openspec/specs/) | 已归档能力的当前可验证行为 |
 | [OpenSpec 活动变更](openspec/changes/) | 正在规划或实施的 proposal、specs、design 和 tasks |
 | [Grove UI 规范](.codex/skills/grove-ui-conventions/SKILL.md) | 产品组件、交互状态、桌面布局、小屏边界与验收规则 |
+| [产品原型](docs/prototypes/README.md) | 已确认的桌面页面、信息层级和交互参考，以及与 OpenSpec 的衔接方式 |
 
 阅读顺序：先读 `AGENTS.md` 与产品蓝图索引，再按索引只读取当前任务相关的 1 至 2 份专题，最后读取相关主规格、活动 change 和代码。除跨领域审计或修改蓝图结构外，不默认加载全部产品专题。`openspec/changes/archive/` 是历史记录，不作为当前产品范围入口。
 
@@ -24,7 +25,8 @@ grove/
 ├── README.md          # 唯一文档导航与本地开发入口
 ├── docs/
 │   ├── 产品蓝图.md    # 产品基线与按任务阅读路由
-│   └── 产品蓝图/      # 七份权威产品专题
+│   ├── 产品蓝图/      # 七份权威产品专题
+│   └── prototypes/    # 版本化产品原型与使用说明
 ├── openspec/          # OpenSpec 工作流（changes/ 与 specs/）
 ├── backend/           # FastAPI 后端（Python ≥3.12）
 └── frontend/          # React 19 + TypeScript + Vite 前端
