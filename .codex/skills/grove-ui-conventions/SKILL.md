@@ -1,6 +1,6 @@
 ---
 name: grove-ui-conventions
-description: 知林 Grove 产品前端实现与验收规范。Use when implementing, adjusting, prototyping, or reviewing Grove pages and React components; handling AI candidates, confirmation, entries, sources, directory trees, task states, search, or AI reading; or validating desktop workbench layouts, small-screen boundaries, accessibility, copy, and interaction states with Tailwind 4 and shadcn/ui.
+description: 知林 Grove 产品前端实现与验收规范。Use when implementing, adjusting, prototyping, or reviewing Grove pages and React components; reproducing a Grove prototype or design, aligning visual fidelity, polishing UI details, or validating screenshots; handling AI candidates, confirmation, entries, sources, directory trees, task states, search, or AI reading; or validating desktop workbench layouts, small-screen boundaries, accessibility, copy, and interaction states with Tailwind 4 and shadcn/ui.
 ---
 
 # Grove UI 实现规范
@@ -28,6 +28,28 @@ description: 知林 Grove 产品前端实现与验收规范。Use when implement
 冲突时依次遵循 OpenSpec、相关产品专题、实际主题和现有代码。不要在本 skill 维护第二套产品决策、组件 API 或令牌值；修改主题后再检查本 skill 是否仍准确。
 
 原型只提供视觉与交互参考，不证明功能已经实现。正式开发使用现有 React、Tailwind 4、shadcn/ui 和 Lucide 重新实现，不复制原型的内联样式、包装 iframe、演示脚本或静态业务状态；有意偏离项记录到当前 change 的 `design.md`。
+
+## 任务分流
+
+开始实现前按风险选择流程：
+
+- **完整视觉流程**：新页面、页面重建、原型还原、设计稿精确对齐、应用壳或全局令牌修改。必须读取 [视觉对齐流程](references/visual-fidelity-workflow.md) 并执行全部门禁。
+- **局部视觉流程**：单个组件或局部样式精修。只提取受影响的视觉基线，至少在主视口检查相邻布局与计算样式；涉及响应式、壳层或全局令牌时升级为完整流程。
+- **常规功能流程**：纯文案、数据逻辑、API 接入、状态逻辑或不可见重构。不加载视觉对齐 reference，不生成完整截图矩阵，但仍执行相关功能和可访问性验证。
+
+如果用户明确要求“跟原型一致”“对齐设计稿”“还原页面”“检查颜色、间距、字体”或同义目标，至少进入局部视觉流程；涉及整个页面时进入完整视觉流程。
+
+## 原型对齐门禁
+
+进入完整视觉流程时：
+
+1. 在页面样式编码前提取全局令牌、字体、应用壳、页面边界、组件尺寸和关键状态，形成视觉基线。
+2. 在 `design.md` 记录采用的原型结构、有意偏离及其产品或数据理由。原型已经确定的布局与样式默认必须对齐，不能用个人偏好或框架默认值作为偏离理由。
+3. 默认先在 1440px 收敛结构、密度和视觉层级；若用户提供的权威截图使用其他尺寸，以该尺寸为主视口并记录原因。
+4. 主视口对齐后，再验证 1280px 和 1600px；端侧边界受影响时另验 1023px 与 1024px。
+5. 同时使用截图和浏览器计算样式：截图检查结构、密度、视觉重量与整体气质；计算样式检查几何、颜色、字体、边框、圆角、阴影和溢出。不得只以 DOM 存在、路由可达或“大致相似”判定完成。
+
+视觉基线和有意偏离未明确前不得开始完整页面的样式实现。原型或规格存在会显著改变结果的歧义时，先记录并向用户澄清，不静默猜测。
 
 ## 实施方式
 
@@ -86,4 +108,4 @@ description: 知林 Grove 产品前端实现与验收规范。Use when implement
 4. loading、empty、error、partial、retry 和破坏性操作状态完整。
 5. 键盘、焦点、对比度和图标标签可用。
 6. 运行相关前端测试、`npm run lint` 和 `npm run build`；关键界面通过浏览器截图检查。
-7. 若当前 change 对应产品原型页面，在 1280px、1440px 和 1600px 对照原型检查，并确认只实现了本次规格范围内的行为。
+7. 若当前 change 对应产品原型页面，按任务分流执行视觉验收；完整页面先在主视口完成截图与计算样式核对，再检查 1280px、1440px 和 1600px，并确认只实现了本次规格范围内的行为。

@@ -67,7 +67,7 @@ TBD - created by archiving change setup-project-foundation. Update Purpose after
 - **THEN** 两条命令均成功退出且无失败项
 
 ### Requirement: Grove 仓库级 UI skill
-仓库 MUST 包含 `.codex/skills/grove-ui-conventions/SKILL.md`，该 skill SHALL 在 Grove 前端实现、调整或 UI 验收任务中触发，并 SHALL 先读取产品蓝图索引、再按当前页面或交互任务读取相关专题，以 OpenSpec 定义产品行为、以 `frontend/src/index.css` 定义设计令牌、以现有组件代码定义接口，避免无差别加载全部蓝图文档或复制易漂移的第二份事实来源。
+仓库 MUST 包含 `.codex/skills/grove-ui-conventions/SKILL.md`，该 skill SHALL 在 Grove 前端实现、调整、原型还原、设计稿对齐、视觉精修或 UI 验收任务中触发，并 SHALL 先读取产品蓝图索引、再按当前页面或交互任务读取相关专题，以 OpenSpec 定义产品行为、以 `frontend/src/index.css` 定义设计令牌、以现有组件代码定义接口，避免无差别加载全部蓝图文档或复制易漂移的第二份事实来源。该 skill MUST 对原型覆盖页面按风险选择验收强度：完整页面实现或重建在编码前建立视觉基线和有意偏离，先在默认 1440px 主视口收敛，再使用截图与计算样式验证 1280px、1440px、1600px；局部视觉调整只检查受影响基线与必要视口；非视觉任务不得被强制执行完整截图矩阵。
 
 #### Scenario: 前端任务加载产品专属约束
 - **WHEN** 代理实施或调整 Grove 前端页面、产品组件或交互状态
@@ -77,12 +77,24 @@ TBD - created by archiving change setup-project-foundation. Update Purpose after
 - **WHEN** 前端任务只涉及确认台、知识空间或其他单一产品领域
 - **THEN** skill 不要求读取全部蓝图专题，而只加载索引、相关专题、当前规格、主题和代码
 
+#### Scenario: 完整页面原型对齐前置测量
+- **WHEN** 代理实现、重建或精确对齐一个原型覆盖的完整页面
+- **THEN** skill 要求在页面样式编码前提取全局令牌、字体、应用壳、页面边界、组件尺寸和关键状态，记录有意偏离，并先在 1440px 或用户提供的权威截图视口收敛
+
+#### Scenario: 视觉验收同时检查截图和计算样式
+- **WHEN** 完整页面完成主视口对齐
+- **THEN** skill 要求以截图核对结构、密度和视觉重量，以浏览器计算样式核对几何、颜色、字体、边框、圆角、阴影和溢出，再验证 1280px 与 1600px
+
+#### Scenario: 任务按风险分流
+- **WHEN** 任务只是局部视觉调整、纯文案、数据逻辑、API 或不可见重构
+- **THEN** skill 对局部视觉调整只要求受影响基线和必要视口，对非视觉任务不要求加载详细视觉 reference 或生成完整截图矩阵
+
 #### Scenario: skill 结构有效
 - **WHEN** 使用 skill-creator 的 `quick_validate.py` 校验 `.codex/skills/grove-ui-conventions`
-- **THEN** 校验成功且 skill 元数据与目录命名有效
+- **THEN** 校验成功且 skill 元数据、渐进式 reference 与目录命名有效
 
 ### Requirement: 产品原型作为版本化设计参考
-仓库 MUST 在 `docs/prototypes/` 保存可直接访问的 Grove 产品原型及说明文档。说明文档 SHALL 记录原型版本、覆盖页面、运行方式和权威边界，并 SHALL 明确原型中的静态数据与模拟交互不代表正式功能已经实现。实施原型覆盖页面时 MUST 以同一视口截图对照验证页面结构、几何、颜色、字体、密度、对齐、控件形态和关键状态，不得只验证 DOM 存在、路由可达或大致结构相似。
+仓库 MUST 在 `docs/prototypes/` 保存可直接访问的 Grove 产品原型及说明文档。说明文档 SHALL 记录原型版本、覆盖页面、运行方式和权威边界，并 SHALL 明确原型中的静态数据与模拟交互不代表正式功能已经实现。实施原型覆盖页面时 MUST 在编码前提取本页视觉基线并记录有意偏离，以 1440px 或用户提供的权威截图尺寸作为默认主视口收敛，再以同一视口截图和浏览器计算样式对照验证页面结构、几何、颜色、字体、密度、对齐、控件形态和关键状态，最后扩展到 1280px 与 1600px；不得只验证 DOM 存在、路由可达或大致结构相似。
 
 #### Scenario: 协作者访问当前产品原型
 - **WHEN** 协作者从 README 进入产品原型
@@ -90,7 +102,7 @@ TBD - created by archiving change setup-project-foundation. Update Purpose after
 
 #### Scenario: 后续 change 引用原型
 - **WHEN** 一个 OpenSpec change 实施原型覆盖的前端页面或交互
-- **THEN** 其设计按需引用对应原型页面并记录有意偏离项，不要求读取或实现无关页面
+- **THEN** 其设计按需引用对应原型页面、记录视觉基线与有意偏离项，不要求读取或实现无关页面
 
 #### Scenario: 正式前端采用原型设计
 - **WHEN** 协作者将原型中的页面落地到正式前端
@@ -98,7 +110,7 @@ TBD - created by archiving change setup-project-foundation. Update Purpose after
 
 #### Scenario: 关键页面视觉验收
 - **WHEN** 一个 change 完成原型所覆盖的关键桌面页面
-- **THEN** 在 1280px、1440px 和 1600px 生成正式页面与原型同视口截图，逐项核对侧栏与顶栏尺寸、内容起点、背景层级、字体、间距、行高、控件尺寸和交互状态，并保存截图路径与有意偏离说明
+- **THEN** 先在默认 1440px 主视口完成正式页面与原型的截图和计算样式核对，再在 1280px 和 1600px 生成同视口截图，逐项核对侧栏与顶栏尺寸、内容起点、背景层级、字体、间距、行高、控件尺寸和交互状态，并保存截图路径与有意偏离说明
 
 #### Scenario: 原型包含未实现业务数据或动作
 - **WHEN** 原型截图包含当前 OpenSpec 尚未实现的统计、按钮或导航能力

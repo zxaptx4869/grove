@@ -1,4 +1,4 @@
 interface:
   display_name: "Grove UI 规范"
-  short_description: "Grove 产品前端实现、桌面工作台布局与交互验收规范"
-  default_prompt: "使用 $grove-ui-conventions，先读取产品蓝图索引并按任务路由，再结合 OpenSpec 与前端代码实现或验收 Grove 界面。"
+  short_description: "Grove 前端实现、原型视觉对齐与桌面工作台验收规范"
+  default_prompt: "使用 $grove-ui-conventions，按任务风险选择流程，结合产品蓝图、OpenSpec、原型和前端代码实现或验收 Grove 界面。"
