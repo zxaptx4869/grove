@@ -1,0 +1,37 @@
+"""项目上下文生成器抽象与结构化输出。"""
+
+from abc import ABC, abstractmethod
+
+from pydantic import BaseModel, Field
+
+from app.models import Node, Project
+
+
+class ProjectContextCorrections(BaseModel):
+    """用户对 AI 生成字段的高优先级纠正（部分覆盖）。"""
+
+    project_summary: str | None = Field(default=None, description="用户纠正后的项目概要")
+    current_focus: str | None = Field(default=None, description="用户纠正后的当前关注方向")
+
+
+class ProjectContextDraft(BaseModel):
+    """一次项目上下文生成的候选结果。"""
+
+    project_summary: str = Field(description="AI 项目概要")
+    current_focus: str = Field(description="当前关注方向")
+    directory_topics: list[str] = Field(description="目录主题列表")
+
+
+class ProjectContextGenerator(ABC):
+    """负责基于项目说明与正式目录生成项目上下文草稿。"""
+
+    provider_name: str = "abstract"
+
+    @abstractmethod
+    async def generate(
+        self,
+        project: Project,
+        nodes: list[Node],
+        corrections: ProjectContextCorrections | None = None,
+    ) -> ProjectContextDraft:
+        """生成结构化项目上下文草稿；失败时抛出异常。"""

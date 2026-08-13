@@ -12,24 +12,28 @@ from fastapi.middleware.cors import CORSMiddleware
 from app.api.auth import router as auth_router
 from app.api.health import router as health_router
 from app.api.me import router as me_router
+from app.api.project_context import router as project_context_router
 from app.api.projects import router as projects_router
 from app.api.sources import router as sources_router
+from app.context.worker import run_context_worker
 from app.core.config import get_settings
 from app.processing.worker import run_worker
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    """应用生命周期：按配置启动/停止进程内处理 Worker。"""
+    """应用生命周期：按配置启动/停止进程内处理与上下文 Worker。"""
     settings = get_settings()
     stop_event = asyncio.Event()
-    worker_task = None
+    tasks: list[asyncio.Task] = []
     if settings.processing_worker_enabled:
-        worker_task = asyncio.create_task(run_worker(stop_event))
+        tasks.append(asyncio.create_task(run_worker(stop_event)))
+    if settings.context_worker_enabled:
+        tasks.append(asyncio.create_task(run_context_worker(stop_event)))
     yield
-    if worker_task is not None:
-        stop_event.set()
-        await worker_task
+    stop_event.set()
+    for task in tasks:
+        await task
 
 
 def create_app() -> FastAPI:
@@ -56,6 +60,7 @@ def create_app() -> FastAPI:
     app.include_router(health_router)
     app.include_router(auth_router)
     app.include_router(me_router)
+    app.include_router(project_context_router)
     app.include_router(projects_router)
     app.include_router(sources_router)
 

@@ -4,4 +4,5 @@ export const queryKeys = {
   projects: ['projects'],
   sources: ['sources'],
   projectTree: (projectId: number) => ['project-tree', projectId],
+  projectContext: (projectId: number) => ['project-context', projectId],
 } as const

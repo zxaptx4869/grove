@@ -10,6 +10,23 @@ function mockProjectApi({ emptyTree = false }: { emptyTree?: boolean } = {}) {
     'fetch',
     vi.fn((input: RequestInfo | URL) => {
       const url = String(input)
+      if (url.includes('/api/projects/1/context')) {
+        return Promise.resolve({
+          ok: true,
+          json: async () => ({
+            project_id: 1,
+            user_description: '完成新家装修',
+            project_summary: '围绕「完成新家装修」进行知识整理。',
+            current_focus: '继续建立正式目录。',
+            directory_topics: emptyTree ? [] : ['装修准备'],
+            lifecycle_status: 'active',
+            generated_at: '2026-08-13T00:00:00Z',
+            status: 'ready',
+            error: null,
+            corrections: { project_summary: null, current_focus: null },
+          }),
+        })
+      }
       if (url.includes('/api/projects/1/tree')) {
         return Promise.resolve({
           ok: true,

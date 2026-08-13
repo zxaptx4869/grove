@@ -35,6 +35,7 @@ import {
 import { Input } from '@/components/ui/input'
 import { Textarea } from '@/components/ui/textarea'
 import { CaptureDialog } from '@/components/features/CaptureDialog'
+import { ProjectContextPanel } from '@/components/features/ProjectContextPanel'
 import { useGroveMutation } from '@/hooks/useGroveMutation'
 import { ProjectSources } from '@/pages/ProjectSources'
 import {
@@ -604,6 +605,7 @@ export function ProjectPage() {
                 编辑项目信息
               </Button>
             </section>
+            <ProjectContextPanel projectId={id} />
           </div>
 
           <aside className="border-l pl-[22px]">

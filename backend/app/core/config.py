@@ -41,6 +41,17 @@ class Settings(BaseSettings):
     # 进程内处理 Worker：应用启动时是否开启（测试环境可关闭）
     processing_worker_enabled: bool = Field(default=True, description="是否启用处理 Worker")
 
+    # 项目上下文生成器：demo（默认）/ 其他占位
+    context_generator: str = Field(default="demo", description="项目上下文生成器标识")
+
+    # 项目上下文刷新防抖时长（秒）
+    context_refresh_debounce_seconds: float = Field(
+        default=1.0, description="项目上下文刷新防抖时长"
+    )
+
+    # 进程内项目上下文 Worker：应用启动时是否开启（测试环境可关闭）
+    context_worker_enabled: bool = Field(default=True, description="是否启用项目上下文 Worker")
+
     # 附件存储目录：默认相对 backend 运行目录，由存储服务解析
     attachment_dir: str = Field(default="uploads", description="本地附件存储目录")
 

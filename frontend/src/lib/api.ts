@@ -261,3 +261,45 @@ export const triggerProcessing = (sourceId: number) =>
 
 export const sourceImageUrl = (sourceId: number, attachmentId: number) =>
   `${API_BASE_URL}/api/sources/${sourceId}/attachments/${attachmentId}/file`
+
+export type ProjectContextStatus = 'pending' | 'ready' | 'failed'
+
+export interface ProjectContextCorrectionsPayload {
+  project_summary: string | null
+  current_focus: string | null
+}
+
+export interface ProjectContextPayload {
+  project_id: number
+  user_description: string | null
+  project_summary: string | null
+  current_focus: string | null
+  directory_topics: string[]
+  lifecycle_status: ProjectStatus
+  generated_at: string | null
+  status: ProjectContextStatus
+  error: string | null
+  corrections: ProjectContextCorrectionsPayload
+}
+
+export interface ProjectContextCorrectionPayload {
+  project_summary?: string | null
+  current_focus?: string | null
+}
+
+export const fetchProjectContext = (projectId: number) =>
+  request<ProjectContextPayload>(`/api/projects/${projectId}/context`)
+
+export const updateProjectContext = (
+  projectId: number,
+  payload: ProjectContextCorrectionPayload,
+) =>
+  request<ProjectContextPayload>(`/api/projects/${projectId}/context`, {
+    method: 'PATCH',
+    body: JSON.stringify(payload),
+  })
+
+export const refreshProjectContext = (projectId: number) =>
+  request<ProjectContextPayload>(`/api/projects/${projectId}/context/refresh`, {
+    method: 'POST',
+  })

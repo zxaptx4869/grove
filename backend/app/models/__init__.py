@@ -2,6 +2,7 @@
 
 from app.models.processing import ProcessingTask
 from app.models.project import Node, Project
+from app.models.project_context import ProjectContext
 from app.models.session import Session
 from app.models.source import Attachment, Source
 from app.models.user import User
@@ -12,6 +13,7 @@ __all__ = [
     "Node",
     "ProcessingTask",
     "Project",
+    "ProjectContext",
     "Session",
     "Source",
     "User",
