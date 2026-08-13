@@ -117,7 +117,7 @@ function ProjectNavigation({ project }: { project?: ProjectPayload }) {
           aria-current={isDirectory ? 'page' : undefined}
           className={`flex min-h-[38px] items-center gap-[9px] rounded-md px-2.5 text-body ${isDirectory ? 'bg-brand-soft font-semibold text-brand' : 'text-muted-foreground hover:bg-muted hover:text-foreground'}`}
         >
-          <FolderTree className="size-4" />目录管理
+          <FolderTree className="size-4" />知识空间
         </Link>
       </nav>
     </div>
