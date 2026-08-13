@@ -1,7 +1,8 @@
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
+import { useQuery } from '@tanstack/react-query'
 import { toast } from 'sonner'
 
 import { SourceList } from '@/components/features/SourceList'
+import { useGroveMutation } from '@/hooks/useGroveMutation'
 import { Button } from '@/components/ui/button'
 import {
   deleteSource,
@@ -10,38 +11,37 @@ import {
   updateSource,
   type ProjectStatus,
 } from '@/lib/api'
+import { queryKeys } from '@/lib/queryKeys'
 
 const PROJECT_STATUSES: ProjectStatus[] = ['active', 'paused', 'completed', 'archived']
 
 /** 项目内「采集与来源」视图。 */
 export function ProjectSources({ projectId }: { projectId: number }) {
-  const queryClient = useQueryClient()
   const projects = useQuery({
-    queryKey: ['projects', 'all-statuses'],
+    queryKey: [...queryKeys.projects, 'all-statuses'],
     queryFn: async () =>
       (await Promise.all(PROJECT_STATUSES.map((status) => fetchProjects(status)))).flat(),
     staleTime: 30_000,
   })
   const sources = useQuery({
-    queryKey: ['sources', 'project', projectId],
+    queryKey: [...queryKeys.sources, 'project', projectId],
     queryFn: () => fetchSources({ projectId }),
   })
 
-  const invalidate = () => queryClient.invalidateQueries({ queryKey: ['sources'] })
-  const assign = useMutation({
+  const assign = useGroveMutation({
     mutationFn: ({ id, projectId: targetId }: { id: number; projectId: number | null }) =>
       updateSource(id, { project_id: targetId }),
+    invalidates: [queryKeys.sources],
     onSuccess: () => {
-      invalidate()
       toast.success('来源归属已更新')
     },
     onError: (error) =>
       toast.error(error instanceof Error ? error.message : '更新失败，请重试'),
   })
-  const remove = useMutation({
+  const remove = useGroveMutation({
     mutationFn: (id: number) => deleteSource(id),
+    invalidates: [queryKeys.sources],
     onSuccess: () => {
-      invalidate()
       toast.success('来源已删除')
     },
     onError: (error) => toast.error(error instanceof Error ? error.message : '删除失败，请重试'),

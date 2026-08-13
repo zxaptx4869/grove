@@ -1,9 +1,10 @@
 import { useState } from 'react'
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
+import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { toast } from 'sonner'
 
 import { SourceCapture } from '@/components/features/SourceCapture'
 import { SourceList } from '@/components/features/SourceList'
+import { useGroveMutation } from '@/hooks/useGroveMutation'
 import { Button } from '@/components/ui/button'
 import {
   deleteSource,
@@ -12,6 +13,7 @@ import {
   updateSource,
   type ProjectStatus,
 } from '@/lib/api'
+import { queryKeys } from '@/lib/queryKeys'
 
 const PROJECT_STATUSES: ProjectStatus[] = ['active', 'paused', 'completed', 'archived']
 
@@ -21,31 +23,31 @@ export function InboxPage() {
   const [filter, setFilter] = useState<'all' | 'unassigned'>('unassigned')
 
   const projects = useQuery({
-    queryKey: ['projects', 'all-statuses'],
+    queryKey: [...queryKeys.projects, 'all-statuses'],
     queryFn: async () =>
       (await Promise.all(PROJECT_STATUSES.map((status) => fetchProjects(status)))).flat(),
     staleTime: 30_000,
   })
   const sources = useQuery({
-    queryKey: ['sources', filter],
+    queryKey: [...queryKeys.sources, filter],
     queryFn: () => fetchSources({ unassigned: filter === 'unassigned' }),
   })
 
-  const invalidate = () => queryClient.invalidateQueries({ queryKey: ['sources'] })
-  const assign = useMutation({
+  const invalidateSources = () => queryClient.invalidateQueries({ queryKey: queryKeys.sources })
+  const assign = useGroveMutation({
     mutationFn: ({ id, projectId }: { id: number; projectId: number | null }) =>
       updateSource(id, { project_id: projectId }),
+    invalidates: [queryKeys.sources],
     onSuccess: () => {
-      invalidate()
       toast.success('来源归属已更新')
     },
     onError: (error) =>
       toast.error(error instanceof Error ? error.message : '更新失败，请重试'),
   })
-  const remove = useMutation({
+  const remove = useGroveMutation({
     mutationFn: (id: number) => deleteSource(id),
+    invalidates: [queryKeys.sources],
     onSuccess: () => {
-      invalidate()
       toast.success('来源已删除')
     },
     onError: (error) => toast.error(error instanceof Error ? error.message : '删除失败，请重试'),
@@ -66,7 +68,7 @@ export function InboxPage() {
       </header>
 
       <div className="grid grid-cols-[minmax(360px,0.9fr)_minmax(0,1.1fr)] items-start gap-6">
-        <SourceCapture projects={projectOptions} onCreated={invalidate} />
+        <SourceCapture projects={projectOptions} onCreated={invalidateSources} />
 
         <div className="min-w-0">
           <div className="mb-2 flex h-[34px] items-center gap-1.5" role="tablist" aria-label="来源筛选">

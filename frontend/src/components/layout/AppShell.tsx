@@ -34,12 +34,13 @@ import {
 } from '@/components/ui/dropdown-menu'
 import { useLogout, useMe } from '@/hooks/useAuth'
 import { fetchProjects, type ProjectPayload, type ProjectStatus } from '@/lib/api'
+import { queryKeys } from '@/lib/queryKeys'
 
 const PROJECT_STATUSES: ProjectStatus[] = ['active', 'paused', 'completed', 'archived']
 
 function useAllProjects() {
   return useQuery({
-    queryKey: ['projects', 'all-statuses'],
+    queryKey: [...queryKeys.projects, 'all-statuses'],
     queryFn: async () => {
       const groups = await Promise.all(PROJECT_STATUSES.map((status) => fetchProjects(status)))
       return groups.flat()

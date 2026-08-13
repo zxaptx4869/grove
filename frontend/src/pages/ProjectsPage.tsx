@@ -1,10 +1,11 @@
 import { useState } from 'react'
-import { useMutation, useQueries, useQueryClient } from '@tanstack/react-query'
+import { useQueries } from '@tanstack/react-query'
 import { FolderKanban, MoreHorizontal, Plus, Trash2 } from 'lucide-react'
 import { Link } from 'react-router-dom'
 import { toast } from 'sonner'
 
 import { EmptyState } from '@/components/features/EmptyState'
+import { useGroveMutation } from '@/hooks/useGroveMutation'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import {
@@ -35,6 +36,7 @@ import {
   type ProjectPayload,
   type ProjectStatus,
 } from '@/lib/api'
+import { queryKeys } from '@/lib/queryKeys'
 
 const STATUSES: Array<{ key: ProjectStatus; label: string }> = [
   { key: 'active', label: '进行中' },
@@ -52,7 +54,6 @@ function statusClass(status: ProjectStatus) {
 }
 
 export function ProjectsPage() {
-  const queryClient = useQueryClient()
   const [filter, setFilter] = useState<ProjectStatus>('active')
   const [createOpen, setCreateOpen] = useState(false)
   const [name, setName] = useState('')
@@ -62,7 +63,7 @@ export function ProjectsPage() {
 
   const projectQueries = useQueries({
     queries: STATUSES.map(({ key }) => ({
-      queryKey: ['projects', key],
+      queryKey: [...queryKeys.projects, key],
       queryFn: () => fetchProjects(key),
       staleTime: 30_000,
     })),
@@ -73,11 +74,10 @@ export function ProjectsPage() {
   const isInitialLoading = projectQueries.some((query) => query.isLoading)
   const hasLoadError = projectQueries.some((query) => query.isError)
 
-  const refresh = () => queryClient.invalidateQueries({ queryKey: ['projects'] })
-  const create = useMutation({
+  const create = useGroveMutation({
     mutationFn: () => createProject({ name: name.trim(), description: description.trim() || null }),
+    invalidates: [queryKeys.projects],
     onSuccess: () => {
-      refresh()
       setCreateOpen(false)
       setName('')
       setDescription('')
@@ -87,19 +87,19 @@ export function ProjectsPage() {
     },
     onError: (error) => setActionError(error instanceof Error ? error.message : '创建失败，请重试'),
   })
-  const changeStatus = useMutation({
+  const changeStatus = useGroveMutation({
     mutationFn: ({ id, status }: { id: number; status: ProjectStatus }) => updateProjectStatus(id, status),
+    invalidates: [queryKeys.projects],
     onSuccess: () => {
-      refresh()
       setActionError('')
       toast.success('项目状态已更新')
     },
     onError: (error) => setActionError(error instanceof Error ? error.message : '状态更新失败，请重试'),
   })
-  const remove = useMutation({
+  const remove = useGroveMutation({
     mutationFn: () => deleteProject(deleteTarget!.id),
+    invalidates: [queryKeys.projects, queryKeys.sources],
     onSuccess: () => {
-      refresh()
       setDeleteTarget(null)
       setActionError('')
       toast.success('项目已删除')

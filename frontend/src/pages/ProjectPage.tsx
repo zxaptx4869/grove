@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
+import { useQuery, useQueryClient } from '@tanstack/react-query'
 import {
   ArrowRight,
   BookOpen,
@@ -35,6 +35,7 @@ import {
 import { Input } from '@/components/ui/input'
 import { Textarea } from '@/components/ui/textarea'
 import { CaptureDialog } from '@/components/features/CaptureDialog'
+import { useGroveMutation } from '@/hooks/useGroveMutation'
 import { ProjectSources } from '@/pages/ProjectSources'
 import {
   createNode,
@@ -49,6 +50,7 @@ import {
   type ProjectStatus,
   type TreeNodePayload,
 } from '@/lib/api'
+import { queryKeys } from '@/lib/queryKeys'
 
 const PROJECT_STATUSES: Array<{ key: ProjectStatus; label: string }> = [
   { key: 'active', label: '进行中' },
@@ -169,14 +171,14 @@ export function ProjectPage() {
   const queryClient = useQueryClient()
 
   const projects = useQuery({
-    queryKey: ['projects', 'all-statuses'],
+    queryKey: [...queryKeys.projects, 'all-statuses'],
     queryFn: async () =>
       (await Promise.all(PROJECT_STATUSES.map(({ key }) => fetchProjects(key)))).flat(),
     enabled: Number.isFinite(id),
     staleTime: 30_000,
   })
   const tree = useQuery({
-    queryKey: ['project-tree', id],
+    queryKey: queryKeys.projectTree(id),
     queryFn: () => fetchProjectTree(id),
     enabled: Number.isFinite(id),
   })
@@ -196,10 +198,7 @@ export function ProjectPage() {
   const [captureOpen, setCaptureOpen] = useState(false)
   const [actionError, setActionError] = useState('')
 
-  const invalidateTree = () => queryClient.invalidateQueries({ queryKey: ['project-tree', id] })
-  const invalidateProjects = () => queryClient.invalidateQueries({ queryKey: ['projects'] })
-
-  const create = useMutation({
+  const create = useGroveMutation({
     mutationFn: ({
       parentId,
       name,
@@ -209,16 +208,15 @@ export function ProjectPage() {
       name: string
       description: string
     }) => createNode(id, { parent_id: parentId, name, description: description || null }),
+    invalidates: [queryKeys.projectTree(id), queryKeys.projects],
     onSuccess: () => {
-      invalidateTree()
-      invalidateProjects()
       setNodeForm(null)
       setActionError('')
       toast.success('目录节点已创建')
     },
     onError: (error) => setActionError(error instanceof Error ? error.message : '创建失败，请重试'),
   })
-  const update = useMutation({
+  const update = useGroveMutation({
     mutationFn: ({
       nodeId,
       name,
@@ -228,19 +226,18 @@ export function ProjectPage() {
       name: string
       description: string
     }) => updateNode(id, nodeId, { name, description: description || null }),
+    invalidates: [queryKeys.projectTree(id)],
     onSuccess: () => {
-      invalidateTree()
       setNodeForm(null)
       setActionError('')
       toast.success('目录节点已更新')
     },
     onError: (error) => setActionError(error instanceof Error ? error.message : '更新失败，请重试'),
   })
-  const removeNode = useMutation({
+  const removeNode = useGroveMutation({
     mutationFn: (nodeId: number) => deleteNode(id, nodeId),
+    invalidates: [queryKeys.projectTree(id), queryKeys.projects],
     onSuccess: () => {
-      invalidateTree()
-      invalidateProjects()
       setDeleteNodeTarget(null)
       setSelectedId(null)
       setActionError('')
@@ -248,54 +245,53 @@ export function ProjectPage() {
     },
     onError: (error) => setActionError(error instanceof Error ? error.message : '删除失败，请重试'),
   })
-  const reorder = useMutation({
+  const reorder = useGroveMutation({
     mutationFn: ({ parentId, orderedIds }: { parentId: number | null; orderedIds: number[] }) =>
       reorderNodes(id, parentId, orderedIds),
+    invalidates: [queryKeys.projectTree(id)],
     onSuccess: () => {
-      invalidateTree()
       setActionError('')
     },
     onError: (error) => setActionError(error instanceof Error ? error.message : '排序失败，请重试'),
   })
-  const move = useMutation({
+  const move = useGroveMutation({
     mutationFn: () => updateNode(id, moveTarget!.id, { parent_id: moveParentId }),
+    invalidates: [queryKeys.projectTree(id)],
     onSuccess: () => {
-      invalidateTree()
       setMoveTarget(null)
       setActionError('')
       toast.success('目录节点已移动')
     },
     onError: (error) => setActionError(error instanceof Error ? error.message : '移动失败，请重试'),
   })
-  const editProject = useMutation({
+  const editProject = useGroveMutation({
     mutationFn: () =>
       updateProject(id, {
         name: projectName.trim(),
         description: projectDescription.trim() || null,
       }),
+    invalidates: [queryKeys.projects],
     onSuccess: () => {
-      invalidateProjects()
       setEditProjectOpen(false)
       setActionError('')
       toast.success('项目信息已更新')
     },
     onError: (error) => setActionError(error instanceof Error ? error.message : '保存失败，请重试'),
   })
-  const changeStatus = useMutation({
+  const changeStatus = useGroveMutation({
     mutationFn: (status: ProjectStatus) => updateProjectStatus(id, status),
+    invalidates: [queryKeys.projects],
     onSuccess: () => {
-      invalidateProjects()
       setActionError('')
       toast.success('项目状态已更新')
     },
     onError: (error) =>
       setActionError(error instanceof Error ? error.message : '状态更新失败，请重试'),
   })
-  const removeProject = useMutation({
+  const removeProject = useGroveMutation({
     mutationFn: () => deleteProject(id),
+    invalidates: [queryKeys.projects, queryKeys.sources],
     onSuccess: () => {
-      invalidateProjects()
-      queryClient.invalidateQueries({ queryKey: ['sources'] })
       navigate('/projects', { replace: true })
       toast.success('项目已删除')
     },
@@ -437,7 +433,7 @@ export function ProjectPage() {
         onOpenChange={setCaptureOpen}
         projects={[]}
         fixedProjectId={id}
-        onCreated={() => queryClient.invalidateQueries({ queryKey: ['sources'] })}
+        onCreated={() => queryClient.invalidateQueries({ queryKey: queryKeys.sources })}
       />
 
       {isSourcesView ? (
