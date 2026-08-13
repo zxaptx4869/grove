@@ -68,7 +68,7 @@ function GlobalNavigation({ projects }: { projects: ProjectPayload[] }) {
         </div>
       </nav>
       <div className="min-h-0 flex-1 px-2 pb-3">
-        <p className="px-2.5 pb-1.5 pt-[18px] text-[11px] font-normal text-muted-foreground">最近项目</p>
+        <p className="px-2.5 pb-1.5 pt-[18px] text-[11px] text-muted-foreground">最近项目</p>
         {recentProjects.length > 0 ? recentProjects.map((project) => (
           <Link key={project.id} to={`/projects/${project.id}`} className="flex min-h-[38px] items-center gap-[9px] rounded-md px-2.5 text-body text-muted-foreground hover:bg-muted hover:text-foreground">
             <FolderTree className="size-4" />

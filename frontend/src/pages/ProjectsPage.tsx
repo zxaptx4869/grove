@@ -130,10 +130,10 @@ export function ProjectsPage() {
             role="tab"
             aria-selected={filter === key}
             onClick={() => setFilter(key)}
-            className={`flex h-[34px] items-center gap-1.5 rounded-md px-2.5 text-body font-semibold transition-colors ${filter === key ? 'bg-card text-foreground shadow-[0_1px_2px_rgb(0_0_0/0.06)]' : 'text-muted-foreground hover:bg-muted hover:text-foreground'}`}
+            className={`flex h-[34px] items-center gap-1.5 rounded-md px-2.5 text-body transition-colors ${filter === key ? 'bg-card text-foreground shadow-[0_1px_2px_rgb(0_0_0/0.06)]' : 'text-muted-foreground hover:bg-muted hover:text-foreground'}`}
           >
             {label}
-            <span className="text-caption font-normal text-muted-foreground">{projectQueries[index].data?.length ?? '–'}</span>
+            <span className="text-caption text-muted-foreground">{projectQueries[index].data?.length ?? '–'}</span>
           </button>
         ))}
       </div>
@@ -163,7 +163,7 @@ export function ProjectsPage() {
             <li key={project.id} className="group flex min-h-[66px] items-center gap-3 px-1 py-2.5">
               <span className="flex size-[34px] shrink-0 items-center justify-center rounded-md bg-muted"><FolderKanban className="size-4 text-brand" /></span>
               <div className="min-w-0 flex-1">
-                <Link className="text-body font-[650] hover:text-brand" to={`/projects/${project.id}`}>{project.name}</Link>
+                <Link className="text-body font-medium hover:text-brand" to={`/projects/${project.id}`}>{project.name}</Link>
                 <p className="mt-[3px] truncate text-caption text-muted-foreground">{project.description || '尚未填写目标与背景'} · {project.node_count} 个目录节点</p>
               </div>
               <Badge className={`min-h-[22px] rounded px-[7px] py-0.5 text-[11px] font-semibold ${statusClass(project.status)}`}>{STATUS_LABELS[project.status]}</Badge>
