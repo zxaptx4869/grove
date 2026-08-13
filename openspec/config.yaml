@@ -2,13 +2,14 @@ schema: spec-driven
 
 # 项目上下文：提供给 OpenSpec 生成工件时的背景
 context: |
-  知林 Grove：个人知识管家 Web 产品。把用户散落的收藏/截图/文档，通过 AI 提取整理为结构化知识库，人在确认后归档。
-  产品铁律：1) AI 输出永远是候选，人拥有最终决定权；2) 正式记录必须可溯源到原始材料；3) 数据按 Workspace 隔离。
+  知林 Grove：面向个人项目的 AI 知识共创工具。把用户散落的截图、文字、网页和文档，通过 AI 提取整理为可确认、可追溯的结构化知识库。
+  产品铁律：1) AI 输出永远是候选；2) 正式记录必须可溯源到原始材料；3) 数据按 Workspace 隔离；4) 人拥有最终决定权。
   技术栈（已锁定）：后端 FastAPI + Pydantic v2 + async SQLAlchemy 2 + Alembic（Python ≥3.12）；
   前端 React 19 + TypeScript + Vite + Tailwind 4 + shadcn/ui + TanStack Query；
   数据库开发 SQLite、生产 MySQL 8；AI 采用 AIProvider 抽象（deepseek/doubao/demo）。
   工程规范：代码注释与文档用中文；环境变量用 pydantic-settings，.env 不入库；
-  前端保证 390px 移动宽度可用；提交信息用 Conventional Commits 风格。
+  Web 是桌面知识整理工作台，从 1024px 视口宽度开始支持完整流程；小屏只显示电脑访问提示，不实现手机 Web 业务界面；
+  提交信息用 Conventional Commits 风格。
 
 # 工件规则
 rules:

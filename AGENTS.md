@@ -22,7 +22,7 @@
 - 技术栈（2026-08-12 锁定）：后端 FastAPI + Pydantic v2 + async SQLAlchemy 2 + Alembic；前端 React 19 + TypeScript + Vite + Tailwind 4 + shadcn/ui + TanStack Query；数据库开发 SQLite、生产 MySQL 8。
 - 后端 Python ≥3.12；依赖管理用 backend/pyproject.toml；格式与静态检查用 ruff。
 - 环境变量统一走 pydantic-settings，密钥类配置只放占位键，`backend/.env.example` 提供模板，不得提交 `.env`。
-- 前端需保证 390px 移动宽度可用。
+- Grove Web 是桌面知识整理工作台，从 1024px 视口宽度开始支持完整业务流程；低于该宽度时只显示电脑访问提示，不实现手机 Web 业务界面。
 - 提交信息用中文、遵循 Conventional Commits 风格（feat/fix/docs/chore/refactor）。
 - 产品范围与优先级以 `docs/产品蓝图与功能优先级.md` 为准；遇到跨 change 的产品分歧先更新蓝图，具体技术取舍记录到对应 change 的 `design.md`，不要静默猜测。
 

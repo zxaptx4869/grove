@@ -1,6 +1,6 @@
 ---
 name: grove-ui-conventions
-description: 知林 Grove 产品前端实现与验收规范。Use when implementing, adjusting, prototyping, or reviewing Grove pages and React components; handling AI candidates, confirmation, entries, sources, directory trees, task states, search, or AI reading; or validating desktop, 390px mobile, accessibility, copy, and interaction states with Tailwind 4 and shadcn/ui.
+description: 知林 Grove 产品前端实现与验收规范。Use when implementing, adjusting, prototyping, or reviewing Grove pages and React components; handling AI candidates, confirmation, entries, sources, directory trees, task states, search, or AI reading; or validating desktop workbench layouts, small-screen boundaries, accessibility, copy, and interaction states with Tailwind 4 and shadcn/ui.
 ---
 
 # Grove UI 实现规范
@@ -22,7 +22,9 @@ description: 知林 Grove 产品前端实现与验收规范。Use when implement
 - 延续现有布局和组件模式；只有真实复用出现时才提取产品组件，不预建未来占位组件。
 - 产品组件保持数据驱动，但不要为了“可替换”制造无业务价值的抽象。
 - 页面首屏直接服务工作流，不做营销式 Hero、装饰性统计卡或卡片套卡片。
-- 桌面端提高扫描和批量处理效率；390px 使用逐层进入与底部操作区，不能压缩桌面三栏造成横向滚动。
+- 将 Web 作为桌面知识整理工作台，从 1024px 视口宽度开始支持完整流程，重点优化 1280px、1440px 和 1600px。
+- 低于 1024px 时不把桌面工作台重排为手机业务界面；统一显示电脑访问提示，不提供继续访问或部分功能入口。
+- 原生 App 上线后，小屏承接页才改为打开或下载 App；不要在 Web 页面中提前实现 App 业务流程。
 
 ## 产品语义
 
@@ -65,8 +67,9 @@ description: 知林 Grove 产品前端实现与验收规范。Use when implement
 
 完成前至少检查：
 
-1. 桌面与 390px 的主流程均可完成，无横向滚动、遮挡或文字溢出。
-2. Candidate、Entry、Source 和 AI 推荐在文案与操作上没有混淆。
-3. loading、empty、error、partial、retry 和破坏性操作状态完整。
-4. 键盘、焦点、对比度和图标标签可用。
-5. 运行相关前端测试、`npm run lint` 和 `npm run build`；关键界面通过浏览器截图检查。
+1. 在 1280px、1440px 和 1600px 检查桌面主流程，无非预期横向滚动、遮挡或文字溢出；窄桌面窗口与浏览器缩放仍应有清晰反馈。
+2. 若当前 change 包含端侧边界实现，检查低于 1024px 的访问不会进入业务工作台；阻断页实现前不得宣称手机 Web 可用。
+3. Candidate、Entry、Source 和 AI 推荐在文案与操作上没有混淆。
+4. loading、empty、error、partial、retry 和破坏性操作状态完整。
+5. 键盘、焦点、对比度和图标标签可用。
+6. 运行相关前端测试、`npm run lint` 和 `npm run build`；关键界面通过浏览器截图检查。
