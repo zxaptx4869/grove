@@ -9,7 +9,8 @@ from sqlalchemy import select
 from sqlalchemy.orm import selectinload
 
 from app.api.deps import DbSession, get_current_workspace
-from app.models import Attachment, Project, Source, Workspace
+from app.models import Attachment, ProcessingTask, Project, Source, Workspace
+from app.models.processing import DONE, FAILED, PROCESSING, WAITING
 from app.schemas.source import AttachmentOut, SourceOut, SourceUpdate
 from app.services.attachment_storage import AttachmentStorage
 
@@ -34,6 +35,7 @@ def _source_out(source: Source, attachments: list[Attachment]) -> SourceOut:
         title=source.title,
         note=source.note,
         project_id=source.project_id,
+        status=source.status,
         created_at=source.created_at,
         updated_at=source.updated_at,
         attachments=[
@@ -207,6 +209,39 @@ async def update_source(
         if payload.project_id is not None:
             await _validate_project(db, workspace.id, payload.project_id)
         source.project_id = payload.project_id
+    await db.commit()
+    return await _load_source_out(db, source_id)
+
+
+@router.post("/{source_id}/process", response_model=SourceOut)
+async def trigger_processing(
+    source_id: int,
+    db: DbSession,
+    workspace: CurrentWorkspace,
+) -> SourceOut:
+    """触发处理：创建或复位处理任务到等待处理。"""
+    source = await _get_owned_source(db, workspace.id, source_id)
+    task = (
+        await db.execute(
+            select(ProcessingTask).where(ProcessingTask.source_id == source.id)
+        )
+    ).scalar_one_or_none()
+
+    if task is None:
+        task = ProcessingTask(source_id=source.id, status=WAITING, retry_count=0)
+        db.add(task)
+    elif task.status == PROCESSING:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="来源正在处理中")
+    elif task.status == DONE:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="来源已处理完成")
+    else:
+        if task.status == FAILED:
+            task.retry_count += 1
+        task.status = WAITING
+        task.error = None
+        task.step = None
+
+    source.status = WAITING
     await db.commit()
     return await _load_source_out(db, source_id)
 

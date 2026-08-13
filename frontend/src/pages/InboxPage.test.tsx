@@ -1,5 +1,6 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { render, screen } from '@testing-library/react'
+import userEvent from '@testing-library/user-event'
 import { MemoryRouter } from 'react-router-dom'
 import { describe, expect, it, vi } from 'vitest'
 import { InboxPage } from './InboxPage'
@@ -34,6 +35,7 @@ describe('InboxPage', () => {
                 title: '洗烘使用体验.png',
                 note: '关注烘干默认设置',
                 project_id: null,
+                status: 'waiting',
                 created_at: '',
                 updated_at: '',
                 attachments: [
@@ -59,6 +61,8 @@ describe('InboxPage', () => {
     expect(await screen.findByRole('heading', { name: '收集箱' })).toBeInTheDocument()
     expect(await screen.findByText('洗烘使用体验.png')).toBeInTheDocument()
     expect(screen.getByLabelText('来源列表')).toBeInTheDocument()
+    expect(screen.getByText('等待处理')).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: '开始处理' })).toBeInTheDocument()
     vi.unstubAllGlobals()
   })
 
@@ -74,6 +78,60 @@ describe('InboxPage', () => {
     renderInbox()
 
     expect(await screen.findByText('还没有来源')).toBeInTheDocument()
+    vi.unstubAllGlobals()
+  })
+
+  it('点击开始处理触发处理接口', async () => {
+    const calls: Array<{ method: string; path: string }> = []
+    vi.stubGlobal(
+      'fetch',
+      vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
+        const url = new URL(String(input), 'http://localhost')
+        calls.push({ method: init?.method ?? 'GET', path: url.pathname })
+        if (url.pathname === '/api/projects') {
+          return Promise.resolve({ ok: true, json: async () => [] })
+        }
+        if (url.pathname === '/api/sources') {
+          if (init?.method === 'POST') {
+            return Promise.resolve({
+              ok: true,
+              json: async () => ({
+                id: 1,
+                title: 'x',
+                note: null,
+                project_id: null,
+                status: 'waiting',
+                created_at: '',
+                updated_at: '',
+                attachments: [],
+              }),
+            })
+          }
+          return Promise.resolve({
+            ok: true,
+            json: async () => [
+              {
+                id: 1,
+                title: 'x',
+                note: null,
+                project_id: null,
+                status: 'waiting',
+                created_at: '',
+                updated_at: '',
+                attachments: [],
+              },
+            ],
+          })
+        }
+        return Promise.resolve({ ok: true, json: async () => [] })
+      }),
+    )
+
+    renderInbox()
+    await screen.findByText('x')
+    await userEvent.click(screen.getByRole('button', { name: '开始处理' }))
+
+    expect(calls.some((call) => call.method === 'POST' && call.path === '/api/sources/1/process')).toBe(true)
     vi.unstubAllGlobals()
   })
 })

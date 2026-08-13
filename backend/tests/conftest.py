@@ -1,5 +1,10 @@
 """pytest 共享夹具。"""
 
+import os
+
+# 测试环境关闭后台 Worker，避免与测试写入产生竞态
+os.environ.setdefault("PROCESSING_WORKER_ENABLED", "false")
+
 import pytest
 from fastapi.testclient import TestClient
 

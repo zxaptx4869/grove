@@ -10,6 +10,7 @@ import {
   deleteSource,
   fetchProjects,
   fetchSources,
+  triggerProcessing,
   updateSource,
   type ProjectStatus,
 } from '@/lib/api'
@@ -51,6 +52,12 @@ export function InboxPage() {
       toast.success('来源已删除')
     },
     onError: (error) => toast.error(error instanceof Error ? error.message : '删除失败，请重试'),
+  })
+  const trigger = useGroveMutation({
+    mutationFn: (id: number) => triggerProcessing(id),
+    invalidates: [queryKeys.sources],
+    onSuccess: () => toast.success('已开始处理'),
+    onError: (error) => toast.error(error instanceof Error ? error.message : '触发处理失败'),
   })
 
   const projectOptions = (projects.data ?? []).map((project) => ({
@@ -103,12 +110,13 @@ export function InboxPage() {
               </Button>
             </div>
           ) : (
-            <SourceList
-              sources={sources.data ?? []}
-              projects={projectOptions}
-              onAssign={(id, projectId) => assign.mutate({ id, projectId })}
-              onDelete={(id) => remove.mutate(id)}
-            />
+        <SourceList
+          sources={sources.data ?? []}
+          projects={projectOptions}
+          onAssign={(id, projectId) => assign.mutate({ id, projectId })}
+          onTrigger={(id) => trigger.mutate(id)}
+          onDelete={(id) => remove.mutate(id)}
+        />
           )}
         </div>
       </div>

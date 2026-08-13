@@ -9,6 +9,7 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship
 from app.db.session import Base
 
 if TYPE_CHECKING:
+    from app.models.processing import ProcessingTask
     from app.models.project import Project
     from app.models.workspace import Workspace
 
@@ -31,6 +32,7 @@ class Source(Base):
     )
     title: Mapped[str] = mapped_column(String(255), nullable=False)
     note: Mapped[str | None] = mapped_column(Text, nullable=True)
+    status: Mapped[str] = mapped_column(String(16), default="waiting", nullable=False)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )
@@ -40,6 +42,9 @@ class Source(Base):
 
     workspace: Mapped["Workspace"] = relationship()
     project: Mapped["Project"] = relationship()
+    processing_task: Mapped["ProcessingTask"] = relationship(
+        back_populates="source", cascade="all, delete-orphan", uselist=False
+    )
     attachments: Mapped[list["Attachment"]] = relationship(
         back_populates="source", cascade="all, delete-orphan", order_by="Attachment.position"
     )

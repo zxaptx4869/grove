@@ -195,6 +195,8 @@ export const reorderNodes = (
 
 export type AttachmentKind = 'image' | 'text'
 
+export type SourceStatus = 'waiting' | 'processing' | 'done' | 'failed'
+
 export interface AttachmentPayload {
   id: number
   kind: AttachmentKind
@@ -209,6 +211,7 @@ export interface SourcePayload {
   title: string
   note: string | null
   project_id: number | null
+  status: SourceStatus
   created_at: string
   updated_at: string
   attachments: AttachmentPayload[]
@@ -252,6 +255,9 @@ export const updateSource = (
 
 export const deleteSource = (sourceId: number) =>
   request<{ ok: boolean }>(`/api/sources/${sourceId}`, { method: 'DELETE' })
+
+export const triggerProcessing = (sourceId: number) =>
+  request<SourcePayload>(`/api/sources/${sourceId}/process`, { method: 'POST' })
 
 export const sourceImageUrl = (sourceId: number, attachmentId: number) =>
   `${API_BASE_URL}/api/sources/${sourceId}/attachments/${attachmentId}/file`

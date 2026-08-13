@@ -35,6 +35,12 @@ class Settings(BaseSettings):
     # AI 供应商：demo（默认）/ deepseek / doubao
     ai_provider: str = Field(default="demo", description="AI 供应商标识")
 
+    # 处理 Provider：demo（默认）/ 其他占位
+    processing_provider: str = Field(default="demo", description="处理 Provider 标识")
+
+    # 进程内处理 Worker：应用启动时是否开启（测试环境可关闭）
+    processing_worker_enabled: bool = Field(default=True, description="是否启用处理 Worker")
+
     # 附件存储目录：默认相对 backend 运行目录，由存储服务解析
     attachment_dir: str = Field(default="uploads", description="本地附件存储目录")
 

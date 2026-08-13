@@ -1,7 +1,8 @@
-import { FileText, ImageIcon, Trash2 } from 'lucide-react'
+import { FileText, ImageIcon, RotateCw, Trash2 } from 'lucide-react'
 
+import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
-import type { SourcePayload } from '@/lib/api'
+import type { SourcePayload, SourceStatus } from '@/lib/api'
 
 interface ProjectOption {
   id: number
@@ -12,7 +13,21 @@ interface SourceListProps {
   sources: SourcePayload[]
   projects: ProjectOption[]
   onAssign: (sourceId: number, projectId: number | null) => void
+  onTrigger: (sourceId: number) => void
   onDelete: (sourceId: number) => void
+}
+
+const STATUS_LABELS: Record<SourceStatus, string> = {
+  waiting: '等待处理',
+  processing: '处理中',
+  done: '已完成',
+  failed: '失败',
+}
+
+function statusClass(status: SourceStatus) {
+  if (status === 'done') return 'bg-confirmed-soft text-confirmed'
+  if (status === 'failed') return 'bg-error-soft text-destructive'
+  return 'bg-muted text-muted-foreground'
 }
 
 function attachmentSummary(source: SourcePayload) {
@@ -25,7 +40,13 @@ function attachmentSummary(source: SourcePayload) {
 }
 
 /** Source 列表：展示类型、标题、说明、项目归属与操作。 */
-export function SourceList({ sources, projects, onAssign, onDelete }: SourceListProps) {
+export function SourceList({
+  sources,
+  projects,
+  onAssign,
+  onTrigger,
+  onDelete,
+}: SourceListProps) {
   if (sources.length === 0) {
     return <p className="px-1 py-6 text-center text-body-sm text-muted-foreground">还没有来源</p>
   }
@@ -65,6 +86,21 @@ export function SourceList({ sources, projects, onAssign, onDelete }: SourceList
                 </option>
               ))}
             </select>
+            <Badge
+              className={`min-h-[22px] shrink-0 rounded px-[7px] py-0.5 text-[11px] font-semibold ${statusClass(source.status)}`}
+            >
+              {STATUS_LABELS[source.status]}
+            </Badge>
+            {source.status === 'waiting' || source.status === 'failed' ? (
+              <Button
+                size="sm"
+                variant={source.status === 'failed' ? 'outline' : 'default'}
+                onClick={() => onTrigger(source.id)}
+              >
+                {source.status === 'failed' ? <RotateCw className="size-3.5" /> : null}
+                {source.status === 'failed' ? '重试' : '开始处理'}
+              </Button>
+            ) : null}
             <Button
               size="icon-sm"
               variant="ghost"

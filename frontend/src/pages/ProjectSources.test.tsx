@@ -23,6 +23,7 @@ describe('ProjectSources', () => {
                 title: '窗帘盒预留笔记',
                 note: null,
                 project_id: 7,
+                status: 'waiting',
                 created_at: '',
                 updated_at: '',
                 attachments: [
