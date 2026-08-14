@@ -171,7 +171,7 @@ export function AppShell() {
   return (
     <div className="h-screen overflow-hidden bg-background text-foreground">
       <div className="grid h-screen grid-cols-[216px_minmax(0,1fr)] max-[1119px]:grid-cols-[184px_minmax(0,1fr)]">
-        <aside className="flex h-full min-w-0 flex-col border-r bg-sidebar">
+        <aside className="flex h-full min-h-0 min-w-0 flex-col border-r bg-sidebar">
           <Link to="/projects" className="flex h-[52px] shrink-0 items-center gap-2.5 border-b px-4 text-body font-[650]" aria-label="知林 Grove 项目">
             <span className="flex size-7 items-center justify-center rounded-md bg-brand text-[13px] font-bold text-white" aria-hidden="true">G</span>
             <span>知林 Grove</span>
@@ -205,7 +205,7 @@ export function AppShell() {
             </DropdownMenu>
           </div>
         </aside>
-        <main className="flex h-full min-w-0 flex-col bg-background">
+        <main className="flex h-full min-h-0 min-w-0 flex-col bg-background">
           <div className="h-[52px] shrink-0 border-b bg-card" aria-hidden="true" />
           <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain"><Outlet /></div>
         </main>
