@@ -177,11 +177,13 @@ function EntryCard({ entry }: { entry: EntryPayload }) {
       <div className="flex items-start justify-between gap-3">
         <div className="min-w-0">
           <div className="flex items-center gap-2">
-            <Badge className="bg-muted text-muted-foreground">
+            <Badge variant="outline" className="bg-brand-soft text-brand">
               {ENTRY_TYPE_LABELS[entry.main_type]}
             </Badge>
             {entry.info_nature ? (
-              <span className="text-caption text-muted-foreground">{entry.info_nature}</span>
+              <Badge variant="outline" className="bg-muted/60 text-foreground">
+                {entry.info_nature}
+              </Badge>
             ) : null}
           </div>
           <h3 className="mt-1 text-body font-[650]">{entry.title}</h3>
