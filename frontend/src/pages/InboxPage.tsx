@@ -32,6 +32,12 @@ export function InboxPage() {
   const sources = useQuery({
     queryKey: [...queryKeys.sources, filter],
     queryFn: () => fetchSources({ unassigned: filter === 'unassigned' }),
+    refetchInterval: (query) =>
+      query.state.data?.some(
+        (source) => source.status === 'waiting' || source.status === 'processing',
+      )
+        ? 1500
+        : false,
   })
 
   const invalidateSources = () => queryClient.invalidateQueries({ queryKey: queryKeys.sources })

@@ -27,6 +27,12 @@ export function ProjectSources({ projectId }: { projectId: number }) {
   const sources = useQuery({
     queryKey: [...queryKeys.sources, 'project', projectId],
     queryFn: () => fetchSources({ projectId }),
+    refetchInterval: (query) =>
+      query.state.data?.some(
+        (source) => source.status === 'waiting' || source.status === 'processing',
+      )
+        ? 1500
+        : false,
   })
 
   const assign = useGroveMutation({
