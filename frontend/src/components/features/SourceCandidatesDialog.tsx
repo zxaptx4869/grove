@@ -111,7 +111,7 @@ export function SourceCandidatesDialog({
             还没有候选
           </div>
         ) : (
-          <div className="space-y-3">
+          <div className="max-h-[65vh] space-y-3 overflow-y-auto pr-1">
             {candidates.data?.map((candidate) => (
               <CandidateItem key={candidate.id} candidate={candidate} />
             ))}
