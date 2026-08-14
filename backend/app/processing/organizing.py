@@ -41,6 +41,9 @@ class OrganizingProcessingProvider(ProcessingProvider):
                 self.provider_name,
                 model,
             )
+            title = (draft.source_title or "").strip()
+            if title:
+                loaded.title = title[:255]
         except Exception as exc:  # noqa: BLE001
             await save_failed_extraction(
                 db,

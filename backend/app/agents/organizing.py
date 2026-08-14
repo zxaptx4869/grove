@@ -38,6 +38,7 @@ class CandidateDraft(BaseModel):
 class ExtractionDraft(BaseModel):
     """一次整理的结构化候选结果。"""
 
+    source_title: str = ""
     candidates: list[CandidateDraft] = []
     discarded_count: int = 0
     discarded_reason_summary: str | None = None
@@ -57,7 +58,8 @@ SYSTEM_PROMPT = """你是 Grove 的整理 Agent。请把用户提供的原始材
    广告、寒暄、无法理解或明显无关的内容不要输出为候选。
 3. 每条候选必须通过 evidence 引用其来源的 attachment_id 和原文/OCR 片段。
 4. main_type 只使用 knowledge（知识）、method（方法）、parameter（参数）、reminder（提醒）。
-5. AI 输出永远是候选，不直接成为正式知识。"""
+5. source_title 生成简洁、可识别的标题，不超过 120 字。
+6. AI 输出永远是候选，不直接成为正式知识。"""
 
 
 def _format_context(
@@ -81,6 +83,7 @@ def _offline_draft(source: Source, sections: list[tuple[int, str]]) -> Extractio
     """离线确定性候选，仅用于未配置密钥时的验收。"""
     if not sections:
         return ExtractionDraft(
+            source_title=source.title,
             candidates=[],
             discarded_count=0,
             discarded_reason_summary="没有可解析的文本附件",
@@ -90,6 +93,7 @@ def _offline_draft(source: Source, sections: list[tuple[int, str]]) -> Extractio
     if not first_text:
         first_text = source.note or source.title
     return ExtractionDraft(
+        source_title=first_text[:40],
         candidates=[
             CandidateDraft(
                 candidate_kind="recommended",

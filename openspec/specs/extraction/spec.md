@@ -40,7 +40,7 @@ Candidate MUST 至少包含标题、核心内容、主类型、信息性质、�
 - **THEN** 每条候选的证据引用包含附件 ID 与原文/OCR 片段
 
 ### Requirement: Organizing Agent 结构化输出
-系统 MUST 通过 PydanticAI Agent 生成结构化 ExtractionDraft；文字附件 MUST 直接进入文本上下文，图片附件 MUST 先由视觉模型 OCR 成文本，再交给文本 Agent 生成候选。
+系统 MUST 通过 PydanticAI Agent 生成结构化 ExtractionDraft；ExtractionDraft MUST 包含 source_title；文字附件 MUST 直接进入文本上下文，图片附件 MUST 先由视觉模型 OCR 成文本，再交给文本 Agent 生成候选；处理成功后 MUST 用 source_title 更新 Source 标题。
 
 #### Scenario: 文字输入
 - **WHEN** Source 包含文字附件
@@ -49,6 +49,10 @@ Candidate MUST 至少包含标题、核心内容、主类型、信息性质、�
 #### Scenario: 图片输入经 OCR
 - **WHEN** Source 包含图片附件
 - **THEN** 先调用视觉模型 OCR，OCR 文本再进入 Organizing Agent 文本上下文
+
+#### Scenario: 生成标题
+- **WHEN** Organizing Agent 处理成功
+- **THEN** 输出非空 source_title，并用于更新 Source 标题
 
 ### Requirement: 视觉解析与整理解耦
 图片 OCR MUST 作为独立服务步骤执行，MUST NOT 由 Organizing Agent 在自主循环中隐式调用；处理流程 MUST 对每个步骤可观察。

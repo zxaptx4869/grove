@@ -61,6 +61,19 @@ async def test_process_creates_candidates(client: httpx.AsyncClient) -> None:
 
 
 @pytest.mark.asyncio
+async def test_processing_updates_source_title(client: httpx.AsyncClient) -> None:
+    """处理成功后 Source 标题应更新为 Agent 生成的标题。"""
+    await _register(client)
+    long_text = "这是很长的第一行" + "内容" * 20
+    source = await _create_source(client, long_text)
+    await _process(client, source["id"])
+
+    updated = (await client.get(f"/api/sources/{source['id']}")).json()
+    assert updated["title"] != source["title"]
+    assert len(updated["title"]) <= 40
+
+
+@pytest.mark.asyncio
 async def test_retry_supersedes_old_extraction(client: httpx.AsyncClient) -> None:
     """重试成功后旧 Extraction 应变为 superseded，且不复制候选。"""
     await _register(client)
