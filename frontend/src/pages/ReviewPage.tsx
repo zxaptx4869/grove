@@ -75,8 +75,8 @@ function CandidateEditor({
   const [infoNature, setInfoNature] = useState(candidate.info_nature ?? '')
 
   return (
-    <div className="candidate-workbench">
-      <div className="space-y-4">
+    <div className="flex min-h-full flex-col">
+      <div className="flex-1 space-y-4">
         <div>
           <span className="badge-ai">
             <Badge className="bg-ai-candidate-soft text-ai-candidate">推荐候选</Badge>
@@ -129,7 +129,7 @@ function CandidateEditor({
         ) : null}
       </div>
 
-      <div className="mt-4 flex items-center gap-2 border-t pt-4">
+      <div className="mt-auto flex justify-end gap-2 border-t pt-4">
         <Button size="sm" variant="outline" disabled={isPending} onClick={onReject}>
           <X />
           拒绝
