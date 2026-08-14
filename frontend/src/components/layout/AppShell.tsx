@@ -169,17 +169,19 @@ export function AppShell() {
   }
 
   return (
-    <div className="min-h-screen bg-background text-foreground">
-      <div className="grid min-h-screen grid-cols-[216px_minmax(0,1fr)] max-[1119px]:grid-cols-[184px_minmax(0,1fr)]">
-        <aside className="flex min-h-screen min-w-0 flex-col border-r bg-sidebar">
+    <div className="h-screen overflow-hidden bg-background text-foreground">
+      <div className="grid h-screen grid-cols-[216px_minmax(0,1fr)] max-[1119px]:grid-cols-[184px_minmax(0,1fr)]">
+        <aside className="flex h-full min-w-0 flex-col border-r bg-sidebar">
           <Link to="/projects" className="flex h-[52px] shrink-0 items-center gap-2.5 border-b px-4 text-body font-[650]" aria-label="知林 Grove 项目">
             <span className="flex size-7 items-center justify-center rounded-md bg-brand text-[13px] font-bold text-white" aria-hidden="true">G</span>
             <span>知林 Grove</span>
           </Link>
 
-          {projectId ? <ProjectNavigation project={currentProject} /> : <GlobalNavigation projects={projects.data ?? []} />}
+          <div className="min-h-0 flex-1 overflow-y-auto">
+            {projectId ? <ProjectNavigation project={currentProject} /> : <GlobalNavigation projects={projects.data ?? []} />}
+          </div>
 
-          <div className="border-t px-2 pb-2 pt-1.5">
+          <div className="shrink-0 border-t px-2 pb-2 pt-1.5">
             <DropdownMenu>
               <DropdownMenuTrigger asChild>
                 <Button variant="ghost" className="h-11 w-full justify-start gap-2 px-2 font-normal">
@@ -203,9 +205,9 @@ export function AppShell() {
             </DropdownMenu>
           </div>
         </aside>
-        <main className="flex min-w-0 flex-col bg-background">
+        <main className="flex h-full min-w-0 flex-col bg-background">
           <div className="h-[52px] shrink-0 border-b bg-card" aria-hidden="true" />
-          <div className="min-h-0 flex-1"><Outlet /></div>
+          <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain"><Outlet /></div>
         </main>
       </div>
 
