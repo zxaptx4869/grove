@@ -62,6 +62,11 @@ function ProviderForm({
           <p className="mt-1 text-body-sm text-muted-foreground">
             {provider} · {model}
           </p>
+          {configured ? (
+            <p className="mt-1 text-caption text-confirmed">
+              已配置 · 尾号 ••••{keyTail}
+            </p>
+          ) : null}
         </div>
         <KeyRound className="size-5 text-muted-foreground" />
       </div>
@@ -76,7 +81,7 @@ function ProviderForm({
             type="password"
             value={apiKey}
             onChange={(event) => setApiKey(event.target.value)}
-            placeholder={configured ? `已配置（尾号 ${keyTail}），留空则不修改` : '粘贴你的 API Key'}
+            placeholder={configured ? '留空则不修改，粘贴新 key 可更换' : '粘贴你的 API Key'}
             autoComplete="off"
           />
         </div>

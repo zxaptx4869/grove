@@ -1,6 +1,7 @@
 """模型服务层：按 Workspace 配置返回 PydanticAI 模型，并提供连接测试。"""
 
-import base64
+import struct
+import zlib
 
 from pydantic import BaseModel
 from pydantic_ai import Agent
@@ -25,10 +26,31 @@ class _ConnectionPong(BaseModel):
     reply: str
 
 
-# 1x1 透明 PNG，仅用于视觉连接测试，不包含用户内容。
-_TINY_PNG = base64.b64decode(
-    "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII="
-)
+def _make_test_png(width: int = 16, height: int = 16) -> bytes:
+    """生成一张不包含用户内容的纯色 PNG，满足视觉模型的最小尺寸要求。"""
+
+    def _chunk(tag: bytes, data: bytes) -> bytes:
+        return (
+            struct.pack(">I", len(data))
+            + tag
+            + data
+            + struct.pack(">I", zlib.crc32(tag + data) & 0xFFFFFFFF)
+        )
+
+    signature = b"\x89PNG\r\n\x1a\n"
+    ihdr = struct.pack(">IIBBBBB", width, height, 8, 6, 0, 0, 0)
+    row = b"\x00" + b"\xff\xff\xff\xff" * width
+    idat = zlib.compress(row * height)
+    return (
+        signature
+        + _chunk(b"IHDR", ihdr)
+        + _chunk(b"IDAT", idat)
+        + _chunk(b"IEND", b"")
+    )
+
+
+# 视觉连接测试用图片，不包含用户内容。
+_TEST_PNG = _make_test_png()
 
 
 def _offline_model() -> Model:
@@ -105,7 +127,7 @@ async def test_vision_connection(db: AsyncSession, workspace_id: int) -> Connect
         row.vision_model,
         provider=OpenAIProvider(base_url=settings.doubao_base_url, api_key=secret),
     )
-    image = BinaryImage(data=_TINY_PNG, media_type="image/png")
+    image = BinaryImage(data=_TEST_PNG, media_type="image/png")
     return await _run_connection_test(model, "请只回复 ok", image)
 
 
