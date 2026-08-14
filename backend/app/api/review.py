@@ -70,6 +70,7 @@ async def list_review_sources(
                 Source.note,
                 Source.status,
                 Source.review_status,
+                Source.created_at,
                 func.count(Candidate.id),
             )
             .join(Candidate, Candidate.source_id == Source.id)
@@ -78,7 +79,7 @@ async def list_review_sources(
                 Source.review_status.in_([REVIEW_PENDING, REVIEW_PARTIAL]),
             )
             .group_by(Source.id)
-            .order_by(Source.id)
+            .order_by(Source.created_at.desc())
         )
     ).all()
     return [
@@ -88,7 +89,8 @@ async def list_review_sources(
             note=item.note,
             status=item.status,
             review_status=item.review_status,
-            candidate_count=int(item[5]),
+            candidate_count=int(item[6]),
+            created_at=item[5],
         )
         for item in rows
     ]

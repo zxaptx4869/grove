@@ -40,6 +40,17 @@ function statusClass(status: CandidatePayload['status']) {
   return 'bg-ai-candidate-soft text-ai-candidate'
 }
 
+function formatTime(value: string) {
+  const date = new Date(value)
+  if (Number.isNaN(date.getTime())) return ''
+  return new Intl.DateTimeFormat('zh-CN', {
+    month: 'short',
+    day: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
+  }).format(date)
+}
+
 function highlightQuote(text: string, quote?: string) {
   if (!quote) return text
   const index = text.indexOf(quote)
@@ -75,8 +86,8 @@ function CandidateEditor({
   const [infoNature, setInfoNature] = useState(candidate.info_nature ?? '')
 
   return (
-    <div className="flex min-h-full flex-col">
-      <div className="flex-1 space-y-4">
+    <div className="flex min-h-0 flex-1 flex-col">
+      <div className="min-h-0 flex-1 space-y-4 overflow-y-auto p-5">
         <div>
           <span className="badge-ai">
             <Badge className="bg-ai-candidate-soft text-ai-candidate">推荐候选</Badge>
@@ -129,7 +140,7 @@ function CandidateEditor({
         ) : null}
       </div>
 
-      <div className="mt-auto flex justify-end gap-2 border-t pt-4">
+      <div className="flex justify-end gap-2 border-t px-5 py-3">
         <Button size="sm" variant="outline" disabled={isPending} onClick={onReject}>
           <X />
           拒绝
@@ -381,26 +392,26 @@ export function ReviewPage() {
               </div>
             </div>
 
-            <div className="min-h-0 flex-1 overflow-y-auto p-5">
-              {candidates.isLoading ? (
+            {candidates.isLoading ? (
+              <div className="min-h-0 flex-1 p-5">
                 <div className="h-64 animate-pulse bg-muted/40" />
-              ) : currentCandidate ? (
-                <CandidateEditor
-                  key={currentCandidate.id}
-                  candidate={currentCandidate}
-                  isPending={adopt.isPending || reject.isPending}
-                  onAdopt={(payload) => adopt.mutate({ candidate: currentCandidate, payload })}
-                  onReject={() => reject.mutate(currentCandidate)}
-                  onSkip={() =>
-                    setCurrentIndex((value) => Math.min(pendingCandidates.length - 1, value + 1))
-                  }
-                />
-              ) : (
-                <div className="flex min-h-64 items-center justify-center text-body-sm text-muted-foreground">
-                  没有待采纳候选
-                </div>
-              )}
-            </div>
+              </div>
+            ) : currentCandidate ? (
+              <CandidateEditor
+                key={currentCandidate.id}
+                candidate={currentCandidate}
+                isPending={adopt.isPending || reject.isPending}
+                onAdopt={(payload) => adopt.mutate({ candidate: currentCandidate, payload })}
+                onReject={() => reject.mutate(currentCandidate)}
+                onSkip={() =>
+                  setCurrentIndex((value) => Math.min(pendingCandidates.length - 1, value + 1))
+                }
+              />
+            ) : (
+              <div className="flex min-h-0 flex-1 items-center justify-center p-5 text-body-sm text-muted-foreground">
+                没有待采纳候选
+              </div>
+            )}
 
             {(candidates.data ?? []).some((candidate) => candidate.status !== 'pending') ? (
               <div className="border-t p-4">
@@ -455,6 +466,7 @@ export function ReviewPage() {
                   <span className="block truncate text-body-sm font-medium">{item.title}</span>
                   <span className="mt-0.5 block text-caption text-muted-foreground">
                     {item.candidate_count} 条候选 · {item.review_status === 'partial_review' ? '部分确认' : '待确认'}
+                    {formatTime(item.created_at) ? ` · ${formatTime(item.created_at)}` : ''}
                   </span>
                 </button>
               ))}

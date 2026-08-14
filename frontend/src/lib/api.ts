@@ -389,6 +389,7 @@ export interface ReviewSourcePayload {
   status: SourceStatus
   review_status: string
   candidate_count: number
+  created_at: string
 }
 
 export interface CandidateUpdatePayload {

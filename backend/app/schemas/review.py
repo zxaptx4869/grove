@@ -1,5 +1,6 @@
 """确认台请求/响应模型。"""
 
+from datetime import datetime
 from typing import Literal
 
 from pydantic import BaseModel, Field
@@ -38,3 +39,4 @@ class ReviewSourceOut(BaseModel):
     status: str
     review_status: str
     candidate_count: int
+    created_at: datetime
