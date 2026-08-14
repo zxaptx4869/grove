@@ -355,7 +355,9 @@ export function ProjectPage() {
     )
 
   return (
-    <section className="w-full px-6 pb-[30px] pt-[22px]">
+    <section
+      className={`w-full px-6 pb-[30px] pt-[22px] ${isDirectoryView ? 'flex h-full flex-col' : ''}`}
+    >
       <header className="mb-5 flex min-h-[60px] items-start justify-between gap-6">
         <div className="min-w-0">
           <div className="flex items-center gap-2">
@@ -442,9 +444,9 @@ export function ProjectPage() {
       ) : isDirectoryView ? (
         <div
           data-testid="knowledge-layout"
-          className="grid min-h-[604px] grid-cols-[250px_minmax(0,1fr)] border-t"
+          className="grid min-h-0 flex-1 grid-cols-[250px_minmax(0,1fr)] border-t"
         >
-          <aside className="min-w-0 border-r px-[10px] py-[14px]">
+          <aside className="min-h-0 min-w-0 overflow-y-auto border-r px-[10px] py-[14px]">
             <div className="mb-2 flex h-[34px] items-center justify-between px-1">
               <div className="flex min-w-0 items-baseline gap-2">
                 <h2 className="truncate text-body font-[650]">项目目录</h2>
@@ -488,7 +490,10 @@ export function ProjectPage() {
               <p className="px-1 py-2 text-caption text-muted-foreground">目录还是空的</p>
             )}
           </aside>
-          <div data-testid="knowledge-content" className="min-w-0 px-6 pb-7 pt-3.5">
+          <div
+            data-testid="knowledge-content"
+            className="min-h-0 min-w-0 overflow-y-auto px-6 pb-7 pt-3.5"
+          >
             {nodes.length === 0 ? (
               <div className="flex min-h-[500px] items-center justify-center text-center">
                 <div className="max-w-[380px]">
