@@ -204,6 +204,7 @@ export interface AttachmentPayload {
   mime_type: string | null
   file_name: string | null
   text_content: string | null
+  ocr_text?: string | null
 }
 
 export interface SourcePayload {

@@ -14,6 +14,7 @@ class AttachmentOut(BaseModel):
     mime_type: str | None
     file_name: str | None
     text_content: str | None
+    ocr_text: str | None
 
 
 class SourceOut(BaseModel):

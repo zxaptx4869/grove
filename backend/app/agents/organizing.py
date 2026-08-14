@@ -138,6 +138,7 @@ async def build_sections(
         elif attachment.kind == "image":
             vision_model = await get_vision_model(db, source.workspace_id)
             text = await ocr_attachment(vision_model, attachment)
+            attachment.ocr_text = text
             sections.append((attachment.id, text))
     return sections
 

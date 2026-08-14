@@ -47,6 +47,7 @@ def _source_out(source: Source, attachments: list[Attachment]) -> SourceOut:
                 mime_type=item.mime_type,
                 file_name=item.file_name,
                 text_content=item.text_content,
+                ocr_text=item.ocr_text,
             )
             for item in attachments
         ],

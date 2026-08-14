@@ -186,6 +186,9 @@ export function ReviewPage() {
     [candidates.data],
   )
   const currentCandidate = pendingCandidates[currentIndex] ?? null
+  const singleImage =
+    (source.data?.attachments.filter((attachment) => attachment.kind === 'image').length ?? 0) ===
+    1
 
   const adopt = useGroveMutation({
     mutationFn: async ({
@@ -306,12 +309,24 @@ export function ReviewPage() {
               <div className="flex flex-wrap gap-3">
                 {source.data?.attachments.map((attachment) =>
                   attachment.kind === 'image' ? (
-                    <img
-                      key={attachment.id}
-                      src={sourceImageUrl(source.data.id, attachment.id)}
-                      alt={attachment.file_name ?? '来源图片'}
-                      className="max-h-80 min-w-60 flex-1 rounded-md border object-contain"
-                    />
+                    <figure key={attachment.id} className="min-w-60 flex-1">
+                      {attachment.ocr_text ? (
+                        <div className="mb-2 max-h-40 overflow-y-auto whitespace-pre-wrap rounded-md bg-muted/30 p-3 text-body-sm">
+                          {highlightQuote(
+                            attachment.ocr_text,
+                            currentCandidate?.evidence.find(
+                              (item) => item.attachment_id === attachment.id,
+                            )?.quote,
+                          )}
+                        </div>
+                      ) : null}
+                      <img
+                        src={sourceImageUrl(source.data.id, attachment.id)}
+                        alt={attachment.file_name ?? '来源图片'}
+                        className="w-full rounded-md border object-contain"
+                        style={{ maxHeight: singleImage ? '70vh' : '45vh' }}
+                      />
+                    </figure>
                   ) : (
                     <div
                       key={attachment.id}
