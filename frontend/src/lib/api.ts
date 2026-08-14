@@ -435,12 +435,14 @@ export interface EntryEvidencePayload {
   source_id: number
   attachment_id: number | null
   quote: string | null
+  source_title: string
 }
 
 export interface EntryPayload {
   id: number
   project_id: number
   node_id: number
+  node_name: string
   title: string
   content: string
   main_type: 'knowledge' | 'method' | 'parameter' | 'reminder'
@@ -450,6 +452,10 @@ export interface EntryPayload {
   created_at: string
   updated_at: string
   evidences: EntryEvidencePayload[]
+}
+
+export interface SearchEntryPayload extends EntryPayload {
+  project_name: string
 }
 
 export interface EntryUpdatePayload {
@@ -476,5 +482,17 @@ export const updateEntry = (entryId: number, payload: EntryUpdatePayload) =>
     body: JSON.stringify(payload),
   })
 
-export const fetchNodeEntries = (projectId: number, nodeId: number) =>
-  request<EntryPayload[]>(`/api/projects/${projectId}/nodes/${nodeId}/entries`)
+export const fetchNodeEntries = (
+  projectId: number,
+  nodeId: number,
+  scope: 'direct' | 'descendants' = 'direct',
+) =>
+  request<EntryPayload[]>(
+    `/api/projects/${projectId}/nodes/${nodeId}/entries?scope=${scope}`,
+  )
+
+export const searchEntries = (q: string, projectId?: number) => {
+  const params = new URLSearchParams({ q })
+  if (projectId != null) params.set('project_id', String(projectId))
+  return request<SearchEntryPayload[]>(`/api/search?${params.toString()}`)
+}

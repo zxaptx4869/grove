@@ -4,12 +4,17 @@ from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy import select
-from sqlalchemy.orm import selectinload
 
 from app.api.deps import DbSession, get_current_workspace
 from app.models import Candidate, Entry, Node, Project, Source, Workspace
 from app.schemas.entry import ArchiveCandidateRequest, EntryOut, EntryUpdate
-from app.services.entry import archive_candidate, edit_entry, entry_out, list_entries_by_node
+from app.services.entry import (
+    archive_candidate,
+    edit_entry,
+    entry_eager_options,
+    entry_out,
+    list_entries_by_node,
+)
 
 router = APIRouter(prefix="/api", tags=["entry"])
 CurrentWorkspace = Annotated[Workspace, Depends(get_current_workspace)]
@@ -32,7 +37,7 @@ async def _get_owned_candidate(
 async def _get_owned_entry(db: DbSession, workspace_id: int, entry_id: int) -> Entry:
     entry = (
         await db.execute(
-            select(Entry).options(selectinload(Entry.evidences)).where(Entry.id == entry_id)
+            select(Entry).options(*entry_eager_options()).where(Entry.id == entry_id)
         )
     ).scalar_one_or_none()
     if entry is None:
@@ -88,13 +93,16 @@ async def list_node_entries(
     node_id: int,
     db: DbSession,
     workspace: CurrentWorkspace,
+    scope: str = "direct",
 ) -> list[EntryOut]:
     """返回某项目某节点下的 Entry。"""
+    if scope not in {"direct", "descendants"}:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="无效的知识范围")
     project = await db.get(Project, project_id)
     if project is None or project.workspace_id != workspace.id:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="项目不存在")
     node = await db.get(Node, node_id)
     if node is None or node.project_id != project_id:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="节点不存在")
-    entries = await list_entries_by_node(db, project_id, node_id)
+    entries = await list_entries_by_node(db, project_id, node_id, scope)
     return [entry_out(entry) for entry in entries]

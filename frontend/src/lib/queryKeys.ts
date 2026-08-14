@@ -8,5 +8,11 @@ export const queryKeys = {
   aiSettings: ['ai-settings'],
   sourceCandidates: (sourceId: number) => ['source-candidates', sourceId],
   reviewSources: (projectId: number) => ['review-sources', projectId],
-  nodeEntries: (projectId: number, nodeId: number) => ['node-entries', projectId, nodeId],
+  nodeEntries: (projectId: number, nodeId: number, scope: 'direct' | 'descendants') => [
+    'node-entries',
+    projectId,
+    nodeId,
+    scope,
+  ],
+  search: (q: string, projectId?: number) => ['search', q, projectId ?? 'global'],
 } as const

@@ -1,14 +1,135 @@
-import { EmptyState } from '@/components/features/EmptyState'
+import { useEffect, useState } from 'react'
+import { useQuery } from '@tanstack/react-query'
+import { LayoutGrid, List, Search, X } from 'lucide-react'
+import { useNavigate } from 'react-router-dom'
 
-/** 搜索占位：搜索与来源追溯在后续切片实现。 */
+import { EmptyState } from '@/components/features/EmptyState'
+import { EntryCard, EntryList } from '@/components/features/EntryViews'
+import { Input } from '@/components/ui/input'
+import { searchEntries } from '@/lib/api'
+import { queryKeys } from '@/lib/queryKeys'
+
+/** 全局搜索：跨项目查找已确认 Entry，点击跳转到对应项目知识空间。 */
 export function SearchPage() {
+  const navigate = useNavigate()
+  const [input, setInput] = useState('')
+  const [debounced, setDebounced] = useState('')
+  const [viewMode, setViewMode] = useState<'card' | 'list'>('card')
+
+  useEffect(() => {
+    const timer = setTimeout(() => setDebounced(input.trim()), 300)
+    return () => clearTimeout(timer)
+  }, [input])
+
+  const results = useQuery({
+    queryKey: queryKeys.search(debounced),
+    queryFn: () => searchEntries(debounced),
+    enabled: debounced.length > 0,
+  })
+
+  const active = debounced.length > 0
+
+  function openEntry(projectId: number) {
+    navigate(`/projects/${projectId}?view=directory`)
+  }
+
   return (
-    <section className="space-y-6">
-      <h1 className="text-heading font-bold">搜索</h1>
-      <EmptyState
-        title="搜索尚未上线"
-        description="后续切片将支持按项目、目录节点过滤的全文搜索，并展示每条记录的来源追溯。"
-      />
+    <section className="mx-auto w-full max-w-5xl px-6 pb-[30px] pt-[22px]">
+      <header className="mb-5">
+        <h1 className="text-[22px] font-[650] leading-[30px]">搜索</h1>
+        <p className="mt-0.5 text-body text-muted-foreground">
+          跨项目查找已确认的正式知识，不改变知识归属。
+        </p>
+      </header>
+
+      <div className="mb-5 flex flex-wrap items-center gap-2">
+        <div className="relative min-w-0 flex-1">
+          <Search className="absolute left-2.5 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
+          <Input
+            value={input}
+            onChange={(event) => setInput(event.target.value)}
+            placeholder="输入关键词搜索标题、内容、目录或来源…"
+            className="h-10 pl-9 pr-9"
+            aria-label="全局搜索"
+            autoFocus
+          />
+          {input ? (
+            <button
+              type="button"
+              onClick={() => setInput('')}
+              className="absolute right-2.5 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
+              aria-label="清空搜索"
+            >
+              <X className="size-4" />
+            </button>
+          ) : null}
+        </div>
+        <div className="flex items-center rounded-md border" role="group" aria-label="视图切换">
+          <button
+            type="button"
+            onClick={() => setViewMode('card')}
+            aria-pressed={viewMode === 'card'}
+            aria-label="卡片视图"
+            className={`flex h-10 items-center gap-1.5 px-2.5 text-body-sm ${
+              viewMode === 'card'
+                ? 'bg-muted font-medium text-foreground'
+                : 'text-muted-foreground hover:text-foreground'
+            }`}
+          >
+            <LayoutGrid className="size-4" />
+            卡片
+          </button>
+          <button
+            type="button"
+            onClick={() => setViewMode('list')}
+            aria-pressed={viewMode === 'list'}
+            aria-label="列表视图"
+            className={`flex h-10 items-center gap-1.5 px-2.5 text-body-sm ${
+              viewMode === 'list'
+                ? 'bg-muted font-medium text-foreground'
+                : 'text-muted-foreground hover:text-foreground'
+            }`}
+          >
+            <List className="size-4" />
+            列表
+          </button>
+        </div>
+      </div>
+
+      {!active ? (
+        <EmptyState
+          title="输入关键词开始搜索"
+          description="搜索范围覆盖标题、核心内容、目录与来源摘要，可跨项目查找正式知识。"
+        />
+      ) : results.isLoading ? (
+        <div className="py-16 text-center text-body-sm text-muted-foreground">正在搜索…</div>
+      ) : (results.data?.length ?? 0) === 0 ? (
+        <EmptyState title="没有匹配的正式知识" description="换个关键词试试。" />
+      ) : (
+        <div>
+          <p className="mb-3 text-caption text-muted-foreground">
+            共 {results.data?.length ?? 0} 条结果
+          </p>
+          {viewMode === 'card' ? (
+            <div className="space-y-3">
+              {results.data?.map((entry) => (
+                <EntryCard
+                  key={entry.id}
+                  entry={entry}
+                  showProject
+                  onSelect={(selected) => openEntry(selected.project_id)}
+                />
+              ))}
+            </div>
+          ) : (
+            <EntryList
+              entries={results.data ?? []}
+              showProject
+              onSelect={(selected) => openEntry(selected.project_id)}
+            />
+          )}
+        </div>
+      )}
     </section>
   )
 }

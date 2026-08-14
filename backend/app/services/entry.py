@@ -12,6 +12,14 @@ from app.models.extraction import CANDIDATE_CONFIRMED, CANDIDATE_PENDING
 from app.schemas.entry import EntryEvidenceOut, EntryOut, EntryUpdate
 
 
+def entry_eager_options():
+    """返回组装 Entry 响应所需的预加载选项。"""
+    return (
+        selectinload(Entry.node),
+        selectinload(Entry.evidences).selectinload(EntrySourceEvidence.source),
+    )
+
+
 def _parse_evidence_refs(raw: str | None) -> list[dict]:
     if not raw:
         return []
@@ -28,6 +36,7 @@ def entry_out(entry: Entry) -> EntryOut:
         id=entry.id,
         project_id=entry.project_id,
         node_id=entry.node_id,
+        node_name=entry.node.name,
         title=entry.title,
         content=entry.content,
         main_type=entry.main_type,
@@ -42,6 +51,7 @@ def entry_out(entry: Entry) -> EntryOut:
                 source_id=item.source_id,
                 attachment_id=item.attachment_id,
                 quote=item.quote,
+                source_title=item.source.title,
             )
             for item in entry.evidences
         ],
@@ -94,7 +104,7 @@ async def archive_candidate(
     await db.flush()
     return (
         await db.execute(
-            select(Entry).options(selectinload(Entry.evidences)).where(Entry.id == entry.id)
+            select(Entry).options(*entry_eager_options()).where(Entry.id == entry.id)
         )
     ).scalar_one()
 
@@ -125,6 +135,7 @@ async def edit_entry(
                 status_code=status.HTTP_400_BAD_REQUEST, detail="目录节点不属于当前项目"
             )
         entry.node_id = payload.node_id
+        entry.node = node
     return entry
 
 
@@ -132,12 +143,38 @@ async def list_entries_by_node(
     db: AsyncSession,
     project_id: int,
     node_id: int,
+    scope: str = "direct",
 ) -> list[Entry]:
-    """返回某项目某节点下的 Entry。"""
+    """返回某项目某节点下的 Entry（直接或严格后代）。"""
+    if scope == "descendants":
+        node_ids = await _descendant_node_ids(db, project_id, node_id)
+    else:
+        node_ids = [node_id]
     result = await db.execute(
         select(Entry)
-        .options(selectinload(Entry.evidences))
-        .where(Entry.project_id == project_id, Entry.node_id == node_id)
-        .order_by(Entry.created_at)
+        .options(*entry_eager_options())
+        .where(Entry.project_id == project_id, Entry.node_id.in_(node_ids))
+        .order_by(Entry.created_at.desc())
     )
     return list(result.scalars().all())
+
+
+async def _descendant_node_ids(
+    db: AsyncSession,
+    project_id: int,
+    node_id: int,
+) -> list[int]:
+    """收集节点全部严格后代的 id（不含自身）。"""
+    nodes = (
+        await db.execute(select(Node).where(Node.project_id == project_id))
+    ).scalars().all()
+    children_by_parent: dict[int | None, list[int]] = {}
+    for node in nodes:
+        children_by_parent.setdefault(node.parent_id, []).append(node.id)
+    result: list[int] = []
+    stack = list(children_by_parent.get(node_id, []))
+    while stack:
+        current = stack.pop()
+        result.append(current)
+        stack.extend(children_by_parent.get(current, []))
+    return result

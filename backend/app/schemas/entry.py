@@ -13,6 +13,7 @@ class EntryEvidenceOut(BaseModel):
     source_id: int
     attachment_id: int | None
     quote: str | None
+    source_title: str
 
 
 class EntryOut(BaseModel):
@@ -21,6 +22,7 @@ class EntryOut(BaseModel):
     id: int
     project_id: int
     node_id: int
+    node_name: str
     title: str
     content: str
     main_type: str

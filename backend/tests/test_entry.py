@@ -41,6 +41,20 @@ async def _create_node(client: httpx.AsyncClient, project_id: int, name: str) ->
     return response.json()
 
 
+async def _create_child_node(
+    client: httpx.AsyncClient,
+    project_id: int,
+    parent_id: int,
+    name: str,
+) -> dict:
+    response = await client.post(
+        f"/api/projects/{project_id}/nodes",
+        json={"name": name, "parent_id": parent_id},
+    )
+    assert response.status_code == 201
+    return response.json()
+
+
 async def _create_source(client: httpx.AsyncClient, project_id: int) -> dict:
     response = await client.post(
         "/api/sources",
@@ -80,7 +94,9 @@ async def test_archive_creates_entry_and_evidence(client: httpx.AsyncClient) -> 
     data = response.json()
     assert data["node_id"] == node["id"]
     assert data["project_id"] == project["id"]
+    assert data["node_name"] == "施工"
     assert data["evidences"][0]["source_id"] == source["id"]
+    assert data["evidences"][0]["source_title"]
 
     entries = (
         await client.get(f"/api/projects/{project['id']}/nodes/{node['id']}/entries")
@@ -151,3 +167,44 @@ async def test_edit_entry(client: httpx.AsyncClient) -> None:
     assert response.status_code == 200
     assert response.json()["title"] == "新标题"
     assert response.json()["node_id"] == node2["id"]
+    assert response.json()["node_name"] == "验收"
+
+
+@pytest.mark.asyncio
+async def test_list_entries_by_scope(client: httpx.AsyncClient) -> None:
+    """按目录浏览应区分仅本节点与仅后代。"""
+    await _register(client)
+    project = await _create_project(client)
+    parent = await _create_node(client, project["id"], "施工")
+    child = await _create_child_node(client, project["id"], parent["id"], "水电")
+
+    for node_id in (parent["id"], child["id"]):
+        source = await _create_source(client, project["id"])
+        await _process(client, source["id"])
+        candidate = (await _candidates(client, source["id"]))[0]
+        await client.post(
+            f"/api/candidates/{candidate['id']}/archive",
+            json={"node_id": node_id},
+        )
+
+    direct = (
+        await client.get(
+            f"/api/projects/{project['id']}/nodes/{parent['id']}/entries"
+        )
+    ).json()
+    descendants = (
+        await client.get(
+            f"/api/projects/{project['id']}/nodes/{parent['id']}/entries",
+            params={"scope": "descendants"},
+        )
+    ).json()
+    child_descendants = (
+        await client.get(
+            f"/api/projects/{project['id']}/nodes/{child['id']}/entries",
+            params={"scope": "descendants"},
+        )
+    ).json()
+
+    assert [entry["node_id"] for entry in direct] == [parent["id"]]
+    assert [entry["node_id"] for entry in descendants] == [child["id"]]
+    assert child_descendants == []

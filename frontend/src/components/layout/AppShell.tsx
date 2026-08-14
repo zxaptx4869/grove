@@ -72,9 +72,12 @@ function GlobalNavigation({ projects }: { projects: ProjectPayload[] }) {
         >
           <Inbox className="size-4" />收集箱
         </NavLink>
-        <div className="flex min-h-[38px] cursor-not-allowed items-center gap-[9px] rounded-md px-2.5 text-body text-muted-foreground/45" aria-disabled="true">
+        <NavLink
+          to="/search"
+          className={({ isActive }) => `flex min-h-[38px] items-center gap-[9px] rounded-md px-2.5 text-body ${isActive ? 'bg-brand-soft font-semibold text-brand' : 'text-muted-foreground hover:bg-muted hover:text-foreground'}`}
+        >
           <Search className="size-4" />搜索
-        </div>
+        </NavLink>
       </nav>
       <div className="min-h-0 flex-1 px-2 pb-3">
         <p className="px-2.5 pb-1.5 pt-[18px] text-[11px] text-muted-foreground">最近项目</p>

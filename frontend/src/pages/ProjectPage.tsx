@@ -1,20 +1,25 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import {
   ArrowRight,
   BookOpen,
   FolderPlus,
   FolderTree,
+  LayoutGrid,
+  List,
   MoreHorizontal,
   Pencil,
   Plus,
+  Search,
   Sparkles,
   Trash2,
+  X,
 } from 'lucide-react'
 import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom'
 import { toast } from 'sonner'
 
 import { NodeTree } from '@/components/features/NodeTree'
+import { EntryCard, EntryList } from '@/components/features/EntryViews'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import {
@@ -46,12 +51,12 @@ import {
   fetchProjectTree,
   fetchNodeEntries,
   reorderNodes,
+  searchEntries,
   updateNode,
   updateProject,
   updateProjectStatus,
   type ProjectStatus,
   type TreeNodePayload,
-  type EntryPayload,
 } from '@/lib/api'
 import { queryKeys } from '@/lib/queryKeys'
 
@@ -87,6 +92,13 @@ function flattenNodes(
   depth = 0,
 ): Array<{ node: TreeNodePayload; depth: number }> {
   return nodes.flatMap((node) => [{ node, depth }, ...flattenNodes(node.children, depth + 1)])
+}
+
+function descendantEntryCount(node: TreeNodePayload): number {
+  return node.children.reduce(
+    (sum, child) => sum + child.entry_count + descendantEntryCount(child),
+    0,
+  )
 }
 
 function NodeFormDialog({
@@ -164,57 +176,6 @@ function NodeFormDialog({
   )
 }
 
-const ENTRY_TYPE_LABELS: Record<EntryPayload['main_type'], string> = {
-  knowledge: '知识',
-  method: '方法',
-  parameter: '参数',
-  reminder: '提醒',
-}
-
-function EntryCard({ entry }: { entry: EntryPayload }) {
-  return (
-    <article className="rounded-md border p-3">
-      <div className="flex items-start justify-between gap-3">
-        <div className="min-w-0">
-          <div className="flex items-center gap-2">
-            <Badge variant="outline" className="bg-brand-soft text-brand">
-              {ENTRY_TYPE_LABELS[entry.main_type]}
-            </Badge>
-            {entry.info_nature ? (
-              <Badge variant="outline" className="bg-muted/60 text-foreground">
-                {entry.info_nature}
-              </Badge>
-            ) : null}
-          </div>
-          <h3 className="mt-1 text-body font-[650]">{entry.title}</h3>
-        </div>
-        <Badge className="shrink-0 bg-confirmed-soft text-confirmed">已确认</Badge>
-      </div>
-      <p className="mt-2 whitespace-pre-wrap text-body-sm leading-6">{entry.content}</p>
-      {entry.applicable_condition ? (
-        <p className="mt-2 text-body-sm text-muted-foreground">
-          适用条件：{entry.applicable_condition}
-        </p>
-      ) : null}
-      {entry.note ? (
-        <p className="mt-2 text-body-sm text-muted-foreground">补充说明：{entry.note}</p>
-      ) : null}
-      {entry.evidences.length > 0 ? (
-        <details className="mt-3 border-t pt-2 text-caption text-muted-foreground">
-          <summary className="cursor-pointer">来源证据 {entry.evidences.length} 条</summary>
-          <div className="mt-2 space-y-1">
-            {entry.evidences.map((evidence) => (
-              <blockquote key={evidence.id} className="border-l-2 px-2">
-                {evidence.quote || '（无引用片段）'}
-              </blockquote>
-            ))}
-          </div>
-        </details>
-      ) : null}
-    </article>
-  )
-}
-
 export function ProjectPage() {
   const { projectId } = useParams()
   const [searchParams] = useSearchParams()
@@ -251,6 +212,19 @@ export function ProjectPage() {
   const [aiOpen, setAiOpen] = useState(false)
   const [captureOpen, setCaptureOpen] = useState(false)
   const [actionError, setActionError] = useState('')
+  const [viewMode, setViewMode] = useState<'card' | 'list'>(() =>
+    Number.isFinite(id) && window.localStorage.getItem(`grove.view-mode.${id}`) === 'list'
+      ? 'list'
+      : 'card',
+  )
+  const [scope, setScope] = useState<'direct' | 'descendants'>('direct')
+  const [searchInput, setSearchInput] = useState('')
+  const [debouncedSearch, setDebouncedSearch] = useState('')
+
+  useEffect(() => {
+    const timer = setTimeout(() => setDebouncedSearch(searchInput.trim()), 300)
+    return () => clearTimeout(timer)
+  }, [searchInput])
 
   const create = useGroveMutation({
     mutationFn: ({
@@ -356,10 +330,18 @@ export function ProjectPage() {
   const effectiveSelectedPath = selectedPath ?? (nodes[0] ? [nodes[0]] : null)
   const effectiveSelectedId = effectiveSelectedPath?.at(-1)?.id ?? null
   const selectedNode = effectiveSelectedPath?.at(-1) ?? null
+  const searchActive = debouncedSearch.length > 0
+  const directCount = selectedNode?.entry_count ?? 0
+  const descendantCount = selectedNode ? descendantEntryCount(selectedNode) : 0
   const entries = useQuery({
-    queryKey: queryKeys.nodeEntries(id, effectiveSelectedId ?? 0),
-    queryFn: () => fetchNodeEntries(id, effectiveSelectedId as number),
-    enabled: isDirectoryView && effectiveSelectedId !== null,
+    queryKey: queryKeys.nodeEntries(id, effectiveSelectedId ?? 0, scope),
+    queryFn: () => fetchNodeEntries(id, effectiveSelectedId as number, scope),
+    enabled: isDirectoryView && !searchActive && effectiveSelectedId !== null,
+  })
+  const searchResults = useQuery({
+    queryKey: queryKeys.search(debouncedSearch, id),
+    queryFn: () => searchEntries(debouncedSearch, id),
+    enabled: isDirectoryView && searchActive && Number.isFinite(id),
   })
 
   function openAddNode(parent: TreeNodePayload | null) {
@@ -373,6 +355,11 @@ export function ProjectPage() {
     setProjectDescription(project.description ?? '')
     setActionError('')
     setEditProjectOpen(true)
+  }
+
+  function changeViewMode(next: 'card' | 'list') {
+    setViewMode(next)
+    if (Number.isFinite(id)) window.localStorage.setItem(`grove.view-mode.${id}`, next)
   }
 
   if (!Number.isFinite(id))
@@ -573,59 +560,194 @@ export function ProjectPage() {
                   </div>
                 </div>
               </div>
-            ) : selectedNode ? (
+            ) : (
               <div>
-                <p className="truncate text-caption text-muted-foreground">
-                  {effectiveSelectedPath?.map((node) => node.name).join(' / ')}
-                </p>
-                <div className="flex min-h-[50px] items-center justify-between gap-4 border-b">
-                  <div className="min-w-0">
-                    <h2 className="truncate text-[16px] font-[650] leading-6">
-                      {selectedNode.name}
-                    </h2>
-                    <p className="truncate text-caption text-muted-foreground">
-                      {selectedNode.description || '尚未填写节点说明。'}
-                    </p>
+                <div className="mb-4 flex flex-wrap items-center gap-2 border-b pb-3">
+                  <div className="relative min-w-0 flex-1">
+                    <Search className="absolute left-2.5 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
+                    <Input
+                      value={searchInput}
+                      onChange={(event) => setSearchInput(event.target.value)}
+                      placeholder="搜索本项目的知识…"
+                      className="pl-8 pr-8"
+                      aria-label="搜索本项目知识"
+                    />
+                    {searchInput ? (
+                      <button
+                        type="button"
+                        onClick={() => setSearchInput('')}
+                        className="absolute right-2 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
+                        aria-label="清空搜索"
+                      >
+                        <X className="size-4" />
+                      </button>
+                    ) : null}
                   </div>
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    onClick={() => setNodeForm({ mode: 'edit', parent: null, node: selectedNode })}
+                  {!searchActive ? (
+                    <div
+                      className="flex items-center rounded-md border"
+                      role="group"
+                      aria-label="知识范围切换"
+                    >
+                      <button
+                        type="button"
+                        onClick={() => setScope('direct')}
+                        aria-pressed={scope === 'direct'}
+                        className={`flex h-9 items-center px-2.5 text-body-sm ${
+                          scope === 'direct'
+                            ? 'bg-muted font-medium text-foreground'
+                            : 'text-muted-foreground hover:text-foreground'
+                        }`}
+                      >
+                        仅本节点（{directCount}）
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setScope('descendants')}
+                        aria-pressed={scope === 'descendants'}
+                        className={`flex h-9 items-center px-2.5 text-body-sm ${
+                          scope === 'descendants'
+                            ? 'bg-muted font-medium text-foreground'
+                            : 'text-muted-foreground hover:text-foreground'
+                        }`}
+                      >
+                        仅后代（{descendantCount}）
+                      </button>
+                    </div>
+                  ) : null}
+                  <div
+                    className="flex items-center rounded-md border"
+                    role="group"
+                    aria-label="视图切换"
                   >
-                    <Pencil />
-                    编辑节点
-                  </Button>
-                </div>
-                {entries.isLoading ? (
-                  <div className="py-10 text-center text-body-sm text-muted-foreground">
-                    加载正式知识…
+                    <button
+                      type="button"
+                      onClick={() => changeViewMode('card')}
+                      aria-pressed={viewMode === 'card'}
+                      aria-label="卡片视图"
+                      className={`flex h-9 items-center gap-1.5 px-2.5 text-body-sm ${
+                        viewMode === 'card'
+                          ? 'bg-muted font-medium text-foreground'
+                          : 'text-muted-foreground hover:text-foreground'
+                      }`}
+                    >
+                      <LayoutGrid className="size-4" />
+                      卡片
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => changeViewMode('list')}
+                      aria-pressed={viewMode === 'list'}
+                      aria-label="列表视图"
+                      className={`flex h-9 items-center gap-1.5 px-2.5 text-body-sm ${
+                        viewMode === 'list'
+                          ? 'bg-muted font-medium text-foreground'
+                          : 'text-muted-foreground hover:text-foreground'
+                      }`}
+                    >
+                      <List className="size-4" />
+                      列表
+                    </button>
                   </div>
-                ) : (entries.data?.length ?? 0) === 0 ? (
-                  <div className="flex min-h-[420px] items-center justify-center text-center">
-                    <div className="max-w-[320px]">
-                      <BookOpen className="mx-auto size-5 text-muted-foreground" />
-                      <h3 className="mt-3 text-body font-[650]">这里还没有正式知识</h3>
-                      <p className="mt-1 text-body-sm leading-6 text-muted-foreground">
-                        当前目录下暂无可浏览的内容。
+                </div>
+
+                {searchActive ? (
+                  <div>
+                    <div className="flex min-h-[50px] items-center justify-between gap-4 border-b">
+                      <div className="min-w-0">
+                        <h2 className="truncate text-[16px] font-[650] leading-6">搜索结果</h2>
+                        <p className="truncate text-caption text-muted-foreground">
+                          “{debouncedSearch}” · 项目内 {searchResults.data?.length ?? 0} 条
+                        </p>
+                      </div>
+                    </div>
+                    {searchResults.isLoading ? (
+                      <div className="py-10 text-center text-body-sm text-muted-foreground">
+                        正在搜索…
+                      </div>
+                    ) : (searchResults.data?.length ?? 0) === 0 ? (
+                      <div className="flex min-h-[420px] items-center justify-center text-center">
+                        <div className="max-w-[320px]">
+                          <Search className="mx-auto size-5 text-muted-foreground" />
+                          <h3 className="mt-3 text-body font-[650]">没有匹配的正式知识</h3>
+                          <p className="mt-1 text-body-sm leading-6 text-muted-foreground">
+                            换个关键词试试。
+                          </p>
+                        </div>
+                      </div>
+                    ) : viewMode === 'card' ? (
+                      <div className="space-y-3 pt-4">
+                        {searchResults.data?.map((entry) => (
+                          <EntryCard key={entry.id} entry={entry} />
+                        ))}
+                      </div>
+                    ) : (
+                      <div className="pt-4">
+                        <EntryList entries={searchResults.data ?? []} />
+                      </div>
+                    )}
+                  </div>
+                ) : selectedNode ? (
+                  <div>
+                    <p className="truncate text-caption text-muted-foreground">
+                      {effectiveSelectedPath?.map((node) => node.name).join(' / ')}
+                    </p>
+                    <div className="flex min-h-[50px] items-center justify-between gap-4 border-b">
+                      <div className="min-w-0">
+                        <h2 className="truncate text-[16px] font-[650] leading-6">
+                          {selectedNode.name}
+                        </h2>
+                        <p className="truncate text-caption text-muted-foreground">
+                          {selectedNode.description || '尚未填写节点说明。'}
+                        </p>
+                      </div>
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={() => setNodeForm({ mode: 'edit', parent: null, node: selectedNode })}
+                      >
+                        <Pencil />
+                        编辑节点
+                      </Button>
+                    </div>
+                    {entries.isLoading ? (
+                      <div className="py-10 text-center text-body-sm text-muted-foreground">
+                        加载正式知识…
+                      </div>
+                    ) : (entries.data?.length ?? 0) === 0 ? (
+                      <div className="flex min-h-[420px] items-center justify-center text-center">
+                        <div className="max-w-[320px]">
+                          <BookOpen className="mx-auto size-5 text-muted-foreground" />
+                          <h3 className="mt-3 text-body font-[650]">这里还没有正式知识</h3>
+                          <p className="mt-1 text-body-sm leading-6 text-muted-foreground">
+                            {scope === 'descendants'
+                              ? '该目录及其后代暂无可浏览的内容。'
+                              : '当前目录下暂无可浏览的内容。'}
+                          </p>
+                        </div>
+                      </div>
+                    ) : viewMode === 'card' ? (
+                      <div className="space-y-3 pt-4">
+                        {entries.data?.map((entry) => (
+                          <EntryCard key={entry.id} entry={entry} />
+                        ))}
+                      </div>
+                    ) : (
+                      <div className="pt-4">
+                        <EntryList entries={entries.data ?? []} />
+                      </div>
+                    )}
+                  </div>
+                ) : (
+                  <div className="flex min-h-[500px] items-center justify-center text-center">
+                    <div>
+                      <FolderTree className="mx-auto size-5 text-muted-foreground" />
+                      <p className="mt-2 text-body-sm text-muted-foreground">
+                        选择一个目录节点查看说明
                       </p>
                     </div>
                   </div>
-                ) : (
-                  <div className="space-y-3 pt-4">
-                    {entries.data?.map((entry) => (
-                      <EntryCard key={entry.id} entry={entry} />
-                    ))}
-                  </div>
                 )}
-              </div>
-            ) : (
-              <div className="flex min-h-[500px] items-center justify-center text-center">
-                <div>
-                  <FolderTree className="mx-auto size-5 text-muted-foreground" />
-                  <p className="mt-2 text-body-sm text-muted-foreground">
-                    选择一个目录节点查看说明
-                  </p>
-                </div>
               </div>
             )}
           </div>
