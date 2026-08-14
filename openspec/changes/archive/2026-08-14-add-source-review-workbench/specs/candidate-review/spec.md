@@ -39,14 +39,3 @@
 #### Scenario: 原始材料与候选同屏
 - **WHEN** 用户选择一条待审 Source
 - **THEN** 展示该 Source 的原始材料与全部候选
-
-### Requirement: Source 内批量决策
-用户 SHALL 能在当前 Source 内选择多条候选并批量采纳或拒绝；批量操作 MUST 只作用于同一 Source 内的候选。
-
-#### Scenario: 批量采纳
-- **WHEN** 用户在当前 Source 内选择多条候选并批量采纳
-- **THEN** 所选候选均变为已采纳，未选候选不变
-
-#### Scenario: 批量拒绝
-- **WHEN** 用户在当前 Source 内选择多条候选并批量拒绝
-- **THEN** 所选候选均变为已拒绝，未选候选不变
