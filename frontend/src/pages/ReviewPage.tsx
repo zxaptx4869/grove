@@ -275,8 +275,8 @@ export function ReviewPage() {
           </div>
         </div>
 
-        <div className="grid min-h-0 flex-1 grid-cols-[minmax(0,1fr)_minmax(360px,.9fr)]">
-          <section className="min-w-0 overflow-y-auto border-r p-5">
+        <div className="grid min-h-0 flex-1 grid-cols-3">
+          <section className="col-span-2 min-w-0 overflow-y-auto border-r p-5">
             <div className="mb-3 flex items-center justify-between">
               <h2 className="text-[16px] font-[650]">原始材料与证据</h2>
               {source.data?.note ? (
