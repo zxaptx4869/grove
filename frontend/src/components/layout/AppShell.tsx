@@ -8,6 +8,7 @@ import {
   House,
   Images,
   Inbox,
+  KeyRound,
   LogOut,
   Search,
   UserRound,
@@ -182,6 +183,10 @@ export function AppShell() {
               </DropdownMenuTrigger>
               <DropdownMenuContent align="start" side="top" className="w-[200px]">
                 <DropdownMenuLabel>{me.data?.workspace.name ?? '当前 Workspace'}</DropdownMenuLabel>
+                <DropdownMenuSeparator />
+                <DropdownMenuItem onSelect={() => navigate('/settings/ai')}>
+                  <KeyRound />模型设置
+                </DropdownMenuItem>
                 <DropdownMenuSeparator />
                 <DropdownMenuItem onSelect={() => setLogoutOpen(true)}><LogOut />退出登录</DropdownMenuItem>
               </DropdownMenuContent>

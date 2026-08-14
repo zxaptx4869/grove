@@ -303,3 +303,53 @@ export const refreshProjectContext = (projectId: number) =>
   request<ProjectContextPayload>(`/api/projects/${projectId}/context/refresh`, {
     method: 'POST',
   })
+
+export interface AIProviderSettingsPayload {
+  text_provider: string
+  text_model: string
+  text_configured: boolean
+  text_key_tail: string | null
+  text_available: boolean
+  vision_provider: string
+  vision_model: string
+  vision_configured: boolean
+  vision_key_tail: string | null
+  vision_available: boolean
+}
+
+export interface ConnectionTestPayload {
+  ok: boolean
+  message: string
+}
+
+export interface ProviderSettingsSavePayload {
+  api_key: string
+  model?: string | null
+}
+
+export const fetchAISettings = () =>
+  request<AIProviderSettingsPayload>('/api/settings/ai')
+
+export const saveTextAISettings = (payload: ProviderSettingsSavePayload) =>
+  request<AIProviderSettingsPayload>('/api/settings/ai/text', {
+    method: 'PUT',
+    body: JSON.stringify(payload),
+  })
+
+export const saveVisionAISettings = (payload: ProviderSettingsSavePayload) =>
+  request<AIProviderSettingsPayload>('/api/settings/ai/vision', {
+    method: 'PUT',
+    body: JSON.stringify(payload),
+  })
+
+export const clearTextAISettings = () =>
+  request<AIProviderSettingsPayload>('/api/settings/ai/text', { method: 'DELETE' })
+
+export const clearVisionAISettings = () =>
+  request<AIProviderSettingsPayload>('/api/settings/ai/vision', { method: 'DELETE' })
+
+export const testTextAISettings = () =>
+  request<ConnectionTestPayload>('/api/settings/ai/text/test', { method: 'POST' })
+
+export const testVisionAISettings = () =>
+  request<ConnectionTestPayload>('/api/settings/ai/vision/test', { method: 'POST' })

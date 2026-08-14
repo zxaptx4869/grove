@@ -1,8 +1,5 @@
-# ai-provider Specification
+## MODIFIED Requirements
 
-## Purpose
-TBD - created by archiving change setup-project-foundation. Update Purpose after archive.
-## Requirements
 ### Requirement: AI Provider 抽象接口
 后端 MUST 使用 PydanticAI 的 provider/client 体系提供模型访问能力；文本模型与视觉模型 MUST 通过统一服务层获取，业务代码 MUST NOT 直接持有第三方客户端；结构化输出 MUST 使用 Pydantic 模型定义。
 
@@ -59,6 +56,8 @@ AI 生成的任何抽取、候选或理解 MUST 标记为候选，不得直接�
 - **WHEN** 消费方读取 Agent 输出
 - **THEN** 能通过明确的候选标记或落库位置判断该结果为候选，且仓库守则禁止其直接成为正式记录
 
+## ADDED Requirements
+
 ### Requirement: 模型密钥配置
 系统 MUST 允许用户为当前 Workspace 配置自己的文本模型与视觉模型密钥；产品本身 MUST NOT 提供或内置模型密钥；密钥 MUST 通过系统钥匙串或等价加密存储，数据库 MUST NOT 保存明文密钥；接口 MUST 只返回脱敏后的配置信息。
 
@@ -92,4 +91,3 @@ AI 生成的任何抽取、候选或理解 MUST 标记为候选，不得直接�
 #### Scenario: 测试失败不覆盖配置
 - **WHEN** 测试连接失败
 - **THEN** 返回明确错误，保留已有配置与密钥，不静默清空
-

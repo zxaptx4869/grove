@@ -20,6 +20,9 @@ const InboxPage = lazy(() =>
 const SearchPage = lazy(() =>
   import('@/pages/SearchPage').then((module) => ({ default: module.SearchPage })),
 )
+const AISettingsPage = lazy(() =>
+  import('@/pages/AISettingsPage').then((module) => ({ default: module.AISettingsPage })),
+)
 const LoginPage = lazy(() =>
   import('@/pages/LoginPage').then((module) => ({ default: module.LoginPage })),
 )
@@ -64,6 +67,7 @@ export default function App() {
           <Route path="/projects/:projectId" element={<Suspense fallback={<PageFallback />}><ProjectPage /></Suspense>} />
           <Route path="/inbox" element={<Suspense fallback={<PageFallback />}><InboxPage /></Suspense>} />
           <Route path="/search" element={<Suspense fallback={<PageFallback />}><SearchPage /></Suspense>} />
+          <Route path="/settings/ai" element={<Suspense fallback={<PageFallback />}><AISettingsPage /></Suspense>} />
         </Route>
 
         <Route path="/login" element={<AuthLayout><Suspense fallback={<PageFallback />}><LoginPage /></Suspense></AuthLayout>} />
