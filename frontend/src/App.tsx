@@ -14,6 +14,9 @@ const ProjectsPage = lazy(() =>
 const ProjectPage = lazy(() =>
   import('@/pages/ProjectPage').then((module) => ({ default: module.ProjectPage })),
 )
+const ReviewPage = lazy(() =>
+  import('@/pages/ReviewPage').then((module) => ({ default: module.ReviewPage })),
+)
 const InboxPage = lazy(() =>
   import('@/pages/InboxPage').then((module) => ({ default: module.InboxPage })),
 )
@@ -65,6 +68,7 @@ export default function App() {
         >
           <Route path="/projects" element={<Suspense fallback={<PageFallback />}><ProjectsPage /></Suspense>} />
           <Route path="/projects/:projectId" element={<Suspense fallback={<PageFallback />}><ProjectPage /></Suspense>} />
+          <Route path="/projects/:projectId/review" element={<Suspense fallback={<PageFallback />}><ReviewPage /></Suspense>} />
           <Route path="/inbox" element={<Suspense fallback={<PageFallback />}><InboxPage /></Suspense>} />
           <Route path="/search" element={<Suspense fallback={<PageFallback />}><SearchPage /></Suspense>} />
           <Route path="/settings/ai" element={<Suspense fallback={<PageFallback />}><AISettingsPage /></Suspense>} />

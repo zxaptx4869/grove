@@ -212,6 +212,7 @@ export interface SourcePayload {
   note: string | null
   project_id: number | null
   status: SourceStatus
+  review_status?: string
   created_at: string
   updated_at: string
   attachments: AttachmentPayload[]
@@ -372,8 +373,56 @@ export interface CandidatePayload {
   evidence: CandidateEvidencePayload[]
   reason: string | null
   risk_flags: string[]
-  status: string
+  status: CandidateDecisionStatus
 }
 
 export const fetchSourceCandidates = (sourceId: number) =>
   request<CandidatePayload[]>(`/api/sources/${sourceId}/candidates`)
+
+export type CandidateDecisionStatus = 'pending' | 'confirmed' | 'rejected'
+
+export interface ReviewSourcePayload {
+  id: number
+  title: string
+  note: string | null
+  status: SourceStatus
+  review_status: string
+  candidate_count: number
+}
+
+export interface CandidateUpdatePayload {
+  title?: string | null
+  content?: string | null
+  main_type?: 'knowledge' | 'method' | 'parameter' | 'reminder' | null
+  info_nature?: 'fact' | 'experience' | 'advice' | 'speculation' | 'other' | null
+  applicable_condition?: string | null
+  note?: string | null
+}
+
+export const fetchSource = (sourceId: number) =>
+  request<SourcePayload>(`/api/sources/${sourceId}`)
+
+export const fetchReviewSources = (projectId: number) =>
+  request<ReviewSourcePayload[]>(`/api/projects/${projectId}/review/sources`)
+
+export const updateCandidate = (candidateId: number, payload: CandidateUpdatePayload) =>
+  request<CandidatePayload>(`/api/candidates/${candidateId}`, {
+    method: 'PATCH',
+    body: JSON.stringify(payload),
+  })
+
+export const decideCandidate = (candidateId: number, status: CandidateDecisionStatus) =>
+  request<CandidatePayload>(`/api/candidates/${candidateId}/decision`, {
+    method: 'POST',
+    body: JSON.stringify({ status }),
+  })
+
+export const batchDecideCandidates = (
+  sourceId: number,
+  candidateIds: number[],
+  status: 'confirmed' | 'rejected',
+) =>
+  request<CandidatePayload[]>(`/api/sources/${sourceId}/candidates/batch-decision`, {
+    method: 'POST',
+    body: JSON.stringify({ candidate_ids: candidateIds, status }),
+  })

@@ -60,7 +60,7 @@ def _parse_risk_flags(raw: str | None) -> list[str]:
     return [str(item) for item in data] if isinstance(data, list) else []
 
 
-def _candidate_out(candidate: Candidate) -> CandidateOut:
+def candidate_out(candidate: Candidate) -> CandidateOut:
     return CandidateOut(
         id=candidate.id,
         source_id=candidate.source_id,
@@ -172,4 +172,4 @@ async def get_active_candidates(db: AsyncSession, source_id: int) -> list[Candid
 
 async def list_candidate_out(db: AsyncSession, source_id: int) -> list[CandidateOut]:
     """返回当前候选响应。"""
-    return [_candidate_out(candidate) for candidate in await get_active_candidates(db, source_id)]
+    return [candidate_out(candidate) for candidate in await get_active_candidates(db, source_id)]

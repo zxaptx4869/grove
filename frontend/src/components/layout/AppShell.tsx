@@ -9,6 +9,7 @@ import {
   Images,
   Inbox,
   KeyRound,
+  ListChecks,
   LogOut,
   Search,
   UserRound,
@@ -95,6 +96,7 @@ function ProjectNavigation({ project }: { project?: ProjectPayload }) {
   const projectId = project?.id ?? Number(location.pathname.match(/^\/projects\/(\d+)/)?.[1])
   const isDirectory = new URLSearchParams(location.search).get('view') === 'directory'
   const isSources = new URLSearchParams(location.search).get('view') === 'sources'
+  const isReview = /^\/projects\/\d+\/review$/.test(location.pathname)
   const statusLabel: Record<ProjectStatus, string> = {
     active: '进行中',
     paused: '暂停',
@@ -125,6 +127,13 @@ function ProjectNavigation({ project }: { project?: ProjectPayload }) {
           className={`flex min-h-[38px] items-center gap-[9px] rounded-md px-2.5 text-body ${isDirectory ? 'bg-brand-soft font-semibold text-brand' : 'text-muted-foreground hover:bg-muted hover:text-foreground'}`}
         >
           <FolderTree className="size-4" />知识空间
+        </Link>
+        <Link
+          to={`/projects/${projectId}/review`}
+          aria-current={isReview ? 'page' : undefined}
+          className={`flex min-h-[38px] items-center gap-[9px] rounded-md px-2.5 text-body ${isReview ? 'bg-brand-soft font-semibold text-brand' : 'text-muted-foreground hover:bg-muted hover:text-foreground'}`}
+        >
+          <ListChecks className="size-4" />确认台
         </Link>
         <Link
           to={`/projects/${projectId}?view=sources`}

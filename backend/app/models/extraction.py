@@ -18,6 +18,8 @@ EXTRACTION_FAILED = "failed"
 CANDIDATE_KIND_RECOMMENDED = "recommended"
 CANDIDATE_KIND_OTHER = "other"
 CANDIDATE_PENDING = "pending"
+CANDIDATE_CONFIRMED = "confirmed"
+CANDIDATE_REJECTED = "rejected"
 
 
 class Extraction(Base):

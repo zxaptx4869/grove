@@ -16,6 +16,7 @@ from app.api.health import router as health_router
 from app.api.me import router as me_router
 from app.api.project_context import router as project_context_router
 from app.api.projects import router as projects_router
+from app.api.review import router as review_router
 from app.api.sources import router as sources_router
 from app.context.worker import run_context_worker
 from app.core.config import get_settings
@@ -66,6 +67,7 @@ def create_app() -> FastAPI:
     app.include_router(me_router)
     app.include_router(project_context_router)
     app.include_router(projects_router)
+    app.include_router(review_router)
     app.include_router(sources_router)
 
     return app
