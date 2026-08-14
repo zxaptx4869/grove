@@ -5,7 +5,7 @@ from functools import lru_cache
 from app.core.config import get_settings
 from app.models import Source
 from app.processing.base import ProcessingProvider
-from app.processing.demo import DemoProcessingProvider
+from app.processing.organizing import OrganizingProcessingProvider
 
 
 class UnavailableProcessingProvider(ProcessingProvider):
@@ -13,14 +13,15 @@ class UnavailableProcessingProvider(ProcessingProvider):
 
     provider_name = "unavailable"
 
-    async def process(self, source: Source) -> None:
+    async def process(self, db, source: Source) -> None:
+        del db
         raise NotImplementedError("真实处理 Provider 尚未接入，请在后续 change 完成实现后再使用。")
 
 
 @lru_cache
 def get_processing_provider() -> ProcessingProvider:
-    """返回配置的处理 Provider；非 demo 一律返回未接入占位。"""
+    """返回配置的处理 Provider；organizing 为默认实现，其他为未接入占位。"""
     settings = get_settings()
-    if settings.processing_provider == "demo":
-        return DemoProcessingProvider()
+    if settings.processing_provider in {"organizing", "demo"}:
+        return OrganizingProcessingProvider()
     return UnavailableProcessingProvider()

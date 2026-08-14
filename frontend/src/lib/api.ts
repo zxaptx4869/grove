@@ -353,3 +353,27 @@ export const testTextAISettings = () =>
 
 export const testVisionAISettings = () =>
   request<ConnectionTestPayload>('/api/settings/ai/vision/test', { method: 'POST' })
+
+export interface CandidateEvidencePayload {
+  attachment_id: number
+  quote: string
+}
+
+export interface CandidatePayload {
+  id: number
+  source_id: number
+  candidate_kind: 'recommended' | 'other'
+  title: string
+  content: string
+  main_type: 'knowledge' | 'method' | 'parameter' | 'reminder'
+  info_nature: string | null
+  applicable_condition: string | null
+  note: string | null
+  evidence: CandidateEvidencePayload[]
+  reason: string | null
+  risk_flags: string[]
+  status: string
+}
+
+export const fetchSourceCandidates = (sourceId: number) =>
+  request<CandidatePayload[]>(`/api/sources/${sourceId}/candidates`)

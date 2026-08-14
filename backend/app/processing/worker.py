@@ -64,7 +64,7 @@ async def _finish_task(task_id: int, source_id: int) -> None:
             return
 
         try:
-            await get_processing_provider().process(source)
+            await get_processing_provider().process(db, source)
             new_status = DONE
             error = None
         except Exception as exc:  # noqa: BLE001

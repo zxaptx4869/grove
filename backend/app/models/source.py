@@ -9,6 +9,7 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship
 from app.db.session import Base
 
 if TYPE_CHECKING:
+    from app.models.extraction import Extraction
     from app.models.processing import ProcessingTask
     from app.models.project import Project
     from app.models.workspace import Workspace
@@ -44,6 +45,9 @@ class Source(Base):
     project: Mapped["Project"] = relationship()
     processing_task: Mapped["ProcessingTask"] = relationship(
         back_populates="source", cascade="all, delete-orphan", uselist=False
+    )
+    extractions: Mapped[list["Extraction"]] = relationship(
+        back_populates="source", cascade="all, delete-orphan"
     )
     attachments: Mapped[list["Attachment"]] = relationship(
         back_populates="source", cascade="all, delete-orphan", order_by="Attachment.position"

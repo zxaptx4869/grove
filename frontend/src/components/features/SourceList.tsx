@@ -1,8 +1,10 @@
+import { useState } from 'react'
 import { FileText, ImageIcon, RotateCw, Trash2 } from 'lucide-react'
 
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import type { SourcePayload, SourceStatus } from '@/lib/api'
+import { SourceCandidatesDialog } from '@/components/features/SourceCandidatesDialog'
 
 interface ProjectOption {
   id: number
@@ -47,12 +49,15 @@ export function SourceList({
   onTrigger,
   onDelete,
 }: SourceListProps) {
+  const [candidateSourceId, setCandidateSourceId] = useState<number | null>(null)
+
   if (sources.length === 0) {
     return <p className="px-1 py-6 text-center text-body-sm text-muted-foreground">还没有来源</p>
   }
 
   return (
-    <ul className="divide-y border-t" aria-label="来源列表">
+    <>
+      <ul className="divide-y border-t" aria-label="来源列表">
       {sources.map((source) => {
         const firstKind = source.attachments[0]?.kind ?? 'text'
         return (
@@ -91,6 +96,16 @@ export function SourceList({
             >
               {STATUS_LABELS[source.status]}
             </Badge>
+            {source.status === 'done' ? (
+              <Button
+                size="sm"
+                variant="outline"
+                onClick={() => setCandidateSourceId(source.id)}
+              >
+                <FileText className="size-3.5" />
+                候选
+              </Button>
+            ) : null}
             {source.status === 'failed' ? (
               <Button
                 size="sm"
@@ -111,7 +126,15 @@ export function SourceList({
             </Button>
           </li>
         )
-      })}
-    </ul>
+        })}
+      </ul>
+      <SourceCandidatesDialog
+        sourceId={candidateSourceId}
+        open={candidateSourceId !== null}
+        onOpenChange={(open) => {
+          if (!open) setCandidateSourceId(null)
+        }}
+      />
+    </>
   )
 }

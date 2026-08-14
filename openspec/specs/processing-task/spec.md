@@ -37,11 +37,15 @@ TBD - created by archiving change add-processing-task-pipeline. Update Purpose a
 - **THEN** Worker 异步领取并处理，采集请求不被阻塞
 
 ### Requirement: Provider 边界
-系统 MUST 通过 `ProcessingProvider` 抽象执行处理；默认使用 Demo 实现（确定性）；未接入的真实 Provider MUST 明确报错。
+系统 MUST 通过 `ProcessingProvider` 抽象执行处理；默认使用 Organizing 处理 Provider，离线模式确定性；真实 Provider 通过 Organizing Agent 执行并产出版本化 Extraction 与 Candidate；未接入的真实 Provider MUST 明确报错。
 
 #### Scenario: Demo 处理
-- **WHEN** 配置为 Demo Provider
-- **THEN** 处理确定性完成，不依赖外部服务
+- **WHEN** 当前 Workspace 未配置真实模型密钥
+- **THEN** Organizing 处理 Provider 使用离线确定性模型完成处理，不依赖外部服务
+
+#### Scenario: 真实 Provider 处理
+- **WHEN** 当前 Workspace 配置了真实模型密钥
+- **THEN** Organizing 处理 Provider 调用 Organizing Agent，并产出版本化 Extraction 与 Candidate
 
 #### Scenario: 未接入 Provider 报错
 - **WHEN** 使用未接入的真实 Provider

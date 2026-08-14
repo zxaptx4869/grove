@@ -32,8 +32,8 @@ class Settings(BaseSettings):
     # 允许跨域的前端来源（逗号分隔）
     frontend_origins: str = "http://localhost:5173,http://127.0.0.1:5173"
 
-    # 处理 Provider：demo（默认）/ 其他占位
-    processing_provider: str = Field(default="demo", description="处理 Provider 标识")
+    # 处理 Provider：organizing（默认）/ 其他占位
+    processing_provider: str = Field(default="organizing", description="处理 Provider 标识")
 
     # 进程内处理 Worker：应用启动时是否开启（测试环境可关闭）
     processing_worker_enabled: bool = Field(default=True, description="是否启用处理 Worker")

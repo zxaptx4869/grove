@@ -2,6 +2,8 @@
 
 from abc import ABC, abstractmethod
 
+from sqlalchemy.ext.asyncio import AsyncSession
+
 from app.models import Source
 
 
@@ -11,5 +13,5 @@ class ProcessingProvider(ABC):
     provider_name: str = "abstract"
 
     @abstractmethod
-    async def process(self, source: Source) -> None:
+    async def process(self, db: AsyncSession, source: Source) -> None:
         """处理 Source；真实解析由后续 change 接入。"""

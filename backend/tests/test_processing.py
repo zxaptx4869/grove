@@ -97,7 +97,7 @@ async def test_process_one_task_failed(client: httpx.AsyncClient, monkeypatch) -
     class FailingProvider(ProcessingProvider):
         provider_name = "failing"
 
-        async def process(self, source: Source) -> None:
+        async def process(self, db, source: Source) -> None:
             raise RuntimeError("处理失败")
 
     monkeypatch.setattr(worker, "get_processing_provider", lambda: FailingProvider())
@@ -139,12 +139,12 @@ async def test_trigger_conflict_when_processing(client: httpx.AsyncClient) -> No
     assert response.status_code == 409
 
 
-def test_factory_returns_demo_by_default() -> None:
-    """默认处理 Provider 应为 Demo 实现。"""
-    from app.processing.demo import DemoProcessingProvider
+def test_factory_returns_organizing_by_default() -> None:
+    """默认处理 Provider 应为 Organizing 实现。"""
     from app.processing.factory import get_processing_provider
+    from app.processing.organizing import OrganizingProcessingProvider
 
-    assert isinstance(get_processing_provider(), DemoProcessingProvider)
+    assert isinstance(get_processing_provider(), OrganizingProcessingProvider)
 
 
 @pytest.mark.asyncio
@@ -154,4 +154,4 @@ async def test_unavailable_provider_raises() -> None:
 
     source = Source(id=1, workspace_id=1, title="x", status=WAITING)
     with pytest.raises(NotImplementedError, match="尚未接入"):
-        await UnavailableProcessingProvider().process(source)
+        await UnavailableProcessingProvider().process(None, source)
