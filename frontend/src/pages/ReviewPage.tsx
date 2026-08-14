@@ -40,6 +40,19 @@ function statusClass(status: CandidatePayload['status']) {
   return 'bg-ai-candidate-soft text-ai-candidate'
 }
 
+function highlightQuote(text: string, quote?: string) {
+  if (!quote) return text
+  const index = text.indexOf(quote)
+  if (index < 0) return text
+  return (
+    <>
+      {text.slice(0, index)}
+      <mark className="rounded bg-amber-100 text-foreground">{quote}</mark>
+      {text.slice(index + quote.length)}
+    </>
+  )
+}
+
 function CandidateEditor({
   candidate,
   onAdopt,
@@ -232,6 +245,8 @@ export function ReviewPage() {
     const index = list.findIndex((item) => item.id === activeSourceId)
     const next = list[index + delta]
     if (next) selectSource(next.id)
+    else if (delta < 0) toast('已经是第一条来源')
+    else toast('已经是最后一条来源')
   }
 
   const sourceIndex = (reviewSources.data ?? []).findIndex((item) => item.id === activeSourceId)
@@ -275,8 +290,8 @@ export function ReviewPage() {
           </div>
         </div>
 
-        <div className="grid min-h-0 flex-1 grid-cols-3">
-          <section className="col-span-2 min-w-0 overflow-y-auto border-r p-5">
+        <div className="grid min-h-0 flex-1 grid-cols-2">
+          <section className="min-h-0 min-w-0 overflow-y-auto border-r p-5">
             <div className="mb-3 flex items-center justify-between">
               <h2 className="text-[16px] font-[650]">原始材料与证据</h2>
               {source.data?.note ? (
@@ -288,21 +303,26 @@ export function ReviewPage() {
             ) : (source.data?.attachments.length ?? 0) === 0 ? (
               <p className="py-10 text-center text-body-sm text-muted-foreground">没有附件</p>
             ) : (
-              <div className="space-y-3">
+              <div className="flex flex-wrap gap-3">
                 {source.data?.attachments.map((attachment) =>
                   attachment.kind === 'image' ? (
                     <img
                       key={attachment.id}
                       src={sourceImageUrl(source.data.id, attachment.id)}
                       alt={attachment.file_name ?? '来源图片'}
-                      className="max-h-80 w-full rounded-md border object-contain"
+                      className="max-h-80 min-w-60 flex-1 rounded-md border object-contain"
                     />
                   ) : (
                     <div
                       key={attachment.id}
-                      className="whitespace-pre-wrap rounded-md bg-muted/30 p-3 text-body-sm"
+                      className="w-full whitespace-pre-wrap rounded-md bg-muted/30 p-3 text-body-sm"
                     >
-                      {attachment.text_content}
+                      {highlightQuote(
+                        attachment.text_content ?? '',
+                        currentCandidate?.evidence.find(
+                          (item) => item.attachment_id === attachment.id,
+                        )?.quote,
+                      )}
                     </div>
                   ),
                 )}
@@ -319,7 +339,10 @@ export function ReviewPage() {
                   variant="ghost"
                   aria-label="上一候选"
                   disabled={pendingCandidates.length === 0}
-                  onClick={() => setCurrentIndex((value) => Math.max(0, value - 1))}
+                  onClick={() => {
+                    if (currentIndex === 0) toast('已经是第一条候选')
+                    else setCurrentIndex((value) => value - 1)
+                  }}
                 >
                   <ChevronLeft />
                 </Button>
@@ -332,9 +355,11 @@ export function ReviewPage() {
                   variant="ghost"
                   aria-label="下一候选"
                   disabled={pendingCandidates.length === 0}
-                  onClick={() =>
-                    setCurrentIndex((value) => Math.min(pendingCandidates.length - 1, value + 1))
-                  }
+                  onClick={() => {
+                    if (currentIndex >= pendingCandidates.length - 1)
+                      toast('已经是最后一条候选')
+                    else setCurrentIndex((value) => value + 1)
+                  }}
                 >
                   <ChevronRight />
                 </Button>
