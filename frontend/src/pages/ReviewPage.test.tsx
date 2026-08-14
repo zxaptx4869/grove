@@ -113,8 +113,6 @@ describe('ReviewPage', () => {
 
     renderPage()
 
-    await userEvent.click(await screen.findByRole('button', { name: /待处理来源/ }))
-    await userEvent.click(await screen.findByText('烘干使用体验'))
     expect(await screen.findByText('晶蕾烘干需手动勾选')).toBeInTheDocument()
     await userEvent.click(screen.getByRole('button', { name: '采纳' }))
 

@@ -141,6 +141,10 @@ async def test_review_sources_project_scoped(client: httpx.AsyncClient) -> None:
     source = await _create_source(client, project["id"])
     await _process(client, source["id"])
 
+    own_response = await client.get(f"/api/projects/{project['id']}/review/sources")
+    assert own_response.status_code == 200
+    assert own_response.json()[0]["id"] == source["id"]
+
     response = await client.get(f"/api/projects/{other['id']}/review/sources")
 
     assert response.status_code == 200

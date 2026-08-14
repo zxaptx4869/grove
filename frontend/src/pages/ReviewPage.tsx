@@ -156,15 +156,16 @@ export function ReviewPage() {
     queryFn: () => fetchReviewSources(id),
     enabled: Number.isFinite(id),
   })
+  const activeSourceId = selectedSourceId ?? reviewSources.data?.[0]?.id ?? null
   const source = useQuery({
-    queryKey: [...queryKeys.sources, 'detail', selectedSourceId ?? 0],
-    queryFn: () => fetchSource(selectedSourceId as number),
-    enabled: selectedSourceId !== null,
+    queryKey: [...queryKeys.sources, 'detail', activeSourceId ?? 0],
+    queryFn: () => fetchSource(activeSourceId as number),
+    enabled: activeSourceId !== null,
   })
   const candidates = useQuery({
-    queryKey: queryKeys.sourceCandidates(selectedSourceId ?? 0),
-    queryFn: () => fetchSourceCandidates(selectedSourceId as number),
-    enabled: selectedSourceId !== null,
+    queryKey: queryKeys.sourceCandidates(activeSourceId ?? 0),
+    queryFn: () => fetchSourceCandidates(activeSourceId as number),
+    enabled: activeSourceId !== null,
   })
 
   const pendingCandidates = useMemo(
@@ -189,7 +190,7 @@ export function ReviewPage() {
       return decideCandidate(candidate.id, 'confirmed')
     },
     invalidates: [
-      queryKeys.sourceCandidates(selectedSourceId ?? 0),
+      queryKeys.sourceCandidates(activeSourceId ?? 0),
       queryKeys.reviewSources(id),
     ],
     onSuccess: () => {
@@ -201,7 +202,7 @@ export function ReviewPage() {
   const reject = useGroveMutation({
     mutationFn: (candidate: CandidatePayload) => decideCandidate(candidate.id, 'rejected'),
     invalidates: [
-      queryKeys.sourceCandidates(selectedSourceId ?? 0),
+      queryKeys.sourceCandidates(activeSourceId ?? 0),
       queryKeys.reviewSources(id),
     ],
     onSuccess: () => {
@@ -213,7 +214,7 @@ export function ReviewPage() {
   const reopen = useGroveMutation({
     mutationFn: (candidate: CandidatePayload) => decideCandidate(candidate.id, 'pending'),
     invalidates: [
-      queryKeys.sourceCandidates(selectedSourceId ?? 0),
+      queryKeys.sourceCandidates(activeSourceId ?? 0),
       queryKeys.reviewSources(id),
     ],
     onSuccess: () => toast.success('候选已重新打开'),
@@ -228,12 +229,12 @@ export function ReviewPage() {
 
   function moveSource(delta: number) {
     const list = reviewSources.data ?? []
-    const index = list.findIndex((item) => item.id === selectedSourceId)
+    const index = list.findIndex((item) => item.id === activeSourceId)
     const next = list[index + delta]
     if (next) selectSource(next.id)
   }
 
-  const sourceIndex = (reviewSources.data ?? []).findIndex((item) => item.id === selectedSourceId)
+  const sourceIndex = (reviewSources.data ?? []).findIndex((item) => item.id === activeSourceId)
 
   return (
     <section className="flex h-full min-h-0 flex-col">
@@ -409,7 +410,7 @@ export function ReviewPage() {
                   key={item.id}
                   type="button"
                   onClick={() => selectSource(item.id)}
-                  className={`w-full rounded-md px-3 py-2 text-left transition-colors ${selectedSourceId === item.id ? 'bg-brand-soft text-brand' : 'hover:bg-muted'}`}
+                  className={`w-full rounded-md px-3 py-2 text-left transition-colors ${activeSourceId === item.id ? 'bg-brand-soft text-brand' : 'hover:bg-muted'}`}
                 >
                   <span className="block truncate text-body-sm font-medium">{item.title}</span>
                   <span className="mt-0.5 block text-caption text-muted-foreground">
