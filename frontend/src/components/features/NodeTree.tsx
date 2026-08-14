@@ -113,6 +113,11 @@ export function NodeTree({ nodes, callbacks, selectedId = null, onSelect }: Node
             >
               {node.name}
             </button>
+            {node.entry_count > 0 ? (
+              <span className="ml-1 shrink-0 rounded-full bg-muted px-1.5 text-[11px] text-muted-foreground">
+                {node.entry_count}
+              </span>
+            ) : null}
             <DropdownMenu>
               <DropdownMenuTrigger asChild>
                 <Button size="icon-xs" variant="ghost" className="opacity-0 group-focus-within:opacity-100 group-hover:opacity-100 data-[state=open]:opacity-100" aria-label={`${node.name} 更多操作`}><MoreHorizontal /></Button>

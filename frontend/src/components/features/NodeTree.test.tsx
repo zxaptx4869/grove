@@ -4,8 +4,8 @@ import { describe, expect, it, vi } from 'vitest'
 import { NodeTree, type NodeTreeCallbacks } from './NodeTree'
 
 const NODES = [
-  { id: 1, name: '节点1', description: null, position: 0, children: [] },
-  { id: 2, name: '节点2', description: null, position: 1, children: [] },
+  { id: 1, name: '节点1', description: null, position: 0, entry_count: 0, children: [] },
+  { id: 2, name: '节点2', description: null, position: 1, entry_count: 2, children: [] },
 ]
 
 describe('NodeTree', () => {

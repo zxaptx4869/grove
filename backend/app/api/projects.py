@@ -6,7 +6,7 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy import func, select
 
 from app.api.deps import DbSession, get_current_workspace
-from app.models import Node, Project, Source, Workspace
+from app.models import Entry, Node, Project, Source, Workspace
 from app.schemas.project import (
     NodeCreate,
     NodeOut,
@@ -52,8 +52,9 @@ async def _delete_node_subtree(db: DbSession, node_id: int) -> None:
         await db.delete(node)
 
 
-def _build_tree(nodes: list[Node]) -> list[NodeOut]:
+def _build_tree(nodes: list[Node], counts: dict[int, int] | None = None) -> list[NodeOut]:
     """按 parent_id 组装嵌套树（同级按 position 排序）。"""
+    counts = counts or {}
     by_parent: dict[int | None, list[Node]] = {}
     for node in nodes:
         by_parent.setdefault(node.parent_id, []).append(node)
@@ -69,6 +70,7 @@ def _build_tree(nodes: list[Node]) -> list[NodeOut]:
                     name=node.name,
                     description=node.description,
                     position=node.position,
+                    entry_count=counts.get(node.id, 0),
                     children=_children(node.id),
                 )
             )
@@ -257,7 +259,18 @@ async def get_project_tree(
     nodes = (
         await db.execute(select(Node).where(Node.project_id == project_id))
     ).scalars().all()
-    return _build_tree(list(nodes))
+    node_ids = [node.id for node in nodes]
+    counts: dict[int, int] = {}
+    if node_ids:
+        rows = (
+            await db.execute(
+                select(Entry.node_id, func.count())
+                .where(Entry.node_id.in_(node_ids))
+                .group_by(Entry.node_id)
+            )
+        ).all()
+        counts = {row[0]: int(row[1]) for row in rows}
+    return _build_tree(list(nodes), counts)
 
 
 @router.post(

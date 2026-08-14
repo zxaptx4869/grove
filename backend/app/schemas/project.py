@@ -49,6 +49,7 @@ class NodeOut(BaseModel):
     name: str
     description: str | None
     position: int
+    entry_count: int = 0
     children: list["NodeOut"] = []
 
 

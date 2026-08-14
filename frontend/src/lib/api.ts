@@ -107,6 +107,7 @@ export interface TreeNodePayload {
   name: string
   description: string | null
   position: number
+  entry_count: number
   children: TreeNodePayload[]
 }
 
