@@ -428,3 +428,52 @@ export const batchDecideCandidates = (
     method: 'POST',
     body: JSON.stringify({ candidate_ids: candidateIds, status }),
   })
+
+export interface EntryEvidencePayload {
+  id: number
+  source_id: number
+  attachment_id: number | null
+  quote: string | null
+}
+
+export interface EntryPayload {
+  id: number
+  project_id: number
+  node_id: number
+  title: string
+  content: string
+  main_type: 'knowledge' | 'method' | 'parameter' | 'reminder'
+  info_nature: string | null
+  applicable_condition: string | null
+  note: string | null
+  created_at: string
+  updated_at: string
+  evidences: EntryEvidencePayload[]
+}
+
+export interface EntryUpdatePayload {
+  title?: string | null
+  content?: string | null
+  main_type?: 'knowledge' | 'method' | 'parameter' | 'reminder' | null
+  info_nature?: 'fact' | 'experience' | 'advice' | 'speculation' | 'other' | null
+  applicable_condition?: string | null
+  note?: string | null
+  node_id?: number | null
+}
+
+export const archiveCandidate = (candidateId: number, nodeId: number) =>
+  request<EntryPayload>(`/api/candidates/${candidateId}/archive`, {
+    method: 'POST',
+    body: JSON.stringify({ node_id: nodeId }),
+  })
+
+export const fetchEntry = (entryId: number) => request<EntryPayload>(`/api/entries/${entryId}`)
+
+export const updateEntry = (entryId: number, payload: EntryUpdatePayload) =>
+  request<EntryPayload>(`/api/entries/${entryId}`, {
+    method: 'PATCH',
+    body: JSON.stringify(payload),
+  })
+
+export const fetchNodeEntries = (projectId: number, nodeId: number) =>
+  request<EntryPayload[]>(`/api/projects/${projectId}/nodes/${nodeId}/entries`)

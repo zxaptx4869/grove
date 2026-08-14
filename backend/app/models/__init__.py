@@ -1,6 +1,7 @@
 """ORM 模型包。"""
 
 from app.models.ai_settings import AIProviderSettings
+from app.models.entry import Entry, EntrySourceEvidence
 from app.models.extraction import Candidate, Extraction
 from app.models.processing import ProcessingTask
 from app.models.project import Node, Project
@@ -14,6 +15,8 @@ __all__ = [
     "AIProviderSettings",
     "Attachment",
     "Candidate",
+    "Entry",
+    "EntrySourceEvidence",
     "Extraction",
     "Node",
     "ProcessingTask",

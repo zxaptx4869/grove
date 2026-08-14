@@ -47,6 +47,14 @@ describe('ReviewPage', () => {
             ],
           })
         }
+        if (url.pathname === '/api/projects/1/tree') {
+          return Promise.resolve({
+            ok: true,
+            json: async () => [
+              { id: 10, name: '施工', description: null, position: 0, children: [] },
+            ],
+          })
+        }
         if (url.pathname === '/api/sources/5') {
           return Promise.resolve({
             ok: true,
@@ -87,7 +95,7 @@ describe('ReviewPage', () => {
             ],
           })
         }
-        if (url.pathname === '/api/candidates/7/decision' && init?.method === 'POST') {
+        if (url.pathname === '/api/candidates/7' && init?.method === 'PATCH') {
           return Promise.resolve({
             ok: true,
             json: async () => ({
@@ -103,7 +111,26 @@ describe('ReviewPage', () => {
               evidence: [],
               reason: null,
               risk_flags: [],
-              status: 'confirmed',
+              status: 'pending',
+            }),
+          })
+        }
+        if (url.pathname === '/api/candidates/7/archive' && init?.method === 'POST') {
+          return Promise.resolve({
+            ok: true,
+            json: async () => ({
+              id: 20,
+              project_id: 1,
+              node_id: 10,
+              title: '晶蕾烘干需手动勾选',
+              content: '晶蕾烘干需要手动勾选。',
+              main_type: 'knowledge',
+              info_nature: 'fact',
+              applicable_condition: null,
+              note: null,
+              created_at: '',
+              updated_at: '',
+              evidences: [],
             }),
           })
         }
@@ -114,14 +141,15 @@ describe('ReviewPage', () => {
     renderPage()
 
     expect(await screen.findByText('晶蕾烘干需手动勾选')).toBeInTheDocument()
+    await userEvent.selectOptions(screen.getByLabelText('归档目录'), '10')
     await userEvent.click(screen.getByRole('button', { name: '采纳' }))
 
     expect(
       calls.some(
         (call) =>
           call.method === 'POST' &&
-          call.path === '/api/candidates/7/decision' &&
-          call.body?.includes('confirmed'),
+          call.path === '/api/candidates/7/archive' &&
+          call.body?.includes('10'),
       ),
     ).toBe(true)
   })

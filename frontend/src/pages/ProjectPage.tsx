@@ -44,6 +44,7 @@ import {
   deleteProject,
   fetchProjects,
   fetchProjectTree,
+  fetchNodeEntries,
   reorderNodes,
   updateNode,
   updateProject,
@@ -303,6 +304,11 @@ export function ProjectPage() {
   const effectiveSelectedPath = selectedPath ?? (nodes[0] ? [nodes[0]] : null)
   const effectiveSelectedId = effectiveSelectedPath?.at(-1)?.id ?? null
   const selectedNode = effectiveSelectedPath?.at(-1) ?? null
+  const entries = useQuery({
+    queryKey: queryKeys.nodeEntries(id, effectiveSelectedId ?? 0),
+    queryFn: () => fetchNodeEntries(id, effectiveSelectedId as number),
+    enabled: isDirectoryView && effectiveSelectedId !== null,
+  })
 
   function openAddNode(parent: TreeNodePayload | null) {
     setActionError('')
@@ -538,15 +544,42 @@ export function ProjectPage() {
                     编辑节点
                   </Button>
                 </div>
-                <div className="flex min-h-[420px] items-center justify-center text-center">
-                  <div className="max-w-[320px]">
-                    <BookOpen className="mx-auto size-5 text-muted-foreground" />
-                    <h3 className="mt-3 text-body font-[650]">这里还没有正式知识</h3>
-                    <p className="mt-1 text-body-sm leading-6 text-muted-foreground">
-                      当前目录下暂无可浏览的内容。
-                    </p>
+                {entries.isLoading ? (
+                  <div className="py-10 text-center text-body-sm text-muted-foreground">
+                    加载正式知识…
                   </div>
-                </div>
+                ) : (entries.data?.length ?? 0) === 0 ? (
+                  <div className="flex min-h-[420px] items-center justify-center text-center">
+                    <div className="max-w-[320px]">
+                      <BookOpen className="mx-auto size-5 text-muted-foreground" />
+                      <h3 className="mt-3 text-body font-[650]">这里还没有正式知识</h3>
+                      <p className="mt-1 text-body-sm leading-6 text-muted-foreground">
+                        当前目录下暂无可浏览的内容。
+                      </p>
+                    </div>
+                  </div>
+                ) : (
+                  <div className="space-y-3 pt-4">
+                    {entries.data?.map((entry) => (
+                      <article key={entry.id} className="rounded-md border p-3">
+                        <div className="flex items-center justify-between gap-3">
+                          <h3 className="text-body font-[650]">{entry.title}</h3>
+                          <Badge variant="outline" className="bg-confirmed-soft text-confirmed">
+                            已确认
+                          </Badge>
+                        </div>
+                        <p className="mt-2 whitespace-pre-wrap text-body-sm leading-6">
+                          {entry.content}
+                        </p>
+                        {entry.evidences.length > 0 ? (
+                          <p className="mt-2 text-caption text-muted-foreground">
+                            来源证据 {entry.evidences.length} 条
+                          </p>
+                        ) : null}
+                      </article>
+                    ))}
+                  </div>
+                )}
               </div>
             ) : (
               <div className="flex min-h-[500px] items-center justify-center text-center">

@@ -8,4 +8,5 @@ export const queryKeys = {
   aiSettings: ['ai-settings'],
   sourceCandidates: (sourceId: number) => ['source-candidates', sourceId],
   reviewSources: (projectId: number) => ['review-sources', projectId],
+  nodeEntries: (projectId: number, nodeId: number) => ['node-entries', projectId, nodeId],
 } as const

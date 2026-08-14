@@ -17,14 +17,17 @@ import { Input } from '@/components/ui/input'
 import { Textarea } from '@/components/ui/textarea'
 import { useGroveMutation } from '@/hooks/useGroveMutation'
 import {
+  archiveCandidate,
   decideCandidate,
   fetchReviewSources,
+  fetchProjectTree,
   fetchSource,
   fetchSourceCandidates,
   sourceImageUrl,
   updateCandidate,
   type CandidatePayload,
   type CandidateUpdatePayload,
+  type TreeNodePayload,
 } from '@/lib/api'
 import { queryKeys } from '@/lib/queryKeys'
 
@@ -53,6 +56,16 @@ function formatTime(value: string) {
   }).format(date)
 }
 
+function flattenNodeOptions(
+  nodes: readonly TreeNodePayload[],
+  prefix = '',
+): Array<{ value: number; label: string }> {
+  return nodes.flatMap((node) => [
+    { value: node.id, label: `${prefix}${node.name}` },
+    ...flattenNodeOptions(node.children, `${prefix}${node.name} / `),
+  ])
+}
+
 function highlightQuote(text: string, quote?: string) {
   if (!quote) return text
   const index = text.indexOf(quote)
@@ -68,16 +81,19 @@ function highlightQuote(text: string, quote?: string) {
 
 function CandidateEditor({
   candidate,
+  nodeOptions,
   onAdopt,
   onReject,
   onSkip,
   isPending,
 }: {
   candidate: CandidatePayload
+  nodeOptions: Array<{ value: number; label: string }>
   onAdopt: (payload: {
     content: string
     main_type: CandidatePayload['main_type']
     info_nature: string | null
+    node_id: number
   }) => void
   onReject: () => void
   onSkip: () => void
@@ -86,6 +102,7 @@ function CandidateEditor({
   const [content, setContent] = useState(candidate.content)
   const [mainType, setMainType] = useState<CandidatePayload['main_type']>(candidate.main_type)
   const [infoNature, setInfoNature] = useState(candidate.info_nature ?? '')
+  const [nodeId, setNodeId] = useState<number | null>(null)
 
   return (
     <div className="flex min-h-0 flex-1 flex-col">
@@ -135,6 +152,24 @@ function CandidateEditor({
             />
           </div>
         </div>
+        <div className="space-y-1.5">
+          <label htmlFor="candidate-node" className="text-body-sm font-medium">
+            归档目录
+          </label>
+          <select
+            id="candidate-node"
+            className="h-9 w-full rounded-md border px-2 text-body-sm"
+            value={nodeId ?? ''}
+            onChange={(event) => setNodeId(event.target.value ? Number(event.target.value) : null)}
+          >
+            <option value="">{nodeOptions.length > 0 ? '选择目录节点' : '项目还没有目录节点'}</option>
+            {nodeOptions.map((option) => (
+              <option key={option.value} value={option.value}>
+                {option.label}
+              </option>
+            ))}
+          </select>
+        </div>
         {candidate.reason ? (
           <p className="text-caption text-muted-foreground">
             推荐理由与风险：{candidate.reason}
@@ -152,12 +187,13 @@ function CandidateEditor({
         </Button>
         <Button
           size="sm"
-          disabled={isPending}
+          disabled={isPending || nodeId === null}
           onClick={() =>
             onAdopt({
               content: content.trim(),
               main_type: mainType,
               info_nature: infoNature.trim() || null,
+              node_id: nodeId as number,
             })
           }
         >
@@ -193,6 +229,12 @@ export function ReviewPage() {
     queryFn: () => fetchSourceCandidates(activeSourceId as number),
     enabled: activeSourceId !== null,
   })
+  const tree = useQuery({
+    queryKey: queryKeys.projectTree(id),
+    queryFn: () => fetchProjectTree(id),
+    enabled: Number.isFinite(id),
+  })
+  const nodeOptions = flattenNodeOptions(tree.data ?? [])
 
   const pendingCandidates = useMemo(
     () => (candidates.data ?? []).filter((candidate) => candidate.status === 'pending'),
@@ -209,14 +251,19 @@ export function ReviewPage() {
       payload,
     }: {
       candidate: CandidatePayload
-      payload: { content: string; main_type: CandidatePayload['main_type']; info_nature: string | null }
+      payload: {
+        content: string
+        main_type: CandidatePayload['main_type']
+        info_nature: string | null
+        node_id: number
+      }
     }) => {
       await updateCandidate(candidate.id, {
         content: payload.content,
         main_type: payload.main_type,
         info_nature: payload.info_nature as CandidateUpdatePayload['info_nature'],
       })
-      return decideCandidate(candidate.id, 'confirmed')
+      return archiveCandidate(candidate.id, payload.node_id)
     },
     invalidates: [
       queryKeys.sourceCandidates(activeSourceId ?? 0),
@@ -402,6 +449,7 @@ export function ReviewPage() {
               <CandidateEditor
                 key={currentCandidate.id}
                 candidate={currentCandidate}
+                nodeOptions={nodeOptions}
                 isPending={adopt.isPending || reject.isPending}
                 onAdopt={(payload) => adopt.mutate({ candidate: currentCandidate, payload })}
                 onReject={() => reject.mutate(currentCandidate)}

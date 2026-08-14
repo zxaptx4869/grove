@@ -66,6 +66,8 @@ async def decide_candidate(
     """对单条候选执行决策并重算 Source 审阅状态。"""
     if decision_status not in {CANDIDATE_PENDING, CANDIDATE_CONFIRMED, CANDIDATE_REJECTED}:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="无效的决策状态")
+    if decision_status == CANDIDATE_PENDING and candidate.entry_id is not None:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="已归档候选不能重新打开")
     candidate.status = decision_status
     await recompute_source_review_status(db, candidate.source_id)
     return candidate
