@@ -97,6 +97,7 @@ function ProjectNavigation({ project }: { project?: ProjectPayload }) {
   const isDirectory = new URLSearchParams(location.search).get('view') === 'directory'
   const isSources = new URLSearchParams(location.search).get('view') === 'sources'
   const isReview = /^\/projects\/\d+\/review$/.test(location.pathname)
+  const isHome = !isDirectory && !isSources && !isReview
   const statusLabel: Record<ProjectStatus, string> = {
     active: '进行中',
     paused: '暂停',
@@ -116,8 +117,8 @@ function ProjectNavigation({ project }: { project?: ProjectPayload }) {
       <nav aria-label="项目导航">
         <Link
           to={`/projects/${projectId}`}
-          aria-current={!isDirectory ? 'page' : undefined}
-          className={`flex min-h-[38px] items-center gap-[9px] rounded-md px-2.5 text-body ${!isDirectory ? 'bg-brand-soft font-semibold text-brand' : 'text-muted-foreground hover:bg-muted hover:text-foreground'}`}
+          aria-current={isHome ? 'page' : undefined}
+          className={`flex min-h-[38px] items-center gap-[9px] rounded-md px-2.5 text-body ${isHome ? 'bg-brand-soft font-semibold text-brand' : 'text-muted-foreground hover:bg-muted hover:text-foreground'}`}
         >
           <House className="size-4" />项目首页
         </Link>
