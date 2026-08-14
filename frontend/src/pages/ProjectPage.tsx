@@ -51,6 +51,7 @@ import {
   updateProjectStatus,
   type ProjectStatus,
   type TreeNodePayload,
+  type EntryPayload,
 } from '@/lib/api'
 import { queryKeys } from '@/lib/queryKeys'
 
@@ -160,6 +161,55 @@ function NodeFormDialog({
         ) : null}
       </DialogContent>
     </Dialog>
+  )
+}
+
+const ENTRY_TYPE_LABELS: Record<EntryPayload['main_type'], string> = {
+  knowledge: '知识',
+  method: '方法',
+  parameter: '参数',
+  reminder: '提醒',
+}
+
+function EntryCard({ entry }: { entry: EntryPayload }) {
+  return (
+    <article className="rounded-md border p-3">
+      <div className="flex items-start justify-between gap-3">
+        <div className="min-w-0">
+          <div className="flex items-center gap-2">
+            <Badge className="bg-muted text-muted-foreground">
+              {ENTRY_TYPE_LABELS[entry.main_type]}
+            </Badge>
+            {entry.info_nature ? (
+              <span className="text-caption text-muted-foreground">{entry.info_nature}</span>
+            ) : null}
+          </div>
+          <h3 className="mt-1 text-body font-[650]">{entry.title}</h3>
+        </div>
+        <Badge className="shrink-0 bg-confirmed-soft text-confirmed">已确认</Badge>
+      </div>
+      <p className="mt-2 whitespace-pre-wrap text-body-sm leading-6">{entry.content}</p>
+      {entry.applicable_condition ? (
+        <p className="mt-2 text-body-sm text-muted-foreground">
+          适用条件：{entry.applicable_condition}
+        </p>
+      ) : null}
+      {entry.note ? (
+        <p className="mt-2 text-body-sm text-muted-foreground">补充说明：{entry.note}</p>
+      ) : null}
+      {entry.evidences.length > 0 ? (
+        <details className="mt-3 border-t pt-2 text-caption text-muted-foreground">
+          <summary className="cursor-pointer">来源证据 {entry.evidences.length} 条</summary>
+          <div className="mt-2 space-y-1">
+            {entry.evidences.map((evidence) => (
+              <blockquote key={evidence.id} className="border-l-2 px-2">
+                {evidence.quote || '（无引用片段）'}
+              </blockquote>
+            ))}
+          </div>
+        </details>
+      ) : null}
+    </article>
   )
 }
 
@@ -561,22 +611,7 @@ export function ProjectPage() {
                 ) : (
                   <div className="space-y-3 pt-4">
                     {entries.data?.map((entry) => (
-                      <article key={entry.id} className="rounded-md border p-3">
-                        <div className="flex items-center justify-between gap-3">
-                          <h3 className="text-body font-[650]">{entry.title}</h3>
-                          <Badge variant="outline" className="bg-confirmed-soft text-confirmed">
-                            已确认
-                          </Badge>
-                        </div>
-                        <p className="mt-2 whitespace-pre-wrap text-body-sm leading-6">
-                          {entry.content}
-                        </p>
-                        {entry.evidences.length > 0 ? (
-                          <p className="mt-2 text-caption text-muted-foreground">
-                            来源证据 {entry.evidences.length} 条
-                          </p>
-                        ) : null}
-                      </article>
+                      <EntryCard key={entry.id} entry={entry} />
                     ))}
                   </div>
                 )}
