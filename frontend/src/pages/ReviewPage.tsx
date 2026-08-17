@@ -15,6 +15,7 @@ import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Textarea } from '@/components/ui/textarea'
+import { BatchReviewView } from '@/components/features/BatchReviewView'
 import { useGroveMutation } from '@/hooks/useGroveMutation'
 import {
   archiveCandidate,
@@ -306,6 +307,8 @@ export function ReviewPage() {
   const [selectedSourceId, setSelectedSourceId] = useState<number | null>(null)
   const [currentIndex, setCurrentIndex] = useState(0)
   const [queueOpen, setQueueOpen] = useState(false)
+  const [reviewMode, setReviewMode] = useState<'source' | 'batch'>('source')
+  const [focusCandidateId, setFocusCandidateId] = useState<number | null>(null)
 
   const reviewSources = useQuery({
     queryKey: queryKeys.reviewSources(id),
@@ -345,7 +348,12 @@ export function ReviewPage() {
     () => (candidates.data ?? []).filter((candidate) => candidate.status === 'rejected'),
     [candidates.data],
   )
-  const currentCandidate = pendingCandidates[currentIndex] ?? null
+  const focusIndex =
+    focusCandidateId != null
+      ? pendingCandidates.findIndex((candidate) => candidate.id === focusCandidateId)
+      : -1
+  const effectiveIndex = focusIndex >= 0 ? focusIndex : currentIndex
+  const currentCandidate = pendingCandidates[effectiveIndex] ?? null
   const suggestionMatchNodeId = currentCandidate
     ? findSuggestionNodeId(currentCandidate, nodesWithParent)
     : null
@@ -407,7 +415,7 @@ export function ReviewPage() {
       queryKeys.reviewSources(id),
     ],
     onSuccess: () => {
-      setCurrentIndex((value) => Math.max(0, value - 1))
+      goToIndex((value) => Math.max(0, value - 1))
       toast.success('候选已采纳')
     },
     onError: (error) => toast.error(error instanceof Error ? error.message : '采纳失败'),
@@ -419,7 +427,7 @@ export function ReviewPage() {
       queryKeys.reviewSources(id),
     ],
     onSuccess: () => {
-      setCurrentIndex((value) => Math.max(0, value - 1))
+      goToIndex((value) => Math.max(0, value - 1))
       toast.success('候选已拒绝')
     },
     onError: (error) => toast.error(error instanceof Error ? error.message : '操作失败'),
@@ -431,7 +439,7 @@ export function ReviewPage() {
       queryKeys.reviewSources(id),
     ],
     onSuccess: () => {
-      setCurrentIndex(0)
+      goToIndex(0)
       toast.success('候选已重新打开')
     },
     onError: (error) => toast.error(error instanceof Error ? error.message : '操作失败'),
@@ -468,15 +476,28 @@ export function ReviewPage() {
       queryKeys.projectTree(id),
     ],
     onSuccess: () => {
-      setCurrentIndex((value) => Math.max(0, value - 1))
+      goToIndex((value) => Math.max(0, value - 1))
       toast.success('候选已归档并创建节点')
     },
     onError: (error) => toast.error(error instanceof Error ? error.message : '创建节点失败'),
   })
   function selectSource(sourceId: number) {
+    setFocusCandidateId(null)
     setSelectedSourceId(sourceId)
     setCurrentIndex(0)
     setQueueOpen(false)
+  }
+
+  function handleReviewCandidate(candidateId: number, sourceId: number) {
+    setReviewMode('source')
+    setSelectedSourceId(sourceId)
+    setFocusCandidateId(candidateId)
+    setCurrentIndex(0)
+  }
+
+  function goToIndex(index: number | ((value: number) => number)) {
+    setFocusCandidateId(null)
+    setCurrentIndex(index)
   }
 
   function moveSource(delta: number) {
@@ -493,17 +514,31 @@ export function ReviewPage() {
   return (
     <section className="flex h-full min-h-0 flex-col">
       <header className="flex min-h-[58px] items-center justify-between gap-4 px-6">
-        <div className="flex items-center gap-3">
-          <h1 className="text-[22px] font-[650] leading-[30px]">确认台</h1>
-          <Badge className="bg-ai-candidate-soft text-ai-candidate">
-            {reviewSources.data?.length ?? 0} 条待确认
-          </Badge>
+        <h1 className="text-[22px] font-[650] leading-[30px]">确认台</h1>
+        <div className="mx-auto flex items-center gap-[7px] rounded-md border bg-muted/50 p-[3px]">
+          <button
+            type="button"
+            onClick={() => setReviewMode('source')}
+            className={`flex h-[30px] items-center rounded-[4px] px-[9px] text-caption transition-colors ${reviewMode === 'source' ? 'bg-card font-medium text-foreground shadow-[0_1px_2px_rgb(0_0_0/0.06)]' : 'text-muted-foreground hover:text-foreground'}`}
+          >
+            按采集审阅
+          </button>
+          <button
+            type="button"
+            onClick={() => setReviewMode('batch')}
+            className={`flex h-[30px] items-center rounded-[4px] px-[9px] text-caption transition-colors ${reviewMode === 'batch' ? 'bg-card font-medium text-foreground shadow-[0_1px_2px_rgb(0_0_0/0.06)]' : 'text-muted-foreground hover:text-foreground'}`}
+          >
+            批量处理
+          </button>
         </div>
-        <span className="text-body-sm text-muted-foreground">
-          逐条决定是否采纳当前项目的候选。
-        </span>
+        <Badge className="bg-ai-candidate-soft text-ai-candidate">
+          {reviewSources.data?.length ?? 0} 条待确认
+        </Badge>
       </header>
 
+      {reviewMode === 'batch' ? (
+        <BatchReviewView projectId={id} onReviewCandidate={handleReviewCandidate} />
+      ) : (
       <div className="flex min-h-0 flex-1 flex-col">
         <div className="flex min-h-[52px] items-center justify-between gap-3 border-y px-6">
           <div>
@@ -591,14 +626,14 @@ export function ReviewPage() {
                   aria-label="上一候选"
                   disabled={pendingCandidates.length === 0}
                   onClick={() => {
-                    if (currentIndex === 0) toast('已经是第一条候选')
-                    else setCurrentIndex((value) => value - 1)
+                    if (effectiveIndex === 0) toast('已经是第一条候选')
+                    else goToIndex((value) => value - 1)
                   }}
                 >
                   <ChevronLeft />
                 </Button>
                 <span className="text-caption text-muted-foreground">
-                  当前候选 {pendingCandidates.length > 0 ? currentIndex + 1 : 0} /{' '}
+                  当前候选 {pendingCandidates.length > 0 ? effectiveIndex + 1 : 0} /{' '}
                   {pendingCandidates.length}
                 </span>
                 <Button
@@ -607,9 +642,9 @@ export function ReviewPage() {
                   aria-label="下一候选"
                   disabled={pendingCandidates.length === 0}
                   onClick={() => {
-                    if (currentIndex >= pendingCandidates.length - 1)
+                    if (effectiveIndex >= pendingCandidates.length - 1)
                       toast('已经是最后一条候选')
-                    else setCurrentIndex((value) => value + 1)
+                    else goToIndex((value) => value + 1)
                   }}
                 >
                   <ChevronRight />
@@ -648,7 +683,7 @@ export function ReviewPage() {
                 }
                 onReject={() => reject.mutate(currentCandidate)}
                 onSkip={() =>
-                  setCurrentIndex((value) => Math.min(pendingCandidates.length - 1, value + 1))
+                  goToIndex((value) => Math.min(pendingCandidates.length - 1, value + 1))
                 }
               />
             ) : rejectedCandidates.length > 0 ? (
@@ -687,8 +722,9 @@ export function ReviewPage() {
           </section>
         </div>
       </div>
+      )}
 
-      {queueOpen ? (
+      {reviewMode === 'source' && queueOpen ? (
         <div className="fixed inset-0 z-50 bg-black/40" onClick={() => setQueueOpen(false)}>
           <aside
             className="absolute right-0 top-0 h-full w-[320px] bg-card p-4 shadow-lg"

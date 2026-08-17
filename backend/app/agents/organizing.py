@@ -164,7 +164,7 @@ def _offline_draft(source: Source, sections: list[tuple[int, str]]) -> Extractio
                 info_nature="fact",
                 evidence=[EvidenceRefDraft(attachment_id=first_id, quote=first_text[:200])],
                 reason="离线示例候选",
-                risk_flags=["离线示例"],
+                risk_flags=[],
             )
         ],
         discarded_count=0,

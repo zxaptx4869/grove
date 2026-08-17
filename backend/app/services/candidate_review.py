@@ -4,13 +4,23 @@ from fastapi import HTTPException, status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models import Candidate
+from app.models import Candidate, Source
 from app.models.extraction import (
     CANDIDATE_CONFIRMED,
+    CANDIDATE_KIND_RECOMMENDED,
     CANDIDATE_PENDING,
     CANDIDATE_REJECTED,
+    ROUTING_RECOMMENDED,
 )
-from app.schemas.review import BatchCandidateDecisionRequest, CandidateUpdate
+from app.schemas.review import (
+    BatchCandidateDecisionRequest,
+    CandidateUpdate,
+    ProjectBatchDecisionRequest,
+    ProjectBatchDecisionResult,
+    ReviewCandidateOut,
+)
+from app.services.entry import archive_candidate
+from app.services.extraction import _parse_risk_flags, candidate_out
 
 
 async def edit_candidate(
@@ -71,3 +81,99 @@ async def batch_decide_candidates(
     for candidate in candidates:
         candidate.status = payload.status
     return list(candidates)
+
+
+def _review_band(candidate: Candidate) -> str:
+    """按确定性规则分流快审/精审。"""
+    if (
+        candidate.candidate_kind == CANDIDATE_KIND_RECOMMENDED
+        and candidate.routing_status == ROUTING_RECOMMENDED
+        and candidate.recommended_node_id is not None
+        and not _parse_risk_flags(candidate.risk_flags)
+    ):
+        return "quick"
+    return "detailed"
+
+
+async def list_project_review_candidates(
+    db: AsyncSession,
+    project_id: int,
+) -> list[ReviewCandidateOut]:
+    """返回项目内全部待采纳候选及来源信息与分流标记。"""
+    rows = (
+        await db.execute(
+            select(Candidate, Source.title, Source.note)
+            .join(Source, Candidate.source_id == Source.id)
+            .where(Source.project_id == project_id, Candidate.status == CANDIDATE_PENDING)
+            .order_by(Candidate.id)
+        )
+    ).all()
+    return [
+        ReviewCandidateOut(
+            **candidate_out(candidate).model_dump(),
+            source_title=source_title,
+            source_note=source_note,
+            review_band=_review_band(candidate),
+        )
+        for candidate, source_title, source_note in rows
+    ]
+
+
+async def batch_decide_project_candidates(
+    db: AsyncSession,
+    project_id: int,
+    payload: ProjectBatchDecisionRequest,
+) -> list[ProjectBatchDecisionResult]:
+    """对项目内选中候选执行批量确认/拒绝，逐条返回结果。"""
+    rows = (
+        await db.execute(
+            select(Candidate, Source)
+            .join(Source, Candidate.source_id == Source.id)
+            .where(Candidate.id.in_(payload.candidate_ids))
+        )
+    ).all()
+    by_id = {
+        candidate.id: candidate
+        for candidate, source in rows
+        if source.project_id == project_id
+    }
+    if len(by_id) != len(set(payload.candidate_ids)):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="批量决策包含不属于当前项目的候选",
+        )
+
+    results: list[ProjectBatchDecisionResult] = []
+    for candidate_id in payload.candidate_ids:
+        candidate = by_id[candidate_id]
+        try:
+            if payload.action == "reject":
+                await decide_candidate(db, candidate, CANDIDATE_REJECTED)
+                await db.commit()
+                results.append(
+                    ProjectBatchDecisionResult(candidate_id=candidate_id, status="rejected")
+                )
+                continue
+
+            node_id = (
+                payload.node_id
+                if payload.node_id is not None
+                else candidate.recommended_node_id
+            )
+            if node_id is None:
+                raise ValueError("候选没有可归档目录，请先精审")
+            await archive_candidate(db, candidate, node_id)
+            await db.commit()
+            results.append(
+                ProjectBatchDecisionResult(candidate_id=candidate_id, status="confirmed")
+            )
+        except Exception as exc:  # noqa: BLE001
+            await db.rollback()
+            results.append(
+                ProjectBatchDecisionResult(
+                    candidate_id=candidate_id,
+                    status="failed",
+                    error=str(exc)[:200],
+                )
+            )
+    return results

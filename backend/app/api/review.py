@@ -14,12 +14,17 @@ from app.schemas.review import (
     BatchCandidateDecisionRequest,
     CandidateDecisionUpdate,
     CandidateUpdate,
+    ProjectBatchDecisionRequest,
+    ProjectBatchDecisionResult,
+    ReviewCandidateOut,
     ReviewSourceOut,
 )
 from app.services.candidate_review import (
     batch_decide_candidates,
+    batch_decide_project_candidates,
     decide_candidate,
     edit_candidate,
+    list_project_review_candidates,
 )
 from app.services.extraction import candidate_out
 
@@ -99,6 +104,35 @@ async def list_review_sources(
         )
         for item in rows
     ]
+
+
+@router.get(
+    "/projects/{project_id}/review/candidates",
+    response_model=list[ReviewCandidateOut],
+)
+async def list_review_candidates(
+    project_id: int,
+    db: DbSession,
+    workspace: CurrentWorkspace,
+) -> list[ReviewCandidateOut]:
+    """返回项目内全部待采纳候选（批量视图用）。"""
+    await _get_owned_project(db, workspace.id, project_id)
+    return await list_project_review_candidates(db, project_id)
+
+
+@router.post(
+    "/projects/{project_id}/review/candidates/batch-decision",
+    response_model=list[ProjectBatchDecisionResult],
+)
+async def batch_decision_project_endpoint(
+    project_id: int,
+    payload: ProjectBatchDecisionRequest,
+    db: DbSession,
+    workspace: CurrentWorkspace,
+) -> list[ProjectBatchDecisionResult]:
+    """对项目内选中候选执行批量确认或拒绝。"""
+    await _get_owned_project(db, workspace.id, project_id)
+    return await batch_decide_project_candidates(db, project_id, payload)
 
 
 @router.patch("/candidates/{candidate_id}", response_model=CandidateOut)

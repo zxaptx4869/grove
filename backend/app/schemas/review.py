@@ -5,6 +5,8 @@ from typing import Literal
 
 from pydantic import BaseModel, Field
 
+from app.schemas.candidate import CandidateOut
+
 
 class CandidateUpdate(BaseModel):
     """编辑候选字段；字段缺失表示不修改，传 null 表示清空。"""
@@ -40,3 +42,27 @@ class ReviewSourceOut(BaseModel):
     review_status: str
     pending_candidate_count: int
     created_at: datetime
+
+
+class ReviewCandidateOut(CandidateOut):
+    """项目批量视图中的候选（含来源信息与分流标记）。"""
+
+    source_title: str
+    source_note: str | None = None
+    review_band: Literal["quick", "detailed"]
+
+
+class ProjectBatchDecisionRequest(BaseModel):
+    """项目内批量决策请求。"""
+
+    candidate_ids: list[int] = Field(min_length=1)
+    action: Literal["confirm", "reject"]
+    node_id: int | None = None
+
+
+class ProjectBatchDecisionResult(BaseModel):
+    """项目内批量决策的单条结果。"""
+
+    candidate_id: int
+    status: Literal["confirmed", "rejected", "failed"]
+    error: str | None = None

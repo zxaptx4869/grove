@@ -486,4 +486,17 @@ describe('ReviewPage', () => {
 
     expect(await screen.findByText('建议新增「求职经验」 · 2 条')).toBeInTheDocument()
   })
+
+  it('切换到批量处理显示批量视图', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(() => Promise.resolve({ ok: true, json: async () => [] })),
+    )
+
+    renderPage()
+
+    await userEvent.click(screen.getByRole('button', { name: '批量处理' }))
+
+    expect(await screen.findByText('已选 0 条低风险候选')).toBeInTheDocument()
+  })
 })

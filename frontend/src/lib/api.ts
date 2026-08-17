@@ -449,6 +449,41 @@ export const batchDecideCandidates = (
     body: JSON.stringify({ candidate_ids: candidateIds, status }),
   })
 
+export type ReviewBand = 'quick' | 'detailed'
+
+export interface ReviewCandidatePayload extends CandidatePayload {
+  source_title: string
+  source_note: string | null
+  review_band: ReviewBand
+}
+
+export interface ProjectBatchDecisionPayload {
+  candidate_ids: number[]
+  action: 'confirm' | 'reject'
+  node_id?: number | null
+}
+
+export interface ProjectBatchDecisionResult {
+  candidate_id: number
+  status: 'confirmed' | 'rejected' | 'failed'
+  error: string | null
+}
+
+export const fetchReviewCandidates = (projectId: number) =>
+  request<ReviewCandidatePayload[]>(`/api/projects/${projectId}/review/candidates`)
+
+export const batchDecideProjectCandidates = (
+  projectId: number,
+  payload: ProjectBatchDecisionPayload,
+) =>
+  request<ProjectBatchDecisionResult[]>(
+    `/api/projects/${projectId}/review/candidates/batch-decision`,
+    {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    },
+  )
+
 export interface EntryEvidencePayload {
   id: number
   source_id: number
