@@ -37,6 +37,7 @@ function candidatePayload(id: number, sourceId: number, overrides: Record<string
     source_title: '来源标题',
     source_note: '来源说明',
     review_band: 'quick',
+    user_node_id: null,
     ...overrides,
   }
 }
@@ -189,7 +190,7 @@ describe('BatchReviewView', () => {
     expect(onReviewCandidate).toHaveBeenCalledWith(3, 7)
   })
 
-  it('修改目录选择节点后批量采纳使用统一节点', async () => {
+  it('修改目录确认后持久化并清空勾选', async () => {
     const calls: Array<{ method: string; path: string; body?: string }> = []
     vi.stubGlobal(
       'fetch',
@@ -223,6 +224,15 @@ describe('BatchReviewView', () => {
             json: async () => [{ candidate_id: 1, status: 'confirmed', error: null }],
           })
         }
+        if (
+          url.pathname === '/api/projects/7/review/candidates/batch-update-directory' &&
+          init?.method === 'POST'
+        ) {
+          return Promise.resolve({
+            ok: true,
+            json: async () => ({ updated: 1 }),
+          })
+        }
         return Promise.resolve({ ok: true, json: async () => [] })
       }),
     )
@@ -235,15 +245,19 @@ describe('BatchReviewView', () => {
     await userEvent.click(await screen.findByRole('button', { name: '统一归档目录' }))
     await userEvent.click(await screen.findByRole('option', { name: /施工/ }))
     await userEvent.click(screen.getByRole('button', { name: '确认' }))
-    await userEvent.click(screen.getByRole('button', { name: '批量采纳' }))
 
     await waitFor(() => {
-      const call = calls.find(
-        (item) =>
-          item.method === 'POST' &&
-          item.path === '/api/projects/7/review/candidates/batch-decision',
-      )
-      expect(call?.body).toContain('"node_id":10')
+      expect(
+        calls.some(
+          (item) =>
+            item.method === 'POST' &&
+            item.path === '/api/projects/7/review/candidates/batch-update-directory' &&
+            item.body?.includes('"node_id":10'),
+        ),
+      ).toBe(true)
     })
+    expect(
+      screen.getByRole('button', { name: '修改目录' }),
+    ).toBeDisabled()
   })
 })

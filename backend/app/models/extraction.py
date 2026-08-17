@@ -94,6 +94,7 @@ class Candidate(Base):
     new_node_name: Mapped[str | None] = mapped_column(String(128), nullable=True)
     new_node_parent_id: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
     new_node_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
+    user_node_id: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )

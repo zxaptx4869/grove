@@ -455,6 +455,7 @@ export interface ReviewCandidatePayload extends CandidatePayload {
   source_title: string
   source_note: string | null
   review_band: ReviewBand
+  user_node_id: number | null
 }
 
 export interface ProjectBatchDecisionPayload {
@@ -478,6 +479,18 @@ export const batchDecideProjectCandidates = (
 ) =>
   request<ProjectBatchDecisionResult[]>(
     `/api/projects/${projectId}/review/candidates/batch-decision`,
+    {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    },
+  )
+
+export const batchUpdateCandidatesDirectory = (
+  projectId: number,
+  payload: { candidate_ids: number[]; node_id: number },
+) =>
+  request<{ updated: number }>(
+    `/api/projects/${projectId}/review/candidates/batch-update-directory`,
     {
       method: 'POST',
       body: JSON.stringify(payload),

@@ -4,7 +4,7 @@ from fastapi import HTTPException, status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models import Candidate, Source
+from app.models import Candidate, Node, Source
 from app.models.extraction import (
     CANDIDATE_CONFIRMED,
     CANDIDATE_KIND_RECOMMENDED,
@@ -14,6 +14,8 @@ from app.models.extraction import (
 )
 from app.schemas.review import (
     BatchCandidateDecisionRequest,
+    BatchUpdateDirectoryRequest,
+    BatchUpdateDirectoryResult,
     CandidateUpdate,
     ProjectBatchDecisionRequest,
     ProjectBatchDecisionResult,
@@ -114,6 +116,7 @@ async def list_project_review_candidates(
             source_title=source_title,
             source_note=source_note,
             review_band=_review_band(candidate),
+            user_node_id=candidate.user_node_id,
         )
         for candidate, source_title, source_note in rows
     ]
@@ -158,7 +161,7 @@ async def batch_decide_project_candidates(
             node_id = (
                 payload.node_id
                 if payload.node_id is not None
-                else candidate.recommended_node_id
+                else candidate.user_node_id or candidate.recommended_node_id
             )
             if node_id is None:
                 raise ValueError("候选没有可归档目录，请先精审")
@@ -177,3 +180,38 @@ async def batch_decide_project_candidates(
                 )
             )
     return results
+
+
+async def batch_update_candidates_directory(
+    db: AsyncSession,
+    project_id: int,
+    payload: BatchUpdateDirectoryRequest,
+) -> BatchUpdateDirectoryResult:
+    """把统一目录持久化到选中候选，返回更新数量。"""
+    rows = (
+        await db.execute(
+            select(Candidate, Source)
+            .join(Source, Candidate.source_id == Source.id)
+            .where(Candidate.id.in_(payload.candidate_ids))
+        )
+    ).all()
+    by_id = {
+        candidate.id: candidate
+        for candidate, source in rows
+        if source.project_id == project_id
+    }
+    if len(by_id) != len(set(payload.candidate_ids)):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="批量更新目录包含不属于当前项目的候选",
+        )
+    node = await db.get(Node, payload.node_id)
+    if node is None or node.project_id != project_id:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="目录节点不属于当前项目",
+        )
+    for candidate_id in payload.candidate_ids:
+        by_id[candidate_id].user_node_id = payload.node_id
+    await db.commit()
+    return BatchUpdateDirectoryResult(updated=len(payload.candidate_ids))

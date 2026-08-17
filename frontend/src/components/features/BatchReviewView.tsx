@@ -1,6 +1,6 @@
 import { useMemo, useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
-import { CheckCheck, FolderInput, ShieldAlert, X } from 'lucide-react'
+import { CheckCheck, FolderInput, ShieldAlert } from 'lucide-react'
 import { toast } from 'sonner'
 
 import { Badge } from '@/components/ui/badge'
@@ -17,6 +17,7 @@ import { useGroveMutation } from '@/hooks/useGroveMutation'
 import { DirectoryTreeSelect } from '@/components/features/DirectoryTreeSelect'
 import {
   batchDecideProjectCandidates,
+  batchUpdateCandidatesDirectory,
   fetchProjectTree,
   fetchReviewCandidates,
   type ReviewCandidatePayload,
@@ -63,7 +64,7 @@ export function BatchReviewView({
 }) {
   const [selectedIds, setSelectedIds] = useState<Set<number>>(new Set())
   const [expandedIds, setExpandedIds] = useState<Set<number>>(new Set())
-  const [overrideNodeId, setOverrideNodeId] = useState<number | null>(null)
+  const [directoryNodeId, setDirectoryNodeId] = useState<number | null>(null)
   const [directoryOpen, setDirectoryOpen] = useState(false)
 
   const candidates = useQuery({
@@ -89,10 +90,11 @@ export function BatchReviewView({
   const groups = useMemo(() => {
     const byNode = new Map<number, ReviewCandidatePayload[]>()
     for (const candidate of quickCandidates) {
-      if (candidate.recommended_node_id == null) continue
-      const list = byNode.get(candidate.recommended_node_id) ?? []
+      const effectiveNodeId = candidate.user_node_id ?? candidate.recommended_node_id
+      if (effectiveNodeId == null) continue
+      const list = byNode.get(effectiveNodeId) ?? []
       list.push(candidate)
-      byNode.set(candidate.recommended_node_id, list)
+      byNode.set(effectiveNodeId, list)
     }
     return Array.from(byNode.entries())
       .map(([nodeId, list]) => ({
@@ -131,14 +133,12 @@ export function BatchReviewView({
       batchDecideProjectCandidates(projectId, {
         candidate_ids: Array.from(selectedIds),
         action: 'confirm',
-        node_id: overrideNodeId,
       }),
     invalidates,
     onSuccess: (results) => {
       const failed = results.filter((item) => item.status === 'failed').length
       const succeeded = results.filter((item) => item.status === 'confirmed').length
       setSelectedIds(new Set())
-      setOverrideNodeId(null)
       if (failed > 0) {
         toast.error(`已归档 ${succeeded} 条，${failed} 条失败，失败项仍可重试`)
       } else {
@@ -160,28 +160,28 @@ export function BatchReviewView({
     },
     onError: (error) => toast.error(error instanceof Error ? error.message : '批量拒绝失败'),
   })
+  const updateDirectory = useGroveMutation({
+    mutationFn: () =>
+      batchUpdateCandidatesDirectory(projectId, {
+        candidate_ids: Array.from(selectedIds),
+        node_id: directoryNodeId as number,
+      }),
+    invalidates: [queryKeys.reviewCandidates(projectId), queryKeys.reviewSources(projectId)],
+    onSuccess: (result) => {
+      setSelectedIds(new Set())
+      setDirectoryNodeId(null)
+      setDirectoryOpen(false)
+      toast.success(`已为 ${result.updated} 条候选设置目录`)
+    },
+    onError: (error) => toast.error(error instanceof Error ? error.message : '修改目录失败'),
+  })
 
   const selectedCount = selectedIds.size
-  const overrideLabel =
-    overrideNodeId != null ? (nodeLabels.get(overrideNodeId) ?? '已选目录') : null
 
   return (
     <div className="min-h-0 flex-1 overflow-y-auto">
       <div className="sticky top-0 z-10 flex min-h-[56px] items-center gap-2 border-b bg-card px-6">
         <strong className="text-body-sm">已选 {selectedCount} 条低风险候选</strong>
-        {overrideLabel ? (
-          <span className="flex items-center gap-1.5 text-caption text-muted-foreground">
-            统一目录：{overrideLabel}
-            <button
-              type="button"
-              aria-label="清除统一目录"
-              onClick={() => setOverrideNodeId(null)}
-              className="text-muted-foreground hover:text-foreground"
-            >
-              <X className="size-3.5" />
-            </button>
-          </span>
-        ) : null}
         <Button
           size="sm"
           disabled={selectedCount === 0 || confirmBatch.isPending}
@@ -308,17 +308,22 @@ export function BatchReviewView({
           </DialogHeader>
           <DirectoryTreeSelect
             nodes={tree.data ?? []}
-            value={overrideNodeId}
+            value={directoryNodeId}
             loading={tree.isLoading}
             placeholder="按各自推荐目录"
             ariaLabel="统一归档目录"
-            onSelect={(id) => setOverrideNodeId(id)}
+            onSelect={(id) => setDirectoryNodeId(id)}
           />
           <DialogFooter>
             <Button variant="outline" onClick={() => setDirectoryOpen(false)}>
               取消
             </Button>
-            <Button onClick={() => setDirectoryOpen(false)}>确认</Button>
+            <Button
+              disabled={directoryNodeId == null || updateDirectory.isPending}
+              onClick={() => updateDirectory.mutate()}
+            >
+              {updateDirectory.isPending ? '保存中…' : '确认'}
+            </Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>

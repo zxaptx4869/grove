@@ -50,6 +50,7 @@ class ReviewCandidateOut(CandidateOut):
     source_title: str
     source_note: str | None = None
     review_band: Literal["quick", "detailed"]
+    user_node_id: int | None = None
 
 
 class ProjectBatchDecisionRequest(BaseModel):
@@ -66,3 +67,16 @@ class ProjectBatchDecisionResult(BaseModel):
     candidate_id: int
     status: Literal["confirmed", "rejected", "failed"]
     error: str | None = None
+
+
+class BatchUpdateDirectoryRequest(BaseModel):
+    """批量更新候选的统一目录。"""
+
+    candidate_ids: list[int] = Field(min_length=1)
+    node_id: int
+
+
+class BatchUpdateDirectoryResult(BaseModel):
+    """批量更新目录结果。"""
+
+    updated: int

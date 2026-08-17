@@ -427,3 +427,74 @@ async def test_batch_decision_rejects_candidates_from_other_project(
     )
 
     assert response.status_code == 400
+
+
+@pytest.mark.asyncio
+async def test_batch_update_directory_persists_and_confirm_uses_it(
+    client: httpx.AsyncClient,
+) -> None:
+    """批量修改目录应持久化，批量采纳使用该节点归档。"""
+    await _register(client)
+    project = await _create_project(client)
+    await client.post(
+        f"/api/projects/{project['id']}/nodes",
+        json={"name": "推荐节点", "parent_id": None},
+    )
+    override = (
+        await client.post(
+            f"/api/projects/{project['id']}/nodes",
+            json={"name": "用户节点", "parent_id": None},
+        )
+    ).json()
+    source = await _create_source(client, project["id"])
+    await _process(client, source["id"])
+    candidate_id = (await _candidates(client, source["id"]))[0]["id"]
+
+    response = await client.post(
+        f"/api/projects/{project['id']}/review/candidates/batch-update-directory",
+        json={"candidate_ids": [candidate_id], "node_id": override["id"]},
+    )
+
+    assert response.status_code == 200
+    assert response.json() == {"updated": 1}
+    items = (
+        await client.get(f"/api/projects/{project['id']}/review/candidates")
+    ).json()
+    assert items[0]["user_node_id"] == override["id"]
+
+    confirm = await client.post(
+        f"/api/projects/{project['id']}/review/candidates/batch-decision",
+        json={"candidate_ids": [candidate_id], "action": "confirm"},
+    )
+    assert confirm.status_code == 200
+    assert confirm.json()[0]["status"] == "confirmed"
+    entries = (
+        await client.get(f"/api/projects/{project['id']}/nodes/{override['id']}/entries")
+    ).json()
+    assert len(entries) == 1
+
+
+@pytest.mark.asyncio
+async def test_batch_update_directory_rejects_other_project_node(
+    client: httpx.AsyncClient,
+) -> None:
+    """批量修改目录不能使用其他项目的节点。"""
+    await _register(client)
+    first = await _create_project(client)
+    second = await _create_project(client)
+    other_node = (
+        await client.post(
+            f"/api/projects/{second['id']}/nodes",
+            json={"name": "其他项目节点", "parent_id": None},
+        )
+    ).json()
+    source = await _create_source(client, first["id"])
+    await _process(client, source["id"])
+    candidate_id = (await _candidates(client, source["id"]))[0]["id"]
+
+    response = await client.post(
+        f"/api/projects/{first['id']}/review/candidates/batch-update-directory",
+        json={"candidate_ids": [candidate_id], "node_id": other_node["id"]},
+    )
+
+    assert response.status_code == 400

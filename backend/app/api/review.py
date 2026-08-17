@@ -12,6 +12,8 @@ from app.models.source import REVIEW_PARTIAL, REVIEW_PENDING
 from app.schemas.candidate import CandidateOut
 from app.schemas.review import (
     BatchCandidateDecisionRequest,
+    BatchUpdateDirectoryRequest,
+    BatchUpdateDirectoryResult,
     CandidateDecisionUpdate,
     CandidateUpdate,
     ProjectBatchDecisionRequest,
@@ -22,6 +24,7 @@ from app.schemas.review import (
 from app.services.candidate_review import (
     batch_decide_candidates,
     batch_decide_project_candidates,
+    batch_update_candidates_directory,
     decide_candidate,
     edit_candidate,
     list_project_review_candidates,
@@ -133,6 +136,21 @@ async def batch_decision_project_endpoint(
     """对项目内选中候选执行批量确认或拒绝。"""
     await _get_owned_project(db, workspace.id, project_id)
     return await batch_decide_project_candidates(db, project_id, payload)
+
+
+@router.post(
+    "/projects/{project_id}/review/candidates/batch-update-directory",
+    response_model=BatchUpdateDirectoryResult,
+)
+async def batch_update_directory_endpoint(
+    project_id: int,
+    payload: BatchUpdateDirectoryRequest,
+    db: DbSession,
+    workspace: CurrentWorkspace,
+) -> BatchUpdateDirectoryResult:
+    """把统一目录持久化到选中候选。"""
+    await _get_owned_project(db, workspace.id, project_id)
+    return await batch_update_candidates_directory(db, project_id, payload)
 
 
 @router.patch("/candidates/{candidate_id}", response_model=CandidateOut)
