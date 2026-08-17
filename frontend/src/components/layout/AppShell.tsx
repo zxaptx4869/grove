@@ -147,6 +147,21 @@ function ProjectNavigation({ project }: { project?: ProjectPayload }) {
           <Images className="size-4" />采集与来源
         </Link>
       </nav>
+      <div className="my-2 border-t" aria-hidden="true" />
+      <nav aria-label="全局导航">
+        <NavLink
+          to="/inbox"
+          className={({ isActive }) => `flex min-h-[38px] items-center gap-[9px] rounded-md px-2.5 text-body ${isActive ? 'bg-brand-soft font-semibold text-brand' : 'text-muted-foreground hover:bg-muted hover:text-foreground'}`}
+        >
+          <Inbox className="size-4" />收集箱
+        </NavLink>
+        <NavLink
+          to="/search"
+          className={({ isActive }) => `flex min-h-[38px] items-center gap-[9px] rounded-md px-2.5 text-body ${isActive ? 'bg-brand-soft font-semibold text-brand' : 'text-muted-foreground hover:bg-muted hover:text-foreground'}`}
+        >
+          <Search className="size-4" />搜索
+        </NavLink>
+      </nav>
     </div>
   )
 }
