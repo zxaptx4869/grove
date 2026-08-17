@@ -5,8 +5,12 @@ import uuid
 import httpx
 import pytest
 
+from app.agents.organizing import ExtractionDraft
+from app.db.session import async_session_factory
 from app.main import create_app
+from app.models import Source
 from app.processing import worker
+from app.processing.organizing import OrganizingProcessingProvider
 
 
 @pytest.fixture
@@ -129,3 +133,33 @@ async def test_reroute_on_project_change(client: httpx.AsyncClient) -> None:
     assert response.status_code == 200
 
     assert (await _candidates(client, source["id"]))[0]["recommended_node_id"] == second_node["id"]
+
+
+@pytest.mark.asyncio
+async def test_auto_assign_recommended_project(
+    client: httpx.AsyncClient,
+    monkeypatch,
+) -> None:
+    """AI 推荐明确的项目应自动归属，不再要求用户确认。"""
+    await _register(client)
+    project = await _project(client, "装修")
+    source = await _source(client, "闭水试验至少持续 24 小时")
+
+    async def _fake_agent(db, source, attachments, project, workspace_projects):
+        return ExtractionDraft(
+            source_title="闭水试验",
+            recommended_project_id=workspace_projects[0].id,
+            project_recommendation_reason="内容与装修相关",
+            candidates=[],
+        )
+
+    monkeypatch.setattr("app.processing.organizing.run_organizing_agent", _fake_agent)
+
+    async with async_session_factory() as db:
+        loaded = await db.get(Source, source["id"])
+        await OrganizingProcessingProvider().process(db, loaded)
+        await db.commit()
+
+    refreshed = await client.get(f"/api/sources/{source['id']}")
+    assert refreshed.status_code == 200
+    assert refreshed.json()["project_id"] == project["id"]

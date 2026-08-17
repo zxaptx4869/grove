@@ -28,14 +28,16 @@ class OrganizingProcessingProvider(ProcessingProvider):
         ).scalar_one()
         settings_row = await get_settings_row(db, source.workspace_id)
         model = settings_row.text_model
-        workspace_projects = (
-            await db.execute(
-                select(Project).where(
-                    Project.workspace_id == source.workspace_id,
-                    Project.status != "archived",
+        workspace_projects: list[Project] = []
+        if loaded.project_id is None:
+            workspace_projects = (
+                await db.execute(
+                    select(Project).where(
+                        Project.workspace_id == source.workspace_id,
+                        Project.status != "archived",
+                    )
                 )
-            )
-        ).scalars().all() if loaded.project_id is None else []
+            ).scalars().all()
         try:
             draft = await run_organizing_agent(
                 db,
@@ -54,6 +56,10 @@ class OrganizingProcessingProvider(ProcessingProvider):
             title = (draft.source_title or "").strip()
             if title:
                 loaded.title = title[:255]
+            if loaded.project_id is None and draft.recommended_project_id is not None:
+                valid_project_ids = {project.id for project in workspace_projects}
+                if draft.recommended_project_id in valid_project_ids:
+                    loaded.project_id = draft.recommended_project_id
             if loaded.project_id is not None:
                 await route_source(db, loaded.id)
         except Exception as exc:  # noqa: BLE001

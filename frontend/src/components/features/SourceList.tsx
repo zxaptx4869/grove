@@ -60,9 +60,6 @@ export function SourceList({
       <ul className="divide-y border-t" aria-label="来源列表">
       {sources.map((source) => {
         const firstKind = source.attachments[0]?.kind ?? 'text'
-        const recommendedProject = projects.find(
-          (project) => project.id === source.recommended_project_id,
-        )
         return (
           <li key={source.id} className="flex min-h-[64px] items-center gap-3 px-1 py-2.5">
             <span className="flex size-[34px] shrink-0 items-center justify-center rounded-md bg-muted">
@@ -78,20 +75,6 @@ export function SourceList({
                 {source.note || '无采集说明'}
                 {attachmentSummary(source)}
               </p>
-              {source.project_id === null && source.recommended_project_id != null ? (
-                <p className="mt-0.5 flex items-center gap-1.5 text-caption">
-                  <span className="text-ai-candidate">
-                    AI 推荐项目：{recommendedProject?.name ?? '未知项目'}
-                  </span>
-                  <button
-                    type="button"
-                    className="text-brand hover:underline"
-                    onClick={() => onAssign(source.id, source.recommended_project_id as number)}
-                  >
-                    采用
-                  </button>
-                </p>
-              ) : null}
             </div>
             <select
               aria-label={`${source.title} 所属项目`}
