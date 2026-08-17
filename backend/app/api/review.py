@@ -3,7 +3,7 @@
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, status
-from sqlalchemy import func, select
+from sqlalchemy import case, func, select
 
 from app.api.deps import DbSession, get_current_workspace
 from app.models import Candidate, Project, Source, Workspace
@@ -63,6 +63,8 @@ async def list_review_sources(
 ) -> list[ReviewSourceOut]:
     """返回项目内待审 Source 及其候选计数。"""
     await _get_owned_project(db, workspace.id, project_id)
+    pending_expr = func.sum(case((Candidate.status == CANDIDATE_PENDING, 1), else_=0))
+    total_expr = func.count(Candidate.id)
     rows = (
         await db.execute(
             select(
@@ -70,16 +72,14 @@ async def list_review_sources(
                 Source.title,
                 Source.note,
                 Source.status,
-                Source.review_status,
                 Source.created_at,
-                func.count(Candidate.id).filter(Candidate.status == CANDIDATE_PENDING),
+                pending_expr.label("pending_count"),
+                total_expr.label("total_count"),
             )
             .join(Candidate, Candidate.source_id == Source.id)
-            .where(
-                Source.project_id == project_id,
-                Source.review_status.in_([REVIEW_PENDING, REVIEW_PARTIAL]),
-            )
+            .where(Source.project_id == project_id)
             .group_by(Source.id)
+            .having(pending_expr > 0)
             .order_by(Source.created_at.desc())
         )
     ).all()
@@ -89,9 +89,13 @@ async def list_review_sources(
             title=item.title,
             note=item.note,
             status=item.status,
-            review_status=item.review_status,
-            pending_candidate_count=int(item[6]),
-            created_at=item[5],
+            review_status=(
+                REVIEW_PARTIAL
+                if int(item.total_count) > int(item.pending_count or 0)
+                else REVIEW_PENDING
+            ),
+            pending_candidate_count=int(item.pending_count or 0),
+            created_at=item.created_at,
         )
         for item in rows
     ]

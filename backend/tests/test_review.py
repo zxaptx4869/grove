@@ -8,8 +8,9 @@ from sqlalchemy import select
 
 from app.db.session import async_session_factory
 from app.main import create_app
-from app.models import Candidate, Extraction
+from app.models import Candidate, Extraction, Source
 from app.models.extraction import CANDIDATE_CONFIRMED
+from app.models.source import REVIEW_PENDING
 from app.processing import worker
 
 
@@ -214,3 +215,28 @@ async def test_review_source_counts_only_pending(client: httpx.AsyncClient) -> N
 
     assert len(review_sources) == 1
     assert review_sources[0]["pending_candidate_count"] == 1
+
+
+@pytest.mark.asyncio
+async def test_review_sources_ignore_stale_review_status(client: httpx.AsyncClient) -> None:
+    """已全部决定的来源即使 review_status 是历史脏数据，也不应出现在待处理列表。"""
+    await _register(client)
+    project = await _create_project(client)
+    source = await _create_source(client, project["id"])
+    await _process(client, source["id"])
+    candidate = (await _candidates(client, source["id"]))[0]
+    await client.post(
+        f"/api/candidates/{candidate['id']}/decision",
+        json={"status": "confirmed"},
+    )
+
+    # 模拟历史脏数据：把派生状态改回待确认
+    async with async_session_factory() as session:
+        stale = await session.get(Source, source["id"])
+        stale.review_status = REVIEW_PENDING
+        await session.commit()
+
+    review_sources = (
+        await client.get(f"/api/projects/{project['id']}/review/sources")
+    ).json()
+    assert review_sources == []
