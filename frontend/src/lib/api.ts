@@ -214,7 +214,6 @@ export interface SourcePayload {
   note: string | null
   project_id: number | null
   status: SourceStatus
-  review_status?: string
   created_at: string
   updated_at: string
   attachments: AttachmentPayload[]

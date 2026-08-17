@@ -16,7 +16,6 @@ if TYPE_CHECKING:
 
 REVIEW_PENDING = "pending_review"
 REVIEW_PARTIAL = "partial_review"
-REVIEWED = "reviewed"
 
 
 class Source(Base):
@@ -38,9 +37,6 @@ class Source(Base):
     title: Mapped[str] = mapped_column(String(255), nullable=False)
     note: Mapped[str | None] = mapped_column(Text, nullable=True)
     status: Mapped[str] = mapped_column(String(16), default="waiting", nullable=False)
-    review_status: Mapped[str] = mapped_column(
-        String(16), default=REVIEW_PENDING, nullable=False
-    )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )

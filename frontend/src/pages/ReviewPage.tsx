@@ -5,7 +5,6 @@ import {
   ChevronLeft,
   ChevronRight,
   List,
-  Pencil,
   X,
 } from 'lucide-react'
 import { useParams } from 'react-router-dom'
@@ -30,18 +29,6 @@ import {
   type TreeNodePayload,
 } from '@/lib/api'
 import { queryKeys } from '@/lib/queryKeys'
-
-const STATUS_LABELS: Record<CandidatePayload['status'], string> = {
-  pending: '待采纳',
-  confirmed: '已采纳',
-  rejected: '已拒绝',
-}
-
-function statusClass(status: CandidatePayload['status']) {
-  if (status === 'confirmed') return 'bg-confirmed-soft text-confirmed'
-  if (status === 'rejected') return 'bg-error-soft text-destructive'
-  return 'bg-ai-candidate-soft text-ai-candidate'
-}
 
 function formatTime(value: string) {
   const normalized = /(Z|[+-]\d{2}:\d{2})$/.test(value) ? value : `${value}Z`
@@ -287,16 +274,6 @@ export function ReviewPage() {
     },
     onError: (error) => toast.error(error instanceof Error ? error.message : '操作失败'),
   })
-  const reopen = useGroveMutation({
-    mutationFn: (candidate: CandidatePayload) => decideCandidate(candidate.id, 'pending'),
-    invalidates: [
-      queryKeys.sourceCandidates(activeSourceId ?? 0),
-      queryKeys.reviewSources(id),
-    ],
-    onSuccess: () => toast.success('候选已重新打开'),
-    onError: (error) => toast.error(error instanceof Error ? error.message : '操作失败'),
-  })
-
   function selectSource(sourceId: number) {
     setSelectedSourceId(sourceId)
     setCurrentIndex(0)
@@ -463,32 +440,6 @@ export function ReviewPage() {
               </div>
             )}
 
-            {(candidates.data ?? []).some((candidate) => candidate.status !== 'pending') ? (
-              <div className="border-t p-4">
-                <p className="mb-2 text-caption text-muted-foreground">已决定候选</p>
-                <div className="space-y-1.5">
-                  {(candidates.data ?? [])
-                    .filter((candidate) => candidate.status !== 'pending')
-                    .map((candidate) => (
-                      <div
-                        key={candidate.id}
-                        className="flex items-center justify-between gap-3 rounded-md border px-3 py-2"
-                      >
-                        <div className="min-w-0">
-                          <p className="truncate text-body-sm">{candidate.title}</p>
-                          <Badge className={`mt-1 ${statusClass(candidate.status)}`}>
-                            {STATUS_LABELS[candidate.status]}
-                          </Badge>
-                        </div>
-                        <Button size="sm" variant="ghost" onClick={() => reopen.mutate(candidate)}>
-                          <Pencil />
-                          重新打开
-                        </Button>
-                      </div>
-                    ))}
-                </div>
-              </div>
-            ) : null}
           </section>
         </div>
       </div>

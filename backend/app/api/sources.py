@@ -36,7 +36,6 @@ def _source_out(source: Source, attachments: list[Attachment]) -> SourceOut:
         note=source.note,
         project_id=source.project_id,
         status=source.status,
-        review_status=source.review_status,
         created_at=source.created_at,
         updated_at=source.updated_at,
         attachments=[
