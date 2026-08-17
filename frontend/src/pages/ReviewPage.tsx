@@ -16,6 +16,7 @@ import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Textarea } from '@/components/ui/textarea'
 import { BatchReviewView } from '@/components/features/BatchReviewView'
+import { DirectoryTreeSelect } from '@/components/features/DirectoryTreeSelect'
 import { useGroveMutation } from '@/hooks/useGroveMutation'
 import {
   archiveCandidate,
@@ -86,6 +87,8 @@ function highlightQuote(text: string, quote?: string) {
 function CandidateEditor({
   candidate,
   nodeOptions,
+  treeNodes,
+  treeLoading = false,
   suggestionMatchNodeId,
   suggestionMatchLabel,
   onAdopt,
@@ -96,6 +99,8 @@ function CandidateEditor({
 }: {
   candidate: CandidatePayload
   nodeOptions: Array<{ value: number; label: string }>
+  treeNodes: TreeNodePayload[]
+  treeLoading?: boolean
   suggestionMatchNodeId: number | null
   suggestionMatchLabel: string | null
   onAdopt: (payload: {
@@ -182,22 +187,15 @@ function CandidateEditor({
           </div>
         </div>
         <div className="space-y-1.5">
-          <label htmlFor="candidate-node" className="text-body-sm font-medium">
-            归档目录
-          </label>
-          <select
-            id="candidate-node"
-            className="h-9 w-full rounded-md border px-2 text-body-sm"
-            value={nodeId ?? ''}
-            onChange={(event) => setNodeId(event.target.value ? Number(event.target.value) : null)}
-          >
-            <option value="">{nodeOptions.length > 0 ? '选择目录节点' : '项目还没有目录节点'}</option>
-            {nodeOptions.map((option) => (
-              <option key={option.value} value={option.value}>
-                {option.label}
-              </option>
-            ))}
-          </select>
+          <span className="text-body-sm font-medium">归档目录</span>
+          <DirectoryTreeSelect
+            nodes={treeNodes}
+            value={nodeId}
+            loading={treeLoading}
+            placeholder={nodeOptions.length > 0 ? '选择目录节点' : '项目还没有目录节点'}
+            ariaLabel="归档目录"
+            onSelect={(id) => setNodeId(id)}
+          />
           {candidate.routing_status !== 'pending' ? (
             <p className="text-caption text-muted-foreground">
               {candidate.routing_status === 'no_suitable'
@@ -674,6 +672,8 @@ export function ReviewPage() {
                 key={currentCandidate.id}
                 candidate={currentCandidate}
                 nodeOptions={nodeOptions}
+                treeNodes={tree.data ?? []}
+                treeLoading={tree.isLoading}
                 suggestionMatchNodeId={suggestionMatchNodeId}
                 suggestionMatchLabel={suggestionMatchLabel}
                 isPending={adopt.isPending || reject.isPending || archiveNewNode.isPending}

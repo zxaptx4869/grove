@@ -14,6 +14,7 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog'
 import { useGroveMutation } from '@/hooks/useGroveMutation'
+import { DirectoryTreeSelect } from '@/components/features/DirectoryTreeSelect'
 import {
   batchDecideProjectCandidates,
   fetchProjectTree,
@@ -43,16 +44,6 @@ function buildNodeLabels(
     }
   }
   return labels
-}
-
-function flattenNodeOptions(
-  nodes: readonly TreeNodePayload[],
-  prefix = '',
-): Array<{ value: number; label: string }> {
-  return nodes.flatMap((node) => [
-    { value: node.id, label: `${prefix}${node.name}` },
-    ...flattenNodeOptions(node.children, `${prefix}${node.name} / `),
-  ])
 }
 
 function routingReason(candidate: ReviewCandidatePayload): string {
@@ -86,7 +77,6 @@ export function BatchReviewView({
     enabled: Number.isFinite(projectId),
   })
   const nodeLabels = useMemo(() => buildNodeLabels(tree.data ?? []), [tree.data])
-  const nodeOptions = useMemo(() => flattenNodeOptions(tree.data ?? []), [tree.data])
 
   const quickCandidates = useMemo(
     () => (candidates.data ?? []).filter((candidate) => candidate.review_band === 'quick'),
@@ -316,21 +306,14 @@ export function BatchReviewView({
               为选中的 {selectedCount} 条候选选择统一归档目录。
             </DialogDescription>
           </DialogHeader>
-          <select
-            aria-label="统一归档目录"
-            className="h-9 w-full rounded-md border px-2 text-body-sm"
-            value={overrideNodeId ?? ''}
-            onChange={(event) =>
-              setOverrideNodeId(event.target.value ? Number(event.target.value) : null)
-            }
-          >
-            <option value="">按各自推荐目录</option>
-            {nodeOptions.map((option) => (
-              <option key={option.value} value={option.value}>
-                {option.label}
-              </option>
-            ))}
-          </select>
+          <DirectoryTreeSelect
+            nodes={tree.data ?? []}
+            value={overrideNodeId}
+            loading={tree.isLoading}
+            placeholder="按各自推荐目录"
+            ariaLabel="统一归档目录"
+            onSelect={(id) => setOverrideNodeId(id)}
+          />
           <DialogFooter>
             <Button variant="outline" onClick={() => setDirectoryOpen(false)}>
               取消

@@ -188,4 +188,62 @@ describe('BatchReviewView', () => {
 
     expect(onReviewCandidate).toHaveBeenCalledWith(3, 7)
   })
+
+  it('修改目录选择节点后批量采纳使用统一节点', async () => {
+    const calls: Array<{ method: string; path: string; body?: string }> = []
+    vi.stubGlobal(
+      'fetch',
+      vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
+        const url = new URL(String(input), 'http://localhost')
+        calls.push({
+          method: init?.method ?? 'GET',
+          path: url.pathname,
+          body: typeof init?.body === 'string' ? init.body : undefined,
+        })
+        if (url.pathname === '/api/projects/7/tree') {
+          return Promise.resolve({
+            ok: true,
+            json: async () => [
+              { id: 10, name: '施工', description: null, position: 0, entry_count: 0, children: [] },
+            ],
+          })
+        }
+        if (url.pathname === '/api/projects/7/review/candidates') {
+          return Promise.resolve({
+            ok: true,
+            json: async () => [candidatePayload(1, 5)],
+          })
+        }
+        if (
+          url.pathname === '/api/projects/7/review/candidates/batch-decision' &&
+          init?.method === 'POST'
+        ) {
+          return Promise.resolve({
+            ok: true,
+            json: async () => [{ candidate_id: 1, status: 'confirmed', error: null }],
+          })
+        }
+        return Promise.resolve({ ok: true, json: async () => [] })
+      }),
+    )
+
+    renderView()
+
+    expect(await screen.findByText('推荐明确 · 1')).toBeInTheDocument()
+    await userEvent.click(screen.getByLabelText('选择「候选 1」'))
+    await userEvent.click(screen.getByRole('button', { name: '修改目录' }))
+    await userEvent.click(await screen.findByRole('button', { name: '统一归档目录' }))
+    await userEvent.click(await screen.findByRole('option', { name: /施工/ }))
+    await userEvent.click(screen.getByRole('button', { name: '确认' }))
+    await userEvent.click(screen.getByRole('button', { name: '批量采纳' }))
+
+    await waitFor(() => {
+      const call = calls.find(
+        (item) =>
+          item.method === 'POST' &&
+          item.path === '/api/projects/7/review/candidates/batch-decision',
+      )
+      expect(call?.body).toContain('"node_id":10')
+    })
+  })
 })

@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import {
   ArrowRight,
@@ -19,6 +19,7 @@ import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom'
 import { toast } from 'sonner'
 
 import { NodeTree } from '@/components/features/NodeTree'
+import { DirectoryTreeSelect } from '@/components/features/DirectoryTreeSelect'
 import { EntryCard, EntryList } from '@/components/features/EntryViews'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -85,13 +86,6 @@ function findNodeWithPath(
     if (found) return found
   }
   return null
-}
-
-function flattenNodes(
-  nodes: readonly TreeNodePayload[],
-  depth = 0,
-): Array<{ node: TreeNodePayload; depth: number }> {
-  return nodes.flatMap((node) => [{ node, depth }, ...flattenNodes(node.children, depth + 1)])
 }
 
 function descendantEntryCount(node: TreeNodePayload): number {
@@ -205,6 +199,16 @@ export function ProjectPage() {
   const [deleteNodeTarget, setDeleteNodeTarget] = useState<TreeNodePayload | null>(null)
   const [moveTarget, setMoveTarget] = useState<TreeNodePayload | null>(null)
   const [moveParentId, setMoveParentId] = useState<number | null>(null)
+  const moveExcludedIds = useMemo(() => {
+    const excluded = new Set<number>()
+    if (!moveTarget) return excluded
+    const walk = (node: TreeNodePayload) => {
+      excluded.add(node.id)
+      node.children.forEach(walk)
+    }
+    walk(moveTarget)
+    return excluded
+  }, [moveTarget])
   const [editProjectOpen, setEditProjectOpen] = useState(false)
   const [projectName, setProjectName] = useState('')
   const [projectDescription, setProjectDescription] = useState('')
@@ -919,28 +923,15 @@ export function ProjectPage() {
               {actionError}
             </div>
           ) : null}
-          <select
-            aria-label="新父节点"
-            className="h-10 rounded-md border bg-background px-3 text-body-sm"
-            value={moveParentId ?? ''}
-            onChange={(event) =>
-              setMoveParentId(event.target.value ? Number(event.target.value) : null)
-            }
-          >
-            <option value="">根目录</option>
-            {flattenNodes(nodes)
-              .filter(
-                ({ node }) =>
-                  node.id !== moveTarget?.id &&
-                  !findNodeWithPath(moveTarget?.children ?? [], node.id),
-              )
-              .map(({ node, depth }) => (
-                <option key={node.id} value={node.id}>
-                  {'　'.repeat(depth)}
-                  {node.name}
-                </option>
-              ))}
-          </select>
+          <DirectoryTreeSelect
+            nodes={nodes}
+            value={moveParentId}
+            allowRoot
+            placeholder="根目录"
+            ariaLabel="新父节点"
+            filter={(node) => !moveExcludedIds.has(node.id)}
+            onSelect={(id) => setMoveParentId(id)}
+          />
           <DialogFooter>
             <Button variant="outline" onClick={() => setMoveTarget(null)}>
               取消

@@ -141,7 +141,8 @@ describe('ReviewPage', () => {
     renderPage()
 
     expect(await screen.findByText('晶蕾烘干需手动勾选')).toBeInTheDocument()
-    await userEvent.selectOptions(screen.getByLabelText('归档目录'), '10')
+    await userEvent.click(screen.getByRole('button', { name: '归档目录' }))
+    await userEvent.click(await screen.findByRole('option', { name: /施工/ }))
     await userEvent.click(screen.getByRole('button', { name: '采纳' }))
 
     expect(
@@ -241,7 +242,7 @@ describe('ReviewPage', () => {
     renderPage()
 
     expect(await screen.findByText('晶蕾烘干需手动勾选')).toBeInTheDocument()
-    expect(screen.getByLabelText('归档目录')).toHaveValue('10')
+    expect(screen.getByRole('button', { name: '归档目录' })).toHaveTextContent('施工')
     expect(screen.getByText(/AI 推荐：施工/)).toBeInTheDocument()
   })
 
