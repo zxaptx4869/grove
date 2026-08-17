@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
-import { render, screen } from '@testing-library/react'
+import { render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { MemoryRouter, Route, Routes } from 'react-router-dom'
 import { afterEach, describe, expect, it, vi } from 'vitest'
@@ -243,5 +243,247 @@ describe('ReviewPage', () => {
     expect(await screen.findByText('晶蕾烘干需手动勾选')).toBeInTheDocument()
     expect(screen.getByLabelText('归档目录')).toHaveValue('10')
     expect(screen.getByText(/AI 推荐：施工/)).toBeInTheDocument()
+  })
+
+  it('暂无合适位置时展示新增节点并归档并调用接口', async () => {
+    const calls: Array<{ method: string; path: string; body?: string }> = []
+    vi.stubGlobal(
+      'fetch',
+      vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
+        const url = new URL(String(input), 'http://localhost')
+        calls.push({
+          method: init?.method ?? 'GET',
+          path: url.pathname,
+          body: typeof init?.body === 'string' ? init.body : undefined,
+        })
+        if (url.pathname === '/api/projects/1/review/sources') {
+          return Promise.resolve({
+            ok: true,
+            json: async () => [
+              {
+                id: 5,
+                title: 'BOSS直聘找工作',
+                note: null,
+                status: 'done',
+                review_status: 'pending_review',
+                pending_candidate_count: 1,
+              },
+            ],
+          })
+        }
+        if (url.pathname === '/api/projects/1/tree') {
+          return Promise.resolve({ ok: true, json: async () => [] })
+        }
+        if (url.pathname === '/api/sources/5') {
+          return Promise.resolve({
+            ok: true,
+            json: async () => ({
+              id: 5,
+              title: 'BOSS直聘找工作',
+              note: null,
+              project_id: 1,
+              status: 'done',
+              recommended_project_id: null,
+              project_recommendation_reason: null,
+              created_at: '',
+              updated_at: '',
+              attachments: [
+                {
+                  id: 9,
+                  kind: 'text',
+                  position: 0,
+                  mime_type: null,
+                  file_name: null,
+                  text_content: '识别不靠谱公司与如何寻找靠谱工作',
+                },
+              ],
+            }),
+          })
+        }
+        if (url.pathname === '/api/sources/5/candidates') {
+          return Promise.resolve({
+            ok: true,
+            json: async () => [
+              {
+                id: 7,
+                source_id: 5,
+                candidate_kind: 'recommended',
+                title: '识别不靠谱公司',
+                content: '识别不靠谱公司。',
+                main_type: 'knowledge',
+                info_nature: 'fact',
+                applicable_condition: null,
+                note: null,
+                evidence: [],
+                reason: null,
+                risk_flags: [],
+                status: 'pending',
+                recommended_node_id: null,
+                node_alternatives: [],
+                node_reason: null,
+                routing_status: 'no_suitable',
+                new_node_suggestion: {
+                  name: '求职经验',
+                  parent_id: null,
+                  reason: '没有匹配目录',
+                },
+              },
+            ],
+          })
+        }
+        if (url.pathname === '/api/candidates/7' && init?.method === 'PATCH') {
+          return Promise.resolve({
+            ok: true,
+            json: async () => ({
+              id: 7,
+              source_id: 5,
+              candidate_kind: 'recommended',
+              title: '识别不靠谱公司',
+              content: '识别不靠谱公司。',
+              main_type: 'knowledge',
+              info_nature: 'fact',
+              applicable_condition: null,
+              note: null,
+              evidence: [],
+              reason: null,
+              risk_flags: [],
+              status: 'pending',
+              recommended_node_id: null,
+              node_alternatives: [],
+              node_reason: null,
+              routing_status: 'no_suitable',
+              new_node_suggestion: {
+                name: '求职经验',
+                parent_id: null,
+                reason: '没有匹配目录',
+              },
+            }),
+          })
+        }
+        if (url.pathname === '/api/candidates/7/archive-with-new-node' && init?.method === 'POST') {
+          return Promise.resolve({
+            ok: true,
+            json: async () => ({
+              id: 20,
+              project_id: 1,
+              node_id: 30,
+              node_name: '求职经验',
+              title: '识别不靠谱公司',
+              content: '识别不靠谱公司。',
+              main_type: 'knowledge',
+              info_nature: 'fact',
+              applicable_condition: null,
+              note: null,
+              created_at: '',
+              updated_at: '',
+              evidences: [],
+            }),
+          })
+        }
+        return Promise.resolve({ ok: true, json: async () => [] })
+      }),
+    )
+
+    renderPage()
+
+    expect(await screen.findByText('识别不靠谱公司')).toBeInTheDocument()
+    await userEvent.click(screen.getByRole('button', { name: '新增「求职经验」并归档' }))
+
+    await waitFor(() => {
+      expect(
+        calls.some(
+          (call) =>
+            call.method === 'POST' &&
+            call.path === '/api/candidates/7/archive-with-new-node' &&
+            call.body?.includes('求职经验'),
+        ),
+      ).toBe(true)
+    })
+  })
+
+  it('同一来源聚合同路径新节点建议', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn((input: RequestInfo | URL) => {
+        const url = new URL(String(input), 'http://localhost')
+        if (url.pathname === '/api/projects/1/review/sources') {
+          return Promise.resolve({
+            ok: true,
+            json: async () => [
+              {
+                id: 5,
+                title: 'BOSS直聘找工作',
+                note: null,
+                status: 'done',
+                review_status: 'pending_review',
+                pending_candidate_count: 2,
+              },
+            ],
+          })
+        }
+        if (url.pathname === '/api/projects/1/tree') {
+          return Promise.resolve({ ok: true, json: async () => [] })
+        }
+        if (url.pathname === '/api/sources/5') {
+          return Promise.resolve({
+            ok: true,
+            json: async () => ({
+              id: 5,
+              title: 'BOSS直聘找工作',
+              note: null,
+              project_id: 1,
+              status: 'done',
+              created_at: '',
+              updated_at: '',
+              attachments: [
+                {
+                  id: 9,
+                  kind: 'text',
+                  position: 0,
+                  mime_type: null,
+                  file_name: null,
+                  text_content: '找工作',
+                },
+              ],
+            }),
+          })
+        }
+        if (url.pathname === '/api/sources/5/candidates') {
+          const base = {
+            candidate_kind: 'recommended',
+            content: '内容',
+            main_type: 'knowledge',
+            info_nature: 'fact',
+            applicable_condition: null,
+            note: null,
+            evidence: [],
+            reason: null,
+            risk_flags: [],
+            status: 'pending',
+            recommended_node_id: null,
+            node_alternatives: [],
+            node_reason: null,
+            routing_status: 'no_suitable',
+            new_node_suggestion: {
+              name: '求职经验',
+              parent_id: null,
+              reason: '没有匹配目录',
+            },
+          }
+          return Promise.resolve({
+            ok: true,
+            json: async () => [
+              { id: 7, source_id: 5, title: '识别不靠谱公司', ...base },
+              { id: 8, source_id: 5, title: '寻找靠谱工作', ...base },
+            ],
+          })
+        }
+        return Promise.resolve({ ok: true, json: async () => [] })
+      }),
+    )
+
+    renderPage()
+
+    expect(await screen.findByText('建议新增「求职经验」 · 2 条')).toBeInTheDocument()
   })
 })

@@ -13,7 +13,12 @@ from app.models.extraction import (
     EXTRACTION_FAILED,
     EXTRACTION_SUPERSEDED,
 )
-from app.schemas.candidate import CandidateOut, EvidenceRefOut, NodeAlternativeOut
+from app.schemas.candidate import (
+    CandidateOut,
+    EvidenceRefOut,
+    NewNodeSuggestionOut,
+    NodeAlternativeOut,
+)
 
 
 def _dump_evidence(candidate_draft) -> str:
@@ -100,6 +105,15 @@ def candidate_out(candidate: Candidate) -> CandidateOut:
         node_alternatives=_parse_node_alternatives(candidate.node_alternatives),
         node_reason=candidate.node_reason,
         routing_status=candidate.routing_status,
+        new_node_suggestion=(
+            NewNodeSuggestionOut(
+                name=candidate.new_node_name,
+                parent_id=candidate.new_node_parent_id,
+                reason=candidate.new_node_reason,
+            )
+            if candidate.new_node_name
+            else None
+        ),
     )
 
 

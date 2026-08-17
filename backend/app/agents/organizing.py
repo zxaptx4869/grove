@@ -62,6 +62,9 @@ class NodeRecommendationDraft(BaseModel):
     node_reason: str | None = None
     node_alternatives: list[NodeAlternativeDraft] = []
     routing_status: Literal["recommended", "needs_review", "no_suitable"]
+    new_node_name: str | None = None
+    new_node_parent_id: int | None = None
+    new_node_reason: str | None = None
 
 
 class RoutingDraft(BaseModel):
@@ -98,7 +101,10 @@ ROUTING_SYSTEM_PROMPT = """你是 Grove 整理 Agent 的路由步骤。请为每
 2. routing_status 只使用 recommended（推荐明确）、needs_review（需要确认）、
    no_suitable（暂无合适位置）。
 3. 给主建议提供简短 node_reason；备选最多 2 个，每个可附 reason。
-4. 不要输出不存在的 node_id。"""
+4. 不要输出不存在的 node_id。
+5. 只有 routing_status 为 no_suitable 时，才可以输出新节点建议：
+   new_node_name 为新节点名称，new_node_parent_id 必须是给定节点 id 或留空（表示根节点），
+   new_node_reason 为简短理由；其他路由状态不要输出新节点建议。"""
 
 
 def _format_context(

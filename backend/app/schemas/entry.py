@@ -50,3 +50,11 @@ class ArchiveCandidateRequest(BaseModel):
     """采纳并归档候选。"""
 
     node_id: int
+
+
+class NewNodeArchiveRequest(BaseModel):
+    """创建或复用节点并归档候选。"""
+
+    name: str = Field(min_length=1, max_length=128)
+    parent_id: int | None = None
+    description: str | None = Field(default=None, max_length=2000)

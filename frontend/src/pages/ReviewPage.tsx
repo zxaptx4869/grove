@@ -18,6 +18,7 @@ import { Textarea } from '@/components/ui/textarea'
 import { useGroveMutation } from '@/hooks/useGroveMutation'
 import {
   archiveCandidate,
+  archiveCandidateWithNewNode,
   decideCandidate,
   fetchReviewSources,
   fetchProjectTree,
@@ -44,14 +45,28 @@ function formatTime(value: string) {
   }).format(date)
 }
 
-function flattenNodeOptions(
+function flattenNodesWithParent(
   nodes: readonly TreeNodePayload[],
+  parentId: number | null = null,
   prefix = '',
-): Array<{ value: number; label: string }> {
+): Array<{ id: number; parentId: number | null; name: string; label: string }> {
   return nodes.flatMap((node) => [
-    { value: node.id, label: `${prefix}${node.name}` },
-    ...flattenNodeOptions(node.children, `${prefix}${node.name} / `),
+    { id: node.id, parentId, name: node.name, label: `${prefix}${node.name}` },
+    ...flattenNodesWithParent(node.children, node.id, `${prefix}${node.name} / `),
   ])
+}
+
+function findSuggestionNodeId(
+  candidate: CandidatePayload,
+  nodes: Array<{ id: number; parentId: number | null; name: string }>,
+) {
+  const suggestion = candidate.new_node_suggestion
+  if (!suggestion?.name) return null
+  const name = suggestion.name.trim().toLowerCase()
+  const parentId = suggestion.parent_id ?? null
+  return nodes.find(
+    (node) => node.name.trim().toLowerCase() === name && node.parentId === parentId,
+  )?.id ?? null
 }
 
 function highlightQuote(text: string, quote?: string) {
@@ -70,18 +85,31 @@ function highlightQuote(text: string, quote?: string) {
 function CandidateEditor({
   candidate,
   nodeOptions,
+  suggestionMatchNodeId,
+  suggestionMatchLabel,
   onAdopt,
+  onArchiveWithNewNode,
   onReject,
   onSkip,
   isPending,
 }: {
   candidate: CandidatePayload
   nodeOptions: Array<{ value: number; label: string }>
+  suggestionMatchNodeId: number | null
+  suggestionMatchLabel: string | null
   onAdopt: (payload: {
     content: string
     main_type: CandidatePayload['main_type']
     info_nature: string | null
     node_id: number
+  }) => void
+  onArchiveWithNewNode: (payload: {
+    content: string
+    main_type: CandidatePayload['main_type']
+    info_nature: string | null
+    name: string
+    parent_id: number | null
+    description: string | null
   }) => void
   onReject: () => void
   onSkip: () => void
@@ -90,9 +118,16 @@ function CandidateEditor({
   const [content, setContent] = useState(candidate.content)
   const [mainType, setMainType] = useState<CandidatePayload['main_type']>(candidate.main_type)
   const [infoNature, setInfoNature] = useState(candidate.info_nature ?? '')
-  const [nodeId, setNodeId] = useState<number | null>(() =>
-    candidate.routing_status === 'no_suitable' ? null : (candidate.recommended_node_id ?? null),
-  )
+  const [nodeId, setNodeId] = useState<number | null>(() => {
+    if (candidate.routing_status === 'no_suitable') {
+      return suggestionMatchNodeId ?? null
+    }
+    return candidate.recommended_node_id ?? null
+  })
+  const suggestion = candidate.new_node_suggestion
+  const isNoSuitable = candidate.routing_status === 'no_suitable'
+  const showNewNodeForm = isNoSuitable && suggestionMatchNodeId === null
+  const [newNodeName, setNewNodeName] = useState(suggestion?.name ?? '')
   const recommendedLabel = nodeOptions.find(
     (option) => option.value === candidate.recommended_node_id,
   )?.label
@@ -165,13 +200,69 @@ function CandidateEditor({
           {candidate.routing_status !== 'pending' ? (
             <p className="text-caption text-muted-foreground">
               {candidate.routing_status === 'no_suitable'
-                ? '暂无合适目录，请手动选择'
+                ? '暂无合适目录，可手动选择或新增节点'
                 : `AI 推荐${candidate.routing_status === 'needs_review' ? '（需确认）' : ''}：${recommendedLabel ?? '—'}`}
               {candidate.node_reason ? ` · ${candidate.node_reason}` : ''}
             </p>
           ) : (
             <p className="text-caption text-muted-foreground">目录推荐生成中…</p>
           )}
+          {suggestionMatchNodeId !== null ? (
+            <p className="text-caption text-muted-foreground">
+              已有节点「{suggestionMatchLabel}」，将直接归档到该节点
+            </p>
+          ) : null}
+          {showNewNodeForm ? (
+            <div className="flex items-center gap-2">
+              {suggestion?.name ? (
+                <Button
+                  size="sm"
+                  variant="link"
+                  disabled={isPending}
+                  onClick={() =>
+                    onArchiveWithNewNode({
+                      content: content.trim(),
+                      main_type: mainType,
+                      info_nature: infoNature.trim() || null,
+                      name: suggestion.name,
+                      parent_id: suggestion.parent_id ?? null,
+                      description: null,
+                    })
+                  }
+                >
+                  新增「{suggestion.name}」并归档
+                </Button>
+              ) : (
+                <>
+                  <Input
+                    id="new-node-name"
+                    aria-label="新节点名称"
+                    placeholder="节点名称"
+                    className="h-8"
+                    value={newNodeName}
+                    onChange={(event) => setNewNodeName(event.target.value)}
+                  />
+                  <Button
+                    size="sm"
+                    variant="link"
+                    disabled={isPending || newNodeName.trim().length === 0}
+                    onClick={() =>
+                      onArchiveWithNewNode({
+                        content: content.trim(),
+                        main_type: mainType,
+                        info_nature: infoNature.trim() || null,
+                        name: newNodeName.trim(),
+                        parent_id: null,
+                        description: null,
+                      })
+                    }
+                  >
+                    新增并归档
+                  </Button>
+                </>
+              )}
+            </div>
+          ) : null}
         </div>
         {candidate.reason ? (
           <p className="text-caption text-muted-foreground">
@@ -237,7 +328,14 @@ export function ReviewPage() {
     queryFn: () => fetchProjectTree(id),
     enabled: Number.isFinite(id),
   })
-  const nodeOptions = flattenNodeOptions(tree.data ?? [])
+  const nodesWithParent = useMemo(
+    () => flattenNodesWithParent(tree.data ?? []),
+    [tree.data],
+  )
+  const nodeOptions = useMemo(
+    () => nodesWithParent.map(({ id, label }) => ({ value: id, label })),
+    [nodesWithParent],
+  )
 
   const pendingCandidates = useMemo(
     () => (candidates.data ?? []).filter((candidate) => candidate.status === 'pending'),
@@ -248,6 +346,38 @@ export function ReviewPage() {
     [candidates.data],
   )
   const currentCandidate = pendingCandidates[currentIndex] ?? null
+  const suggestionMatchNodeId = currentCandidate
+    ? findSuggestionNodeId(currentCandidate, nodesWithParent)
+    : null
+  const suggestionMatchLabel =
+    suggestionMatchNodeId !== null
+      ? (nodeOptions.find((option) => option.value === suggestionMatchNodeId)?.label ?? null)
+      : null
+  const groupedNodeSuggestions = useMemo(
+    () => {
+      const groups = new Map<
+        string,
+        { name: string; parentId: number | null; count: number }
+      >()
+      for (const candidate of pendingCandidates) {
+        const suggestion = candidate.new_node_suggestion
+        if (!suggestion?.name || candidate.routing_status !== 'no_suitable') continue
+        const key = `${suggestion.parent_id ?? 'root'}::${suggestion.name.trim().toLowerCase()}`
+        const existing = groups.get(key)
+        if (existing) {
+          existing.count += 1
+        } else {
+          groups.set(key, {
+            name: suggestion.name.trim(),
+            parentId: suggestion.parent_id ?? null,
+            count: 1,
+          })
+        }
+      }
+      return Array.from(groups.values())
+    },
+    [pendingCandidates],
+  )
   const singleImage =
     (source.data?.attachments.filter((attachment) => attachment.kind === 'image').length ?? 0) ===
     1
@@ -305,6 +435,43 @@ export function ReviewPage() {
       toast.success('候选已重新打开')
     },
     onError: (error) => toast.error(error instanceof Error ? error.message : '操作失败'),
+  })
+  const archiveNewNode = useGroveMutation({
+    mutationFn: async ({
+      candidate,
+      payload,
+    }: {
+      candidate: CandidatePayload
+      payload: {
+        content: string
+        main_type: CandidatePayload['main_type']
+        info_nature: string | null
+        name: string
+        parent_id: number | null
+        description: string | null
+      }
+    }) => {
+      await updateCandidate(candidate.id, {
+        content: payload.content,
+        main_type: payload.main_type,
+        info_nature: payload.info_nature as CandidateUpdatePayload['info_nature'],
+      })
+      return archiveCandidateWithNewNode(candidate.id, {
+        name: payload.name,
+        parent_id: payload.parent_id ?? null,
+        description: payload.description ?? null,
+      })
+    },
+    invalidates: [
+      queryKeys.sourceCandidates(activeSourceId ?? 0),
+      queryKeys.reviewSources(id),
+      queryKeys.projectTree(id),
+    ],
+    onSuccess: () => {
+      setCurrentIndex((value) => Math.max(0, value - 1))
+      toast.success('候选已归档并创建节点')
+    },
+    onError: (error) => toast.error(error instanceof Error ? error.message : '创建节点失败'),
   })
   function selectSource(sourceId: number) {
     setSelectedSourceId(sourceId)
@@ -450,6 +617,19 @@ export function ReviewPage() {
               </div>
             </div>
 
+            {groupedNodeSuggestions.length > 0 ? (
+              <div className="flex flex-wrap items-center gap-1.5 border-b px-5 py-2">
+                {groupedNodeSuggestions.map((item) => (
+                  <span
+                    key={`${item.parentId ?? 'root'}:${item.name}`}
+                    className="text-caption text-muted-foreground"
+                  >
+                    建议新增「{item.name}」{item.count > 1 ? ` · ${item.count} 条` : ''}
+                  </span>
+                ))}
+              </div>
+            ) : null}
+
             {candidates.isLoading ? (
               <div className="min-h-0 flex-1 p-5">
                 <div className="h-64 animate-pulse bg-muted/40" />
@@ -459,8 +639,13 @@ export function ReviewPage() {
                 key={currentCandidate.id}
                 candidate={currentCandidate}
                 nodeOptions={nodeOptions}
-                isPending={adopt.isPending || reject.isPending}
+                suggestionMatchNodeId={suggestionMatchNodeId}
+                suggestionMatchLabel={suggestionMatchLabel}
+                isPending={adopt.isPending || reject.isPending || archiveNewNode.isPending}
                 onAdopt={(payload) => adopt.mutate({ candidate: currentCandidate, payload })}
+                onArchiveWithNewNode={(payload) =>
+                  archiveNewNode.mutate({ candidate: currentCandidate, payload })
+                }
                 onReject={() => reject.mutate(currentCandidate)}
                 onSkip={() =>
                   setCurrentIndex((value) => Math.min(pendingCandidates.length - 1, value + 1))

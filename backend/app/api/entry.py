@@ -7,9 +7,10 @@ from sqlalchemy import select
 
 from app.api.deps import DbSession, get_current_workspace
 from app.models import Candidate, Entry, Node, Project, Source, Workspace
-from app.schemas.entry import ArchiveCandidateRequest, EntryOut, EntryUpdate
+from app.schemas.entry import ArchiveCandidateRequest, EntryOut, EntryUpdate, NewNodeArchiveRequest
 from app.services.entry import (
     archive_candidate,
+    archive_candidate_with_new_node,
     edit_entry,
     entry_eager_options,
     entry_out,
@@ -58,6 +59,23 @@ async def archive_candidate_endpoint(
     """采纳候选并归档为 Entry。"""
     candidate = await _get_owned_candidate(db, workspace.id, candidate_id)
     entry = await archive_candidate(db, candidate, payload.node_id)
+    await db.commit()
+    return entry_out(entry)
+
+
+@router.post(
+    "/candidates/{candidate_id}/archive-with-new-node",
+    response_model=EntryOut,
+)
+async def archive_candidate_with_new_node_endpoint(
+    candidate_id: int,
+    payload: NewNodeArchiveRequest,
+    db: DbSession,
+    workspace: CurrentWorkspace,
+) -> EntryOut:
+    """创建或复用节点，并在同一事务内归档候选。"""
+    candidate = await _get_owned_candidate(db, workspace.id, candidate_id)
+    entry = await archive_candidate_with_new_node(db, candidate, payload)
     await db.commit()
     return entry_out(entry)
 

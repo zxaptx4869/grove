@@ -3,13 +3,14 @@
 import json
 
 from fastapi import HTTPException, status
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app.models import Candidate, Entry, EntrySourceEvidence, Node, Source
 from app.models.extraction import CANDIDATE_CONFIRMED, CANDIDATE_PENDING
-from app.schemas.entry import EntryEvidenceOut, EntryOut, EntryUpdate
+from app.schemas.entry import EntryEvidenceOut, EntryOut, EntryUpdate, NewNodeArchiveRequest
+from app.services.project_context import schedule_refresh
 
 
 def entry_eager_options():
@@ -107,6 +108,83 @@ async def archive_candidate(
             select(Entry).options(*entry_eager_options()).where(Entry.id == entry.id)
         )
     ).scalar_one()
+
+
+async def _find_or_create_node(
+    db: AsyncSession,
+    project_id: int,
+    parent_id: int | None,
+    name: str,
+    description: str | None,
+) -> tuple[Node, bool]:
+    """查找同名同父节点，不存在时创建；返回 (节点, 是否新建)。"""
+    normalized_name = name.strip().casefold()
+    siblings = (
+        await db.execute(
+            select(Node).where(
+                Node.project_id == project_id,
+                Node.parent_id.is_(None) if parent_id is None else Node.parent_id == parent_id,
+            )
+        )
+    ).scalars().all()
+    for node in siblings:
+        if (node.name or "").strip().casefold() == normalized_name:
+            return node, False
+
+    sibling_count = (
+        await db.execute(
+            select(func.count())
+            .select_from(Node)
+            .where(
+                Node.project_id == project_id,
+                Node.parent_id.is_(None) if parent_id is None else Node.parent_id == parent_id,
+            )
+        )
+    ).scalar_one()
+    node = Node(
+        project_id=project_id,
+        parent_id=parent_id,
+        name=name.strip(),
+        description=description,
+        position=int(sibling_count),
+    )
+    db.add(node)
+    await db.flush()
+    return node, True
+
+
+async def archive_candidate_with_new_node(
+    db: AsyncSession,
+    candidate: Candidate,
+    payload: NewNodeArchiveRequest,
+) -> Entry:
+    """创建或复用节点，并在同一事务内归档候选。"""
+    if candidate.status != CANDIDATE_PENDING:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="候选已处理")
+
+    source = await db.get(Source, candidate.source_id)
+    if source is None or source.project_id is None:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="来源尚未归属项目")
+
+    parent_id = payload.parent_id
+    if parent_id is not None:
+        parent = await db.get(Node, parent_id)
+        if parent is None or parent.project_id != source.project_id:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST, detail="父节点不属于当前项目"
+            )
+
+    node, created = await _find_or_create_node(
+        db,
+        source.project_id,
+        parent_id,
+        payload.name,
+        payload.description,
+    )
+    if created:
+        await schedule_refresh(db, source.project_id)
+
+    return await archive_candidate(db, candidate, node.id)
 
 
 async def edit_entry(

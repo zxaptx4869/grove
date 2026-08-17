@@ -37,6 +37,9 @@ async def clear_candidate_routing(db: AsyncSession, source_id: int) -> None:
             recommended_node_id=None,
             node_alternatives=None,
             node_reason=None,
+            new_node_name=None,
+            new_node_parent_id=None,
+            new_node_reason=None,
             routing_status=ROUTING_PENDING,
         )
     )
@@ -59,14 +62,6 @@ async def route_source(db: AsyncSession, source_id: int) -> None:
             .order_by(Node.position)
         )
     ).scalars().all()
-    if not nodes:
-        for candidate in candidates:
-            candidate.recommended_node_id = None
-            candidate.node_alternatives = None
-            candidate.node_reason = None
-            candidate.routing_status = ROUTING_NO_SUITABLE
-        return
-
     node_ids = {node.id for node in nodes}
 
     draft = await run_routing_agent(db, source.workspace_id, candidates, list(nodes))
@@ -103,3 +98,17 @@ async def _apply_recommendation(
         candidate.routing_status = (
             ROUTING_NEEDS_REVIEW if valid_alternatives else ROUTING_NO_SUITABLE
         )
+
+    if candidate.routing_status == ROUTING_NO_SUITABLE:
+        new_node_name = (recommendation.new_node_name or "").strip() or None
+        candidate.new_node_name = new_node_name
+        candidate.new_node_parent_id = (
+            recommendation.new_node_parent_id
+            if recommendation.new_node_parent_id in node_ids
+            else None
+        )
+        candidate.new_node_reason = recommendation.new_node_reason if new_node_name else None
+    else:
+        candidate.new_node_name = None
+        candidate.new_node_parent_id = None
+        candidate.new_node_reason = None

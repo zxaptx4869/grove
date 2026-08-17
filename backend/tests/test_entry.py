@@ -230,3 +230,82 @@ async def test_archive_marks_source_reviewed(client: httpx.AsyncClient) -> None:
         await client.get(f"/api/projects/{project['id']}/review/sources")
     ).json()
     assert review_sources == []
+
+
+@pytest.mark.asyncio
+async def test_archive_with_new_node_creates_node_and_entry(
+    client: httpx.AsyncClient,
+) -> None:
+    """无目录项目应能在一次请求中创建节点并归档候选。"""
+    await _register(client)
+    project = await _create_project(client)
+    source = await _create_source(client, project["id"])
+    await _process(client, source["id"])
+    candidate = (await _candidates(client, source["id"]))[0]
+
+    response = await client.post(
+        f"/api/candidates/{candidate['id']}/archive-with-new-node",
+        json={"name": "求职经验"},
+    )
+
+    assert response.status_code == 200
+    data = response.json()
+    assert data["node_name"] == "求职经验"
+    assert data["evidences"][0]["source_id"] == source["id"]
+
+    tree = (
+        await client.get(f"/api/projects/{project['id']}/tree")
+    ).json()
+    assert len(tree) == 1
+    assert tree[0]["name"] == "求职经验"
+
+
+@pytest.mark.asyncio
+async def test_archive_with_new_node_reuses_existing_node(
+    client: httpx.AsyncClient,
+) -> None:
+    """同名同父节点已存在时应复用，不创建重复节点。"""
+    await _register(client)
+    project = await _create_project(client)
+    node = await _create_node(client, project["id"], "求职经验")
+    source = await _create_source(client, project["id"])
+    await _process(client, source["id"])
+    candidate = (await _candidates(client, source["id"]))[0]
+
+    response = await client.post(
+        f"/api/candidates/{candidate['id']}/archive-with-new-node",
+        json={"name": "求职经验"},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["node_id"] == node["id"]
+    tree = (
+        await client.get(f"/api/projects/{project['id']}/tree")
+    ).json()
+    assert len(tree) == 1
+
+
+@pytest.mark.asyncio
+async def test_archive_with_new_node_rejects_wrong_project_parent(
+    client: httpx.AsyncClient,
+) -> None:
+    """新节点父节点不属于当前项目时应失败且不留半成品。"""
+    await _register(client)
+    project = await _create_project(client)
+    other = await _create_project(client)
+    other_node = await _create_node(client, other["id"], "其他项目节点")
+    source = await _create_source(client, project["id"])
+    await _process(client, source["id"])
+    candidate = (await _candidates(client, source["id"]))[0]
+
+    response = await client.post(
+        f"/api/candidates/{candidate['id']}/archive-with-new-node",
+        json={"name": "求职经验", "parent_id": other_node["id"]},
+    )
+
+    assert response.status_code == 400
+    tree = (
+        await client.get(f"/api/projects/{project['id']}/tree")
+    ).json()
+    assert tree == []
+    assert (await _candidates(client, source["id"]))[0]["status"] == "pending"

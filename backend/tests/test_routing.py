@@ -5,7 +5,7 @@ import uuid
 import httpx
 import pytest
 
-from app.agents.organizing import ExtractionDraft
+from app.agents.organizing import ExtractionDraft, NodeRecommendationDraft, RoutingDraft
 from app.db.session import async_session_factory
 from app.main import create_app
 from app.models import Source
@@ -163,3 +163,103 @@ async def test_auto_assign_recommended_project(
     refreshed = await client.get(f"/api/sources/{source['id']}")
     assert refreshed.status_code == 200
     assert refreshed.json()["project_id"] == project["id"]
+
+
+@pytest.mark.asyncio
+async def test_no_suitable_stores_new_node_suggestion(
+    client: httpx.AsyncClient,
+    monkeypatch,
+) -> None:
+    """no_suitable 候选应保存路由 Agent 给出的新节点建议。"""
+    await _register(client)
+    project = await _project(client, "求职")
+    await _node(client, project["id"], "装修")
+    source = await _source(client, "如何识别不靠谱公司", project["id"])
+
+    async def _fake_route(db, workspace_id, candidates, nodes):
+        return RoutingDraft(
+            recommendations=[
+                NodeRecommendationDraft(
+                    candidate_id=candidates[0].id,
+                    routing_status="no_suitable",
+                    new_node_name="求职经验",
+                    new_node_parent_id=None,
+                    new_node_reason="没有匹配目录",
+                )
+            ]
+        )
+
+    monkeypatch.setattr("app.services.routing.run_routing_agent", _fake_route)
+
+    await _process(client, source["id"])
+    candidate = (await _candidates(client, source["id"]))[0]
+
+    assert candidate["routing_status"] == "no_suitable"
+    assert candidate["new_node_suggestion"]["name"] == "求职经验"
+    assert candidate["new_node_suggestion"]["parent_id"] is None
+    assert candidate["new_node_suggestion"]["reason"] == "没有匹配目录"
+
+
+@pytest.mark.asyncio
+async def test_no_suitable_rejects_invalid_new_node_parent(
+    client: httpx.AsyncClient,
+    monkeypatch,
+) -> None:
+    """非法新节点父节点应被降级为根节点。"""
+    await _register(client)
+    project = await _project(client, "求职")
+    await _node(client, project["id"], "装修")
+    source = await _source(client, "如何识别不靠谱公司", project["id"])
+
+    async def _fake_route(db, workspace_id, candidates, nodes):
+        return RoutingDraft(
+            recommendations=[
+                NodeRecommendationDraft(
+                    candidate_id=candidates[0].id,
+                    routing_status="no_suitable",
+                    new_node_name="求职经验",
+                    new_node_parent_id=9999,
+                    new_node_reason="没有匹配目录",
+                )
+            ]
+        )
+
+    monkeypatch.setattr("app.services.routing.run_routing_agent", _fake_route)
+
+    await _process(client, source["id"])
+    candidate = (await _candidates(client, source["id"]))[0]
+
+    assert candidate["new_node_suggestion"]["name"] == "求职经验"
+    assert candidate["new_node_suggestion"]["parent_id"] is None
+
+
+@pytest.mark.asyncio
+async def test_empty_project_stores_new_node_suggestion(
+    client: httpx.AsyncClient,
+    monkeypatch,
+) -> None:
+    """项目没有节点时也应调用路由 Agent 并保存新节点建议。"""
+    await _register(client)
+    project = await _project(client, "求职")
+    source = await _source(client, "如何寻找靠谱工作", project["id"])
+
+    async def _fake_route(db, workspace_id, candidates, nodes):
+        return RoutingDraft(
+            recommendations=[
+                NodeRecommendationDraft(
+                    candidate_id=candidates[0].id,
+                    routing_status="no_suitable",
+                    new_node_name="求职经验",
+                    new_node_parent_id=None,
+                    new_node_reason="项目还没有目录",
+                )
+            ]
+        )
+
+    monkeypatch.setattr("app.services.routing.run_routing_agent", _fake_route)
+
+    await _process(client, source["id"])
+    candidate = (await _candidates(client, source["id"]))[0]
+
+    assert candidate["routing_status"] == "no_suitable"
+    assert candidate["new_node_suggestion"]["name"] == "求职经验"

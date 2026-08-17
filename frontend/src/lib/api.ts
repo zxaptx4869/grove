@@ -368,6 +368,12 @@ export interface NodeAlternativePayload {
   reason: string
 }
 
+export interface NewNodeSuggestionPayload {
+  name: string
+  parent_id: number | null
+  reason: string | null
+}
+
 export type RoutingStatus = 'pending' | 'recommended' | 'needs_review' | 'no_suitable'
 
 export interface CandidatePayload {
@@ -388,6 +394,7 @@ export interface CandidatePayload {
   node_alternatives: NodeAlternativePayload[]
   node_reason: string | null
   routing_status: RoutingStatus
+  new_node_suggestion: NewNodeSuggestionPayload | null
 }
 
 export const fetchSourceCandidates = (sourceId: number) =>
@@ -484,6 +491,21 @@ export const archiveCandidate = (candidateId: number, nodeId: number) =>
   request<EntryPayload>(`/api/candidates/${candidateId}/archive`, {
     method: 'POST',
     body: JSON.stringify({ node_id: nodeId }),
+  })
+
+export interface ArchiveCandidateWithNewNodePayload {
+  name: string
+  parent_id?: number | null
+  description?: string | null
+}
+
+export const archiveCandidateWithNewNode = (
+  candidateId: number,
+  payload: ArchiveCandidateWithNewNodePayload,
+) =>
+  request<EntryPayload>(`/api/candidates/${candidateId}/archive-with-new-node`, {
+    method: 'POST',
+    body: JSON.stringify(payload),
   })
 
 export const fetchEntry = (entryId: number) => request<EntryPayload>(`/api/entries/${entryId}`)

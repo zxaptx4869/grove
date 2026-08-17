@@ -17,6 +17,14 @@ class NodeAlternativeOut(BaseModel):
     reason: str = ""
 
 
+class NewNodeSuggestionOut(BaseModel):
+    """候选的新节点建议。"""
+
+    name: str
+    parent_id: int | None = None
+    reason: str | None = None
+
+
 class CandidateOut(BaseModel):
     """AI 候选，非正式知识。"""
 
@@ -37,3 +45,4 @@ class CandidateOut(BaseModel):
     node_alternatives: list[NodeAlternativeOut] = []
     node_reason: str | None
     routing_status: str
+    new_node_suggestion: NewNodeSuggestionOut | None = None
