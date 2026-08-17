@@ -4,8 +4,12 @@ import uuid
 
 import httpx
 import pytest
+from sqlalchemy import select
 
+from app.db.session import async_session_factory
 from app.main import create_app
+from app.models import Candidate, Extraction
+from app.models.extraction import CANDIDATE_CONFIRMED
 from app.processing import worker
 
 
@@ -51,6 +55,29 @@ async def _candidates(client: httpx.AsyncClient, source_id: int) -> list[dict]:
     response = await client.get(f"/api/sources/{source_id}/candidates")
     assert response.status_code == 200
     return response.json()
+
+
+async def _add_confirmed_candidate(source_id: int) -> None:
+    async with async_session_factory() as session:
+        extraction = (
+            await session.execute(
+                select(Extraction).where(Extraction.source_id == source_id)
+            )
+        ).scalars().first()
+        assert extraction is not None
+        session.add(
+            Candidate(
+                extraction_id=extraction.id,
+                source_id=source_id,
+                candidate_kind="recommended",
+                title="第二条候选",
+                content="第二条候选内容",
+                main_type="knowledge",
+                info_nature="fact",
+                status=CANDIDATE_CONFIRMED,
+            )
+        )
+        await session.commit()
 
 
 @pytest.mark.asyncio
@@ -170,3 +197,20 @@ async def test_review_workspace_isolation(client: httpx.AsyncClient) -> None:
             json={"status": "confirmed"},
         )
         assert response.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_review_source_counts_only_pending(client: httpx.AsyncClient) -> None:
+    """待处理来源的候选数应只统计待采纳，不包含已确认候选。"""
+    await _register(client)
+    project = await _create_project(client)
+    source = await _create_source(client, project["id"])
+    await _process(client, source["id"])
+    await _add_confirmed_candidate(source["id"])
+
+    review_sources = (
+        await client.get(f"/api/projects/{project['id']}/review/sources")
+    ).json()
+
+    assert len(review_sources) == 1
+    assert review_sources[0]["pending_candidate_count"] == 1

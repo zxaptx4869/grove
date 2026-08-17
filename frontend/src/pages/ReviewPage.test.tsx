@@ -42,7 +42,7 @@ describe('ReviewPage', () => {
                 note: '关注默认设置',
                 status: 'done',
                 review_status: 'pending_review',
-                candidate_count: 1,
+                pending_candidate_count: 1,
               },
             ],
           })

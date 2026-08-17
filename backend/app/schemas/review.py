@@ -38,5 +38,5 @@ class ReviewSourceOut(BaseModel):
     note: str | None
     status: str
     review_status: str
-    candidate_count: int
+    pending_candidate_count: int
     created_at: datetime

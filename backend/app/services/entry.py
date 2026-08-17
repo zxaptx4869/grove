@@ -10,6 +10,7 @@ from sqlalchemy.orm import selectinload
 from app.models import Candidate, Entry, EntrySourceEvidence, Node, Source
 from app.models.extraction import CANDIDATE_CONFIRMED, CANDIDATE_PENDING
 from app.schemas.entry import EntryEvidenceOut, EntryOut, EntryUpdate
+from app.services.candidate_review import recompute_source_review_status
 
 
 def entry_eager_options():
@@ -102,6 +103,7 @@ async def archive_candidate(
     candidate.status = CANDIDATE_CONFIRMED
     candidate.entry_id = entry.id
     await db.flush()
+    await recompute_source_review_status(db, candidate.source_id)
     return (
         await db.execute(
             select(Entry).options(*entry_eager_options()).where(Entry.id == entry.id)

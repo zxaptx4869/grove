@@ -208,3 +208,25 @@ async def test_list_entries_by_scope(client: httpx.AsyncClient) -> None:
     assert [entry["node_id"] for entry in direct] == [parent["id"]]
     assert [entry["node_id"] for entry in descendants] == [child["id"]]
     assert child_descendants == []
+
+
+@pytest.mark.asyncio
+async def test_archive_marks_source_reviewed(client: httpx.AsyncClient) -> None:
+    """采纳（归档）全部候选后，Source 应从待处理来源中消失。"""
+    await _register(client)
+    project = await _create_project(client)
+    node = await _create_node(client, project["id"], "施工")
+    source = await _create_source(client, project["id"])
+    await _process(client, source["id"])
+    candidate = (await _candidates(client, source["id"]))[0]
+
+    response = await client.post(
+        f"/api/candidates/{candidate['id']}/archive",
+        json={"node_id": node["id"]},
+    )
+
+    assert response.status_code == 200
+    review_sources = (
+        await client.get(f"/api/projects/{project['id']}/review/sources")
+    ).json()
+    assert review_sources == []

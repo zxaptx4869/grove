@@ -7,6 +7,7 @@ from sqlalchemy import func, select
 
 from app.api.deps import DbSession, get_current_workspace
 from app.models import Candidate, Project, Source, Workspace
+from app.models.extraction import CANDIDATE_PENDING
 from app.models.source import REVIEW_PARTIAL, REVIEW_PENDING
 from app.schemas.candidate import CandidateOut
 from app.schemas.review import (
@@ -71,7 +72,7 @@ async def list_review_sources(
                 Source.status,
                 Source.review_status,
                 Source.created_at,
-                func.count(Candidate.id),
+                func.count(Candidate.id).filter(Candidate.status == CANDIDATE_PENDING),
             )
             .join(Candidate, Candidate.source_id == Source.id)
             .where(
@@ -89,7 +90,7 @@ async def list_review_sources(
             note=item.note,
             status=item.status,
             review_status=item.review_status,
-            candidate_count=int(item[6]),
+            pending_candidate_count=int(item[6]),
             created_at=item[5],
         )
         for item in rows

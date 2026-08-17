@@ -389,7 +389,7 @@ export interface ReviewSourcePayload {
   note: string | null
   status: SourceStatus
   review_status: string
-  candidate_count: number
+  pending_candidate_count: number
   created_at: string
 }
 

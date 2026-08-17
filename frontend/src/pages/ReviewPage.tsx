@@ -515,7 +515,7 @@ export function ReviewPage() {
                 >
                   <span className="block truncate text-body-sm font-medium">{item.title}</span>
                   <span className="mt-0.5 block text-caption text-muted-foreground">
-                    {item.candidate_count} 条候选 · {item.review_status === 'partial_review' ? '部分确认' : '待确认'}
+                    {item.pending_candidate_count} 条待采纳 · {item.review_status === 'partial_review' ? '部分确认' : '待确认'}
                     {formatTime(item.created_at) ? ` · ${formatTime(item.created_at)}` : ''}
                   </span>
                 </button>
