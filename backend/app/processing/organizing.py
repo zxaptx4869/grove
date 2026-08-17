@@ -5,10 +5,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app.agents.organizing import run_organizing_agent
-from app.models import Source
+from app.models import Project, Source
 from app.processing.base import ProcessingProvider
 from app.services.ai_models import get_settings_row
 from app.services.extraction import save_failed_extraction, save_success_extraction
+from app.services.routing import route_source
 
 
 class OrganizingProcessingProvider(ProcessingProvider):
@@ -27,12 +28,21 @@ class OrganizingProcessingProvider(ProcessingProvider):
         ).scalar_one()
         settings_row = await get_settings_row(db, source.workspace_id)
         model = settings_row.text_model
+        workspace_projects = (
+            await db.execute(
+                select(Project).where(
+                    Project.workspace_id == source.workspace_id,
+                    Project.status != "archived",
+                )
+            )
+        ).scalars().all() if loaded.project_id is None else []
         try:
             draft = await run_organizing_agent(
                 db,
                 loaded,
                 list(loaded.attachments),
                 loaded.project,
+                workspace_projects,
             )
             await save_success_extraction(
                 db,
@@ -44,6 +54,8 @@ class OrganizingProcessingProvider(ProcessingProvider):
             title = (draft.source_title or "").strip()
             if title:
                 loaded.title = title[:255]
+            if loaded.project_id is not None:
+                await route_source(db, loaded.id)
         except Exception as exc:  # noqa: BLE001
             await save_failed_extraction(
                 db,

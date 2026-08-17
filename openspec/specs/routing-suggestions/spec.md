@@ -1,0 +1,65 @@
+# routing-suggestions Specification
+
+## Purpose
+TBD - created by archiving change add-project-and-node-routing-suggestions. Update Purpose after archive.
+## Requirements
+### Requirement: Source 项目推荐
+系统 MUST 在全局收集箱来源处理时为未归属来源生成推荐项目与推荐理由；推荐不明确时 MUST 保持未归属；已归属项目的来源 MUST 直接使用当前项目，不调用 AI 猜测项目。
+
+#### Scenario: 全局来源推荐项目
+- **WHEN** 系统处理一个未归属项目的来源
+- **THEN** 生成 `recommended_project_id` 与推荐理由
+
+#### Scenario: 推荐不明确保持未归属
+- **WHEN** AI 无法判断来源应归属哪个项目
+- **THEN** `recommended_project_id` 为空，来源保持未归属
+
+#### Scenario: 项目内来源不猜项目
+- **WHEN** 系统处理一个已归属项目的来源
+- **THEN** 不生成项目推荐，直接使用该来源当前项目
+
+### Requirement: Candidate 目录推荐
+系统 MUST 为每条候选生成真实 `node_id` 的主建议、备选与理由；主建议与备选 MUST 来自当前项目真实存在的节点，不得自由输出无法匹配的路径。
+
+#### Scenario: 主建议为真实节点
+- **WHEN** 系统为一条候选计算目录推荐
+- **THEN** `recommended_node_id` 指向当前项目内真实存在的节点
+
+#### Scenario: 备选为真实节点
+- **WHEN** 系统为候选提供备选目录
+- **THEN** 每个备选 `node_id` 均指向当前项目内真实存在的节点
+
+#### Scenario: 拒绝非法节点
+- **WHEN** Agent 输出的主建议或备选不是当前项目内的真实节点
+- **THEN** 应用层拒绝该推荐，不保存非法 `node_id`
+
+### Requirement: 三档路由状态
+系统 MUST 用三档可解释状态表达推荐可信度：推荐明确（`recommended`）、需要确认（`needs_review`）、暂无合适位置（`no_suitable`）；MUST NOT 展示模型自报的伪精确百分比。
+
+#### Scenario: 推荐明确
+- **WHEN** AI 对候选目录有明确主建议
+- **THEN** `routing_status` 为 `recommended`
+
+#### Scenario: 需要确认
+- **WHEN** AI 有建议但不确定
+- **THEN** `routing_status` 为 `needs_review`
+
+#### Scenario: 暂无合适位置
+- **WHEN** AI 找不到合适目录节点
+- **THEN** `routing_status` 为 `no_suitable`
+
+### Requirement: 路由步骤触发与重跑
+系统 MUST 在项目内来源处理成功后立即路由；全局来源在用户确认项目后路由；用户修改来源项目后 MUST 重新路由并覆盖旧推荐；重跑 MUST NOT 复制候选或正式知识。
+
+#### Scenario: 项目内来源处理完即路由
+- **WHEN** 一个已归属项目的来源处理成功
+- **THEN** 系统立即为其候选计算目录推荐
+
+#### Scenario: 全局来源确认项目后路由
+- **WHEN** 用户为未归属来源确认项目
+- **THEN** 系统为该来源候选计算目录推荐
+
+#### Scenario: 修改项目重新路由
+- **WHEN** 用户修改一个来源的所属项目
+- **THEN** 系统重新计算其候选的目录推荐，并覆盖旧推荐
+

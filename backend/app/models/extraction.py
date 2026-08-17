@@ -21,6 +21,11 @@ CANDIDATE_PENDING = "pending"
 CANDIDATE_CONFIRMED = "confirmed"
 CANDIDATE_REJECTED = "rejected"
 
+ROUTING_PENDING = "pending"
+ROUTING_RECOMMENDED = "recommended"
+ROUTING_NEEDS_REVIEW = "needs_review"
+ROUTING_NO_SUITABLE = "no_suitable"
+
 
 class Extraction(Base):
     """一次版本化处理运行记录。"""
@@ -79,6 +84,14 @@ class Candidate(Base):
     status: Mapped[str] = mapped_column(String(16), default=CANDIDATE_PENDING, nullable=False)
     entry_id: Mapped[int | None] = mapped_column(
         BigInteger, ForeignKey("entries.id", ondelete="SET NULL"), index=True, nullable=True
+    )
+    recommended_node_id: Mapped[int | None] = mapped_column(
+        BigInteger, index=True, nullable=True
+    )
+    node_alternatives: Mapped[str | None] = mapped_column(Text, nullable=True)
+    node_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
+    routing_status: Mapped[str] = mapped_column(
+        String(16), default=ROUTING_PENDING, nullable=False
     )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False

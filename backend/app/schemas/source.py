@@ -25,6 +25,8 @@ class SourceOut(BaseModel):
     note: str | None
     project_id: int | None
     status: str
+    recommended_project_id: int | None
+    project_recommendation_reason: str | None
     created_at: datetime
     updated_at: datetime
     attachments: list[AttachmentOut] = []

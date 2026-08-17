@@ -90,7 +90,12 @@ function CandidateEditor({
   const [content, setContent] = useState(candidate.content)
   const [mainType, setMainType] = useState<CandidatePayload['main_type']>(candidate.main_type)
   const [infoNature, setInfoNature] = useState(candidate.info_nature ?? '')
-  const [nodeId, setNodeId] = useState<number | null>(null)
+  const [nodeId, setNodeId] = useState<number | null>(() =>
+    candidate.routing_status === 'no_suitable' ? null : (candidate.recommended_node_id ?? null),
+  )
+  const recommendedLabel = nodeOptions.find(
+    (option) => option.value === candidate.recommended_node_id,
+  )?.label
 
   return (
     <div className="flex min-h-0 flex-1 flex-col">
@@ -157,6 +162,16 @@ function CandidateEditor({
               </option>
             ))}
           </select>
+          {candidate.routing_status !== 'pending' ? (
+            <p className="text-caption text-muted-foreground">
+              {candidate.routing_status === 'no_suitable'
+                ? '暂无合适目录，请手动选择'
+                : `AI 推荐${candidate.routing_status === 'needs_review' ? '（需确认）' : ''}：${recommendedLabel ?? '—'}`}
+              {candidate.node_reason ? ` · ${candidate.node_reason}` : ''}
+            </p>
+          ) : (
+            <p className="text-caption text-muted-foreground">目录推荐生成中…</p>
+          )}
         </div>
         {candidate.reason ? (
           <p className="text-caption text-muted-foreground">

@@ -13,6 +13,7 @@ from app.models import Attachment, ProcessingTask, Project, Source, Workspace
 from app.models.processing import DONE, FAILED, PROCESSING, WAITING
 from app.schemas.source import AttachmentOut, SourceOut, SourceUpdate
 from app.services.attachment_storage import AttachmentStorage
+from app.services.routing import clear_candidate_routing, route_source
 
 router = APIRouter(prefix="/api/sources", tags=["sources"])
 CurrentWorkspace = Annotated[Workspace, Depends(get_current_workspace)]
@@ -36,6 +37,8 @@ def _source_out(source: Source, attachments: list[Attachment]) -> SourceOut:
         note=source.note,
         project_id=source.project_id,
         status=source.status,
+        recommended_project_id=source.recommended_project_id,
+        project_recommendation_reason=source.project_recommendation_reason,
         created_at=source.created_at,
         updated_at=source.updated_at,
         attachments=[
@@ -206,11 +209,19 @@ async def update_source(
     source = await _get_owned_source(db, workspace.id, source_id)
     if "note" in payload.model_fields_set:
         source.note = payload.note
-    if "project_id" in payload.model_fields_set:
+    project_changed = (
+        "project_id" in payload.model_fields_set
+        and payload.project_id != source.project_id
+    )
+    if project_changed:
         if payload.project_id is not None:
             await _validate_project(db, workspace.id, payload.project_id)
         source.project_id = payload.project_id
+        await clear_candidate_routing(db, source.id)
     await db.commit()
+    if project_changed:
+        await route_source(db, source.id)
+        await db.commit()
     return await _load_source_out(db, source_id)
 
 

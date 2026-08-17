@@ -214,6 +214,8 @@ export interface SourcePayload {
   note: string | null
   project_id: number | null
   status: SourceStatus
+  recommended_project_id: number | null
+  project_recommendation_reason: string | null
   created_at: string
   updated_at: string
   attachments: AttachmentPayload[]
@@ -361,6 +363,13 @@ export interface CandidateEvidencePayload {
   quote: string
 }
 
+export interface NodeAlternativePayload {
+  node_id: number
+  reason: string
+}
+
+export type RoutingStatus = 'pending' | 'recommended' | 'needs_review' | 'no_suitable'
+
 export interface CandidatePayload {
   id: number
   source_id: number
@@ -375,6 +384,10 @@ export interface CandidatePayload {
   reason: string | null
   risk_flags: string[]
   status: CandidateDecisionStatus
+  recommended_node_id: number | null
+  node_alternatives: NodeAlternativePayload[]
+  node_reason: string | null
+  routing_status: RoutingStatus
 }
 
 export const fetchSourceCandidates = (sourceId: number) =>

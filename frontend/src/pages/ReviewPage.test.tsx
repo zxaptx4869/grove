@@ -153,4 +153,95 @@ describe('ReviewPage', () => {
       ),
     ).toBe(true)
   })
+
+  it('有目录推荐时预填推荐节点', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn((input: RequestInfo | URL) => {
+        const url = new URL(String(input), 'http://localhost')
+        if (url.pathname === '/api/projects/1/review/sources') {
+          return Promise.resolve({
+            ok: true,
+            json: async () => [
+              {
+                id: 5,
+                title: '烘干使用体验',
+                note: null,
+                status: 'done',
+                review_status: 'pending_review',
+                pending_candidate_count: 1,
+              },
+            ],
+          })
+        }
+        if (url.pathname === '/api/projects/1/tree') {
+          return Promise.resolve({
+            ok: true,
+            json: async () => [
+              { id: 10, name: '施工', description: null, position: 0, children: [] },
+            ],
+          })
+        }
+        if (url.pathname === '/api/sources/5') {
+          return Promise.resolve({
+            ok: true,
+            json: async () => ({
+              id: 5,
+              title: '烘干使用体验',
+              note: null,
+              project_id: 1,
+              status: 'done',
+              recommended_project_id: null,
+              project_recommendation_reason: null,
+              created_at: '',
+              updated_at: '',
+              attachments: [
+                {
+                  id: 9,
+                  kind: 'text',
+                  position: 0,
+                  mime_type: null,
+                  file_name: null,
+                  text_content: '晶蕾烘干需要手动勾选',
+                },
+              ],
+            }),
+          })
+        }
+        if (url.pathname === '/api/sources/5/candidates') {
+          return Promise.resolve({
+            ok: true,
+            json: async () => [
+              {
+                id: 7,
+                source_id: 5,
+                candidate_kind: 'recommended',
+                title: '晶蕾烘干需手动勾选',
+                content: '晶蕾烘干需要手动勾选。',
+                main_type: 'knowledge',
+                info_nature: 'fact',
+                applicable_condition: null,
+                note: null,
+                evidence: [],
+                reason: '独立可用',
+                risk_flags: [],
+                status: 'pending',
+                recommended_node_id: 10,
+                node_alternatives: [],
+                node_reason: '匹配施工节点',
+                routing_status: 'recommended',
+              },
+            ],
+          })
+        }
+        return Promise.resolve({ ok: true, json: async () => [] })
+      }),
+    )
+
+    renderPage()
+
+    expect(await screen.findByText('晶蕾烘干需手动勾选')).toBeInTheDocument()
+    expect(screen.getByLabelText('归档目录')).toHaveValue('10')
+    expect(screen.getByText(/AI 推荐：施工/)).toBeInTheDocument()
+  })
 })

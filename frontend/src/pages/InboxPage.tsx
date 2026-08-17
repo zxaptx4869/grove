@@ -76,7 +76,7 @@ export function InboxPage() {
       <header className="mb-5">
         <h1 className="text-[22px] font-[650] leading-[30px]">收集箱</h1>
         <p className="mt-0.5 text-body text-muted-foreground">
-          先放进来，稍后再归属项目。当前不支持 AI 推荐项目。
+          先放进来，稍后再归属项目。处理完成后会由 AI 推荐所属项目。
         </p>
       </header>
 

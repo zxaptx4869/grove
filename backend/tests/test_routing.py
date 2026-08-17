@@ -1,0 +1,131 @@
+"""项目与目录推荐（路由）测试。"""
+
+import uuid
+
+import httpx
+import pytest
+
+from app.main import create_app
+from app.processing import worker
+
+
+@pytest.fixture
+async def client():
+    transport = httpx.ASGITransport(app=create_app())
+    async with httpx.AsyncClient(transport=transport, base_url="http://test") as api_client:
+        yield api_client
+
+
+async def _register(client: httpx.AsyncClient) -> str:
+    username = f"user_{uuid.uuid4().hex[:10]}"
+    response = await client.post(
+        "/api/auth/register",
+        json={"username": username, "password": "password123"},
+    )
+    assert response.status_code == 201
+    return username
+
+
+async def _project(client: httpx.AsyncClient, name: str) -> dict:
+    response = await client.post("/api/projects", json={"name": name})
+    assert response.status_code == 201
+    return response.json()
+
+
+async def _node(client: httpx.AsyncClient, project_id: int, name: str) -> dict:
+    response = await client.post(
+        f"/api/projects/{project_id}/nodes",
+        json={"name": name, "parent_id": None},
+    )
+    assert response.status_code == 201
+    return response.json()
+
+
+async def _source(
+    client: httpx.AsyncClient,
+    text: str,
+    project_id: int | None = None,
+) -> dict:
+    data = {"text": text}
+    if project_id is not None:
+        data["project_id"] = str(project_id)
+    response = await client.post("/api/sources", data=data)
+    assert response.status_code == 201
+    return response.json()
+
+
+async def _process(client: httpx.AsyncClient, source_id: int) -> None:
+    await client.post(f"/api/sources/{source_id}/process")
+    assert await worker.process_one_task() is True
+
+
+async def _candidates(client: httpx.AsyncClient, source_id: int) -> list[dict]:
+    response = await client.get(f"/api/sources/{source_id}/candidates")
+    assert response.status_code == 200
+    return response.json()
+
+
+@pytest.mark.asyncio
+async def test_project_internal_source_routes_after_processing(
+    client: httpx.AsyncClient,
+) -> None:
+    """项目内来源处理成功后应立即得到目录推荐。"""
+    await _register(client)
+    project = await _project(client, "装修")
+    node = await _node(client, project["id"], "施工")
+    source = await _source(client, "闭水试验至少持续 24 小时", project["id"])
+
+    await _process(client, source["id"])
+    candidates = await _candidates(client, source["id"])
+
+    assert len(candidates) == 1
+    assert candidates[0]["recommended_node_id"] == node["id"]
+    assert candidates[0]["routing_status"] == "recommended"
+
+
+@pytest.mark.asyncio
+async def test_global_source_routes_after_project_assignment(
+    client: httpx.AsyncClient,
+) -> None:
+    """全局来源确认项目后应触发目录推荐。"""
+    await _register(client)
+    project = await _project(client, "装修")
+    node = await _node(client, project["id"], "施工")
+    source = await _source(client, "闭水试验至少持续 24 小时")
+    await _process(client, source["id"])
+
+    before = await _candidates(client, source["id"])
+    assert before[0]["routing_status"] == "pending"
+    assert before[0]["recommended_node_id"] is None
+
+    response = await client.patch(
+        f"/api/sources/{source['id']}",
+        json={"project_id": project["id"]},
+    )
+    assert response.status_code == 200
+
+    after = await _candidates(client, source["id"])
+    assert after[0]["recommended_node_id"] == node["id"]
+    assert after[0]["routing_status"] == "recommended"
+
+
+@pytest.mark.asyncio
+async def test_reroute_on_project_change(client: httpx.AsyncClient) -> None:
+    """修改来源项目后应重新计算目录推荐。"""
+    await _register(client)
+    first = await _project(client, "项目甲")
+    first_node = await _node(client, first["id"], "节点甲")
+    second = await _project(client, "项目乙")
+    second_node = await _node(client, second["id"], "节点乙")
+    source = await _source(client, "闭水试验至少持续 24 小时", first["id"])
+    await _process(client, source["id"])
+
+    assert (await _candidates(client, source["id"]))[0]["recommended_node_id"] == first_node["id"]
+
+    response = await client.patch(
+        f"/api/sources/{source['id']}",
+        json={"project_id": second["id"]},
+    )
+    assert response.status_code == 200
+
+    assert (await _candidates(client, source["id"]))[0]["recommended_node_id"] == second_node["id"]

@@ -13,7 +13,7 @@ from app.models.extraction import (
     EXTRACTION_FAILED,
     EXTRACTION_SUPERSEDED,
 )
-from app.schemas.candidate import CandidateOut, EvidenceRefOut
+from app.schemas.candidate import CandidateOut, EvidenceRefOut, NodeAlternativeOut
 
 
 def _dump_evidence(candidate_draft) -> str:
@@ -60,6 +60,27 @@ def _parse_risk_flags(raw: str | None) -> list[str]:
     return [str(item) for item in data] if isinstance(data, list) else []
 
 
+def _parse_node_alternatives(raw: str | None) -> list[NodeAlternativeOut]:
+    if not raw:
+        return []
+    try:
+        data = json.loads(raw)
+    except (json.JSONDecodeError, TypeError):
+        return []
+    if not isinstance(data, list):
+        return []
+    result: list[NodeAlternativeOut] = []
+    for item in data:
+        if isinstance(item, dict) and "node_id" in item:
+            result.append(
+                NodeAlternativeOut(
+                    node_id=int(item["node_id"]),
+                    reason=str(item.get("reason", "")),
+                )
+            )
+    return result
+
+
 def candidate_out(candidate: Candidate) -> CandidateOut:
     return CandidateOut(
         id=candidate.id,
@@ -75,6 +96,10 @@ def candidate_out(candidate: Candidate) -> CandidateOut:
         reason=candidate.reason,
         risk_flags=_parse_risk_flags(candidate.risk_flags),
         status=candidate.status,
+        recommended_node_id=candidate.recommended_node_id,
+        node_alternatives=_parse_node_alternatives(candidate.node_alternatives),
+        node_reason=candidate.node_reason,
+        routing_status=candidate.routing_status,
     )
 
 
@@ -105,6 +130,8 @@ async def save_success_extraction(
     )
     db.add(extraction)
     await db.flush()
+    source.recommended_project_id = draft.recommended_project_id
+    source.project_recommendation_reason = draft.project_recommendation_reason
 
     for candidate_draft in draft.candidates:
         db.add(

@@ -10,6 +10,13 @@ class EvidenceRefOut(BaseModel):
     quote: str
 
 
+class NodeAlternativeOut(BaseModel):
+    """候选目录备选。"""
+
+    node_id: int
+    reason: str = ""
+
+
 class CandidateOut(BaseModel):
     """AI 候选，非正式知识。"""
 
@@ -26,3 +33,7 @@ class CandidateOut(BaseModel):
     reason: str | None
     risk_flags: list[str] = []
     status: str
+    recommended_node_id: int | None
+    node_alternatives: list[NodeAlternativeOut] = []
+    node_reason: str | None
+    routing_status: str

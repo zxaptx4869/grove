@@ -112,7 +112,7 @@ async def test_failure_keeps_previous_candidates(client: httpx.AsyncClient, monk
     before = (await client.get(f"/api/sources/{source['id']}/candidates")).json()
     assert len(before) == 1
 
-    async def _fail(db, source, attachments, project):
+    async def _fail(db, source, attachments, project, workspace_projects):
         raise RuntimeError("整理失败")
 
     monkeypatch.setattr("app.processing.organizing.run_organizing_agent", _fail)
