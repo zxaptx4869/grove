@@ -285,7 +285,10 @@ export function ReviewPage() {
       queryKeys.sourceCandidates(activeSourceId ?? 0),
       queryKeys.reviewSources(id),
     ],
-    onSuccess: () => toast.success('候选已重新打开'),
+    onSuccess: () => {
+      setCurrentIndex(0)
+      toast.success('候选已重新打开')
+    },
     onError: (error) => toast.error(error instanceof Error ? error.message : '操作失败'),
   })
   function selectSource(sourceId: number) {
@@ -465,6 +468,7 @@ export function ReviewPage() {
                         size="sm"
                         variant="ghost"
                         disabled={reopen.isPending}
+                        aria-label={`重新打开「${candidate.title}」`}
                         onClick={() => reopen.mutate(candidate)}
                       >
                         <Pencil />
