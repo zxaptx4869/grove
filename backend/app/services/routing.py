@@ -6,7 +6,7 @@ import logging
 from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.agents.organizing import NodeRecommendationDraft, run_routing_agent
+from app.agents.organizing import NodeAlternativeDraft, NodeRecommendationDraft, run_routing_agent
 from app.models import Candidate, Node, Source
 from app.models.extraction import (
     ROUTING_NEEDS_REVIEW,
@@ -19,7 +19,7 @@ from app.services.extraction import get_active_candidates
 logger = logging.getLogger(__name__)
 
 
-def _dump_alternatives(alternatives: list[NodeRecommendationDraft]) -> str | None:
+def _dump_alternatives(alternatives: list[NodeAlternativeDraft]) -> str | None:
     if not alternatives:
         return None
     return json.dumps(

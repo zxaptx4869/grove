@@ -1,5 +1,6 @@
 """Source 采集、列表、详情、归属与删除 API。"""
 
+import logging
 from pathlib import Path
 from typing import Annotated
 
@@ -17,6 +18,7 @@ from app.services.routing import clear_candidate_routing, route_source
 
 router = APIRouter(prefix="/api/sources", tags=["sources"])
 CurrentWorkspace = Annotated[Workspace, Depends(get_current_workspace)]
+logger = logging.getLogger(__name__)
 
 IMAGE_EXTENSIONS = {
     "image/png": ".png",
@@ -220,8 +222,12 @@ async def update_source(
         await clear_candidate_routing(db, source.id)
     await db.commit()
     if project_changed:
-        await route_source(db, source.id)
-        await db.commit()
+        try:
+            await route_source(db, source.id)
+            await db.commit()
+        except Exception:  # noqa: BLE001
+            logger.exception("路由来源失败：%s", source.id)
+            await db.rollback()
     return await _load_source_out(db, source_id)
 
 

@@ -1,5 +1,7 @@
 """Organizing 处理 Provider：生成 Extraction 与 Candidate。"""
 
+import logging
+
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
@@ -10,6 +12,8 @@ from app.processing.base import ProcessingProvider
 from app.services.ai_models import get_settings_row
 from app.services.extraction import save_failed_extraction, save_success_extraction
 from app.services.routing import route_source
+
+logger = logging.getLogger(__name__)
 
 
 class OrganizingProcessingProvider(ProcessingProvider):
@@ -60,8 +64,6 @@ class OrganizingProcessingProvider(ProcessingProvider):
                 valid_project_ids = {project.id for project in workspace_projects}
                 if draft.recommended_project_id in valid_project_ids:
                     loaded.project_id = draft.recommended_project_id
-            if loaded.project_id is not None:
-                await route_source(db, loaded.id)
         except Exception as exc:  # noqa: BLE001
             await save_failed_extraction(
                 db,
@@ -71,3 +73,9 @@ class OrganizingProcessingProvider(ProcessingProvider):
                 str(exc),
             )
             raise
+
+        if loaded.project_id is not None:
+            try:
+                await route_source(db, loaded.id)
+            except Exception:  # noqa: BLE001
+                logger.exception("路由来源失败：%s", loaded.id)
