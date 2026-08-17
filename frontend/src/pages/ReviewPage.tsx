@@ -220,17 +220,20 @@ export function ReviewPage() {
     queryKey: queryKeys.reviewSources(id),
     queryFn: () => fetchReviewSources(id),
     enabled: Number.isFinite(id),
+    staleTime: 0,
   })
   const activeSourceId = selectedSourceId ?? reviewSources.data?.[0]?.id ?? null
   const source = useQuery({
     queryKey: [...queryKeys.sources, 'detail', activeSourceId ?? 0],
     queryFn: () => fetchSource(activeSourceId as number),
     enabled: activeSourceId !== null,
+    staleTime: 0,
   })
   const candidates = useQuery({
     queryKey: queryKeys.sourceCandidates(activeSourceId ?? 0),
     queryFn: () => fetchSourceCandidates(activeSourceId as number),
     enabled: activeSourceId !== null,
+    staleTime: 0,
   })
   const tree = useQuery({
     queryKey: queryKeys.projectTree(id),

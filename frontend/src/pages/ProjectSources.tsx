@@ -27,6 +27,7 @@ export function ProjectSources({ projectId }: { projectId: number }) {
   const sources = useQuery({
     queryKey: [...queryKeys.sources, 'project', projectId],
     queryFn: () => fetchSources({ projectId }),
+    staleTime: 0,
     refetchInterval: (query) =>
       query.state.data?.some(
         (source) => source.status === 'waiting' || source.status === 'processing',
