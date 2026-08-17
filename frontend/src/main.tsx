@@ -10,7 +10,9 @@ const queryClient = new QueryClient({
   defaultOptions: {
     queries: {
       retry: 1,
-      staleTime: 5 * 60 * 1000,
+      // 默认即时查询：服务端状态进入页面即重新拉取，避免后台处理/跨页变更出现时差。
+      // 只有明确静态且昂贵的查询才在各自 useQuery 里显式设置更长 staleTime。
+      staleTime: 0,
     },
   },
 })
