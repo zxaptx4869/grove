@@ -59,6 +59,14 @@ async def route_source(db: AsyncSession, source_id: int) -> None:
             .order_by(Node.position)
         )
     ).scalars().all()
+    if not nodes:
+        for candidate in candidates:
+            candidate.recommended_node_id = None
+            candidate.node_alternatives = None
+            candidate.node_reason = None
+            candidate.routing_status = ROUTING_NO_SUITABLE
+        return
+
     node_ids = {node.id for node in nodes}
 
     draft = await run_routing_agent(db, source.workspace_id, candidates, list(nodes))

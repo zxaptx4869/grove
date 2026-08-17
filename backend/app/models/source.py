@@ -37,9 +37,7 @@ class Source(Base):
     title: Mapped[str] = mapped_column(String(255), nullable=False)
     note: Mapped[str | None] = mapped_column(Text, nullable=True)
     status: Mapped[str] = mapped_column(String(16), default="waiting", nullable=False)
-    recommended_project_id: Mapped[int | None] = mapped_column(
-        BigInteger, index=True, nullable=True
-    )
+    recommended_project_id: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
     project_recommendation_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False

@@ -85,9 +85,7 @@ class Candidate(Base):
     entry_id: Mapped[int | None] = mapped_column(
         BigInteger, ForeignKey("entries.id", ondelete="SET NULL"), index=True, nullable=True
     )
-    recommended_node_id: Mapped[int | None] = mapped_column(
-        BigInteger, index=True, nullable=True
-    )
+    recommended_node_id: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
     node_alternatives: Mapped[str | None] = mapped_column(Text, nullable=True)
     node_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
     routing_status: Mapped[str] = mapped_column(
