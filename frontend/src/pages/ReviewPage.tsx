@@ -5,6 +5,7 @@ import {
   ChevronLeft,
   ChevronRight,
   List,
+  Pencil,
   X,
 } from 'lucide-react'
 import { useParams } from 'react-router-dom'
@@ -227,6 +228,10 @@ export function ReviewPage() {
     () => (candidates.data ?? []).filter((candidate) => candidate.status === 'pending'),
     [candidates.data],
   )
+  const rejectedCandidates = useMemo(
+    () => (candidates.data ?? []).filter((candidate) => candidate.status === 'rejected'),
+    [candidates.data],
+  )
   const currentCandidate = pendingCandidates[currentIndex] ?? null
   const singleImage =
     (source.data?.attachments.filter((attachment) => attachment.kind === 'image').length ?? 0) ===
@@ -272,6 +277,15 @@ export function ReviewPage() {
       setCurrentIndex((value) => Math.max(0, value - 1))
       toast.success('候选已拒绝')
     },
+    onError: (error) => toast.error(error instanceof Error ? error.message : '操作失败'),
+  })
+  const reopen = useGroveMutation({
+    mutationFn: (candidate: CandidatePayload) => decideCandidate(candidate.id, 'pending'),
+    invalidates: [
+      queryKeys.sourceCandidates(activeSourceId ?? 0),
+      queryKeys.reviewSources(id),
+    ],
+    onSuccess: () => toast.success('候选已重新打开'),
     onError: (error) => toast.error(error instanceof Error ? error.message : '操作失败'),
   })
   function selectSource(sourceId: number) {
@@ -434,6 +448,32 @@ export function ReviewPage() {
                   setCurrentIndex((value) => Math.min(pendingCandidates.length - 1, value + 1))
                 }
               />
+            ) : rejectedCandidates.length > 0 ? (
+              <div className="min-h-0 flex-1 overflow-y-auto p-5">
+                <p className="mb-2 text-caption text-muted-foreground">已拒绝候选</p>
+                <div className="space-y-2">
+                  {rejectedCandidates.map((candidate) => (
+                    <div
+                      key={candidate.id}
+                      className="flex items-center justify-between gap-3 rounded-md border px-3 py-2"
+                    >
+                      <div className="min-w-0">
+                        <p className="truncate text-body-sm">{candidate.title}</p>
+                        <Badge className="mt-1 bg-error-soft text-destructive">已拒绝</Badge>
+                      </div>
+                      <Button
+                        size="sm"
+                        variant="ghost"
+                        disabled={reopen.isPending}
+                        onClick={() => reopen.mutate(candidate)}
+                      >
+                        <Pencil />
+                        重新打开
+                      </Button>
+                    </div>
+                  ))}
+                </div>
+              </div>
             ) : (
               <div className="flex min-h-0 flex-1 items-center justify-center p-5 text-body-sm text-muted-foreground">
                 没有待采纳候选
