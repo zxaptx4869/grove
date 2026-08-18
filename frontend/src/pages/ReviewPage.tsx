@@ -19,6 +19,8 @@ import { BatchReviewView } from '@/components/features/BatchReviewView'
 import { DirectoryTreeSelect } from '@/components/features/DirectoryTreeSelect'
 import { useGroveMutation } from '@/hooks/useGroveMutation'
 import {
+  addEvidence,
+  applyRevision,
   archiveCandidate,
   archiveCandidateWithNewNode,
   decideCandidate,
@@ -28,6 +30,7 @@ import {
   fetchSourceCandidates,
   sourceImageUrl,
   updateCandidate,
+  type ApplyRevisionPayload,
   type CandidatePayload,
   type CandidateUpdatePayload,
   type TreeNodePayload,
@@ -45,6 +48,13 @@ function formatTime(value: string) {
     minute: '2-digit',
     timeZone: 'Asia/Shanghai',
   }).format(date)
+}
+
+function relationLabel(status: CandidatePayload['relation_status']): string {
+  if (status === 'duplicate') return '疑似重复'
+  if (status === 'supplement') return '可以补充'
+  if (status === 'conflict') return '可能冲突'
+  return '新知识'
 }
 
 function flattenNodesWithParent(
@@ -93,6 +103,8 @@ function CandidateEditor({
   suggestionMatchLabel,
   onAdopt,
   onArchiveWithNewNode,
+  onAddEvidence,
+  onApplyRevision,
   onReject,
   onSkip,
   isPending,
@@ -117,6 +129,8 @@ function CandidateEditor({
     parent_id: number | null
     description: string | null
   }) => void
+  onAddEvidence: () => void
+  onApplyRevision: () => void
   onReject: () => void
   onSkip: () => void
   isPending: boolean
@@ -147,6 +161,78 @@ function CandidateEditor({
           </span>
           <h3 className="mt-2 text-[16px] font-[650] leading-6">{candidate.title}</h3>
         </div>
+        {candidate.relation_status !== 'pending' && candidate.relation_status !== 'new' ? (
+          <div className="rounded-md border border-amber-200 bg-amber-50 p-3">
+            <div className="flex items-center gap-2">
+              <Badge className="bg-amber-100 text-amber-700">
+                {relationLabel(candidate.relation_status)}
+              </Badge>
+              {candidate.relation_target_entry_title ? (
+                <span className="text-body-sm text-muted-foreground">
+                  与「{candidate.relation_target_entry_title}」
+                </span>
+              ) : null}
+            </div>
+            {candidate.relation_reason ? (
+              <p className="mt-1 text-caption text-muted-foreground">
+                {candidate.relation_reason}
+              </p>
+            ) : null}
+            {candidate.revision_draft?.change_summary ? (
+              <p className="mt-1 text-caption text-muted-foreground">
+                修订说明：{candidate.revision_draft.change_summary}
+              </p>
+            ) : null}
+            <div className="mt-2 flex flex-wrap gap-2">
+              {candidate.relation_status === 'duplicate' ? (
+                <Button
+                  size="sm"
+                  disabled={isPending || candidate.relation_target_entry_id == null}
+                  onClick={onAddEvidence}
+                >
+                  补充来源证据
+                </Button>
+              ) : null}
+              {candidate.relation_status === 'supplement' ? (
+                <Button
+                  size="sm"
+                  disabled={isPending || !candidate.revision_draft}
+                  onClick={onApplyRevision}
+                >
+                  应用修订草稿
+                </Button>
+              ) : null}
+              {candidate.relation_status === 'conflict' ? (
+                <>
+                  <Button
+                    size="sm"
+                    disabled={isPending || nodeId === null}
+                    onClick={() =>
+                      onAdopt({
+                        content: content.trim(),
+                        main_type: mainType,
+                        info_nature: infoNature.trim() || null,
+                        node_id: nodeId as number,
+                      })
+                    }
+                  >
+                    并列保留
+                  </Button>
+                  <Button
+                    size="sm"
+                    disabled={isPending || !candidate.revision_draft}
+                    onClick={onApplyRevision}
+                  >
+                    修订现有
+                  </Button>
+                  <Button size="sm" variant="outline" disabled={isPending} onClick={onReject}>
+                    忽略
+                  </Button>
+                </>
+              ) : null}
+            </div>
+          </div>
+        ) : null}
         <div className="space-y-1.5">
           <label htmlFor="candidate-content" className="text-body-sm font-medium">
             内容
@@ -291,7 +377,9 @@ function CandidateEditor({
           }
         >
           <Check />
-          采纳
+          {candidate.relation_status === 'pending' || candidate.relation_status === 'new'
+            ? '采纳'
+            : '仍按新知识创建'}
         </Button>
       </div>
     </div>
@@ -478,6 +566,39 @@ export function ReviewPage() {
       toast.success('候选已归档并创建节点')
     },
     onError: (error) => toast.error(error instanceof Error ? error.message : '创建节点失败'),
+  })
+  const addEvidenceRelation = useGroveMutation({
+    mutationFn: (candidate: CandidatePayload) =>
+      addEvidence(candidate.id, {
+        entry_id: candidate.relation_target_entry_id as number,
+      }),
+    invalidates: [
+      queryKeys.sourceCandidates(activeSourceId ?? 0),
+      queryKeys.reviewSources(id),
+    ],
+    onSuccess: () => {
+      goToIndex((value) => Math.max(0, value - 1))
+      toast.success('已补充来源证据')
+    },
+    onError: (error) => toast.error(error instanceof Error ? error.message : '补充来源失败'),
+  })
+  const applyRevisionRelation = useGroveMutation({
+    mutationFn: ({
+      candidate,
+      payload,
+    }: {
+      candidate: CandidatePayload
+      payload: ApplyRevisionPayload
+    }) => applyRevision(candidate.id, payload),
+    invalidates: [
+      queryKeys.sourceCandidates(activeSourceId ?? 0),
+      queryKeys.reviewSources(id),
+    ],
+    onSuccess: () => {
+      goToIndex((value) => Math.max(0, value - 1))
+      toast.success('已应用修订')
+    },
+    onError: (error) => toast.error(error instanceof Error ? error.message : '应用修订失败'),
   })
   function selectSource(sourceId: number) {
     setFocusCandidateId(null)
@@ -676,11 +797,35 @@ export function ReviewPage() {
                 treeLoading={tree.isLoading}
                 suggestionMatchNodeId={suggestionMatchNodeId}
                 suggestionMatchLabel={suggestionMatchLabel}
-                isPending={adopt.isPending || reject.isPending || archiveNewNode.isPending}
+                isPending={
+                  adopt.isPending ||
+                  reject.isPending ||
+                  archiveNewNode.isPending ||
+                  addEvidenceRelation.isPending ||
+                  applyRevisionRelation.isPending
+                }
                 onAdopt={(payload) => adopt.mutate({ candidate: currentCandidate, payload })}
                 onArchiveWithNewNode={(payload) =>
                   archiveNewNode.mutate({ candidate: currentCandidate, payload })
                 }
+                onAddEvidence={() => addEvidenceRelation.mutate(currentCandidate)}
+                onApplyRevision={() => {
+                  const draft = currentCandidate.revision_draft
+                  if (!draft) return
+                  applyRevisionRelation.mutate({
+                    candidate: currentCandidate,
+                    payload: {
+                      entry_id: currentCandidate.relation_target_entry_id as number,
+                      title: draft.title ?? undefined,
+                      content: draft.content ?? undefined,
+                      main_type: draft.main_type ?? undefined,
+                      info_nature:
+                        (draft.info_nature as ApplyRevisionPayload['info_nature']) ?? undefined,
+                      applicable_condition: draft.applicable_condition ?? undefined,
+                      note: draft.note ?? undefined,
+                    },
+                  })
+                }}
                 onReject={() => reject.mutate(currentCandidate)}
                 onSkip={() =>
                   goToIndex((value) => Math.min(pendingCandidates.length - 1, value + 1))

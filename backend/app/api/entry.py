@@ -7,8 +7,17 @@ from sqlalchemy import select
 
 from app.api.deps import DbSession, get_current_workspace
 from app.models import Candidate, Entry, Node, Project, Source, Workspace
-from app.schemas.entry import ArchiveCandidateRequest, EntryOut, EntryUpdate, NewNodeArchiveRequest
+from app.schemas.entry import (
+    AddEvidenceRequest,
+    ApplyRevisionRequest,
+    ArchiveCandidateRequest,
+    EntryOut,
+    EntryUpdate,
+    NewNodeArchiveRequest,
+)
 from app.services.entry import (
+    add_evidence_to_entry,
+    apply_revision_to_entry,
     archive_candidate,
     archive_candidate_with_new_node,
     edit_entry,
@@ -76,6 +85,42 @@ async def archive_candidate_with_new_node_endpoint(
     """创建或复用节点，并在同一事务内归档候选。"""
     candidate = await _get_owned_candidate(db, workspace.id, candidate_id)
     entry = await archive_candidate_with_new_node(db, candidate, payload)
+    await db.commit()
+    return entry_out(entry)
+
+
+@router.post(
+    "/candidates/{candidate_id}/add-evidence",
+    response_model=EntryOut,
+)
+async def add_evidence_endpoint(
+    candidate_id: int,
+    payload: AddEvidenceRequest,
+    db: DbSession,
+    workspace: CurrentWorkspace,
+) -> EntryOut:
+    """把候选来源证据补充到已有 Entry。"""
+    candidate = await _get_owned_candidate(db, workspace.id, candidate_id)
+    await _get_owned_entry(db, workspace.id, payload.entry_id)
+    entry = await add_evidence_to_entry(db, candidate, payload.entry_id)
+    await db.commit()
+    return entry_out(entry)
+
+
+@router.post(
+    "/candidates/{candidate_id}/apply-revision",
+    response_model=EntryOut,
+)
+async def apply_revision_endpoint(
+    candidate_id: int,
+    payload: ApplyRevisionRequest,
+    db: DbSession,
+    workspace: CurrentWorkspace,
+) -> EntryOut:
+    """把候选修订草稿应用到已有 Entry。"""
+    candidate = await _get_owned_candidate(db, workspace.id, candidate_id)
+    await _get_owned_entry(db, workspace.id, payload.entry_id)
+    entry = await apply_revision_to_entry(db, candidate, payload)
     await db.commit()
     return entry_out(entry)
 

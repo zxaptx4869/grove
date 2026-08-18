@@ -15,6 +15,7 @@ from app.models.extraction import (
 )
 from app.schemas.candidate import (
     CandidateOut,
+    EntryRevisionDraftOut,
     EvidenceRefOut,
     NewNodeSuggestionOut,
     NodeAlternativeOut,
@@ -65,6 +66,27 @@ def parse_risk_flags(raw: str | None) -> list[str]:
     return [str(item) for item in data] if isinstance(data, list) else []
 
 
+def _parse_revision_draft(raw: str | None) -> EntryRevisionDraftOut | None:
+    """把候选上存储的修订草稿 JSON 解析为响应模型。"""
+    if not raw:
+        return None
+    try:
+        data = json.loads(raw)
+    except (json.JSONDecodeError, TypeError):
+        return None
+    if not isinstance(data, dict):
+        return None
+    return EntryRevisionDraftOut(
+        title=data.get("title"),
+        content=data.get("content"),
+        main_type=data.get("main_type"),
+        info_nature=data.get("info_nature"),
+        applicable_condition=data.get("applicable_condition"),
+        note=data.get("note"),
+        change_summary=str(data.get("change_summary", "") or ""),
+    )
+
+
 def _parse_node_alternatives(raw: str | None) -> list[NodeAlternativeOut]:
     if not raw:
         return []
@@ -86,7 +108,11 @@ def _parse_node_alternatives(raw: str | None) -> list[NodeAlternativeOut]:
     return result
 
 
-def candidate_out(candidate: Candidate) -> CandidateOut:
+def candidate_out(
+    candidate: Candidate,
+    relation_target_title: str | None = None,
+    relation_target_node_name: str | None = None,
+) -> CandidateOut:
     return CandidateOut(
         id=candidate.id,
         source_id=candidate.source_id,
@@ -114,6 +140,12 @@ def candidate_out(candidate: Candidate) -> CandidateOut:
             if candidate.new_node_name
             else None
         ),
+        relation_status=candidate.relation_status,
+        relation_target_entry_id=candidate.relation_target_entry_id,
+        relation_target_entry_title=relation_target_title,
+        relation_target_entry_node_name=relation_target_node_name,
+        relation_reason=candidate.relation_reason,
+        revision_draft=_parse_revision_draft(candidate.revision_draft),
     )
 
 
@@ -213,4 +245,14 @@ async def get_active_candidates(db: AsyncSession, source_id: int) -> list[Candid
 
 async def list_candidate_out(db: AsyncSession, source_id: int) -> list[CandidateOut]:
     """返回当前候选响应。"""
-    return [candidate_out(candidate) for candidate in await get_active_candidates(db, source_id)]
+    from app.services.entry_relation import load_relation_targets
+
+    candidates = await get_active_candidates(db, source_id)
+    targets = await load_relation_targets(db, candidates)
+    return [
+        candidate_out(
+            candidate,
+            *targets.get(candidate.id, (None, None)),
+        )
+        for candidate in candidates
+    ]

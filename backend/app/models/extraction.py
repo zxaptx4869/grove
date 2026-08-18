@@ -26,6 +26,12 @@ ROUTING_RECOMMENDED = "recommended"
 ROUTING_NEEDS_REVIEW = "needs_review"
 ROUTING_NO_SUITABLE = "no_suitable"
 
+RELATION_PENDING = "pending"
+RELATION_NEW = "new"
+RELATION_DUPLICATE = "duplicate"
+RELATION_SUPPLEMENT = "supplement"
+RELATION_CONFLICT = "conflict"
+
 
 class Extraction(Base):
     """一次版本化处理运行记录。"""
@@ -95,6 +101,12 @@ class Candidate(Base):
     new_node_parent_id: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
     new_node_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
     user_node_id: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    relation_status: Mapped[str] = mapped_column(
+        String(16), default=RELATION_PENDING, nullable=False
+    )
+    relation_target_entry_id: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    relation_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
+    revision_draft: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )

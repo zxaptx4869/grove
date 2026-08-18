@@ -10,6 +10,7 @@ from app.agents.organizing import run_organizing_agent
 from app.models import Project, Source
 from app.processing.base import ProcessingProvider
 from app.services.ai_models import get_settings_row
+from app.services.entry_relation import route_relations
 from app.services.extraction import save_failed_extraction, save_success_extraction
 from app.services.routing import route_source
 
@@ -79,3 +80,7 @@ class OrganizingProcessingProvider(ProcessingProvider):
                 await route_source(db, loaded.id)
             except Exception:  # noqa: BLE001
                 logger.exception("路由来源失败：%s", loaded.id)
+            try:
+                await route_relations(db, loaded.id)
+            except Exception:  # noqa: BLE001
+                logger.exception("关系判断来源失败：%s", loaded.id)

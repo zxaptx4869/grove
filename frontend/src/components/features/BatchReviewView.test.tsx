@@ -34,6 +34,12 @@ function candidatePayload(id: number, sourceId: number, overrides: Record<string
     node_reason: null,
     routing_status: 'recommended',
     new_node_suggestion: null,
+    relation_status: 'new',
+    relation_target_entry_id: null,
+    relation_target_entry_title: null,
+    relation_target_entry_node_name: null,
+    relation_reason: null,
+    revision_draft: null,
     source_title: '来源标题',
     source_note: '来源说明',
     review_band: 'quick',
@@ -188,6 +194,36 @@ describe('BatchReviewView', () => {
     await userEvent.click(screen.getByRole('button', { name: '精审' }))
 
     expect(onReviewCandidate).toHaveBeenCalledWith(3, 7)
+  })
+
+  it('关系建议进入精审并展示原因', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn((input: RequestInfo | URL) => {
+        const url = new URL(String(input), 'http://localhost')
+        if (url.pathname === '/api/projects/7/tree') {
+          return Promise.resolve({ ok: true, json: async () => [] })
+        }
+        if (url.pathname === '/api/projects/7/review/candidates') {
+          return Promise.resolve({
+            ok: true,
+            json: async () => [
+              candidatePayload(3, 7, {
+                review_band: 'detailed',
+                relation_status: 'supplement',
+                relation_target_entry_id: 20,
+                relation_target_entry_title: '闭水试验规范',
+                relation_reason: '补充参数',
+              }),
+            ],
+          })
+        }
+        return Promise.resolve({ ok: true, json: async () => [] })
+      }),
+    )
+    renderView()
+
+    expect(await screen.findByText('可以补充 · 补充参数 · 来自：来源标题')).toBeInTheDocument()
   })
 
   it('修改目录确认后持久化并清空勾选', async () => {

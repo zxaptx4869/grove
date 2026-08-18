@@ -9,7 +9,13 @@ from sqlalchemy.orm import selectinload
 
 from app.models import Candidate, Entry, EntrySourceEvidence, Node, Source
 from app.models.extraction import CANDIDATE_CONFIRMED, CANDIDATE_PENDING
-from app.schemas.entry import EntryEvidenceOut, EntryOut, EntryUpdate, NewNodeArchiveRequest
+from app.schemas.entry import (
+    ApplyRevisionRequest,
+    EntryEvidenceOut,
+    EntryOut,
+    EntryUpdate,
+    NewNodeArchiveRequest,
+)
 from app.services.project_context import schedule_refresh
 
 
@@ -29,6 +35,19 @@ def _parse_evidence_refs(raw: str | None) -> list[dict]:
     except (json.JSONDecodeError, TypeError):
         return []
     return [item for item in data if isinstance(item, dict)]
+
+
+def _add_candidate_evidence_to_entry(db, candidate: Candidate, entry: Entry) -> None:
+    """把候选的证据引用转换为目标 Entry 的来源证据。"""
+    for ref in _parse_evidence_refs(candidate.evidence_refs):
+        db.add(
+            EntrySourceEvidence(
+                entry_id=entry.id,
+                source_id=candidate.source_id,
+                attachment_id=ref.get("attachment_id") if "attachment_id" in ref else None,
+                quote=str(ref.get("quote", "")) or None,
+            )
+        )
 
 
 def entry_out(entry: Entry) -> EntryOut:
@@ -90,16 +109,80 @@ async def archive_candidate(
     db.add(entry)
     await db.flush()
 
-    for ref in _parse_evidence_refs(candidate.evidence_refs):
-        db.add(
-            EntrySourceEvidence(
-                entry_id=entry.id,
-                source_id=source.id,
-                attachment_id=ref.get("attachment_id") if "attachment_id" in ref else None,
-                quote=str(ref.get("quote", "")) or None,
-            )
+    _add_candidate_evidence_to_entry(db, candidate, entry)
+
+    candidate.status = CANDIDATE_CONFIRMED
+    candidate.entry_id = entry.id
+    await db.flush()
+    return (
+        await db.execute(
+            select(Entry).options(*entry_eager_options()).where(Entry.id == entry.id)
+        )
+    ).scalar_one()
+
+
+async def add_evidence_to_entry(
+    db: AsyncSession,
+    candidate: Candidate,
+    entry_id: int,
+) -> Entry:
+    """把候选来源证据补充到已有 Entry，并锁定候选。"""
+    if candidate.status != CANDIDATE_PENDING:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="候选已处理")
+    source = await db.get(Source, candidate.source_id)
+    if source is None or source.project_id is None:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="来源尚未归属项目")
+
+    entry = await db.get(Entry, entry_id)
+    if entry is None or entry.project_id != source.project_id:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST, detail="目标 Entry 不属于当前项目"
         )
 
+    _add_candidate_evidence_to_entry(db, candidate, entry)
+    candidate.status = CANDIDATE_CONFIRMED
+    candidate.entry_id = entry.id
+    await db.flush()
+    return (
+        await db.execute(
+            select(Entry).options(*entry_eager_options()).where(Entry.id == entry.id)
+        )
+    ).scalar_one()
+
+
+async def apply_revision_to_entry(
+    db: AsyncSession,
+    candidate: Candidate,
+    payload: ApplyRevisionRequest,
+) -> Entry:
+    """把候选修订草稿应用到已有 Entry，并补充来源证据、锁定候选。"""
+    if candidate.status != CANDIDATE_PENDING:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="候选已处理")
+    source = await db.get(Source, candidate.source_id)
+    if source is None or source.project_id is None:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="来源尚未归属项目")
+
+    entry = await db.get(Entry, payload.entry_id)
+    if entry is None or entry.project_id != source.project_id:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST, detail="目标 Entry 不属于当前项目"
+        )
+
+    fields = payload.model_fields_set
+    if "title" in fields and payload.title is not None:
+        entry.title = payload.title
+    if "content" in fields and payload.content is not None:
+        entry.content = payload.content
+    if "main_type" in fields and payload.main_type is not None:
+        entry.main_type = payload.main_type
+    if "info_nature" in fields:
+        entry.info_nature = payload.info_nature
+    if "applicable_condition" in fields:
+        entry.applicable_condition = payload.applicable_condition
+    if "note" in fields:
+        entry.note = payload.note
+
+    _add_candidate_evidence_to_entry(db, candidate, entry)
     candidate.status = CANDIDATE_CONFIRMED
     candidate.entry_id = entry.id
     await db.flush()

@@ -58,3 +58,21 @@ class NewNodeArchiveRequest(BaseModel):
     name: str = Field(min_length=1, max_length=128)
     parent_id: int | None = None
     description: str | None = Field(default=None, max_length=2000)
+
+
+class AddEvidenceRequest(BaseModel):
+    """把候选来源证据补充到已有 Entry。"""
+
+    entry_id: int
+
+
+class ApplyRevisionRequest(BaseModel):
+    """把候选修订草稿应用到已有 Entry。"""
+
+    entry_id: int
+    title: str | None = Field(default=None, min_length=1, max_length=255)
+    content: str | None = Field(default=None, min_length=1, max_length=8000)
+    main_type: Literal["knowledge", "method", "parameter", "reminder"] | None = None
+    info_nature: Literal["fact", "experience", "advice", "speculation", "other"] | None = None
+    applicable_condition: str | None = Field(default=None, max_length=4000)
+    note: str | None = Field(default=None, max_length=4000)

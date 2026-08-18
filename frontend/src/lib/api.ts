@@ -376,6 +376,18 @@ export interface NewNodeSuggestionPayload {
 
 export type RoutingStatus = 'pending' | 'recommended' | 'needs_review' | 'no_suitable'
 
+export type RelationStatus = 'pending' | 'new' | 'duplicate' | 'supplement' | 'conflict'
+
+export interface EntryRevisionDraftPayload {
+  title: string | null
+  content: string | null
+  main_type: 'knowledge' | 'method' | 'parameter' | 'reminder' | null
+  info_nature: string | null
+  applicable_condition: string | null
+  note: string | null
+  change_summary: string
+}
+
 export interface CandidatePayload {
   id: number
   source_id: number
@@ -395,6 +407,12 @@ export interface CandidatePayload {
   node_reason: string | null
   routing_status: RoutingStatus
   new_node_suggestion: NewNodeSuggestionPayload | null
+  relation_status: RelationStatus
+  relation_target_entry_id: number | null
+  relation_target_entry_title: string | null
+  relation_target_entry_node_name: string | null
+  relation_reason: string | null
+  revision_draft: EntryRevisionDraftPayload | null
 }
 
 export const fetchSourceCandidates = (sourceId: number) =>
@@ -552,6 +570,32 @@ export const archiveCandidateWithNewNode = (
   payload: ArchiveCandidateWithNewNodePayload,
 ) =>
   request<EntryPayload>(`/api/candidates/${candidateId}/archive-with-new-node`, {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  })
+
+export interface AddEvidencePayload {
+  entry_id: number
+}
+
+export const addEvidence = (candidateId: number, payload: AddEvidencePayload) =>
+  request<EntryPayload>(`/api/candidates/${candidateId}/add-evidence`, {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  })
+
+export interface ApplyRevisionPayload {
+  entry_id: number
+  title?: string | null
+  content?: string | null
+  main_type?: 'knowledge' | 'method' | 'parameter' | 'reminder' | null
+  info_nature?: 'fact' | 'experience' | 'advice' | 'speculation' | 'other' | null
+  applicable_condition?: string | null
+  note?: string | null
+}
+
+export const applyRevision = (candidateId: number, payload: ApplyRevisionPayload) =>
+  request<EntryPayload>(`/api/candidates/${candidateId}/apply-revision`, {
     method: 'POST',
     body: JSON.stringify(payload),
   })

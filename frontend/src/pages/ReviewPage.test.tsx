@@ -91,6 +91,12 @@ describe('ReviewPage', () => {
                 reason: '独立可用',
                 risk_flags: [],
                 status: 'pending',
+                relation_status: 'new',
+                relation_target_entry_id: null,
+                relation_target_entry_title: null,
+                relation_target_entry_node_name: null,
+                relation_reason: null,
+                revision_draft: null,
               },
             ],
           })
@@ -231,6 +237,12 @@ describe('ReviewPage', () => {
                 node_alternatives: [],
                 node_reason: '匹配施工节点',
                 routing_status: 'recommended',
+                relation_status: 'new',
+                relation_target_entry_id: null,
+                relation_target_entry_title: null,
+                relation_target_entry_node_name: null,
+                relation_reason: null,
+                revision_draft: null,
               },
             ],
           })
@@ -328,6 +340,12 @@ describe('ReviewPage', () => {
                   parent_id: null,
                   reason: '没有匹配目录',
                 },
+                relation_status: 'new',
+                relation_target_entry_id: null,
+                relation_target_entry_title: null,
+                relation_target_entry_node_name: null,
+                relation_reason: null,
+                revision_draft: null,
               },
             ],
           })
@@ -470,6 +488,12 @@ describe('ReviewPage', () => {
               parent_id: null,
               reason: '没有匹配目录',
             },
+            relation_status: 'new',
+            relation_target_entry_id: null,
+            relation_target_entry_title: null,
+            relation_target_entry_node_name: null,
+            relation_reason: null,
+            revision_draft: null,
           }
           return Promise.resolve({
             ok: true,
@@ -486,6 +510,140 @@ describe('ReviewPage', () => {
     renderPage()
 
     expect(await screen.findByText('建议新增「求职经验」 · 2 条')).toBeInTheDocument()
+  })
+
+  it('疑似重复候选可补充来源证据', async () => {
+    const calls: Array<{ method: string; path: string; body?: string }> = []
+    vi.stubGlobal(
+      'fetch',
+      vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
+        const url = new URL(String(input), 'http://localhost')
+        calls.push({
+          method: init?.method ?? 'GET',
+          path: url.pathname,
+          body: typeof init?.body === 'string' ? init.body : undefined,
+        })
+        if (url.pathname === '/api/projects/1/review/sources') {
+          return Promise.resolve({
+            ok: true,
+            json: async () => [
+              {
+                id: 5,
+                title: '闭水试验',
+                note: null,
+                status: 'done',
+                review_status: 'pending_review',
+                pending_candidate_count: 1,
+              },
+            ],
+          })
+        }
+        if (url.pathname === '/api/projects/1/tree') {
+          return Promise.resolve({
+            ok: true,
+            json: async () => [
+              { id: 10, name: '施工', description: null, position: 0, children: [] },
+            ],
+          })
+        }
+        if (url.pathname === '/api/sources/5') {
+          return Promise.resolve({
+            ok: true,
+            json: async () => ({
+              id: 5,
+              title: '闭水试验',
+              note: null,
+              project_id: 1,
+              status: 'done',
+              created_at: '',
+              updated_at: '',
+              attachments: [
+                {
+                  id: 9,
+                  kind: 'text',
+                  position: 0,
+                  mime_type: null,
+                  file_name: null,
+                  text_content: '闭水试验通常持续 24 小时',
+                },
+              ],
+            }),
+          })
+        }
+        if (url.pathname === '/api/sources/5/candidates') {
+          return Promise.resolve({
+            ok: true,
+            json: async () => [
+              {
+                id: 7,
+                source_id: 5,
+                candidate_kind: 'recommended',
+                title: '闭水试验通常持续 24 小时',
+                content: '闭水试验通常持续 24 小时。',
+                main_type: 'knowledge',
+                info_nature: 'fact',
+                applicable_condition: null,
+                note: null,
+                evidence: [{ attachment_id: 9, quote: '闭水试验通常持续 24 小时' }],
+                reason: null,
+                risk_flags: [],
+                status: 'pending',
+                recommended_node_id: null,
+                node_alternatives: [],
+                node_reason: null,
+                routing_status: 'no_suitable',
+                new_node_suggestion: null,
+                relation_status: 'duplicate',
+                relation_target_entry_id: 20,
+                relation_target_entry_title: '闭水试验规范',
+                relation_target_entry_node_name: '施工',
+                relation_reason: '内容相同',
+                revision_draft: null,
+              },
+            ],
+          })
+        }
+        if (url.pathname === '/api/candidates/7/add-evidence' && init?.method === 'POST') {
+          return Promise.resolve({
+            ok: true,
+            json: async () => ({
+              id: 20,
+              project_id: 1,
+              node_id: 10,
+              node_name: '施工',
+              title: '闭水试验规范',
+              content: '闭水试验通常持续 24 小时。',
+              main_type: 'knowledge',
+              info_nature: 'fact',
+              applicable_condition: null,
+              note: null,
+              created_at: '',
+              updated_at: '',
+              evidences: [],
+            }),
+          })
+        }
+        return Promise.resolve({ ok: true, json: async () => [] })
+      }),
+    )
+
+    renderPage()
+
+    expect(
+      await screen.findByRole('heading', { name: '闭水试验通常持续 24 小时' }),
+    ).toBeInTheDocument()
+    await userEvent.click(screen.getByRole('button', { name: '补充来源证据' }))
+
+    await waitFor(() => {
+      expect(
+        calls.some(
+          (call) =>
+            call.method === 'POST' &&
+            call.path === '/api/candidates/7/add-evidence' &&
+            call.body?.includes('20'),
+        ),
+      ).toBe(true)
+    })
   })
 
   it('切换到批量处理显示批量视图', async () => {

@@ -10,6 +10,8 @@ from app.models.extraction import (
     CANDIDATE_KIND_RECOMMENDED,
     CANDIDATE_PENDING,
     CANDIDATE_REJECTED,
+    RELATION_NEW,
+    RELATION_PENDING,
     ROUTING_RECOMMENDED,
 )
 from app.schemas.review import (
@@ -22,6 +24,7 @@ from app.schemas.review import (
     ReviewCandidateOut,
 )
 from app.services.entry import archive_candidate
+from app.services.entry_relation import load_relation_targets
 from app.services.extraction import candidate_out, parse_risk_flags
 
 
@@ -99,6 +102,7 @@ def _review_band(candidate: Candidate) -> str:
         and candidate.routing_status == ROUTING_RECOMMENDED
         and candidate.recommended_node_id is not None
         and not parse_risk_flags(candidate.risk_flags)
+        and candidate.relation_status in {RELATION_PENDING, RELATION_NEW}
     ):
         return "quick"
     return "detailed"
@@ -117,9 +121,11 @@ async def list_project_review_candidates(
             .order_by(Candidate.id)
         )
     ).all()
+    candidates = [candidate for candidate, _, _ in rows]
+    targets = await load_relation_targets(db, candidates)
     return [
         ReviewCandidateOut(
-            **candidate_out(candidate).model_dump(),
+            **candidate_out(candidate, *targets.get(candidate.id, (None, None))).model_dump(),
             source_title=source_title,
             source_note=source_note,
             review_band=_review_band(candidate),

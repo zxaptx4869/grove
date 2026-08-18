@@ -48,6 +48,12 @@ function buildNodeLabels(
 }
 
 function routingReason(candidate: ReviewCandidatePayload): string {
+  if (candidate.relation_status === 'duplicate')
+    return candidate.relation_reason ? `疑似重复 · ${candidate.relation_reason}` : '疑似重复'
+  if (candidate.relation_status === 'supplement')
+    return candidate.relation_reason ? `可以补充 · ${candidate.relation_reason}` : '可以补充'
+  if (candidate.relation_status === 'conflict')
+    return candidate.relation_reason ? `可能冲突 · ${candidate.relation_reason}` : '可能冲突'
   if (candidate.risk_flags.length > 0) return candidate.risk_flags[0]
   if (candidate.candidate_kind === 'other') return '其他发现'
   if (candidate.routing_status === 'needs_review') return '需要确认'

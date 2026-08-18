@@ -14,6 +14,7 @@ from app.models import Attachment, ProcessingTask, Project, Source, Workspace
 from app.models.processing import DONE, FAILED, PROCESSING, WAITING
 from app.schemas.source import AttachmentOut, SourceOut, SourceUpdate
 from app.services.attachment_storage import AttachmentStorage
+from app.services.entry_relation import clear_candidate_relations, route_relations
 from app.services.routing import clear_candidate_routing, route_source
 
 router = APIRouter(prefix="/api/sources", tags=["sources"])
@@ -220,6 +221,7 @@ async def update_source(
             await _validate_project(db, workspace.id, payload.project_id)
         source.project_id = payload.project_id
         await clear_candidate_routing(db, source.id)
+        await clear_candidate_relations(db, source.id)
     await db.commit()
     if project_changed:
         try:
@@ -227,6 +229,12 @@ async def update_source(
             await db.commit()
         except Exception:  # noqa: BLE001
             logger.exception("路由来源失败：%s", source.id)
+            await db.rollback()
+        try:
+            await route_relations(db, source.id)
+            await db.commit()
+        except Exception:  # noqa: BLE001
+            logger.exception("关系判断来源失败：%s", source.id)
             await db.rollback()
     return await _load_source_out(db, source_id)
 
