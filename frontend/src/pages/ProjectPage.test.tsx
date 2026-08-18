@@ -133,7 +133,7 @@ describe('ProjectPage', () => {
     expect(screen.getByRole('button', { name: '需求确认' })).toBeInTheDocument()
     expect(screen.queryByRole('button', { name: '根节点' })).not.toBeInTheDocument()
     expect(screen.getByRole('button', { name: '创建根节点' })).toBeInTheDocument()
-    expect(screen.getByRole('button', { name: '与 AI 共创目录' })).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: '与 AI 共创目录' })).not.toBeInTheDocument()
     expect(screen.getByRole('heading', { name: '这里还没有正式知识' })).toBeInTheDocument()
     expect(screen.getByRole('button', { name: '装修准备' })).toHaveAttribute(
       'aria-selected',
@@ -167,7 +167,7 @@ describe('ProjectPage', () => {
   })
 
   it('AI 共创入口发起目录起草并展示澄清问卷', async () => {
-    mockProjectApi()
+    mockProjectApi({ emptyTree: true })
     renderProject('/projects/1?view=directory')
 
     await userEvent.click(await screen.findByRole('button', { name: '与 AI 共创目录' }))

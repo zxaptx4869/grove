@@ -439,11 +439,6 @@ export function ProjectPage() {
               采集到项目
             </Button>
           ) : null}
-          {isDirectoryView && nodes.length > 0 ? (
-            <Button size="sm" variant="outline" onClick={() => setAiOpen(true)}>
-              <Sparkles />与 AI 共创目录
-            </Button>
-          ) : null}
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
               <Button size="icon-sm" variant="ghost" aria-label="项目更多操作">
@@ -832,15 +827,6 @@ export function ProjectPage() {
                   </button>
                 ))}
               </div>
-            </section>
-            <section className="mt-6 border-t pt-5">
-              <h2 className="text-body font-[650]">目录共创</h2>
-              <p className="mt-2 text-body-sm leading-6 text-muted-foreground">
-                从项目目标出发，与 AI 一起讨论目录结构。
-              </p>
-              <Button className="mt-3" size="sm" variant="outline" onClick={() => setAiOpen(true)}>
-                <Sparkles />与 AI 共创目录
-              </Button>
             </section>
           </aside>
         </div>

@@ -440,9 +440,16 @@ export function DirectoryDraftDialog({
           {generating ? (
             <div className="flex items-center gap-2 py-10 text-body-sm text-muted-foreground">
               <RotateCw className="size-4 animate-spin" />
-              {draft?.next_action === 'clarify'
-                ? `AI 正在生成澄清问题…（已等待 ${waitSeconds} 秒）`
-                : `AI 正在生成候选树…（已等待 ${waitSeconds} 秒）`}
+              <span>
+                {draft?.next_action === 'clarify'
+                  ? `AI 正在生成澄清问题…（已等待 ${waitSeconds} 秒）`
+                  : `AI 正在生成候选树…（已等待 ${waitSeconds} 秒）`}
+                {waitSeconds >= 20 ? (
+                  <span className="mt-1 block text-amber-600">
+                    生成较慢，可稍候或关闭后重新发起。
+                  </span>
+                ) : null}
+              </span>
             </div>
           ) : draft?.status === 'awaiting_input' ? (
             <div className="space-y-4">
