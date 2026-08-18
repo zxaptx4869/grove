@@ -672,6 +672,7 @@ export interface DraftNodePayload {
   name: string
   description: string | null
   position: number
+  selected: boolean
 }
 
 export interface DirectoryDraftPayload {
@@ -701,6 +702,7 @@ export interface DraftMessagePayload {
 export interface DraftTreeNodeInput {
   name: string
   description: string | null
+  selected?: boolean
   children: DraftTreeNodeInput[]
 }
 

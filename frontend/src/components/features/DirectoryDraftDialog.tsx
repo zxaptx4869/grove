@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { FolderPlus, Plus, RotateCw, Trash2, X } from 'lucide-react'
+import { FolderPlus, Pencil, Plus, RotateCw, Trash2, X } from 'lucide-react'
 
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -22,6 +22,7 @@ interface EditableNode {
   uid: string
   name: string
   description: string | null
+  selected: boolean
   children: EditableNode[]
 }
 
@@ -40,6 +41,7 @@ function flattenToNested(nodes: DraftNodePayload[]): EditableNode[] {
         uid: `draft-${uid++}`,
         name: node.name,
         description: node.description,
+        selected: node.selected ?? true,
         children: build(node.id),
       }))
   return build(null)
@@ -48,6 +50,16 @@ function flattenToNested(nodes: DraftNodePayload[]): EditableNode[] {
 function countNodes(nodes: readonly EditableNode[]): number {
   return nodes.reduce(
     (total, node) => total + 1 + countNodes(node.children),
+    0,
+  )
+}
+
+function countSelected(nodes: readonly EditableNode[]): number {
+  return nodes.reduce(
+    (total, node) =>
+      total +
+      (node.selected ? 1 : 0) +
+      countSelected(node.children),
     0,
   )
 }
@@ -90,47 +102,100 @@ function TreeNodeEditor({
   onChange: (node: EditableNode) => void
   onRemove: () => void
 }) {
+  const [editing, setEditing] = useState(false)
+  const [editName, setEditName] = useState(node.name)
+  const [editDesc, setEditDesc] = useState(node.description ?? '')
+
+  function save() {
+    onChange({
+      ...node,
+      name: editName.trim() || node.name,
+      description: editDesc.trim() || null,
+    })
+    setEditing(false)
+  }
+
   return (
     <div className="space-y-2 border-l-2 border-muted pl-3" style={{ marginLeft: depth * 12 }}>
       <div className="flex items-center gap-2">
-        <Input
-          className="h-8 flex-1"
-          value={node.name}
-          aria-label="节点名称"
-          onChange={(event) => onChange({ ...node, name: event.target.value })}
+        <input
+          type="checkbox"
+          aria-label={`采用 ${node.name}`}
+          checked={node.selected}
+          onChange={() => onChange({ ...node, selected: !node.selected })}
         />
-        <Button
-          size="icon-sm"
-          variant="ghost"
-          aria-label="新增子节点"
-          onClick={() =>
-            onChange({
-              ...node,
-              children: [
-                ...node.children,
-                {
-                  uid: `draft-${Math.random().toString(36).slice(2)}`,
-                  name: '新节点',
-                  description: null,
-                  children: [],
-                },
-              ],
-            })
-          }
-        >
-          <Plus />
-        </Button>
-        <Button size="icon-sm" variant="ghost" aria-label="删除节点" onClick={onRemove}>
-          <Trash2 />
-        </Button>
+        {editing ? (
+          <>
+            <Input
+              className="h-8 w-40"
+              value={editName}
+              aria-label="节点名称"
+              autoFocus
+              onChange={(event) => setEditName(event.target.value)}
+            />
+            <Button size="sm" onClick={save}>
+              保存
+            </Button>
+            <Button size="sm" variant="ghost" onClick={() => setEditing(false)}>
+              取消
+            </Button>
+          </>
+        ) : (
+          <>
+            <span className="min-w-0 flex-1 truncate text-body-sm font-medium">
+              {node.name}
+            </span>
+            <Button
+              size="icon-sm"
+              variant="ghost"
+              aria-label={`编辑 ${node.name}`}
+              onClick={() => {
+                setEditName(node.name)
+                setEditDesc(node.description ?? '')
+                setEditing(true)
+              }}
+            >
+              <Pencil />
+            </Button>
+            <Button
+              size="icon-sm"
+              variant="ghost"
+              aria-label={`新增子节点到 ${node.name}`}
+              onClick={() =>
+                onChange({
+                  ...node,
+                  children: [
+                    ...node.children,
+                    {
+                      uid: `draft-${Math.random().toString(36).slice(2)}`,
+                      name: '新节点',
+                      description: null,
+                      selected: true,
+                      children: [],
+                    },
+                  ],
+                })
+              }
+            >
+              <Plus />
+            </Button>
+            <Button size="icon-sm" variant="ghost" aria-label={`删除 ${node.name}`} onClick={onRemove}>
+              <Trash2 />
+            </Button>
+          </>
+        )}
       </div>
-      <Textarea
-        rows={2}
-        value={node.description ?? ''}
-        aria-label="节点说明"
-        placeholder="节点说明（可选）"
-        onChange={(event) => onChange({ ...node, description: event.target.value || null })}
-      />
+      {editing ? (
+        <Textarea
+          rows={2}
+          value={editDesc}
+          aria-label="节点说明"
+          placeholder="节点说明（可选）"
+          onChange={(event) => setEditDesc(event.target.value)}
+        />
+      ) : node.description ? (
+        <p className="text-caption text-muted-foreground">{node.description}</p>
+      ) : null}
       {node.children.map((child) => (
         <TreeNodeEditor
           key={child.uid}
@@ -220,6 +285,7 @@ export function DirectoryDraftDialog({
   }, [draft?.status, projectId])
 
   const nodeCount = useMemo(() => countNodes(tree), [tree])
+  const selectedCount = useMemo(() => countSelected(tree), [tree])
 
   function toggleOption(questionId: string, option: string, multiple: boolean) {
     setAnswers((current) => {
@@ -417,7 +483,7 @@ export function DirectoryDraftDialog({
             <div className="grid h-full grid-cols-2 gap-4">
               <div className="min-h-0 space-y-2 overflow-y-auto pr-2">
                 <p className="text-caption text-muted-foreground">
-                  将创建 {nodeCount} 个节点 · 受影响 Entry 0 条
+                  已选 {selectedCount} / {nodeCount} 个节点 · 受影响 Entry 0 条
                 </p>
                 <Button
                   size="sm"
@@ -429,6 +495,7 @@ export function DirectoryDraftDialog({
                         uid: `draft-${Math.random().toString(36).slice(2)}`,
                         name: '新节点',
                         description: null,
+                        selected: true,
                         children: [],
                       },
                     ])
@@ -511,7 +578,7 @@ export function DirectoryDraftDialog({
               <Button variant="outline" disabled={busy} onClick={saveTree}>
                 保存编辑
               </Button>
-              <Button disabled={busy || nodeCount === 0} onClick={applyDraft}>
+              <Button disabled={busy || selectedCount === 0} onClick={applyDraft}>
                 应用目录
               </Button>
             </>

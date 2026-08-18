@@ -103,6 +103,7 @@ def draft_out(
                 name=node.name,
                 description=node.description,
                 position=node.position,
+                selected=node.selected,
             )
             for node in sorted(nodes, key=lambda item: item.position)
         ],
@@ -192,6 +193,7 @@ def _flatten_nodes(roots: list[DirectoryNodeDraft]) -> list[dict]:
                     "description": node.description,
                     "parent_ref": parent_ref,
                     "position": position,
+                    "selected": bool(getattr(node, "selected", True)),
                 }
             )
             walk(node.children, ref)
@@ -217,6 +219,7 @@ async def _replace_draft_nodes(
             name=item["name"],
             description=item["description"],
             position=item["position"],
+            selected=item["selected"],
         )
         db.add(node)
         created.append(node)
@@ -522,6 +525,8 @@ async def apply_draft(
             children_by_parent.get(parent_draft_id, []),
             key=lambda item: item.position,
         ):
+            if not node.selected:
+                continue
             formal_parent = (
                 created_node_ids[node.parent_id] if node.parent_id is not None else None
             )

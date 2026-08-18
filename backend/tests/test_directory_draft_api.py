@@ -192,6 +192,36 @@ async def test_apply_draft_rejects_non_empty_project(client) -> None:
 
 
 @pytest.mark.asyncio
+async def test_apply_draft_skips_unselected_nodes(client) -> None:
+    await _register(client)
+    project = await _create_project(client)
+    await _to_pending_confirm(client, project["id"])
+    await client.patch(
+        f"/api/projects/{project['id']}/directory-draft/nodes",
+        json={
+            "nodes": [
+                {
+                    "name": "保留",
+                    "description": None,
+                    "selected": True,
+                    "children": [
+                        {"name": "排除", "description": None, "selected": False, "children": []}
+                    ],
+                }
+            ]
+        },
+    )
+
+    response = await client.post(
+        f"/api/projects/{project['id']}/directory-draft/apply"
+    )
+
+    assert response.status_code == 200
+    tree = (await client.get(f"/api/projects/{project['id']}/tree")).json()
+    assert [node["name"] for node in tree] == ["保留"]
+
+
+@pytest.mark.asyncio
 async def test_discard_draft(client) -> None:
     await _register(client)
     project = await _create_project(client)

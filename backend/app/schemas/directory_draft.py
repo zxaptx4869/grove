@@ -22,6 +22,7 @@ class DraftNodeOut(BaseModel):
     name: str
     description: str | None
     position: int
+    selected: bool
 
 
 class DraftOut(BaseModel):
@@ -72,6 +73,7 @@ class DraftNodeInput(BaseModel):
 
     name: str = Field(min_length=1, max_length=128)
     description: str | None = Field(default=None, max_length=2000)
+    selected: bool = True
     children: list["DraftNodeInput"] = []
 
 
