@@ -16,6 +16,7 @@
 - 实施完成后执行 `openspec archive <change>` 同步主规格，再提交代码。
 - **推送与合并必须经用户确认**：完成实现后先停留在本地分支（可提交、可 push 前待命），用户验证无问题并明确确认后，再推送远端或合并分支。
 - **本地提交及时化**：每次完成一段可验证的代码修改（功能、修复、测试、文档或配置）后，立即在本地提交一次，避免改动长期滞留工作区导致丢失或难以回溯；推送与合并仍须经用户确认。
+- **分支策略**：开发新功能（OpenSpec change）时，自 proposal 阶段起新建 `codex/<change>` 特性分支，不在 main 上直接开发；小 bug 修复、文档与配置调整不强制新分支。推送与合并前仍须经用户确认。
 - CLI 可用命令：`openspec list`、`openspec status --change <name>`、`openspec instructions <artifact> --change <name>`、`openspec validate --all --strict`、`openspec archive <change>`。
 
 ## 3. 工程约定
