@@ -404,8 +404,10 @@ export function DirectoryDraftDialog({
             <p className="text-caption text-muted-foreground">
               AI 只生成候选草稿，确认后才会创建正式节点。
             </p>
+            {draft ? (
+              <div className="mt-2">{sourceBadge(draft)}</div>
+            ) : null}
           </div>
-          {draft ? sourceBadge(draft) : null}
           <Button
             size="icon-sm"
             variant="ghost"
