@@ -217,6 +217,7 @@ export function DirectoryDraftDialog({
   const [loading, setLoading] = useState(false)
   const [busy, setBusy] = useState(false)
   const [dirty, setDirty] = useState(false)
+  const [thinking, setThinking] = useState(false)
   const [error, setError] = useState('')
   const [waitSeconds, setWaitSeconds] = useState(0)
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null)
@@ -371,6 +372,7 @@ export function DirectoryDraftDialog({
     const content = messageInput.trim()
     if (!content || !draft) return
     setBusy(true)
+    setThinking(true)
     setError('')
     setMessageInput('')
     setMessages((current) => [
@@ -383,6 +385,20 @@ export function DirectoryDraftDialog({
       applyDraftData(data)
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : '发送消息失败')
+    } finally {
+      setBusy(false)
+      setThinking(false)
+    }
+  }
+
+  async function retryDraft() {
+    setBusy(true)
+    setError('')
+    try {
+      const data = await createDirectoryDraft(projectId)
+      applyDraftData(data)
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : '重新发起失败')
     } finally {
       setBusy(false)
     }
@@ -529,20 +545,27 @@ export function DirectoryDraftDialog({
                       可以直接告诉 AI 怎么调整目录。
                     </p>
                   ) : (
-                    messages.map((message) => (
-                      <div
-                        key={message.id}
-                        className={`max-w-[85%] rounded-md px-3 py-2 text-body-sm ${
-                          message.role === 'user'
-                            ? 'ml-auto bg-brand-soft text-brand'
-                            : message.role === 'system'
-                              ? 'bg-muted text-muted-foreground'
-                              : 'bg-muted/60'
-                        }`}
-                      >
-                        {message.content}
-                      </div>
-                    ))
+                    <>
+                      {messages.map((message) => (
+                        <div
+                          key={message.id}
+                          className={`max-w-[85%] rounded-md px-3 py-2 text-body-sm ${
+                            message.role === 'user'
+                              ? 'ml-auto bg-brand-soft text-brand'
+                              : message.role === 'system'
+                                ? 'bg-muted text-muted-foreground'
+                                : 'bg-muted/60'
+                          }`}
+                        >
+                          {message.content}
+                        </div>
+                      ))}
+                      {thinking ? (
+                        <div className="max-w-[85%] rounded-md bg-muted/60 px-3 py-2 text-body-sm text-muted-foreground">
+                          AI 思考中…
+                        </div>
+                      ) : null}
+                    </>
                   )}
                 </div>
                 <div className="mt-2 flex items-end gap-2">
@@ -554,15 +577,22 @@ export function DirectoryDraftDialog({
                     onChange={(event) => setMessageInput(event.target.value)}
                   />
                   <Button disabled={busy || !messageInput.trim()} onClick={sendMessage}>
+                    {busy ? <RotateCw className="animate-spin" /> : null}
                     发送
                   </Button>
                 </div>
               </div>
             </div>
           ) : draft?.status === 'failed' ? (
-            <p className="py-8 text-center text-body-sm text-destructive">
-              草稿生成失败：{draft.last_error ?? '未知错误'}，请重新发起。
-            </p>
+            <div className="space-y-3 py-8 text-center">
+              <p className="text-body-sm text-destructive">
+                草稿生成失败：{draft.last_error ?? '未知错误'}
+              </p>
+              <Button variant="outline" disabled={busy} onClick={retryDraft}>
+                <RotateCw className={busy ? 'animate-spin' : ''} />
+                重新发起
+              </Button>
+            </div>
           ) : (
             <p className="py-8 text-center text-body-sm text-muted-foreground">
               草稿已处理或正在处理，请稍候。

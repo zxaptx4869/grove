@@ -112,6 +112,52 @@ async def test_submit_clarify_generates_candidate_tree(client) -> None:
 
 
 @pytest.mark.asyncio
+async def test_second_clarify_batch_then_generate(client, monkeypatch) -> None:
+    from app.agents.directory import ClarifyQuestionDraft, ClarifyResultDraft
+    from app.context.base import GenerationMeta
+    from app.services import directory_draft as service
+
+    async def fake_clarify(db, workspace_id, project, context_text, clarify_batches):
+        return (
+            ClarifyResultDraft(
+                needs_more=True,
+                questions=[
+                    ClarifyQuestionDraft(
+                        id="q2",
+                        text="第二批问题",
+                        options=["A", "B"],
+                        multiple=False,
+                    )
+                ],
+            ),
+            GenerationMeta(provider="offline", model=None, is_fallback=True),
+        )
+
+    monkeypatch.setattr(service, "run_directory_clarify", fake_clarify)
+    await _register(client)
+    project = await _create_project(client)
+    await client.post(f"/api/projects/{project['id']}/directory-draft", json={})
+    assert await process_next_draft_step() is True
+
+    await client.post(
+        f"/api/projects/{project['id']}/directory-draft/clarify",
+        json={"answers": {"dimension": "按阶段"}},
+    )
+    assert await process_next_draft_step() is True
+    data = (await client.get(f"/api/projects/{project['id']}/directory-draft")).json()
+    assert data["status"] == "awaiting_input"
+    assert any(question["text"] == "第二批问题" for question in data["clarify"])
+
+    await client.post(
+        f"/api/projects/{project['id']}/directory-draft/clarify",
+        json={"answers": {"q2": "A"}},
+    )
+    assert await process_next_draft_step() is True
+    data = (await client.get(f"/api/projects/{project['id']}/directory-draft")).json()
+    assert data["status"] == "pending_confirm"
+
+
+@pytest.mark.asyncio
 async def test_update_draft_nodes_persists_edits(client) -> None:
     await _register(client)
     project = await _create_project(client)

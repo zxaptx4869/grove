@@ -330,6 +330,9 @@ async def run_clarify_step(
         await run_generate_step(db, draft, project)
         return
     context_text = await _build_context_text(db, project)
+    answers = _answers_text(draft.clarify_answers_json)
+    if answers:
+        context_text = f"{context_text}\n\n用户澄清答案：\n{answers}"
     result, meta = await run_directory_clarify(
         db,
         project.workspace_id,
@@ -374,6 +377,7 @@ async def create_or_reuse_draft(
             existing.clarify_json = None
             existing.clarify_answers_json = None
             existing.clarify_batches = 0
+            existing.conversation_rounds = 0
             existing.last_error = None
             existing.claimed_at = None
             await db.execute(
@@ -408,7 +412,7 @@ async def submit_clarify_answers(
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="草稿当前不需要澄清")
     draft.clarify_answers_json = json.dumps(answers, ensure_ascii=False)
     draft.clarify_batches += 1
-    draft.next_action = DRAFT_GENERATE
+    draft.next_action = DRAFT_CLARIFY
     draft.status = DRAFT_DRAFTING
     draft.claimed_at = None
     return draft
