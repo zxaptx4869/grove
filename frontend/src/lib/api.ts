@@ -681,12 +681,20 @@ export interface DirectoryDraftPayload {
   clarify_batches: number
   clarify: ClarifyQuestionPayload[]
   nodes: DraftNodePayload[]
+  messages: DraftMessagePayload[]
   provider: string | null
   model: string | null
   is_fallback: boolean
   last_error: string | null
   created_at: string
   updated_at: string
+}
+
+export interface DraftMessagePayload {
+  id: number
+  role: 'user' | 'assistant' | 'system'
+  content: string
+  created_at: string
 }
 
 export interface DraftTreeNodeInput {
@@ -740,3 +748,15 @@ export const discardDirectoryDraft = (projectId: number) =>
   request<DirectoryDraftPayload>(`/api/projects/${projectId}/directory-draft/discard`, {
     method: 'POST',
   })
+
+export const submitDirectoryDraftMessage = (
+  projectId: number,
+  content: string,
+) =>
+  request<DirectoryDraftPayload>(
+    `/api/projects/${projectId}/directory-draft/messages`,
+    {
+      method: 'POST',
+      body: JSON.stringify({ content }),
+    },
+  )

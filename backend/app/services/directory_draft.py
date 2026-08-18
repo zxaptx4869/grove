@@ -7,7 +7,12 @@ from fastapi import HTTPException, status
 from sqlalchemy import delete, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.agents.directory import DirectoryNodeDraft, run_directory_clarify, run_directory_draft
+from app.agents.directory import (
+    DirectoryNodeDraft,
+    run_directory_clarify,
+    run_directory_draft,
+    run_directory_refine,
+)
 from app.models import Node, Project, ProjectContext
 from app.models.directory_draft import (
     DRAFT_AWAITING_INPUT,
@@ -17,10 +22,12 @@ from app.models.directory_draft import (
     DRAFT_GENERATE,
     DRAFT_PENDING_CONFIRM,
     DirectoryDraft,
+    DirectoryDraftMessage,
     DirectoryDraftNode,
 )
 from app.schemas.directory_draft import (
     ClarifyQuestionOut,
+    DraftMessageOut,
     DraftNodeOut,
     DraftOut,
 )
@@ -29,6 +36,7 @@ from app.services.project_context import schedule_refresh
 logger = logging.getLogger(__name__)
 
 MAX_DRAFT_NODES = 200
+MAX_CONVERSATION_ROUNDS = 30
 
 
 def _parse_clarify(raw: str | None) -> list[ClarifyQuestionOut]:
@@ -70,8 +78,13 @@ def _answers_text(raw: str | None) -> str:
     return "\n".join(lines)
 
 
-def draft_out(draft: DirectoryDraft, nodes: list[DirectoryDraftNode]) -> DraftOut:
+def draft_out(
+    draft: DirectoryDraft,
+    nodes: list[DirectoryDraftNode],
+    messages: list[DirectoryDraftMessage] | None = None,
+) -> DraftOut:
     """组装草稿响应。"""
+    messages = messages or []
     return DraftOut(
         id=draft.id,
         project_id=draft.project_id,
@@ -88,6 +101,15 @@ def draft_out(draft: DirectoryDraft, nodes: list[DirectoryDraftNode]) -> DraftOu
                 position=node.position,
             )
             for node in sorted(nodes, key=lambda item: item.position)
+        ],
+        messages=[
+            DraftMessageOut(
+                id=message.id,
+                role=message.role,
+                content=message.content,
+                created_at=message.created_at,
+            )
+            for message in messages
         ],
         provider=draft.provider,
         model=draft.model,
@@ -193,6 +215,70 @@ async def _replace_draft_nodes(
     for node, item in zip(created, items, strict=True):
         if item["parent_ref"] is not None:
             node.parent_id = created[item["parent_ref"]].id
+
+
+async def list_draft_messages(
+    db: AsyncSession,
+    draft_id: int,
+) -> list[DirectoryDraftMessage]:
+    """按时间顺序返回草稿会话消息。"""
+    return list(
+        (
+            await db.execute(
+                select(DirectoryDraftMessage)
+                .where(DirectoryDraftMessage.draft_id == draft_id)
+                .order_by(DirectoryDraftMessage.created_at, DirectoryDraftMessage.id)
+            )
+        ).scalars().all()
+    )
+
+
+async def _append_draft_message(
+    db: AsyncSession,
+    draft_id: int,
+    role: str,
+    content: str,
+) -> None:
+    db.add(
+        DirectoryDraftMessage(
+            draft_id=draft_id,
+            role=role,
+            content=content,
+        )
+    )
+
+
+async def _draft_tree_json(db: AsyncSession, draft: DirectoryDraft) -> str:
+    """把草稿节点序列化为嵌套 JSON 树。"""
+    nodes = (
+        await db.execute(
+            select(DirectoryDraftNode).where(DirectoryDraftNode.draft_id == draft.id)
+        )
+    ).scalars().all()
+    children_by_parent: dict[int | None, list[DirectoryDraftNode]] = {}
+    for node in nodes:
+        children_by_parent.setdefault(node.parent_id, []).append(node)
+
+    def build(parent_id: int | None) -> list[dict]:
+        result = []
+        for node in sorted(
+            children_by_parent.get(parent_id, []),
+            key=lambda item: item.position,
+        ):
+            result.append(
+                {
+                    "name": node.name,
+                    "description": node.description,
+                    "children": build(node.id),
+                }
+            )
+        return result
+
+    return json.dumps(build(None), ensure_ascii=False)
+
+
+def _count_tree(nodes: list[DirectoryNodeDraft]) -> int:
+    return sum(1 + _count_tree(node.children) for node in nodes)
 
 
 async def run_generate_step(
@@ -386,4 +472,77 @@ async def apply_draft(
 async def discard_draft(db: AsyncSession, draft: DirectoryDraft) -> DirectoryDraft:
     """丢弃草稿。"""
     draft.status = DRAFT_DISCARDED
+    return draft
+
+
+async def submit_draft_message(
+    db: AsyncSession,
+    draft: DirectoryDraft,
+    project: Project,
+    content: str,
+) -> DirectoryDraft:
+    """追加用户消息，调用 Agent 调整草稿并自动应用返回的候选树。"""
+    if draft.status != DRAFT_PENDING_CONFIRM:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="草稿当前不能对话调整",
+        )
+    content = content.strip()
+    if not content:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="消息内容不能为空")
+    if len(content) > 2000:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="消息最长 2000 字符")
+    if draft.conversation_rounds >= MAX_CONVERSATION_ROUNDS:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=f"会话轮次已达上限（{MAX_CONVERSATION_ROUNDS}），请重新起草",
+        )
+
+    await _append_draft_message(db, draft.id, "user", content)
+    draft.conversation_rounds += 1
+    await db.flush()
+
+    context_text = await _build_context_text(db, project)
+    tree_json = await _draft_tree_json(db, draft)
+    messages = await list_draft_messages(db, draft.id)
+    convo = [
+        {"role": message.role, "content": message.content}
+        for message in messages
+    ]
+    result, meta = await run_directory_refine(
+        db,
+        project.workspace_id,
+        project,
+        context_text,
+        tree_json,
+        convo,
+    )
+    draft.provider = meta.provider
+    draft.model = meta.model
+    draft.is_fallback = meta.is_fallback
+    if meta.is_fallback:
+        logger.warning("Directory Draft 对话降级：provider=%s", meta.provider)
+
+    if result.tree is not None:
+        await _replace_draft_nodes(db, draft, result.tree)
+        node_count = _count_tree(result.tree)
+        await _append_draft_message(
+            db,
+            draft.id,
+            "assistant",
+            result.reply_text.strip() or "（已更新目录草稿）",
+        )
+        await _append_draft_message(
+            db,
+            draft.id,
+            "system",
+            f"已应用目录，共 {node_count} 个节点",
+        )
+    else:
+        await _append_draft_message(
+            db,
+            draft.id,
+            "assistant",
+            result.reply_text.strip() or "（已收到你的消息）",
+        )
     return draft

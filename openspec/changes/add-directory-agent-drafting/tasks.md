@@ -40,4 +40,14 @@
 - [x] 5.1 运行 `openspec validate --all --strict`
 - [x] 5.2 运行后端测试与静态检查
 - [x] 5.3 运行前端测试与构建
-- [ ] 5.4 手动走查目录共创全流程（澄清 → 候选树 → 内联编辑 → 应用）
+- [ ] 5.4 手动走查目录共创全流程（澄清 → 候选树 → 对话调整 → 内联编辑 → 应用）
+
+## 6. 对话调整草稿
+
+- [x] 6.1 新增 Alembic 迁移：`directory_draft_messages` 表与 `directory_drafts.conversation_rounds`
+- [x] 6.2 模型与 schema：消息模型、`DraftOut.messages`、`DraftMessageOut`
+- [x] 6.3 Agent：`run_directory_refine`（回复文字 + 可选新树），离线只回文字
+- [x] 6.4 服务：`submit_draft_message`（追加消息、轮数上限 30、返回树自动替换节点）
+- [x] 6.5 API：`POST .../messages`，草稿响应带消息列表
+- [x] 6.6 前端：候选树在左、对话区在右，消息列表与发送框，返回树自动更新
+- [x] 6.7 测试：对话追加、纯讨论不改树、自动应用、轮数上限、状态限制

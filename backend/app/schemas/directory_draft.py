@@ -34,12 +34,25 @@ class DraftOut(BaseModel):
     clarify_batches: int
     clarify: list[ClarifyQuestionOut] = []
     nodes: list[DraftNodeOut] = []
+    messages: list["DraftMessageOut"] = []
     provider: str | None
     model: str | None
     is_fallback: bool
     last_error: str | None
     created_at: datetime
     updated_at: datetime
+
+
+class DraftMessageOut(BaseModel):
+    """草稿会话消息。"""
+
+    id: int
+    role: str
+    content: str
+    created_at: datetime
+
+
+DraftOut.model_rebuild()
 
 
 class DraftCreateRequest(BaseModel):
@@ -69,3 +82,9 @@ class DraftNodesUpdateRequest(BaseModel):
     """全量替换草稿节点树。"""
 
     nodes: list[DraftNodeInput] = []
+
+
+class DraftMessageSubmitRequest(BaseModel):
+    """发送一条对话调整消息。"""
+
+    content: str = Field(min_length=1, max_length=2000)

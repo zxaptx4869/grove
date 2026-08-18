@@ -42,6 +42,13 @@ class DirectoryDraftDraft(BaseModel):
     nodes: list[DirectoryNodeDraft] = Field(default_factory=list)
 
 
+class ChatRoundResultDraft(BaseModel):
+    """一轮对话调整的结果：回复文字 + 可选完整候选树。"""
+
+    reply_text: str = ""
+    tree: list[DirectoryNodeDraft] | None = None
+
+
 CLARIFY_SYSTEM_PROMPT = """你是 Grove 的 Directory Agent 澄清步骤。请判断是否需要向用户澄清。
 
 要求：
@@ -58,6 +65,16 @@ DRAFT_SYSTEM_PROMPT = """你是 Grove 的 Directory Agent 起草步骤。
 1. 节点名称简洁（2-8 字），description 用一句话说明该节点用途。
 2. 层级控制在 2-3 层，总节点数不超过 30。
 3. 输出始终是候选草稿，不创建或修改正式目录。"""
+
+
+REFINE_SYSTEM_PROMPT = """你是 Grove 的 Directory Agent 调整步骤。
+请基于当前候选树与对话调整目录草稿。
+
+要求：
+1. 先给出简短回复文字，说明你的理解和改动。
+2. 如果对话要求修改目录，返回完整的更新后候选树；未要求改动或纯讨论时 tree 为 null。
+3. 返回完整树时，未涉及的部分必须原样保留，避免节点漂移。
+4. 输出始终是候选草稿，不创建或修改正式目录。"""
 
 
 def _offline_clarify(clarify_batches: int) -> ClarifyResultDraft:
@@ -115,6 +132,11 @@ def _offline_draft(project: Project) -> DirectoryDraftDraft:
     )
 
 
+def _offline_refine() -> ChatRoundResultDraft:
+    """离线确定性调整回复：纯讨论，不改树。"""
+    return ChatRoundResultDraft(reply_text="已收到你的消息，当前草稿保持不变。")
+
+
 async def run_directory_clarify(
     db,
     workspace_id: int,
@@ -166,5 +188,40 @@ async def run_directory_draft(
     result = await agent.run(context_text)
     if result.output is None:
         raise RuntimeError("Directory Agent 起草步骤未返回结构化结果")
+    model_name = getattr(text_model, "model_name", None) or "unknown"
+    return result.output, GenerationMeta(provider="llm", model=str(model_name), is_fallback=False)
+
+
+async def run_directory_refine(
+    db,
+    workspace_id: int,
+    project: Project,
+    context_text: str,
+    tree_json: str,
+    messages: list[dict],
+) -> tuple[ChatRoundResultDraft, GenerationMeta]:
+    """运行一轮对话调整，返回回复与可选新树。"""
+    text_model = await get_text_model(db, workspace_id)
+    if isinstance(text_model, TestModel):
+        return (
+            _offline_refine(),
+            GenerationMeta(provider="offline", model=None, is_fallback=True),
+        )
+
+    convo_text = "\n".join(
+        f"{item['role']}：{item['content']}" for item in messages
+    )
+    prompt = (
+        f"{context_text}\n\n当前候选树：\n{tree_json}\n\n最近对话：\n{convo_text}"
+    )
+    agent = Agent(
+        text_model,
+        output_type=ChatRoundResultDraft,
+        system_prompt=REFINE_SYSTEM_PROMPT,
+        retries=1,
+    )
+    result = await agent.run(prompt)
+    if result.output is None:
+        raise RuntimeError("Directory Agent 调整步骤未返回结构化结果")
     model_name = getattr(text_model, "model_name", None) or "unknown"
     return result.output, GenerationMeta(provider="llm", model=str(model_name), is_fallback=False)

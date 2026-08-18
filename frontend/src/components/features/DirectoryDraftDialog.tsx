@@ -17,9 +17,11 @@ import {
   applyDirectoryDraft,
   createDirectoryDraft,
   discardDirectoryDraft,
+  submitDirectoryDraftMessage,
   submitDirectoryDraftClarify,
   updateDirectoryDraftNodes,
   type DirectoryDraftPayload,
+  type DraftMessagePayload,
   type DraftNodePayload,
 } from '@/lib/api'
 
@@ -162,6 +164,8 @@ export function DirectoryDraftDialog({
   const [draft, setDraft] = useState<DirectoryDraftPayload | null>(null)
   const [tree, setTree] = useState<EditableNode[]>([])
   const [answers, setAnswers] = useState<Record<string, string | string[]>>({})
+  const [messages, setMessages] = useState<DraftMessagePayload[]>([])
+  const [messageInput, setMessageInput] = useState('')
   const [loading, setLoading] = useState(false)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
@@ -173,6 +177,7 @@ export function DirectoryDraftDialog({
     createDirectoryDraft(projectId)
       .then((data) => {
         setDraft(data)
+        setMessages(data.messages ?? [])
         if (data.status === 'pending_confirm') setTree(flattenToNested(data.nodes))
       })
       .catch((reason: unknown) =>
@@ -182,6 +187,12 @@ export function DirectoryDraftDialog({
   }, [open, projectId])
 
   const nodeCount = useMemo(() => countNodes(tree), [tree])
+
+  function applyDraftData(data: DirectoryDraftPayload) {
+    setDraft(data)
+    setMessages(data.messages ?? [])
+    if (data.status === 'pending_confirm') setTree(flattenToNested(data.nodes))
+  }
 
   function toggleOption(questionId: string, option: string, multiple: boolean) {
     setAnswers((current) => {
@@ -200,8 +211,7 @@ export function DirectoryDraftDialog({
     setError('')
     try {
       const data = await submitDirectoryDraftClarify(projectId, answers)
-      setDraft(data)
-      setTree(flattenToNested(data.nodes))
+      applyDraftData(data)
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : '提交澄清失败')
     } finally {
@@ -214,8 +224,7 @@ export function DirectoryDraftDialog({
     setError('')
     try {
       const data = await updateDirectoryDraftNodes(projectId, tree)
-      setDraft(data)
-      setTree(flattenToNested(data.nodes))
+      applyDraftData(data)
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : '保存草稿失败')
     } finally {
@@ -246,6 +255,26 @@ export function DirectoryDraftDialog({
       onOpenChange(false)
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : '丢弃草稿失败')
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  async function sendMessage() {
+    const content = messageInput.trim()
+    if (!content || !draft) return
+    setBusy(true)
+    setError('')
+    setMessageInput('')
+    setMessages((current) => [
+      ...current,
+      { id: -Date.now(), role: 'user', content, created_at: new Date().toISOString() },
+    ])
+    try {
+      const data = await submitDirectoryDraftMessage(projectId, content)
+      applyDraftData(data)
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : '发送消息失败')
     } finally {
       setBusy(false)
     }
@@ -312,32 +341,70 @@ export function DirectoryDraftDialog({
             })}
           </div>
         ) : draft?.status === 'pending_confirm' ? (
-          <div className="max-h-[50vh] space-y-2 overflow-y-auto">
-            <p className="text-caption text-muted-foreground">
-              将创建 {nodeCount} 个节点 · 受影响 Entry 0 条
-            </p>
-            <Button
-              size="sm"
-              variant="outline"
-              onClick={() =>
-                setTree((current) => [
-                  ...current,
-                  { uid: `draft-${Math.random().toString(36).slice(2)}`, name: '新节点', description: null, children: [] },
-                ])
-              }
-            >
-              <FolderPlus />
-              添加根节点
-            </Button>
-            {tree.map((node) => (
-              <TreeNodeEditor
-                key={node.uid}
-                node={node}
-                depth={0}
-                onChange={(updated) => setTree(mapNodes(tree, updated.uid, () => updated))}
-                onRemove={() => setTree(removeNode(tree, node.uid))}
-              />
-            ))}
+          <div className="grid max-h-[55vh] grid-cols-2 gap-4 overflow-hidden">
+            <div className="min-h-0 space-y-2 overflow-y-auto pr-2">
+              <p className="text-caption text-muted-foreground">
+                将创建 {nodeCount} 个节点 · 受影响 Entry 0 条
+              </p>
+              <Button
+                size="sm"
+                variant="outline"
+                onClick={() =>
+                  setTree((current) => [
+                    ...current,
+                    { uid: `draft-${Math.random().toString(36).slice(2)}`, name: '新节点', description: null, children: [] },
+                  ])
+                }
+              >
+                <FolderPlus />
+                添加根节点
+              </Button>
+              {tree.map((node) => (
+                <TreeNodeEditor
+                  key={node.uid}
+                  node={node}
+                  depth={0}
+                  onChange={(updated) => setTree(mapNodes(tree, updated.uid, () => updated))}
+                  onRemove={() => setTree(removeNode(tree, node.uid))}
+                />
+              ))}
+            </div>
+            <div className="flex min-h-0 flex-col">
+              <div className="min-h-0 flex-1 space-y-2 overflow-y-auto rounded-md border p-3">
+                {messages.length === 0 ? (
+                  <p className="text-caption text-muted-foreground">
+                    可以直接告诉 AI 怎么调整目录。
+                  </p>
+                ) : (
+                  messages.map((message) => (
+                    <div
+                      key={message.id}
+                      className={`max-w-[85%] rounded-md px-3 py-2 text-body-sm ${
+                        message.role === 'user'
+                          ? 'ml-auto bg-brand-soft text-brand'
+                          : message.role === 'system'
+                            ? 'bg-muted text-muted-foreground'
+                            : 'bg-muted/60'
+                      }`}
+                    >
+                      {message.content}
+                    </div>
+                  ))
+                )}
+              </div>
+              <div className="mt-2 flex items-end gap-2">
+                <Textarea
+                  className="flex-1"
+                  rows={3}
+                  value={messageInput}
+                  placeholder="告诉 AI 怎么调整目录…"
+                  onChange={(event) => setMessageInput(event.target.value)}
+                />
+                <Button disabled={busy || !messageInput.trim()} onClick={sendMessage}>
+                  发送
+                </Button>
+              </div>
+            </div>
           </div>
         ) : (
           <p className="py-8 text-center text-body-sm text-muted-foreground">

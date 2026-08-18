@@ -11,6 +11,7 @@ from app.models.directory_draft import DirectoryDraft
 from app.schemas.directory_draft import (
     ClarifySubmitRequest,
     DraftCreateRequest,
+    DraftMessageSubmitRequest,
     DraftNodeInput,
     DraftNodesUpdateRequest,
     DraftOut,
@@ -21,7 +22,9 @@ from app.services.directory_draft import (
     discard_draft,
     draft_out,
     get_active_draft,
+    list_draft_messages,
     submit_clarify_answers,
+    submit_draft_message,
     update_draft_nodes,
 )
 
@@ -48,7 +51,8 @@ async def _load_out(db: DbSession, draft: DirectoryDraft) -> DraftOut:
             select(DirectoryDraftNode).where(DirectoryDraftNode.draft_id == draft.id)
         )
     ).scalars().all()
-    return draft_out(draft, list(nodes))
+    messages = await list_draft_messages(db, draft.id)
+    return draft_out(draft, list(nodes), messages)
 
 
 @router.post("", status_code=status.HTTP_201_CREATED, response_model=DraftOut)
@@ -142,5 +146,22 @@ async def discard_draft_endpoint(
     if draft is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="草稿不存在")
     draft = await discard_draft(db, draft)
+    await db.commit()
+    return await _load_out(db, draft)
+
+
+@router.post("/messages", response_model=DraftOut)
+async def submit_message_endpoint(
+    project_id: int,
+    payload: DraftMessageSubmitRequest,
+    db: DbSession,
+    workspace: CurrentWorkspace,
+) -> DraftOut:
+    """发送对话调整消息，返回更新后的草稿与消息。"""
+    project = await _get_owned_project(db, workspace.id, project_id)
+    draft = await get_active_draft(db, project_id)
+    if draft is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="草稿不存在")
+    draft = await submit_draft_message(db, draft, project, payload.content)
     await db.commit()
     return await _load_out(db, draft)

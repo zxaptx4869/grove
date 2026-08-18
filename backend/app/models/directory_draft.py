@@ -56,6 +56,7 @@ class DirectoryDraft(Base):
         Boolean, default=False, server_default="0", nullable=False
     )
     last_error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    conversation_rounds: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )
@@ -65,6 +66,9 @@ class DirectoryDraft(Base):
 
     project: Mapped["Project"] = relationship()
     nodes: Mapped[list["DirectoryDraftNode"]] = relationship(
+        back_populates="draft", cascade="all, delete-orphan"
+    )
+    messages: Mapped[list["DirectoryDraftMessage"]] = relationship(
         back_populates="draft", cascade="all, delete-orphan"
     )
 
@@ -99,3 +103,26 @@ class DirectoryDraftNode(Base):
     )
 
     draft: Mapped[DirectoryDraft] = relationship(back_populates="nodes")
+
+
+class DirectoryDraftMessage(Base):
+    """草稿会话消息。"""
+
+    __tablename__ = "directory_draft_messages"
+
+    id: Mapped[int] = mapped_column(
+        BigInteger().with_variant(Integer, "sqlite"), primary_key=True, autoincrement=True
+    )
+    draft_id: Mapped[int] = mapped_column(
+        BigInteger,
+        ForeignKey("directory_drafts.id", ondelete="CASCADE"),
+        index=True,
+        nullable=False,
+    )
+    role: Mapped[str] = mapped_column(String(16), nullable=False)
+    content: Mapped[str] = mapped_column(Text, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+
+    draft: Mapped[DirectoryDraft] = relationship(back_populates="messages")

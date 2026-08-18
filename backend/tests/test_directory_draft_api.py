@@ -40,6 +40,14 @@ async def _create_node(client: httpx.AsyncClient, project_id: int, name: str) ->
     return response.json()
 
 
+async def _to_pending_confirm(client: httpx.AsyncClient, project_id: int) -> None:
+    await client.post(f"/api/projects/{project_id}/directory-draft", json={})
+    await client.post(
+        f"/api/projects/{project_id}/directory-draft/clarify",
+        json={"answers": {"dimension": "按阶段", "modules": []}},
+    )
+
+
 @pytest.mark.asyncio
 async def test_create_draft_returns_clarify_questions(client) -> None:
     await _register(client)
@@ -186,3 +194,78 @@ async def test_draft_workspace_isolation(client) -> None:
             f"/api/projects/{project['id']}/directory-draft"
         )
         assert response.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_submit_message_appends_messages_and_rounds(client) -> None:
+    await _register(client)
+    project = await _create_project(client)
+    await _to_pending_confirm(client, project["id"])
+
+    response = await client.post(
+        f"/api/projects/{project['id']}/directory-draft/messages",
+        json={"content": "把施工节点拆细"},
+    )
+
+    assert response.status_code == 200
+    data = response.json()
+    assert data["status"] == "pending_confirm"
+    roles = [message["role"] for message in data["messages"]]
+    assert "user" in roles
+    assert "assistant" in roles
+    assert any(message["content"] == "把施工节点拆细" for message in data["messages"])
+
+
+@pytest.mark.asyncio
+async def test_submit_message_rejected_during_clarify(client) -> None:
+    await _register(client)
+    project = await _create_project(client)
+    await client.post(f"/api/projects/{project['id']}/directory-draft", json={})
+
+    response = await client.post(
+        f"/api/projects/{project['id']}/directory-draft/messages",
+        json={"content": "还在澄清阶段"},
+    )
+
+    assert response.status_code == 409
+
+
+@pytest.mark.asyncio
+async def test_submit_message_auto_applies_returned_tree(client, monkeypatch) -> None:
+    from app.agents.directory import ChatRoundResultDraft, DirectoryNodeDraft
+    from app.context.base import GenerationMeta
+    from app.services import directory_draft as service
+
+    async def fake_refine(db, workspace_id, project, context_text, tree_json, messages):
+        return (
+            ChatRoundResultDraft(
+                reply_text="已调整目录",
+                tree=[
+                    DirectoryNodeDraft(
+                        name="新根",
+                        description=None,
+                        children=[DirectoryNodeDraft(name="子节点", description=None)],
+                    )
+                ],
+            ),
+            GenerationMeta(provider="offline", model=None, is_fallback=True),
+        )
+
+    monkeypatch.setattr(service, "run_directory_refine", fake_refine)
+    await _register(client)
+    project = await _create_project(client)
+    await _to_pending_confirm(client, project["id"])
+
+    response = await client.post(
+        f"/api/projects/{project['id']}/directory-draft/messages",
+        json={"content": "重新组织一下"},
+    )
+
+    assert response.status_code == 200
+    data = response.json()
+    names = {node["name"] for node in data["nodes"]}
+    assert names == {"新根", "子节点"}
+    assert any(
+        message["role"] == "system" and "已应用目录" in message["content"]
+        for message in data["messages"]
+    )

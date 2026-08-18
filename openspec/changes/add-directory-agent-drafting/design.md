@@ -15,8 +15,9 @@
 
 **Non-Goals:**
 
-- 节点拓展（`add-directory-agent-node-expansion`）、对话式调整草稿、思维导图、语义检索、流式输出。
+- 节点拓展（`add-directory-agent-node-expansion`）、思维导图、语义检索、流式输出。
 - 自动应用草稿；不修改正式 Node 模型；不做跨项目草稿与草稿历史。
+- 对话调整不做结构化增量操作（AddNode/Rename/Move…）、不做消息截断与历史压缩。
 
 ## Decisions
 
@@ -104,6 +105,16 @@ POST   /api/projects/{id}/directory-draft/discard  丢弃
 ### D8：生成来源展示
 
 草稿响应携带 `provider / model / is_fallback`，前端展示“真实模型 / 离线生成”徽标；降级时后端 warning 日志。
+
+### D9：对话调整草稿
+
+新增 `directory_draft_messages` 表（draft_id、role、content、created_at），`directory_drafts` 增加 `conversation_rounds`（上限 30）。候选树生成后开放 `POST .../messages`：追加用户消息 → 把当前会话全部消息 + 候选树 JSON 交给 `run_directory_refine` → 返回 `{reply_text, tree?}`；返回树时自动 `_replace_draft_nodes` 并追加 system“已应用目录，共 N 个节点”。不做消息截断与历史压缩，轮数上限即总量控制；离线兜底只回文字不改树。
+
+理由：参照 KnowStruct 已验证的“纯讨论 / 附带完整树”语义；自动应用保持草稿仍是候选，用户可继续编辑。
+
+### D10：共创工作区布局
+
+候选树在左、对话区在右的双栏布局；对话输入只出现在 `pending_confirm`。
 
 ## Risks / Trade-offs
 
