@@ -498,3 +498,103 @@ async def test_batch_update_directory_rejects_other_project_node(
     )
 
     assert response.status_code == 400
+
+
+@pytest.mark.asyncio
+async def test_batch_reject_keeps_confirmed_candidate(client: httpx.AsyncClient) -> None:
+    """批量拒绝不能改变已确认候选，且保留其 Entry。"""
+    await _register(client)
+    project = await _create_project(client)
+    node = (
+        await client.post(
+            f"/api/projects/{project['id']}/nodes",
+            json={"name": "施工", "parent_id": None},
+        )
+    ).json()
+    source = await _create_source(client, project["id"])
+    await _process(client, source["id"])
+    candidate = (await _candidates(client, source["id"]))[0]
+    await client.post(f"/api/candidates/{candidate['id']}/archive", json={"node_id": node["id"]})
+
+    response = await client.post(
+        f"/api/projects/{project['id']}/review/candidates/batch-decision",
+        json={"candidate_ids": [candidate["id"]], "action": "reject"},
+    )
+
+    assert response.status_code == 200
+    assert response.json()[0]["status"] == "failed"
+    refreshed = (await _candidates(client, source["id"]))[0]
+    assert refreshed["status"] == "confirmed"
+    entries = (
+        await client.get(f"/api/projects/{project['id']}/nodes/{node['id']}/entries")
+    ).json()
+    assert len(entries) == 1
+
+
+@pytest.mark.asyncio
+async def test_batch_decision_dedupes_candidate_ids(client: httpx.AsyncClient) -> None:
+    """批量决策对重复候选 id 只处理一次。"""
+    await _register(client)
+    project = await _create_project(client)
+    source = await _create_source(client, project["id"])
+    await _process(client, source["id"])
+    candidate = (await _candidates(client, source["id"]))[0]
+
+    response = await client.post(
+        f"/api/projects/{project['id']}/review/candidates/batch-decision",
+        json={"candidate_ids": [candidate["id"], candidate["id"]], "action": "reject"},
+    )
+
+    assert response.status_code == 200
+    assert len(response.json()) == 1
+    assert response.json()[0]["status"] == "rejected"
+
+
+@pytest.mark.asyncio
+async def test_batch_update_directory_dedupes_ids(client: httpx.AsyncClient) -> None:
+    """批量更新目录对重复候选 id 只更新一次。"""
+    await _register(client)
+    project = await _create_project(client)
+    node = (
+        await client.post(
+            f"/api/projects/{project['id']}/nodes",
+            json={"name": "目标节点", "parent_id": None},
+        )
+    ).json()
+    source = await _create_source(client, project["id"])
+    await _process(client, source["id"])
+    candidate = (await _candidates(client, source["id"]))[0]
+
+    response = await client.post(
+        f"/api/projects/{project['id']}/review/candidates/batch-update-directory",
+        json={"candidate_ids": [candidate["id"], candidate["id"]], "node_id": node["id"]},
+    )
+
+    assert response.status_code == 200
+    assert response.json() == {"updated": 1}
+
+
+@pytest.mark.asyncio
+async def test_batch_update_directory_rejects_processed_candidate(
+    client: httpx.AsyncClient,
+) -> None:
+    """批量更新目录不能作用于已处理候选。"""
+    await _register(client)
+    project = await _create_project(client)
+    node = (
+        await client.post(
+            f"/api/projects/{project['id']}/nodes",
+            json={"name": "施工", "parent_id": None},
+        )
+    ).json()
+    source = await _create_source(client, project["id"])
+    await _process(client, source["id"])
+    candidate = (await _candidates(client, source["id"]))[0]
+    await client.post(f"/api/candidates/{candidate['id']}/archive", json={"node_id": node["id"]})
+
+    response = await client.post(
+        f"/api/projects/{project['id']}/review/candidates/batch-update-directory",
+        json={"candidate_ids": [candidate["id"]], "node_id": node["id"]},
+    )
+
+    assert response.status_code == 400

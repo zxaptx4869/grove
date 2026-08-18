@@ -55,6 +55,8 @@ async def decide_candidate(
     """对单条候选执行决策并重算 Source 审阅状态。"""
     if decision_status not in {CANDIDATE_PENDING, CANDIDATE_CONFIRMED, CANDIDATE_REJECTED}:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="无效的决策状态")
+    if decision_status == CANDIDATE_REJECTED and candidate.status != CANDIDATE_PENDING:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="候选已处理，不能拒绝")
     if decision_status == CANDIDATE_PENDING and candidate.entry_id is not None:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="已归档候选不能重新打开")
     candidate.status = decision_status
@@ -140,14 +142,15 @@ async def batch_decide_project_candidates(
         for candidate, source in rows
         if source.project_id == project_id
     }
-    if len(by_id) != len(set(payload.candidate_ids)):
+    candidate_ids = list(dict.fromkeys(payload.candidate_ids))
+    if len(by_id) != len(candidate_ids):
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="批量决策包含不属于当前项目的候选",
         )
 
     results: list[ProjectBatchDecisionResult] = []
-    for candidate_id in payload.candidate_ids:
+    for candidate_id in candidate_ids:
         candidate = by_id[candidate_id]
         try:
             if payload.action == "reject":
@@ -200,18 +203,25 @@ async def batch_update_candidates_directory(
         for candidate, source in rows
         if source.project_id == project_id
     }
-    if len(by_id) != len(set(payload.candidate_ids)):
+    candidate_ids = list(dict.fromkeys(payload.candidate_ids))
+    if len(by_id) != len(candidate_ids):
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="批量更新目录包含不属于当前项目的候选",
         )
+    for candidate_id in candidate_ids:
+        if by_id[candidate_id].status != CANDIDATE_PENDING:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="批量更新目录包含已处理候选",
+            )
     node = await db.get(Node, payload.node_id)
     if node is None or node.project_id != project_id:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="目录节点不属于当前项目",
         )
-    for candidate_id in payload.candidate_ids:
+    for candidate_id in candidate_ids:
         by_id[candidate_id].user_node_id = payload.node_id
     await db.commit()
-    return BatchUpdateDirectoryResult(updated=len(payload.candidate_ids))
+    return BatchUpdateDirectoryResult(updated=len(candidate_ids))
