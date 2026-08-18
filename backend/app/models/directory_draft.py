@@ -16,10 +16,12 @@ DRAFT_AWAITING_INPUT = "awaiting_input"
 DRAFT_PENDING_CONFIRM = "pending_confirm"
 DRAFT_CONFIRMED = "confirmed"
 DRAFT_DISCARDED = "discarded"
+DRAFT_FAILED = "failed"
 
 DRAFT_ACTIVE = {
     DRAFT_DRAFTING,
     DRAFT_AWAITING_INPUT,
+    DRAFT_FAILED,
     DRAFT_PENDING_CONFIRM,
 }
 
@@ -57,6 +59,7 @@ class DirectoryDraft(Base):
     )
     last_error: Mapped[str | None] = mapped_column(Text, nullable=True)
     conversation_rounds: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    claimed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )

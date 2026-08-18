@@ -2,6 +2,7 @@
 
 import json
 import logging
+from datetime import UTC, datetime
 
 from fastapi import HTTPException, status
 from sqlalchemy import delete, func, select
@@ -13,12 +14,15 @@ from app.agents.directory import (
     run_directory_draft,
     run_directory_refine,
 )
+from app.db.session import async_session_factory
 from app.models import Node, Project, ProjectContext
 from app.models.directory_draft import (
     DRAFT_AWAITING_INPUT,
     DRAFT_CLARIFY,
     DRAFT_CONFIRMED,
     DRAFT_DISCARDED,
+    DRAFT_DRAFTING,
+    DRAFT_FAILED,
     DRAFT_GENERATE,
     DRAFT_PENDING_CONFIRM,
     DirectoryDraft,
@@ -131,7 +135,12 @@ async def get_active_draft(
             .where(
                 DirectoryDraft.project_id == project_id,
                 DirectoryDraft.status.in_(
-                    [DRAFT_AWAITING_INPUT, DRAFT_PENDING_CONFIRM]
+                    [
+                        DRAFT_DRAFTING,
+                        DRAFT_AWAITING_INPUT,
+                        DRAFT_PENDING_CONFIRM,
+                        DRAFT_FAILED,
+                    ]
                 ),
             )
             .order_by(DirectoryDraft.updated_at.desc())
@@ -353,18 +362,35 @@ async def create_or_reuse_draft(
     db: AsyncSession,
     project: Project,
 ) -> DirectoryDraft:
-    """创建或复用项目活跃草稿，并执行首次澄清步骤。"""
+    """创建或复用项目活跃草稿；失败草稿重置后复用。"""
     existing = await get_active_draft(db, project.id)
     if existing is not None:
+        if existing.status == DRAFT_FAILED:
+            existing.status = DRAFT_DRAFTING
+            existing.next_action = DRAFT_CLARIFY
+            existing.clarify_json = None
+            existing.clarify_answers_json = None
+            existing.clarify_batches = 0
+            existing.last_error = None
+            existing.claimed_at = None
+            await db.execute(
+                delete(DirectoryDraftNode).where(
+                    DirectoryDraftNode.draft_id == existing.id
+                )
+            )
+            await db.execute(
+                delete(DirectoryDraftMessage).where(
+                    DirectoryDraftMessage.draft_id == existing.id
+                )
+            )
         return existing
     draft = DirectoryDraft(
         project_id=project.id,
-        status="drafting",
+        status=DRAFT_DRAFTING,
         next_action=DRAFT_CLARIFY,
     )
     db.add(draft)
     await db.flush()
-    await run_clarify_step(db, draft, project)
     return draft
 
 
@@ -380,9 +406,59 @@ async def submit_clarify_answers(
     draft.clarify_answers_json = json.dumps(answers, ensure_ascii=False)
     draft.clarify_batches += 1
     draft.next_action = DRAFT_GENERATE
-    draft.status = "drafting"
-    await run_generate_step(db, draft, project)
+    draft.status = DRAFT_DRAFTING
+    draft.claimed_at = None
     return draft
+
+
+async def claim_next_draft(db: AsyncSession) -> DirectoryDraft | None:
+    """认领一个待处理的草稿步骤。"""
+    draft = (
+        await db.execute(
+            select(DirectoryDraft)
+            .where(
+                DirectoryDraft.status == DRAFT_DRAFTING,
+                DirectoryDraft.claimed_at.is_(None),
+            )
+            .order_by(DirectoryDraft.updated_at)
+            .limit(1)
+        )
+    ).scalar_one_or_none()
+    if draft is None:
+        return None
+    draft.claimed_at = datetime.now(UTC)
+    return draft
+
+
+async def process_next_draft_step() -> bool:
+    """认领并处理一个草稿步骤，返回是否有步骤被处理。"""
+    async with async_session_factory() as db:
+        draft = await claim_next_draft(db)
+        if draft is None:
+            return False
+        draft_id = draft.id
+        project_id = draft.project_id
+        await db.commit()
+
+    async with async_session_factory() as db:
+        draft = await db.get(DirectoryDraft, draft_id)
+        project = await db.get(Project, project_id)
+        if draft is None or project is None:
+            return True
+        try:
+            if draft.next_action == DRAFT_CLARIFY:
+                await run_clarify_step(db, draft, project)
+            else:
+                await run_generate_step(db, draft, project)
+            draft.claimed_at = None
+            draft.last_error = None
+        except Exception as exc:  # noqa: BLE001
+            logger.exception("处理目录草稿步骤失败：%s", draft_id)
+            draft.status = DRAFT_FAILED
+            draft.last_error = str(exc)[:2000]
+            draft.claimed_at = None
+        await db.commit()
+    return True
 
 
 async def update_draft_nodes(

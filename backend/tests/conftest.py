@@ -7,6 +7,7 @@ os.environ.setdefault("DATABASE_URL", "sqlite+aiosqlite:///./test_grove.db")
 # 测试环境关闭后台 Worker，避免与测试写入产生竞态
 os.environ.setdefault("PROCESSING_WORKER_ENABLED", "false")
 os.environ.setdefault("CONTEXT_WORKER_ENABLED", "false")
+os.environ.setdefault("DIRECTORY_DRAFT_WORKER_ENABLED", "false")
 # 测试环境使用内存密钥存储，避免触碰系统钥匙串
 os.environ.setdefault("SECRET_STORE", "memory")
 

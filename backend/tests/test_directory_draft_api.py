@@ -4,8 +4,12 @@ import uuid
 
 import httpx
 import pytest
+from sqlalchemy import delete
 
+from app.db.session import async_session_factory
 from app.main import create_app
+from app.models.directory_draft import DirectoryDraft
+from app.services.directory_draft import process_next_draft_step
 
 
 @pytest.fixture
@@ -13,6 +17,15 @@ async def client():
     transport = httpx.ASGITransport(app=create_app())
     async with httpx.AsyncClient(transport=transport, base_url="http://test") as api_client:
         yield api_client
+
+
+@pytest.fixture(autouse=True)
+async def _clean_draft_rows():
+    """每个测试前清空草稿表，避免残留草稿干扰 Worker 认领。"""
+    async with async_session_factory() as db:
+        await db.execute(delete(DirectoryDraft))
+        await db.commit()
+    yield
 
 
 async def _register(client: httpx.AsyncClient) -> str:
@@ -42,10 +55,12 @@ async def _create_node(client: httpx.AsyncClient, project_id: int, name: str) ->
 
 async def _to_pending_confirm(client: httpx.AsyncClient, project_id: int) -> None:
     await client.post(f"/api/projects/{project_id}/directory-draft", json={})
+    assert await process_next_draft_step() is True
     await client.post(
         f"/api/projects/{project_id}/directory-draft/clarify",
         json={"answers": {"dimension": "按阶段", "modules": []}},
     )
+    assert await process_next_draft_step() is True
 
 
 @pytest.mark.asyncio
@@ -57,6 +72,9 @@ async def test_create_draft_returns_clarify_questions(client) -> None:
 
     assert response.status_code == 201
     data = response.json()
+    assert data["status"] == "drafting"
+    assert await process_next_draft_step() is True
+    data = (await client.get(f"/api/projects/{project['id']}/directory-draft")).json()
     assert data["status"] == "awaiting_input"
     assert data["next_action"] == "clarify"
     assert len(data["clarify"]) == 2
@@ -71,6 +89,7 @@ async def test_submit_clarify_generates_candidate_tree(client) -> None:
     await _register(client)
     project = await _create_project(client)
     await client.post(f"/api/projects/{project['id']}/directory-draft", json={})
+    assert await process_next_draft_step() is True
 
     response = await client.post(
         f"/api/projects/{project['id']}/directory-draft/clarify",
@@ -83,7 +102,9 @@ async def test_submit_clarify_generates_candidate_tree(client) -> None:
     )
 
     assert response.status_code == 200
-    data = response.json()
+    assert response.json()["status"] == "drafting"
+    assert await process_next_draft_step() is True
+    data = (await client.get(f"/api/projects/{project['id']}/directory-draft")).json()
     assert data["status"] == "pending_confirm"
     assert data["next_action"] == "generate"
     assert len(data["nodes"]) > 0
@@ -95,10 +116,12 @@ async def test_update_draft_nodes_persists_edits(client) -> None:
     await _register(client)
     project = await _create_project(client)
     await client.post(f"/api/projects/{project['id']}/directory-draft", json={})
+    assert await process_next_draft_step() is True
     await client.post(
         f"/api/projects/{project['id']}/directory-draft/clarify",
         json={"answers": {"dimension": "按阶段", "modules": []}},
     )
+    assert await process_next_draft_step() is True
 
     response = await client.patch(
         f"/api/projects/{project['id']}/directory-draft/nodes",
@@ -124,10 +147,12 @@ async def test_apply_draft_creates_nodes_and_marks_confirmed(client) -> None:
     await _register(client)
     project = await _create_project(client)
     await client.post(f"/api/projects/{project['id']}/directory-draft", json={})
+    assert await process_next_draft_step() is True
     await client.post(
         f"/api/projects/{project['id']}/directory-draft/clarify",
         json={"answers": {"dimension": "按阶段", "modules": []}},
     )
+    assert await process_next_draft_step() is True
 
     response = await client.post(
         f"/api/projects/{project['id']}/directory-draft/apply"
@@ -151,10 +176,12 @@ async def test_apply_draft_rejects_non_empty_project(client) -> None:
     project = await _create_project(client)
     await _create_node(client, project["id"], "已有节点")
     await client.post(f"/api/projects/{project['id']}/directory-draft", json={})
+    assert await process_next_draft_step() is True
     await client.post(
         f"/api/projects/{project['id']}/directory-draft/clarify",
         json={"answers": {"dimension": "按阶段", "modules": []}},
     )
+    assert await process_next_draft_step() is True
 
     response = await client.post(
         f"/api/projects/{project['id']}/directory-draft/apply"
@@ -169,6 +196,7 @@ async def test_discard_draft(client) -> None:
     await _register(client)
     project = await _create_project(client)
     await client.post(f"/api/projects/{project['id']}/directory-draft", json={})
+    assert await process_next_draft_step() is True
 
     response = await client.post(
         f"/api/projects/{project['id']}/directory-draft/discard"

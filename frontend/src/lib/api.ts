@@ -657,6 +657,7 @@ export type DirectoryDraftStatus =
   | 'pending_confirm'
   | 'confirmed'
   | 'discarded'
+  | 'failed'
 
 export interface ClarifyQuestionPayload {
   id: string

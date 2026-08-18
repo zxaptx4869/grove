@@ -54,6 +54,11 @@ class Settings(BaseSettings):
     # 进程内项目上下文 Worker：应用启动时是否开启（测试环境可关闭）
     context_worker_enabled: bool = Field(default=True, description="是否启用项目上下文 Worker")
 
+    # 进程内目录起草 Worker（测试环境可置 false）
+    directory_draft_worker_enabled: bool = Field(
+        default=True, description="是否启用目录起草 Worker"
+    )
+
     # 模型密钥存储：keychain（默认）/ memory（测试）
     secret_store: str = Field(default="keychain", description="密钥安全存储实现")
 

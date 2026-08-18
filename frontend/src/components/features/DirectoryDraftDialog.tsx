@@ -1,22 +1,15 @@
-import { useEffect, useMemo, useState } from 'react'
-import { Check, FolderPlus, Plus, RotateCw, Trash2, X } from 'lucide-react'
+import { useEffect, useMemo, useRef, useState } from 'react'
+import { FolderPlus, Plus, RotateCw, Trash2, X } from 'lucide-react'
 
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from '@/components/ui/dialog'
 import { Input } from '@/components/ui/input'
 import { Textarea } from '@/components/ui/textarea'
 import {
   applyDirectoryDraft,
   createDirectoryDraft,
   discardDirectoryDraft,
+  fetchDirectoryDraft,
   submitDirectoryDraftMessage,
   submitDirectoryDraftClarify,
   updateDirectoryDraftNodes,
@@ -78,9 +71,7 @@ function removeNode(nodes: readonly EditableNode[], uid: string): EditableNode[]
 
 function sourceBadge(draft: DirectoryDraftPayload) {
   if (draft.provider === 'llm' && !draft.is_fallback) {
-    return (
-      <Badge className="bg-confirmed-soft text-confirmed">真实模型</Badge>
-    )
+    return <Badge className="bg-confirmed-soft text-confirmed">真实模型</Badge>
   }
   if (draft.is_fallback || draft.provider === 'offline' || draft.provider === 'demo') {
     return <Badge className="bg-error-soft text-destructive">离线生成</Badge>
@@ -117,7 +108,12 @@ function TreeNodeEditor({
               ...node,
               children: [
                 ...node.children,
-                { uid: `draft-${Math.random().toString(36).slice(2)}`, name: '新节点', description: null, children: [] },
+                {
+                  uid: `draft-${Math.random().toString(36).slice(2)}`,
+                  name: '新节点',
+                  description: null,
+                  children: [],
+                },
               ],
             })
           }
@@ -164,35 +160,66 @@ export function DirectoryDraftDialog({
   const [draft, setDraft] = useState<DirectoryDraftPayload | null>(null)
   const [tree, setTree] = useState<EditableNode[]>([])
   const [answers, setAnswers] = useState<Record<string, string | string[]>>({})
+  const [otherText, setOtherText] = useState<Record<string, string>>({})
   const [messages, setMessages] = useState<DraftMessagePayload[]>([])
   const [messageInput, setMessageInput] = useState('')
   const [loading, setLoading] = useState(false)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
-
-  useEffect(() => {
-    if (!open) return
-    setError('')
-    setLoading(true)
-    createDirectoryDraft(projectId)
-      .then((data) => {
-        setDraft(data)
-        setMessages(data.messages ?? [])
-        if (data.status === 'pending_confirm') setTree(flattenToNested(data.nodes))
-      })
-      .catch((reason: unknown) =>
-        setError(reason instanceof Error ? reason.message : '创建草稿失败'),
-      )
-      .finally(() => setLoading(false))
-  }, [open, projectId])
-
-  const nodeCount = useMemo(() => countNodes(tree), [tree])
+  const pollRef = useRef<ReturnType<typeof setInterval> | null>(null)
 
   function applyDraftData(data: DirectoryDraftPayload) {
     setDraft(data)
     setMessages(data.messages ?? [])
     if (data.status === 'pending_confirm') setTree(flattenToNested(data.nodes))
   }
+
+  function stopPolling() {
+    if (pollRef.current) {
+      clearInterval(pollRef.current)
+      pollRef.current = null
+    }
+  }
+
+  useEffect(() => {
+    if (!open) {
+      stopPolling()
+      return
+    }
+    setError('')
+    setLoading(true)
+    createDirectoryDraft(projectId)
+      .then((data) => {
+        applyDraftData(data)
+        setLoading(false)
+      })
+      .catch((reason: unknown) => {
+        setError(reason instanceof Error ? reason.message : '创建草稿失败')
+        setLoading(false)
+      })
+    return stopPolling
+  }, [open, projectId])
+
+  useEffect(() => {
+    if (!draft || draft.status !== 'drafting') {
+      stopPolling()
+      return
+    }
+    stopPolling()
+    pollRef.current = setInterval(async () => {
+      try {
+        const data = await fetchDirectoryDraft(projectId)
+        applyDraftData(data)
+        if (data.status !== 'drafting') stopPolling()
+      } catch (reason) {
+        setError(reason instanceof Error ? reason.message : '获取草稿失败')
+        stopPolling()
+      }
+    }, 1000)
+    return stopPolling
+  }, [draft?.status, projectId])
+
+  const nodeCount = useMemo(() => countNodes(tree), [tree])
 
   function toggleOption(questionId: string, option: string, multiple: boolean) {
     setAnswers((current) => {
@@ -210,7 +237,18 @@ export function DirectoryDraftDialog({
     setBusy(true)
     setError('')
     try {
-      const data = await submitDirectoryDraftClarify(projectId, answers)
+      const merged = { ...answers }
+      for (const [questionId, text] of Object.entries(otherText)) {
+        const current = merged[questionId]
+        if (Array.isArray(current)) {
+          merged[questionId] = current
+            .filter((item) => item !== '其他')
+            .concat(text ? [text] : [])
+        } else if (current === '其他') {
+          merged[questionId] = text || '其他'
+        }
+      }
+      const data = await submitDirectoryDraftClarify(projectId, merged)
       applyDraftData(data)
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : '提交澄清失败')
@@ -280,139 +318,184 @@ export function DirectoryDraftDialog({
     }
   }
 
-  return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="sm:max-w-2xl">
-        <DialogHeader>
-          <DialogTitle>与 AI 共创目录</DialogTitle>
-          <DialogDescription>
-            AI 只生成候选目录草稿，确认后才会创建正式节点。
-            {draft ? sourceBadge(draft) : null}
-          </DialogDescription>
-        </DialogHeader>
+  const generating =
+    loading || draft?.status === 'drafting'
 
-        {error ? (
-          <div className="rounded-md border-l-2 border-destructive bg-error-soft px-3 py-2 text-body-sm text-destructive">
-            {error}
+  return open ? (
+    <div className="fixed inset-0 z-50 bg-black/40" onClick={() => onOpenChange(false)}>
+      <aside
+        role="dialog"
+        aria-modal="true"
+        aria-label="与 AI 共创目录"
+        className="absolute right-0 top-0 flex h-full w-[min(760px,100vw)] flex-col bg-card shadow-lg"
+        onClick={(event) => event.stopPropagation()}
+      >
+        <header className="flex items-center justify-between gap-3 border-b px-6 py-4">
+          <div className="min-w-0">
+            <h2 className="text-[18px] font-[650] leading-6">与 AI 共创目录</h2>
+            <p className="text-caption text-muted-foreground">
+              AI 只生成候选草稿，确认后才会创建正式节点。
+            </p>
           </div>
-        ) : null}
+          {draft ? sourceBadge(draft) : null}
+          <Button
+            size="icon-sm"
+            variant="ghost"
+            aria-label="关闭"
+            onClick={() => onOpenChange(false)}
+          >
+            <X />
+          </Button>
+        </header>
 
-        {loading ? (
-          <div className="space-y-2 py-8">
-            <div className="h-5 w-40 animate-pulse rounded bg-muted/50" />
-            <div className="h-32 animate-pulse rounded bg-muted/40" />
-          </div>
-        ) : draft?.status === 'awaiting_input' ? (
-          <div className="max-h-[50vh] space-y-4 overflow-y-auto">
-            {draft.clarify.map((question) => {
-              const value = answers[question.id]
-              const selected = Array.isArray(value) ? value : value ? [value] : []
-              return (
-                <div key={question.id} className="space-y-2 rounded-md border p-3">
-                  <p className="text-body font-[650]">{question.text}</p>
-                  <div className="flex flex-wrap gap-2">
-                    {question.options.map((option) => {
-                      const active = selected.includes(option)
-                      return (
-                        <Button
-                          key={option}
-                          size="sm"
-                          variant={active ? 'default' : 'outline'}
-                          onClick={() => toggleOption(question.id, option, question.multiple)}
-                        >
-                          {active ? <Check /> : null}
-                          {option}
-                        </Button>
-                      )
-                    })}
-                  </div>
-                  <Input
-                    value={Array.isArray(value) ? '' : (value ?? '')}
-                    placeholder="或自由输入答案"
-                    onChange={(event) =>
-                      setAnswers((current) => ({
-                        ...current,
-                        [question.id]: event.target.value,
-                      }))
-                    }
-                  />
-                </div>
-              )
-            })}
-          </div>
-        ) : draft?.status === 'pending_confirm' ? (
-          <div className="grid max-h-[55vh] grid-cols-2 gap-4 overflow-hidden">
-            <div className="min-h-0 space-y-2 overflow-y-auto pr-2">
-              <p className="text-caption text-muted-foreground">
-                将创建 {nodeCount} 个节点 · 受影响 Entry 0 条
-              </p>
-              <Button
-                size="sm"
-                variant="outline"
-                onClick={() =>
-                  setTree((current) => [
-                    ...current,
-                    { uid: `draft-${Math.random().toString(36).slice(2)}`, name: '新节点', description: null, children: [] },
-                  ])
-                }
-              >
-                <FolderPlus />
-                添加根节点
-              </Button>
-              {tree.map((node) => (
-                <TreeNodeEditor
-                  key={node.uid}
-                  node={node}
-                  depth={0}
-                  onChange={(updated) => setTree(mapNodes(tree, updated.uid, () => updated))}
-                  onRemove={() => setTree(removeNode(tree, node.uid))}
-                />
-              ))}
+        <div className="min-h-0 flex-1 overflow-y-auto px-6 py-4">
+          {error ? (
+            <div className="mb-3 rounded-md border-l-2 border-destructive bg-error-soft px-3 py-2 text-body-sm text-destructive">
+              {error}
             </div>
-            <div className="flex min-h-0 flex-col">
-              <div className="min-h-0 flex-1 space-y-2 overflow-y-auto rounded-md border p-3">
-                {messages.length === 0 ? (
-                  <p className="text-caption text-muted-foreground">
-                    可以直接告诉 AI 怎么调整目录。
-                  </p>
-                ) : (
-                  messages.map((message) => (
-                    <div
-                      key={message.id}
-                      className={`max-w-[85%] rounded-md px-3 py-2 text-body-sm ${
-                        message.role === 'user'
-                          ? 'ml-auto bg-brand-soft text-brand'
-                          : message.role === 'system'
-                            ? 'bg-muted text-muted-foreground'
-                            : 'bg-muted/60'
-                      }`}
-                    >
-                      {message.content}
+          ) : null}
+
+          {generating ? (
+            <div className="flex items-center gap-2 py-10 text-body-sm text-muted-foreground">
+              <RotateCw className="size-4 animate-spin" />
+              {draft?.next_action === 'clarify' ? 'AI 正在生成澄清问题…' : 'AI 正在生成候选树…'}
+            </div>
+          ) : draft?.status === 'awaiting_input' ? (
+            <div className="space-y-4">
+              {draft.clarify.map((question) => {
+                const value = answers[question.id]
+                const selected = Array.isArray(value) ? value : value ? [value] : []
+                const otherSelected = selected.includes('其他')
+                return (
+                  <div key={question.id} className="space-y-2 rounded-md border p-3">
+                    <p className="text-body font-[650]">{question.text}</p>
+                    <div className="space-y-1.5">
+                      {question.options.map((option) => {
+                        const active = selected.includes(option)
+                        return (
+                          <label
+                            key={option}
+                            className="flex cursor-pointer items-center gap-2 text-body-sm"
+                          >
+                            <input
+                              type={question.multiple ? 'checkbox' : 'radio'}
+                              name={question.id}
+                              checked={active}
+                              onChange={() => toggleOption(question.id, option, question.multiple)}
+                            />
+                            {option}
+                          </label>
+                        )
+                      })}
+                      <label className="flex cursor-pointer items-center gap-2 text-body-sm">
+                        <input
+                          type={question.multiple ? 'checkbox' : 'radio'}
+                          name={question.id}
+                          checked={otherSelected}
+                          onChange={() => toggleOption(question.id, '其他', question.multiple)}
+                        />
+                        其他
+                      </label>
                     </div>
-                  ))
-                )}
-              </div>
-              <div className="mt-2 flex items-end gap-2">
-                <Textarea
-                  className="flex-1"
-                  rows={3}
-                  value={messageInput}
-                  placeholder="告诉 AI 怎么调整目录…"
-                  onChange={(event) => setMessageInput(event.target.value)}
-                />
-                <Button disabled={busy || !messageInput.trim()} onClick={sendMessage}>
-                  发送
+                    {otherSelected ? (
+                      <Input
+                        value={otherText[question.id] ?? ''}
+                        placeholder="请输入自定义答案"
+                        onChange={(event) =>
+                          setOtherText((current) => ({
+                            ...current,
+                            [question.id]: event.target.value,
+                          }))
+                        }
+                      />
+                    ) : null}
+                  </div>
+                )
+              })}
+            </div>
+          ) : draft?.status === 'pending_confirm' ? (
+            <div className="grid h-full grid-cols-2 gap-4">
+              <div className="min-h-0 space-y-2 overflow-y-auto pr-2">
+                <p className="text-caption text-muted-foreground">
+                  将创建 {nodeCount} 个节点 · 受影响 Entry 0 条
+                </p>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  onClick={() =>
+                    setTree((current) => [
+                      ...current,
+                      {
+                        uid: `draft-${Math.random().toString(36).slice(2)}`,
+                        name: '新节点',
+                        description: null,
+                        children: [],
+                      },
+                    ])
+                  }
+                >
+                  <FolderPlus />
+                  添加根节点
                 </Button>
+                {tree.map((node) => (
+                  <TreeNodeEditor
+                    key={node.uid}
+                    node={node}
+                    depth={0}
+                    onChange={(updated) => setTree(mapNodes(tree, updated.uid, () => updated))}
+                    onRemove={() => setTree(removeNode(tree, node.uid))}
+                  />
+                ))}
+              </div>
+              <div className="flex min-h-0 flex-col">
+                <div className="min-h-0 flex-1 space-y-2 overflow-y-auto rounded-md border p-3">
+                  {messages.length === 0 ? (
+                    <p className="text-caption text-muted-foreground">
+                      可以直接告诉 AI 怎么调整目录。
+                    </p>
+                  ) : (
+                    messages.map((message) => (
+                      <div
+                        key={message.id}
+                        className={`max-w-[85%] rounded-md px-3 py-2 text-body-sm ${
+                          message.role === 'user'
+                            ? 'ml-auto bg-brand-soft text-brand'
+                            : message.role === 'system'
+                              ? 'bg-muted text-muted-foreground'
+                              : 'bg-muted/60'
+                        }`}
+                      >
+                        {message.content}
+                      </div>
+                    ))
+                  )}
+                </div>
+                <div className="mt-2 flex items-end gap-2">
+                  <Textarea
+                    className="flex-1"
+                    rows={3}
+                    value={messageInput}
+                    placeholder="告诉 AI 怎么调整目录…"
+                    onChange={(event) => setMessageInput(event.target.value)}
+                  />
+                  <Button disabled={busy || !messageInput.trim()} onClick={sendMessage}>
+                    发送
+                  </Button>
+                </div>
               </div>
             </div>
-          </div>
-        ) : (
-          <p className="py-8 text-center text-body-sm text-muted-foreground">
-            草稿正在生成或已处理，请稍后重试。
-          </p>
-        )}
+          ) : draft?.status === 'failed' ? (
+            <p className="py-8 text-center text-body-sm text-destructive">
+              草稿生成失败：{draft.last_error ?? '未知错误'}，请重新发起。
+            </p>
+          ) : (
+            <p className="py-8 text-center text-body-sm text-muted-foreground">
+              草稿已处理或正在处理，请稍候。
+            </p>
+          )}
+        </div>
 
-        <DialogFooter>
+        <footer className="flex justify-end gap-2 border-t px-6 py-4">
           <Button variant="ghost" disabled={busy || !draft} onClick={discard}>
             <X />
             丢弃
@@ -433,8 +516,8 @@ export function DirectoryDraftDialog({
               </Button>
             </>
           ) : null}
-        </DialogFooter>
-      </DialogContent>
-    </Dialog>
-  )
+        </footer>
+      </aside>
+    </div>
+  ) : null
 }
