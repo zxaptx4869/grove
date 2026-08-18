@@ -281,8 +281,8 @@ export function DirectoryDraftDialog({
   const nodeCount = useMemo(() => countNodes(tree), [tree])
   const selectedCount = useMemo(() => countSelected(tree), [tree])
 
-  async function persistTree() {
-    if (!dirty) return
+  async function persistTree(force = false) {
+    if (!force && !dirty) return
     try {
       const data = await updateDirectoryDraftNodes(projectId, tree)
       setDraft(data)
@@ -341,7 +341,7 @@ export function DirectoryDraftDialog({
     setBusy(true)
     setError('')
     try {
-      if (dirty) await persistTree()
+      await persistTree(true)
       const data = await applyDirectoryDraft(projectId)
       setDraft(data)
       onApplied?.()
@@ -377,6 +377,7 @@ export function DirectoryDraftDialog({
       { id: -Date.now(), role: 'user', content, created_at: new Date().toISOString() },
     ])
     try {
+      await persistTree(true)
       const data = await submitDirectoryDraftMessage(projectId, content)
       applyDraftData(data)
     } catch (reason) {
