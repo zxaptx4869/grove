@@ -122,6 +122,12 @@ refresh_due_at = max(now + debounce, last_success_generated_at + min_interval)
 
 理由：系统内已配置真实 key；真实模型才能产出有意义的项目概要，demo 只是兜底。离线回退保证测试与无密钥环境仍可运行。
 
+### D10：防静默降级
+
+`ProjectContext` 新增 `provider`（`demo` / `llm` / `offline`）、`model` 与 `is_fallback`；生成器返回 `GenerationMeta` 描述本次来源，服务在落库时记录，降级时输出 warning 日志。前端根据 `is_fallback` 展示“真实模型 / 离线生成”徽标，并在页脚展示模型名。启动日志提示当前生成器类型与降级条件。
+
+理由：接口 200 + ready 不代表用了真实模型；来源可追溯后才能避免“静默降级”类问题。此规则同步写入 AGENTS.md 作为工程约定。
+
 ## Risks / Trade-offs
 
 - [快照短暂滞后于实时数据] → 关系判断保留项目内直接检索兜底；前端目录徽章改用实时树。

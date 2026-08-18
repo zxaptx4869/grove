@@ -306,6 +306,9 @@ export interface ProjectContextPayload {
   last_update_reason: string | null
   entries_summary: EntrySummaryPayload | null
   recent_themes: string[]
+  provider: string | null
+  model: string | null
+  is_fallback: boolean
   status: ProjectContextStatus
   error: string | null
   corrections: ProjectContextCorrectionsPayload

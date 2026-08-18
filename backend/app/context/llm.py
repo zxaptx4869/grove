@@ -4,6 +4,7 @@ from pydantic_ai import Agent
 from pydantic_ai.models.test import TestModel
 
 from app.context.base import (
+    GenerationMeta,
     ProjectContextCorrections,
     ProjectContextDraft,
     ProjectContextGenerator,
@@ -81,15 +82,18 @@ def _offline_draft(
             recent_titles.append(title)
         if len(recent_titles) >= 5:
             break
-    return ProjectContextDraft(
-        project_summary=corrections.project_summary
-        or (
-            f"围绕「{description}」进行知识整理，当前目录包含 {len(nodes)} 个节点，"
-            f"已确认 {total_entries} 条知识。"
+    return (
+        ProjectContextDraft(
+            project_summary=corrections.project_summary
+            or (
+                f"围绕「{description}」进行知识整理，当前目录包含 {len(nodes)} 个节点，"
+                f"已确认 {total_entries} 条知识。"
+            ),
+            current_focus=corrections.current_focus or "继续建立正式目录并采集原始材料。",
+            directory_topics=topics,
+            recent_themes=recent_titles,
         ),
-        current_focus=corrections.current_focus or "继续建立正式目录并采集原始材料。",
-        directory_topics=topics,
-        recent_themes=recent_titles,
+        GenerationMeta(provider="offline", model=None, is_fallback=True),
     )
 
 
@@ -106,7 +110,7 @@ class LLMProjectContextGenerator(ProjectContextGenerator):
         entries_summary: dict | None = None,
         top_level_nodes: list[dict] | None = None,
         corrections: ProjectContextCorrections | None = None,
-    ) -> ProjectContextDraft:
+    ) -> tuple[ProjectContextDraft, GenerationMeta]:
         text_model = await get_text_model(db, project.workspace_id)
         if isinstance(text_model, TestModel):
             return _offline_draft(
@@ -133,4 +137,11 @@ class LLMProjectContextGenerator(ProjectContextGenerator):
         result = await agent.run(context)
         if result.output is None:
             raise RuntimeError("项目上下文生成器未返回结构化结果")
-        return result.output
+        model_name = getattr(text_model, "model_name", None) or getattr(
+            text_model, "model", "unknown"
+        )
+        return result.output, GenerationMeta(
+            provider="llm",
+            model=str(model_name),
+            is_fallback=False,
+        )

@@ -132,6 +132,15 @@ export function ProjectContextPanel({
           <Badge className={`min-h-[22px] rounded px-[7px] py-0.5 text-[11px] font-semibold ${statusClass(data.status)}`}>
             {STATUS_LABELS[data.status]}
           </Badge>
+          {data.is_fallback ? (
+            <Badge className="min-h-[22px] rounded bg-error-soft px-[7px] py-0.5 text-[11px] font-semibold text-destructive">
+              离线生成
+            </Badge>
+          ) : (
+            <Badge className="min-h-[22px] rounded bg-confirmed-soft px-[7px] py-0.5 text-[11px] font-semibold text-confirmed">
+              真实模型
+            </Badge>
+          )}
         </div>
         <div className="flex items-center gap-2">
           <Button size="sm" variant="outline" onClick={openCorrect}>
@@ -224,7 +233,8 @@ export function ProjectContextPanel({
         <p className="text-caption text-muted-foreground">
           <Sparkles className="mr-1 inline size-3.5" />
           AI 候选 · 更新于 {formatGeneratedAt(data.generated_at)} · 版本 v{data.version ?? 0} ·
-          更新原因 {data.last_update_reason ?? '—'} · 生命周期 {data.lifecycle_status}
+          更新原因 {data.last_update_reason ?? '—'} · 模型 {data.model ?? '—'} · 生命周期{' '}
+          {data.lifecycle_status}
         </p>
       </div>
 

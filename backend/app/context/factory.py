@@ -3,6 +3,7 @@
 from functools import lru_cache
 
 from app.context.base import (
+    GenerationMeta,
     ProjectContextCorrections,
     ProjectContextDraft,
     ProjectContextGenerator,
@@ -26,7 +27,7 @@ class UnavailableProjectContextGenerator(ProjectContextGenerator):
         entries_summary: dict | None = None,
         top_level_nodes: list[dict] | None = None,
         corrections: ProjectContextCorrections | None = None,
-    ) -> ProjectContextDraft:
+    ) -> tuple[ProjectContextDraft, GenerationMeta]:
         del db, project, nodes, entries_summary, top_level_nodes, corrections
         raise NotImplementedError(
             "项目上下文生成 Provider 尚未接入，请在后续 change 完成实现后再使用。"

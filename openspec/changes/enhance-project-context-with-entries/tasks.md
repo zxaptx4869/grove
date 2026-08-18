@@ -3,6 +3,7 @@
 - [x] 1.1 新增 Alembic 迁移，为 `project_contexts` 增加 `version`、`last_update_reason`、`entries_summary`、`recent_themes` 可空列
 - [x] 1.2 更新 `ProjectContext` 模型与字段注释
 - [x] 1.3 更新 `ProjectContextOut`，增加 `version`、`last_update_reason`、结构化 `entries_summary` 与 `recent_themes`
+- [x] 1.4 新增 Alembic 迁移与模型字段：`provider`、`model`、`is_fallback`
 
 验收：`cd backend && .venv/bin/alembic upgrade head && .venv/bin/ruff check .`
 
@@ -13,6 +14,7 @@
 - [x] 2.3 扩展 `ProjectContextDraft` 与 `ProjectContextGenerator` 接口：输入 `entries_summary` 与顶级节点信息，输出 `recent_themes`
 - [x] 2.4 更新 demo 生成器：`recent_themes` 从最近条目标题确定性提炼，`directory_topics` 保持顶级节点名
 - [x] 2.5 新增 `LLMProjectContextGenerator`（真实文本模型 + 无密钥离线回退），工厂默认接入并支持 `demo` 切换
+- [x] 2.6 生成器返回 `GenerationMeta`（provider / model / is_fallback），刷新时落库并降级日志告警
 
 验收：`cd backend && .venv/bin/pytest -q && .venv/bin/ruff check .`
 
@@ -23,6 +25,7 @@
 - [x] 3.3 `refresh_project_context` 成功时 `version += 1` 并写入新字段，失败不递增
 - [x] 3.4 Entry 服务接入触发点：归档 `entry_archived`、编辑/应用修订 `entry_edited`，补充来源证据不触发
 - [x] 3.5 项目/目录接口补 `directory_changed` / `project_updated`；纠正与手动刷新记录 `user_correction` / `manual_refresh`
+- [x] 3.6 启动日志提示生成器类型与降级条件
 
 验收：`cd backend && .venv/bin/pytest -q && .venv/bin/ruff check .`
 
@@ -32,6 +35,7 @@
 - [x] 4.2 扩展 `lib/api.ts` 的 `ProjectContextPayload` 与相关类型
 - [x] 4.3 `ProjectContextPanel` 展示近期主题、Entry 覆盖、版本与更新原因；目录主题徽章改为从目录树派生
 - [x] 4.4 补充项目上下文面板的前端测试
+- [x] 4.5 前端展示“真实模型 / 离线生成”徽标与模型名
 
 验收：`cd frontend && npm run test:run && npm run build`
 
@@ -41,3 +45,4 @@
 - [x] 5.2 运行后端测试与静态检查
 - [x] 5.3 运行前端测试与构建
 - [ ] 5.4 手动走查项目上下文面板展示与触发更新策略
+- [x] 5.5 更新 AGENTS.md：AI 生成路径必须记录 provider / model / fallback，禁止静默降级

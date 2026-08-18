@@ -260,7 +260,7 @@ async def refresh_project_context(
     top_level_nodes = _build_top_level_nodes(list(nodes), entries_summary)
 
     try:
-        draft = await get_project_context_generator().generate(
+        draft, meta = await get_project_context_generator().generate(
             db,
             project,
             list(nodes),
@@ -279,6 +279,15 @@ async def refresh_project_context(
         context.directory_topics = json.dumps(topic_names, ensure_ascii=False)
         context.entries_summary = json.dumps(entries_summary, ensure_ascii=False)
         context.recent_themes = json.dumps(draft.recent_themes, ensure_ascii=False)
+        context.provider = meta.provider
+        context.model = meta.model
+        context.is_fallback = meta.is_fallback
+        if meta.is_fallback:
+            logger.warning(
+                "项目上下文降级生成：provider=%s，model=%s",
+                meta.provider,
+                meta.model,
+            )
         context.version = (context.version or 0) + 1
         if reason:
             context.last_update_reason = reason
@@ -326,6 +335,9 @@ async def _assemble_out(project: Project, context: ProjectContext) -> ProjectCon
         last_update_reason=context.last_update_reason,
         entries_summary=_parse_entries_summary(context.entries_summary),
         recent_themes=_parse_recent_themes(context.recent_themes),
+        provider=context.provider,
+        model=context.model,
+        is_fallback=context.is_fallback,
         status=context.status,
         error=context.error,
         corrections=ProjectContextCorrectionsOut(

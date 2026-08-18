@@ -4,6 +4,7 @@
 """
 
 import asyncio
+import logging
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
@@ -24,11 +25,17 @@ from app.context.worker import run_context_worker
 from app.core.config import get_settings
 from app.processing.worker import run_worker
 
+logger = logging.getLogger(__name__)
+
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """应用生命周期：按配置启动/停止进程内处理与上下文 Worker。"""
     settings = get_settings()
+    logger.info(
+        "项目上下文生成器：%s（无可用密钥或进程无钥匙串权限时自动降级为离线输出）",
+        settings.context_generator,
+    )
     stop_event = asyncio.Event()
     tasks: list[asyncio.Task] = []
     if settings.processing_worker_enabled:

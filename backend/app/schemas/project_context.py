@@ -53,6 +53,9 @@ class ProjectContextOut(BaseModel):
     last_update_reason: str | None
     entries_summary: EntrySummaryOut | None
     recent_themes: list[str] = []
+    provider: str | None
+    model: str | None
+    is_fallback: bool
     status: str
     error: str | None
     corrections: ProjectContextCorrectionsOut

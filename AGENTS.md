@@ -27,6 +27,7 @@
 - 提交信息用中文、遵循 Conventional Commits 风格（feat/fix/docs/chore/refactor）。
 - 前端服务端状态查询默认即时（TanStack Query `staleTime: 0`，在 `main.tsx` 全局默认）；只有明确静态且昂贵的查询才在各自 `useQuery` 显式设置更长 `staleTime`，并注明缓存理由。后台 Worker 或跨页面变更的数据不得依赖长缓存。
 - 产品范围与优先级从 `docs/产品蓝图.md` 路由到对应权威专题；先读索引，再只读取任务相关的 1 至 2 份专题，不默认加载全部产品专题。遇到跨 change 的产品分歧先更新对应专题，具体技术取舍记录到对应 change 的 `design.md`，不要静默猜测。
+- **AI 可观测性（防静默降级）**：所有 AI 生成路径必须记录 provider / model / fallback 状态；接口返回成功不等于真实模型调用成功，禁止静默降级。发生降级时必须日志告警，并在响应或界面中可识别。
 
 ## 4. 代码注释与沟通语言
 

@@ -1,6 +1,7 @@
 """确定性 Demo 项目上下文生成器。"""
 
 from app.context.base import (
+    GenerationMeta,
     ProjectContextCorrections,
     ProjectContextDraft,
     ProjectContextGenerator,
@@ -21,7 +22,7 @@ class DemoProjectContextGenerator(ProjectContextGenerator):
         entries_summary: dict | None = None,
         top_level_nodes: list[dict] | None = None,
         corrections: ProjectContextCorrections | None = None,
-    ) -> ProjectContextDraft:
+    ) -> tuple[ProjectContextDraft, GenerationMeta]:
         """根据项目说明与正式目录生成固定格式的上下文草稿。"""
         corrections = corrections or ProjectContextCorrections()
         description = (project.description or "").strip() or "未填写项目说明"
@@ -45,9 +46,12 @@ class DemoProjectContextGenerator(ProjectContextGenerator):
         )
         current_focus = corrections.current_focus or "继续建立正式目录并采集原始材料。"
 
-        return ProjectContextDraft(
-            project_summary=project_summary,
-            current_focus=current_focus,
-            directory_topics=topics,
-            recent_themes=recent_titles,
+        return (
+            ProjectContextDraft(
+                project_summary=project_summary,
+                current_focus=current_focus,
+                directory_topics=topics,
+                recent_themes=recent_titles,
+            ),
+            GenerationMeta(provider="demo", model=None, is_fallback=True),
         )

@@ -49,6 +49,9 @@ describe('ProjectContextPanel', () => {
               truncated_count: 0,
             },
             recent_themes: ['预算框架', '材料信息'],
+            provider: 'llm',
+            model: 'deepseek-chat',
+            is_fallback: false,
             status: 'ready',
             error: null,
             corrections: { project_summary: null, current_focus: null },
@@ -69,6 +72,8 @@ describe('ProjectContextPanel', () => {
     expect(screen.getByText('已确认 5 条正式知识')).toBeInTheDocument()
     expect(screen.getByText(/版本 v3/)).toBeInTheDocument()
     expect(screen.getByText(/更新原因 entry_archived/)).toBeInTheDocument()
+    expect(screen.getByText('真实模型')).toBeInTheDocument()
+    expect(screen.getByText(/模型 deepseek-chat/)).toBeInTheDocument()
     expect(screen.getByText('已生成')).toBeInTheDocument()
   })
 
@@ -98,6 +103,9 @@ describe('ProjectContextPanel', () => {
               last_update_reason: null,
               entries_summary: null,
               recent_themes: [],
+              provider: 'offline',
+              model: null,
+              is_fallback: true,
               status: 'pending',
               error: null,
               corrections: { project_summary: '我的纠正概要', current_focus: '只看预算' },
@@ -118,6 +126,9 @@ describe('ProjectContextPanel', () => {
             last_update_reason: 'user_correction',
             entries_summary: null,
             recent_themes: [],
+            provider: 'offline',
+            model: null,
+            is_fallback: true,
             status: 'ready',
             error: null,
             corrections: { project_summary: null, current_focus: null },
@@ -165,6 +176,9 @@ describe('ProjectContextPanel', () => {
             last_update_reason: 'manual_refresh',
             entries_summary: null,
             recent_themes: [],
+            provider: 'offline',
+            model: null,
+            is_fallback: true,
             status: 'ready',
             error: null,
             corrections: { project_summary: null, current_focus: null },
@@ -211,6 +225,9 @@ describe('ProjectContextPanel', () => {
             last_update_reason: null,
             entries_summary: null,
             recent_themes: [],
+            provider: 'offline',
+            model: null,
+            is_fallback: true,
             status: 'ready',
             error: null,
             corrections: { project_summary: null, current_focus: null },

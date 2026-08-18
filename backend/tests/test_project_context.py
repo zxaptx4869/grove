@@ -359,6 +359,8 @@ async def test_refresh_writes_version_entries_summary_and_themes(
     assert data["status"] == READY
     assert data["version"] == 1
     assert data["last_update_reason"] == "manual_refresh"
+    assert data["provider"] == "offline"
+    assert data["is_fallback"] is True
     assert data["entries_summary"]["total"] == 1
     assert data["entries_summary"]["by_type"]["knowledge"] == 1
     assert data["entries_summary"]["by_top_node"][0]["count"] == 1
@@ -415,3 +417,37 @@ async def test_archive_schedules_refresh_but_evidence_does_not(
     row = await _context_row(project["id"])
     assert row.last_update_reason == "entry_archived"
     assert row.refresh_due_at == due_before
+
+
+@pytest.mark.asyncio
+async def test_demo_generator_reports_fallback_meta() -> None:
+    """demo 生成器应标记为降级来源。"""
+    from app.context.demo import DemoProjectContextGenerator
+    from app.models import Project
+
+    project = Project(id=1, workspace_id=1, name="x", status="active")
+    draft, meta = await DemoProjectContextGenerator().generate(None, project, [])
+
+    assert meta.provider == "demo"
+    assert meta.is_fallback is True
+    assert draft.directory_topics == []
+
+
+@pytest.mark.asyncio
+async def test_llm_generator_offline_reports_fallback(monkeypatch) -> None:
+    """LLM 生成器在无可用密钥时应标记为 offline 降级。"""
+    from pydantic_ai.models.test import TestModel
+
+    from app.context import llm as llm_module
+    from app.context.llm import LLMProjectContextGenerator
+    from app.models import Project
+
+    async def _fake_get_text_model(db, workspace_id):
+        return TestModel()
+
+    monkeypatch.setattr(llm_module, "get_text_model", _fake_get_text_model)
+    project = Project(id=1, workspace_id=1, name="x", status="active")
+    draft, meta = await LLMProjectContextGenerator().generate(None, project, [])
+
+    assert meta.provider == "offline"
+    assert meta.is_fallback is True

@@ -7,6 +7,14 @@ from pydantic import BaseModel, Field
 from app.models import Node, Project
 
 
+class GenerationMeta(BaseModel):
+    """一次上下文生成的来源元数据，用于可观测性。"""
+
+    provider: str
+    model: str | None = None
+    is_fallback: bool = False
+
+
 class ProjectContextCorrections(BaseModel):
     """用户对 AI 生成字段的高优先级纠正（部分覆盖）。"""
 
@@ -37,5 +45,5 @@ class ProjectContextGenerator(ABC):
         entries_summary: dict | None = None,
         top_level_nodes: list[dict] | None = None,
         corrections: ProjectContextCorrections | None = None,
-    ) -> ProjectContextDraft:
+    ) -> tuple[ProjectContextDraft, GenerationMeta]:
         """生成结构化项目上下文草稿；失败时抛出异常。"""
