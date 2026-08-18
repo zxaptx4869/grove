@@ -132,13 +132,17 @@ export function ProjectContextPanel({
           <Badge className={`min-h-[22px] rounded px-[7px] py-0.5 text-[11px] font-semibold ${statusClass(data.status)}`}>
             {STATUS_LABELS[data.status]}
           </Badge>
-          {data.is_fallback ? (
+          {data.provider === 'llm' && !data.is_fallback ? (
+            <Badge className="min-h-[22px] rounded bg-confirmed-soft px-[7px] py-0.5 text-[11px] font-semibold text-confirmed">
+              真实模型
+            </Badge>
+          ) : data.is_fallback || data.provider === 'offline' || data.provider === 'demo' ? (
             <Badge className="min-h-[22px] rounded bg-error-soft px-[7px] py-0.5 text-[11px] font-semibold text-destructive">
               离线生成
             </Badge>
           ) : (
-            <Badge className="min-h-[22px] rounded bg-confirmed-soft px-[7px] py-0.5 text-[11px] font-semibold text-confirmed">
-              真实模型
+            <Badge className="min-h-[22px] rounded bg-muted px-[7px] py-0.5 text-[11px] font-semibold text-muted-foreground">
+              来源未标注
             </Badge>
           )}
         </div>
