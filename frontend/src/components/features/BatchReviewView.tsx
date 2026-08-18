@@ -243,7 +243,7 @@ export function BatchReviewView({
                 <div className="flex items-center gap-2 border-b bg-muted/30 px-3 py-2">
                   <FolderInput className="size-4 text-muted-foreground" />
                   <h3 className="min-w-0 truncate text-body font-[650]">{group.label}</h3>
-                  <Badge className="ml-auto bg-ai-candidate-soft text-ai-candidate">
+                  <Badge className="shrink-0 bg-ai-candidate-soft text-ai-candidate">
                     推荐明确 · {group.candidates.length}
                   </Badge>
                 </div>
@@ -267,7 +267,7 @@ export function BatchReviewView({
                 <div className="flex items-center gap-2 border-b bg-muted/30 px-3 py-2">
                   <ShieldAlert className="size-4 text-destructive" />
                   <h3 className="text-body font-[650]">已分流精审</h3>
-                  <Badge className="ml-auto bg-error-soft text-destructive">
+                  <Badge className="shrink-0 bg-error-soft text-destructive">
                     {detailedCandidates.length} 条不参与快审
                   </Badge>
                 </div>
