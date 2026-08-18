@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { FolderPlus, Pencil, Plus, RotateCw, Trash2, X } from 'lucide-react'
+import { Pencil, RotateCw, Trash2, X } from 'lucide-react'
 
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -117,7 +117,7 @@ function TreeNodeEditor({
 
   return (
     <div className="space-y-2 border-l-2 border-muted pl-3" style={{ marginLeft: depth * 12 }}>
-      <div className="flex items-center gap-2">
+      <div className="group flex items-center gap-2">
         <input
           type="checkbox"
           aria-label={`采用 ${node.name}`}
@@ -148,43 +148,28 @@ function TreeNodeEditor({
                 {node.description}
               </span>
             ) : null}
-            <Button
-              size="icon-sm"
-              variant="ghost"
-              aria-label={`编辑 ${node.name}`}
-              onClick={() => {
-                setEditName(node.name)
-                setEditDesc(node.description ?? '')
-                setEditing(true)
-              }}
-            >
-              <Pencil />
-            </Button>
-            <Button
-              size="icon-sm"
-              variant="ghost"
-              aria-label={`新增子节点到 ${node.name}`}
-              onClick={() =>
-                onChange({
-                  ...node,
-                  children: [
-                    ...node.children,
-                    {
-                      uid: `draft-${Math.random().toString(36).slice(2)}`,
-                      name: '新节点',
-                      description: null,
-                      selected: true,
-                      children: [],
-                    },
-                  ],
-                })
-              }
-            >
-              <Plus />
-            </Button>
-            <Button size="icon-sm" variant="ghost" aria-label={`删除 ${node.name}`} onClick={onRemove}>
-              <Trash2 />
-            </Button>
+            <span className="flex items-center opacity-0 transition-opacity group-hover:opacity-100 focus-within:opacity-100">
+              <Button
+                size="icon-sm"
+                variant="ghost"
+                aria-label={`编辑 ${node.name}`}
+                onClick={() => {
+                  setEditName(node.name)
+                  setEditDesc(node.description ?? '')
+                  setEditing(true)
+                }}
+              >
+                <Pencil />
+              </Button>
+              <Button
+                size="icon-sm"
+                variant="ghost"
+                aria-label={`删除 ${node.name}`}
+                onClick={onRemove}
+              >
+                <Trash2 />
+              </Button>
+            </span>
           </>
         )}
       </div>
@@ -486,25 +471,6 @@ export function DirectoryDraftDialog({
                 <p className="text-caption text-muted-foreground">
                   已选 {selectedCount} / {nodeCount} 个节点 · 受影响 Entry 0 条
                 </p>
-                <Button
-                  size="sm"
-                  variant="outline"
-                  onClick={() =>
-                    setTree((current) => [
-                      ...current,
-                      {
-                        uid: `draft-${Math.random().toString(36).slice(2)}`,
-                        name: '新节点',
-                        description: null,
-                        selected: true,
-                        children: [],
-                      },
-                    ])
-                  }
-                >
-                  <FolderPlus />
-                  添加根节点
-                </Button>
                 {tree.map((node) => (
                   <TreeNodeEditor
                     key={node.uid}
