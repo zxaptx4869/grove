@@ -1,0 +1,104 @@
+## ADDED Requirements
+
+### Requirement: Directory Draft 归属与活跃草稿
+
+系统 MUST 提供 `DirectoryDraft` 模型并归属一个 Project，每个 Project 至多有一份活跃草稿；草稿与草稿节点 MUST 按 Workspace/Project 隔离，跨 Workspace 读取 MUST 失败；草稿 MUST 包含状态机（`drafting` / `awaiting_input` / `pending_confirm` / `confirmed` / `discarded`）与下一步动作（`clarify` / `generate`）。
+
+#### Scenario: 每项目至多一份活跃草稿
+
+- **WHEN** 用户为项目创建目录草稿且已存在活跃草稿
+- **THEN** 复用或覆盖现有草稿，不产生第二份活跃草稿
+
+#### Scenario: 跨项目草稿不可见
+
+- **WHEN** 用户访问不属于当前 Workspace 或项目的草稿
+- **THEN** 请求失败（404），不暴露草稿内容
+
+### Requirement: 问卷式澄清
+
+系统 MUST 支持 Directory Agent 一次返回 3–5 道结构化澄清问题，每道包含 id、问题文本、选项列表与是否多选；用户 MUST 能一次提交全部答案，每道题可点选选项或自由输入；澄清批次 MUST 上限为 2 次，达到上限后 MUST 直接生成候选树。
+
+#### Scenario: 一次返回多道问题
+
+- **WHEN** Agent 判定需要澄清
+- **THEN** 一次返回 3–5 道带选项的问题，不逐题轮询
+
+#### Scenario: 选项与自由输入
+
+- **WHEN** 用户提交澄清答案
+- **THEN** 每道题可以选选项，也可以输入自由文本；多选问题接受答案数组
+
+#### Scenario: 澄清批次上限
+
+- **WHEN** 澄清答案提交后 Agent 仍判定信息不足且已使用 2 次澄清批次
+- **THEN** Agent 不再提问，直接生成候选树
+
+### Requirement: 候选树生成
+
+系统 MUST 基于项目说明、Project Context 快照与用户澄清答案生成候选目录树；候选树 MUST 只写入草稿，不得直接创建或修改正式节点；无可用密钥时 MUST 以确定性兜底生成候选树，并标记生成来源。
+
+#### Scenario: 生成候选树
+
+- **WHEN** 用户提交澄清答案或无需澄清
+- **THEN** 草稿进入待确认状态，包含层级化候选节点（名称、说明、父引用与顺序）
+
+#### Scenario: 生成不触碰正式目录
+
+- **WHEN** 候选树生成完成
+- **THEN** 正式节点表无任何变化，AI 输出只存在于草稿
+
+### Requirement: 可视化与内联编辑
+
+系统 MUST 提供可视化候选树，并允许用户内联编辑草稿节点：新增子节点、重命名、更新说明与删除节点；编辑 MUST 只修改草稿，不影响正式目录。
+
+#### Scenario: 内联编辑草稿
+
+- **WHEN** 用户在候选树中新增、改名、改说明或删除草稿节点
+- **THEN** 草稿节点更新并持久化，正式目录不变
+
+#### Scenario: 待确认状态可编辑
+
+- **WHEN** 草稿处于待确认状态
+- **THEN** 用户仍可编辑草稿节点后再应用
+
+### Requirement: 确认应用
+
+系统 MUST 在用户确认后校验并原子应用草稿：parent 引用合法、无环、名称长度合法、节点总数不超过上限；任一校验失败 MUST 不创建任何节点；成功后 MUST 创建全部正式节点、标记草稿为 `confirmed`，并触发项目上下文刷新。
+
+#### Scenario: 原子应用成功
+
+- **WHEN** 用户确认应用候选树
+- **THEN** 全部草稿节点按树结构与顺序创建为正式节点，草稿标记为已确认
+
+#### Scenario: 校验失败不留半成品
+
+- **WHEN** 候选树存在非法父引用、环、超长名称或超节点上限
+- **THEN** 请求失败，正式目录不变，草稿保持待确认
+
+#### Scenario: 应用后触发上下文刷新
+
+- **WHEN** 草稿应用成功创建目录节点
+- **THEN** 系统安排项目上下文刷新
+
+### Requirement: 生成来源可追溯
+
+系统 MUST 在草稿中记录 `provider`（`demo` / `llm` / `offline`）、`model` 与 `is_fallback`；降级生成 MUST 标记为降级，禁止静默降级。
+
+#### Scenario: 记录生成来源
+
+- **WHEN** 候选树或澄清问题由 Agent 生成
+- **THEN** 草稿记录 provider、model 与降级标记
+
+### Requirement: 目录共创入口
+
+空目录知识空间与知识空间页头的「与 AI 共创目录」入口 MUST 发起目录起草流程，而不是占位提示。
+
+#### Scenario: 空目录入口发起起草
+
+- **WHEN** 用户在空目录内容区点击「与 AI 共创目录」
+- **THEN** 打开目录起草工作区并创建或复用活跃草稿
+
+#### Scenario: 非空目录入口发起起草
+
+- **WHEN** 用户在知识空间页头点击「与 AI 共创目录」
+- **THEN** 打开目录起草工作区，且不直接修改现有正式目录
