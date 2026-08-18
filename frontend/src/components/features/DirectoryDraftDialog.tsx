@@ -142,9 +142,12 @@ function TreeNodeEditor({
           </>
         ) : (
           <>
-            <span className="min-w-0 flex-1 truncate text-body-sm font-medium">
-              {node.name}
-            </span>
+            <span className="shrink-0 truncate text-body-sm font-medium">{node.name}</span>
+            {node.description ? (
+              <span className="min-w-0 flex-1 truncate text-caption text-muted-foreground">
+                {node.description}
+              </span>
+            ) : null}
             <Button
               size="icon-sm"
               variant="ghost"
@@ -193,8 +196,6 @@ function TreeNodeEditor({
           placeholder="节点说明（可选）"
           onChange={(event) => setEditDesc(event.target.value)}
         />
-      ) : node.description ? (
-        <p className="text-caption text-muted-foreground">{node.description}</p>
       ) : null}
       {node.children.map((child) => (
         <TreeNodeEditor
@@ -393,7 +394,7 @@ export function DirectoryDraftDialog({
         role="dialog"
         aria-modal="true"
         aria-label="与 AI 共创目录"
-        className="absolute right-0 top-0 flex h-full w-[min(760px,100vw)] flex-col bg-card shadow-lg"
+        className="absolute right-0 top-0 flex h-full w-[min(960px,100vw)] flex-col bg-card shadow-lg"
         onClick={(event) => event.stopPropagation()}
       >
         <header className="flex items-center justify-between gap-3 border-b px-6 py-4">
