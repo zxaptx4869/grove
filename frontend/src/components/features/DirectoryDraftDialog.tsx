@@ -218,6 +218,7 @@ export function DirectoryDraftDialog({
   const [busy, setBusy] = useState(false)
   const [dirty, setDirty] = useState(false)
   const [error, setError] = useState('')
+  const [waitSeconds, setWaitSeconds] = useState(0)
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null)
 
   function applyDraftData(data: DirectoryDraftPayload) {
@@ -390,6 +391,16 @@ export function DirectoryDraftDialog({
   const generating =
     loading || draft?.status === 'drafting'
 
+  useEffect(() => {
+    if (!generating) {
+      setWaitSeconds(0)
+      return
+    }
+    setWaitSeconds(0)
+    const timer = setInterval(() => setWaitSeconds((value) => value + 1), 1000)
+    return () => clearInterval(timer)
+  }, [generating])
+
   return open ? (
     <div className="fixed inset-0 z-50 bg-black/40" onClick={() => onOpenChange(false)}>
       <aside
@@ -429,7 +440,9 @@ export function DirectoryDraftDialog({
           {generating ? (
             <div className="flex items-center gap-2 py-10 text-body-sm text-muted-foreground">
               <RotateCw className="size-4 animate-spin" />
-              {draft?.next_action === 'clarify' ? 'AI 正在生成澄清问题…' : 'AI 正在生成候选树…'}
+              {draft?.next_action === 'clarify'
+                ? `AI 正在生成澄清问题…（已等待 ${waitSeconds} 秒）`
+                : `AI 正在生成候选树…（已等待 ${waitSeconds} 秒）`}
             </div>
           ) : draft?.status === 'awaiting_input' ? (
             <div className="space-y-4">
