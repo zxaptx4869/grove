@@ -166,7 +166,7 @@ export function DirectoryTreeSelect({
     }
     el.addEventListener('wheel', onWheel, { passive: false })
     return () => el.removeEventListener('wheel', onWheel)
-  }, [])
+  }, [open])
 
   const triggerLabel =
     selectedPath ?? (allowRoot && value == null ? '根目录' : placeholder)
