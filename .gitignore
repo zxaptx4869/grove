@@ -16,3 +16,4 @@ backend/.ruff_cache/
 *.egg-info/
 .pytest_cache/
 frontend/.eslintcache
+docs/discussions/
