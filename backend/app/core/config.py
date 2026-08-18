@@ -38,8 +38,8 @@ class Settings(BaseSettings):
     # 进程内处理 Worker：应用启动时是否开启（测试环境可关闭）
     processing_worker_enabled: bool = Field(default=True, description="是否启用处理 Worker")
 
-    # 项目上下文生成器：demo（默认）/ 其他占位
-    context_generator: str = Field(default="demo", description="项目上下文生成器标识")
+    # 项目上下文生成器：llm（默认，无密钥时离线回退）/ demo（确定性）/ 其他占位
+    context_generator: str = Field(default="llm", description="项目上下文生成器标识")
 
     # 项目上下文刷新防抖时长（秒）
     context_refresh_debounce_seconds: float = Field(

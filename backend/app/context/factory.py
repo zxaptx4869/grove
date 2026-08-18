@@ -8,6 +8,7 @@ from app.context.base import (
     ProjectContextGenerator,
 )
 from app.context.demo import DemoProjectContextGenerator
+from app.context.llm import LLMProjectContextGenerator
 from app.core.config import get_settings
 from app.models import Node, Project
 
@@ -19,13 +20,14 @@ class UnavailableProjectContextGenerator(ProjectContextGenerator):
 
     async def generate(
         self,
+        db,
         project: Project,
         nodes: list[Node],
         entries_summary: dict | None = None,
         top_level_nodes: list[dict] | None = None,
         corrections: ProjectContextCorrections | None = None,
     ) -> ProjectContextDraft:
-        del project, nodes, entries_summary, top_level_nodes, corrections
+        del db, project, nodes, entries_summary, top_level_nodes, corrections
         raise NotImplementedError(
             "项目上下文生成 Provider 尚未接入，请在后续 change 完成实现后再使用。"
         )
@@ -33,8 +35,10 @@ class UnavailableProjectContextGenerator(ProjectContextGenerator):
 
 @lru_cache
 def get_project_context_generator() -> ProjectContextGenerator:
-    """返回配置的项目上下文生成器；非 demo 一律返回未接入占位。"""
+    """返回配置的项目上下文生成器；llm 使用真实模型，demo 为确定性实现。"""
     settings = get_settings()
+    if settings.context_generator == "llm":
+        return LLMProjectContextGenerator()
     if settings.context_generator == "demo":
         return DemoProjectContextGenerator()
     return UnavailableProjectContextGenerator()

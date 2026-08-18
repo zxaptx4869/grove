@@ -261,6 +261,7 @@ async def refresh_project_context(
 
     try:
         draft = await get_project_context_generator().generate(
+            db,
             project,
             list(nodes),
             entries_summary,

@@ -15,6 +15,7 @@ class DemoProjectContextGenerator(ProjectContextGenerator):
 
     async def generate(
         self,
+        db,
         project: Project,
         nodes: list[Node],
         entries_summary: dict | None = None,

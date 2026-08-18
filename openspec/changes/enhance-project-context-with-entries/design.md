@@ -114,6 +114,14 @@ refresh_due_at = max(now + debounce, last_success_generated_at + min_interval)
 
 理由：不接真实 Provider 也能走通全流程并用于测试。
 
+### D9：真实 LLM 生成器接入
+
+新增 `context/llm.py` 的 `LLMProjectContextGenerator`：使用 `get_text_model(workspace_id)` 获取 Workspace 文本模型，通过 PydanticAI 结构化输出生成 `project_summary`、`current_focus`、`recent_themes`；`directory_topics` 由提示词约束为原样返回顶级节点名。模型不可用（TestModel / 无密钥）时回退为与 demo 一致的确定性输出。
+
+工厂默认返回 `llm` 生成器，`CONTEXT_GENERATOR=demo` 可切回确定性实现。生成器接口增加 `db` 参数以读取模型配置。
+
+理由：系统内已配置真实 key；真实模型才能产出有意义的项目概要，demo 只是兜底。离线回退保证测试与无密钥环境仍可运行。
+
 ## Risks / Trade-offs
 
 - [快照短暂滞后于实时数据] → 关系判断保留项目内直接检索兜底；前端目录徽章改用实时树。

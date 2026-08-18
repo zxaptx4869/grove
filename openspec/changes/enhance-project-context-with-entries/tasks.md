@@ -12,6 +12,7 @@
 - [x] 2.2 实现顶级节点信息组装：名称 + 截断说明（≤200 字）+ 直接/子树 Entry 数，上限 50 并记录剩余计数
 - [x] 2.3 扩展 `ProjectContextDraft` 与 `ProjectContextGenerator` 接口：输入 `entries_summary` 与顶级节点信息，输出 `recent_themes`
 - [x] 2.4 更新 demo 生成器：`recent_themes` 从最近条目标题确定性提炼，`directory_topics` 保持顶级节点名
+- [x] 2.5 新增 `LLMProjectContextGenerator`（真实文本模型 + 无密钥离线回退），工厂默认接入并支持 `demo` 切换
 
 验收：`cd backend && .venv/bin/pytest -q && .venv/bin/ruff check .`
 

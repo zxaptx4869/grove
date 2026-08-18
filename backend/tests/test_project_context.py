@@ -216,6 +216,7 @@ async def test_failure_fallback_keeps_previous_snapshot(
 
         async def generate(
             self,
+            db,
             project,
             nodes,
             entries_summary=None,
@@ -248,6 +249,7 @@ async def test_failure_without_snapshot_marks_failed(
 
         async def generate(
             self,
+            db,
             project,
             nodes,
             entries_summary=None,
@@ -319,12 +321,12 @@ async def test_context_worker_processes_due_refresh() -> None:
     assert "后台刷新" in (row.project_summary or "")
 
 
-def test_factory_returns_demo_by_default() -> None:
-    """默认项目上下文生成器应为 Demo 实现。"""
-    from app.context.demo import DemoProjectContextGenerator
+def test_factory_returns_llm_by_default() -> None:
+    """默认项目上下文生成器应为 LLM 实现。"""
     from app.context.factory import get_project_context_generator
+    from app.context.llm import LLMProjectContextGenerator
 
-    assert isinstance(get_project_context_generator(), DemoProjectContextGenerator)
+    assert isinstance(get_project_context_generator(), LLMProjectContextGenerator)
 
 
 @pytest.mark.asyncio
@@ -335,7 +337,7 @@ async def test_unavailable_provider_raises() -> None:
 
     project = Project(id=1, workspace_id=1, name="x", status="active")
     with pytest.raises(NotImplementedError, match="尚未接入"):
-        await UnavailableProjectContextGenerator().generate(project, [])
+        await UnavailableProjectContextGenerator().generate(None, project, [])
 
 
 @pytest.mark.asyncio
