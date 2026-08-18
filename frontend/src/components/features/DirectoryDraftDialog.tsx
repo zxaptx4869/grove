@@ -216,6 +216,7 @@ export function DirectoryDraftDialog({
   const [messageInput, setMessageInput] = useState('')
   const [loading, setLoading] = useState(false)
   const [busy, setBusy] = useState(false)
+  const [dirty, setDirty] = useState(false)
   const [error, setError] = useState('')
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null)
 
@@ -223,6 +224,13 @@ export function DirectoryDraftDialog({
     setDraft(data)
     setMessages(data.messages ?? [])
     if (data.status === 'pending_confirm') setTree(flattenToNested(data.nodes))
+  }
+
+  function updateTree(
+    updater: (current: EditableNode[]) => EditableNode[],
+  ) {
+    setTree((current) => updater(current))
+    setDirty(true)
   }
 
   function stopPolling() {
@@ -273,6 +281,26 @@ export function DirectoryDraftDialog({
   const nodeCount = useMemo(() => countNodes(tree), [tree])
   const selectedCount = useMemo(() => countSelected(tree), [tree])
 
+  async function persistTree() {
+    if (!dirty) return
+    try {
+      const data = await updateDirectoryDraftNodes(projectId, tree)
+      setDraft(data)
+      setMessages(data.messages ?? [])
+      setDirty(false)
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : '保存草稿失败')
+    }
+  }
+
+  useEffect(() => {
+    if (!dirty || !draft || draft.status !== 'pending_confirm') return
+    const timer = setTimeout(() => {
+      void persistTree()
+    }, 600)
+    return () => clearTimeout(timer)
+  }, [dirty, tree, draft?.status])
+
   function toggleOption(questionId: string, option: string, multiple: boolean) {
     setAnswers((current) => {
       if (!multiple) return { ...current, [questionId]: option }
@@ -309,23 +337,11 @@ export function DirectoryDraftDialog({
     }
   }
 
-  async function saveTree() {
-    setBusy(true)
-    setError('')
-    try {
-      const data = await updateDirectoryDraftNodes(projectId, tree)
-      applyDraftData(data)
-    } catch (reason) {
-      setError(reason instanceof Error ? reason.message : '保存草稿失败')
-    } finally {
-      setBusy(false)
-    }
-  }
-
   async function applyDraft() {
     setBusy(true)
     setError('')
     try {
+      if (dirty) await persistTree()
       const data = await applyDirectoryDraft(projectId)
       setDraft(data)
       onApplied?.()
@@ -476,8 +492,10 @@ export function DirectoryDraftDialog({
                     key={node.uid}
                     node={node}
                     depth={0}
-                    onChange={(updated) => setTree(mapNodes(tree, updated.uid, () => updated))}
-                    onRemove={() => setTree(removeNode(tree, node.uid))}
+                    onChange={(updated) =>
+                      updateTree((current) => mapNodes(current, updated.uid, () => updated))
+                    }
+                    onRemove={() => updateTree((current) => removeNode(current, node.uid))}
                   />
                 ))}
               </div>
@@ -542,9 +560,6 @@ export function DirectoryDraftDialog({
           ) : null}
           {draft?.status === 'pending_confirm' ? (
             <>
-              <Button variant="outline" disabled={busy} onClick={saveTree}>
-                保存编辑
-              </Button>
               <Button disabled={busy || selectedCount === 0} onClick={applyDraft}>
                 应用目录
               </Button>
