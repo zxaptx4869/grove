@@ -41,6 +41,7 @@ import {
 import { Input } from '@/components/ui/input'
 import { Textarea } from '@/components/ui/textarea'
 import { CaptureDialog } from '@/components/features/CaptureDialog'
+import { DirectoryDraftDialog } from '@/components/features/DirectoryDraftDialog'
 import { ProjectContextPanel } from '@/components/features/ProjectContextPanel'
 import { useGroveMutation } from '@/hooks/useGroveMutation'
 import { ProjectSources } from '@/pages/ProjectSources'
@@ -1042,19 +1043,15 @@ export function ProjectPage() {
         </DialogContent>
       </Dialog>
 
-      <Dialog open={aiOpen} onOpenChange={setAiOpen}>
-        <DialogContent className="sm:max-w-md">
-          <DialogHeader>
-            <DialogTitle>与 AI 共创目录</DialogTitle>
-            <DialogDescription>
-              入口已就位。Directory Agent 不在本轮实现范围内，目前不会生成或修改任何目录节点。
-            </DialogDescription>
-          </DialogHeader>
-          <DialogFooter>
-            <Button onClick={() => setAiOpen(false)}>知道了</Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
+      <DirectoryDraftDialog
+        projectId={id}
+        open={aiOpen}
+        onOpenChange={setAiOpen}
+        onApplied={() => {
+          queryClient.invalidateQueries({ queryKey: queryKeys.projectTree(id) })
+          queryClient.invalidateQueries({ queryKey: queryKeys.projects })
+        }}
+      />
     </section>
   )
 }

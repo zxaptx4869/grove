@@ -1,0 +1,146 @@
+"""Directory Draft 起草 API。"""
+
+from typing import Annotated
+
+from fastapi import APIRouter, Depends, HTTPException, status
+from sqlalchemy import select
+
+from app.api.deps import DbSession, get_current_workspace
+from app.models import Project, Workspace
+from app.models.directory_draft import DirectoryDraft
+from app.schemas.directory_draft import (
+    ClarifySubmitRequest,
+    DraftCreateRequest,
+    DraftNodeInput,
+    DraftNodesUpdateRequest,
+    DraftOut,
+)
+from app.services.directory_draft import (
+    apply_draft,
+    create_or_reuse_draft,
+    discard_draft,
+    draft_out,
+    get_active_draft,
+    submit_clarify_answers,
+    update_draft_nodes,
+)
+
+router = APIRouter(
+    prefix="/api/projects/{project_id}/directory-draft",
+    tags=["directory-draft"],
+)
+CurrentWorkspace = Annotated[Workspace, Depends(get_current_workspace)]
+
+
+async def _get_owned_project(db: DbSession, workspace_id: int, project_id: int) -> Project:
+    project = await db.get(Project, project_id)
+    if project is None or project.workspace_id != workspace_id:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="项目不存在")
+    return project
+
+
+async def _load_out(db: DbSession, draft: DirectoryDraft) -> DraftOut:
+    from app.models.directory_draft import DirectoryDraftNode
+
+    await db.refresh(draft)
+    nodes = (
+        await db.execute(
+            select(DirectoryDraftNode).where(DirectoryDraftNode.draft_id == draft.id)
+        )
+    ).scalars().all()
+    return draft_out(draft, list(nodes))
+
+
+@router.post("", status_code=status.HTTP_201_CREATED, response_model=DraftOut)
+async def create_draft_endpoint(
+    project_id: int,
+    payload: DraftCreateRequest,
+    db: DbSession,
+    workspace: CurrentWorkspace,
+) -> DraftOut:
+    """创建或复用活跃草稿并执行首次澄清/起草步骤。"""
+    project = await _get_owned_project(db, workspace.id, project_id)
+    draft = await create_or_reuse_draft(db, project)
+    await db.commit()
+    return await _load_out(db, draft)
+
+
+@router.get("", response_model=DraftOut)
+async def get_draft_endpoint(
+    project_id: int,
+    db: DbSession,
+    workspace: CurrentWorkspace,
+) -> DraftOut:
+    """读取活跃草稿。"""
+    await _get_owned_project(db, workspace.id, project_id)
+    draft = await get_active_draft(db, project_id)
+    if draft is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="草稿不存在")
+    return await _load_out(db, draft)
+
+
+@router.post("/clarify", response_model=DraftOut)
+async def submit_clarify_endpoint(
+    project_id: int,
+    payload: ClarifySubmitRequest,
+    db: DbSession,
+    workspace: CurrentWorkspace,
+) -> DraftOut:
+    """提交澄清答案并生成候选树。"""
+    project = await _get_owned_project(db, workspace.id, project_id)
+    draft = await get_active_draft(db, project_id)
+    if draft is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="草稿不存在")
+    draft = await submit_clarify_answers(db, draft, project, payload.answers)
+    await db.commit()
+    return await _load_out(db, draft)
+
+
+@router.patch("/nodes", response_model=DraftOut)
+async def update_nodes_endpoint(
+    project_id: int,
+    payload: DraftNodesUpdateRequest,
+    db: DbSession,
+    workspace: CurrentWorkspace,
+) -> DraftOut:
+    """内联编辑草稿节点树。"""
+    await _get_owned_project(db, workspace.id, project_id)
+    draft = await get_active_draft(db, project_id)
+    if draft is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="草稿不存在")
+    roots: list[DraftNodeInput] = payload.nodes
+    draft = await update_draft_nodes(db, draft, roots)
+    await db.commit()
+    return await _load_out(db, draft)
+
+
+@router.post("/apply", response_model=DraftOut)
+async def apply_draft_endpoint(
+    project_id: int,
+    db: DbSession,
+    workspace: CurrentWorkspace,
+) -> DraftOut:
+    """确认应用草稿为正式目录。"""
+    project = await _get_owned_project(db, workspace.id, project_id)
+    draft = await get_active_draft(db, project_id)
+    if draft is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="草稿不存在")
+    draft = await apply_draft(db, draft, project)
+    await db.commit()
+    return await _load_out(db, draft)
+
+
+@router.post("/discard", response_model=DraftOut)
+async def discard_draft_endpoint(
+    project_id: int,
+    db: DbSession,
+    workspace: CurrentWorkspace,
+) -> DraftOut:
+    """丢弃草稿。"""
+    await _get_owned_project(db, workspace.id, project_id)
+    draft = await get_active_draft(db, project_id)
+    if draft is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="草稿不存在")
+    draft = await discard_draft(db, draft)
+    await db.commit()
+    return await _load_out(db, draft)

@@ -650,3 +650,93 @@ export const searchEntries = (q: string, projectId?: number) => {
   if (projectId != null) params.set('project_id', String(projectId))
   return request<SearchEntryPayload[]>(`/api/search?${params.toString()}`)
 }
+
+export type DirectoryDraftStatus =
+  | 'drafting'
+  | 'awaiting_input'
+  | 'pending_confirm'
+  | 'confirmed'
+  | 'discarded'
+
+export interface ClarifyQuestionPayload {
+  id: string
+  text: string
+  options: string[]
+  multiple: boolean
+}
+
+export interface DraftNodePayload {
+  id: number
+  parent_id: number | null
+  name: string
+  description: string | null
+  position: number
+}
+
+export interface DirectoryDraftPayload {
+  id: number
+  project_id: number
+  status: DirectoryDraftStatus
+  next_action: 'clarify' | 'generate'
+  clarify_batches: number
+  clarify: ClarifyQuestionPayload[]
+  nodes: DraftNodePayload[]
+  provider: string | null
+  model: string | null
+  is_fallback: boolean
+  last_error: string | null
+  created_at: string
+  updated_at: string
+}
+
+export interface DraftTreeNodeInput {
+  name: string
+  description: string | null
+  children: DraftTreeNodeInput[]
+}
+
+export const createDirectoryDraft = (
+  projectId: number,
+  background: string | null = null,
+) =>
+  request<DirectoryDraftPayload>(`/api/projects/${projectId}/directory-draft`, {
+    method: 'POST',
+    body: JSON.stringify({ background }),
+  })
+
+export const fetchDirectoryDraft = (projectId: number) =>
+  request<DirectoryDraftPayload>(`/api/projects/${projectId}/directory-draft`)
+
+export const submitDirectoryDraftClarify = (
+  projectId: number,
+  answers: Record<string, string | string[]>,
+) =>
+  request<DirectoryDraftPayload>(
+    `/api/projects/${projectId}/directory-draft/clarify`,
+    {
+      method: 'POST',
+      body: JSON.stringify({ answers }),
+    },
+  )
+
+export const updateDirectoryDraftNodes = (
+  projectId: number,
+  nodes: DraftTreeNodeInput[],
+) =>
+  request<DirectoryDraftPayload>(
+    `/api/projects/${projectId}/directory-draft/nodes`,
+    {
+      method: 'PATCH',
+      body: JSON.stringify({ nodes }),
+    },
+  )
+
+export const applyDirectoryDraft = (projectId: number) =>
+  request<DirectoryDraftPayload>(`/api/projects/${projectId}/directory-draft/apply`, {
+    method: 'POST',
+  })
+
+export const discardDirectoryDraft = (projectId: number) =>
+  request<DirectoryDraftPayload>(`/api/projects/${projectId}/directory-draft/discard`, {
+    method: 'POST',
+  })

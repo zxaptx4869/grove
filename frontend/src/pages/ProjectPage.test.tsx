@@ -46,6 +46,33 @@ function mockProjectApi({ emptyTree = false }: { emptyTree?: boolean } = {}) {
                 ],
         })
       }
+      if (url.endsWith('/api/projects/1/directory-draft')) {
+        return Promise.resolve({
+          ok: true,
+          json: async () => ({
+            id: 10,
+            project_id: 1,
+            status: 'awaiting_input',
+            next_action: 'clarify',
+            clarify_batches: 0,
+            clarify: [
+              {
+                id: 'dimension',
+                text: '目录按什么维度组织？',
+                options: ['按阶段', '按空间', '按主题'],
+                multiple: false,
+              },
+            ],
+            nodes: [],
+            provider: 'offline',
+            model: null,
+            is_fallback: true,
+            last_error: null,
+            created_at: '',
+            updated_at: '',
+          }),
+        })
+      }
       const status = new URL(url, 'http://localhost').searchParams.get('status_filter')
       return Promise.resolve({
         ok: true,
@@ -139,13 +166,15 @@ describe('ProjectPage', () => {
     expect(screen.queryByRole('heading', { name: '这里还没有正式知识' })).not.toBeInTheDocument()
   })
 
-  it('AI 共创入口明确保持未实现状态', async () => {
+  it('AI 共创入口发起目录起草并展示澄清问卷', async () => {
     mockProjectApi()
     renderProject('/projects/1?view=directory')
 
     await userEvent.click(await screen.findByRole('button', { name: '与 AI 共创目录' }))
 
-    expect(screen.getByRole('dialog')).toHaveTextContent('Directory Agent 不在本轮实现范围内')
+    expect(await screen.findByRole('dialog')).toBeInTheDocument()
+    expect(await screen.findByText('目录按什么维度组织？')).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: '提交并生成' })).toBeInTheDocument()
   })
 
   it('目录节点删除仍要求二次确认并说明子树影响', async () => {

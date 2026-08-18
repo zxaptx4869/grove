@@ -1,6 +1,7 @@
 """ORM 模型包。"""
 
 from app.models.ai_settings import AIProviderSettings
+from app.models.directory_draft import DirectoryDraft, DirectoryDraftNode
 from app.models.entry import Entry, EntrySourceEvidence
 from app.models.extraction import Candidate, Extraction
 from app.models.processing import ProcessingTask
@@ -15,6 +16,8 @@ __all__ = [
     "AIProviderSettings",
     "Attachment",
     "Candidate",
+    "DirectoryDraft",
+    "DirectoryDraftNode",
     "Entry",
     "EntrySourceEvidence",
     "Extraction",
