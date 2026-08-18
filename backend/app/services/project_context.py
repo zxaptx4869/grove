@@ -270,7 +270,13 @@ async def refresh_project_context(
         )
         context.project_summary = draft.project_summary
         context.current_focus = draft.current_focus
-        context.directory_topics = json.dumps(draft.directory_topics, ensure_ascii=False)
+        # 目录主题保持确定性：始终取顶级节点名称，不依赖模型输出
+        topic_names = (
+            [item["name"] for item in top_level_nodes]
+            if top_level_nodes
+            else draft.directory_topics
+        )
+        context.directory_topics = json.dumps(topic_names, ensure_ascii=False)
         context.entries_summary = json.dumps(entries_summary, ensure_ascii=False)
         context.recent_themes = json.dumps(draft.recent_themes, ensure_ascii=False)
         context.version = (context.version or 0) + 1
