@@ -1,4 +1,4 @@
-import { useMemo, useRef, useState, type ReactNode } from 'react'
+import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { ChevronDown, ChevronRight, Folder, FolderTree, Search } from 'lucide-react'
 
 import { Button } from '@/components/ui/button'
@@ -93,6 +93,15 @@ export function DirectoryTreeSelect({
   }, [nodes, filter])
 
   const byId = useMemo(() => new Map(entries.map((entry) => [entry.id, entry])), [entries])
+  const childrenByParent = useMemo(() => {
+    const map = new Map<number | null, NodeEntry[]>()
+    for (const entry of entries) {
+      const list = map.get(entry.parentId) ?? []
+      list.push(entry)
+      map.set(entry.parentId, list)
+    }
+    return map
+  }, [entries])
   const selectedPath = value != null ? byId.get(value)?.path ?? null : null
 
   const visible = useMemo(() => {
@@ -127,16 +136,12 @@ export function DirectoryTreeSelect({
     const walk = (entry: NodeEntry) => {
       rows.push({ ...entry, expanded: expandedIds.has(entry.id) })
       if (expandedIds.has(entry.id)) {
-        for (const child of entries) {
-          if (child.parentId === entry.id) walk(child)
-        }
+        for (const child of childrenByParent.get(entry.id) ?? []) walk(child)
       }
     }
-    for (const entry of entries) {
-      if (entry.parentId == null) walk(entry)
-    }
+    for (const entry of childrenByParent.get(null) ?? []) walk(entry)
     return { rows, hasMatch: true }
-  }, [entries, byId, expandedIds, query])
+  }, [entries, byId, childrenByParent, expandedIds, query])
 
   function toggleExpanded(nodeId: number) {
     setExpandedIds((current) => {
@@ -147,16 +152,20 @@ export function DirectoryTreeSelect({
     })
   }
 
-  function handleWheel(event: React.WheelEvent<HTMLDivElement>) {
+  useEffect(() => {
     const el = treeRef.current
     if (!el) return
-    const canScrollUp = el.scrollTop > 0
-    const canScrollDown = el.scrollTop + el.clientHeight < el.scrollHeight
-    if ((event.deltaY < 0 && canScrollUp) || (event.deltaY > 0 && canScrollDown)) {
-      event.preventDefault()
-      el.scrollTop += event.deltaY
+    const onWheel = (event: WheelEvent) => {
+      const canScrollUp = el.scrollTop > 0
+      const canScrollDown = el.scrollTop + el.clientHeight < el.scrollHeight
+      if ((event.deltaY < 0 && canScrollUp) || (event.deltaY > 0 && canScrollDown)) {
+        event.preventDefault()
+        el.scrollTop += event.deltaY
+      }
     }
-  }
+    el.addEventListener('wheel', onWheel, { passive: false })
+    return () => el.removeEventListener('wheel', onWheel)
+  }, [])
 
   const triggerLabel =
     selectedPath ?? (allowRoot && value == null ? '根目录' : placeholder)
@@ -203,7 +212,6 @@ export function DirectoryTreeSelect({
         </div>
         <div
           ref={treeRef}
-          onWheel={handleWheel}
           className="h-64 overflow-y-auto overscroll-contain p-1"
         >
           {loading ? (

@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import {
   ArrowRight,
@@ -209,6 +209,10 @@ export function ProjectPage() {
     walk(moveTarget)
     return excluded
   }, [moveTarget])
+  const moveNodeFilter = useCallback(
+    (node: TreeNodePayload) => !moveExcludedIds.has(node.id),
+    [moveExcludedIds],
+  )
   const [editProjectOpen, setEditProjectOpen] = useState(false)
   const [projectName, setProjectName] = useState('')
   const [projectDescription, setProjectDescription] = useState('')
@@ -929,7 +933,7 @@ export function ProjectPage() {
             allowRoot
             placeholder="根目录"
             ariaLabel="新父节点"
-            filter={(node) => !moveExcludedIds.has(node.id)}
+            filter={moveNodeFilter}
             onSelect={(id) => setMoveParentId(id)}
           />
           <DialogFooter>
