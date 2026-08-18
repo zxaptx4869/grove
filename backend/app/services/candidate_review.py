@@ -22,7 +22,7 @@ from app.schemas.review import (
     ReviewCandidateOut,
 )
 from app.services.entry import archive_candidate
-from app.services.extraction import _parse_risk_flags, candidate_out
+from app.services.extraction import candidate_out, parse_risk_flags
 
 
 async def edit_candidate(
@@ -68,7 +68,12 @@ async def batch_decide_candidates(
     source_id: int,
     payload: BatchCandidateDecisionRequest,
 ) -> list[Candidate]:
-    """对同一 Source 内的候选批量决策。"""
+    """对同一 Source 内的候选批量决策（仅保留拒绝语义，确认请走项目级接口）。"""
+    if payload.status == CANDIDATE_CONFIRMED:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="该接口已废弃确认语义，请使用项目级批量确认",
+        )
     candidates = (
         await db.execute(
             select(Candidate).where(
@@ -93,7 +98,7 @@ def _review_band(candidate: Candidate) -> str:
         candidate.candidate_kind == CANDIDATE_KIND_RECOMMENDED
         and candidate.routing_status == ROUTING_RECOMMENDED
         and candidate.recommended_node_id is not None
-        and not _parse_risk_flags(candidate.risk_flags)
+        and not parse_risk_flags(candidate.risk_flags)
     ):
         return "quick"
     return "detailed"

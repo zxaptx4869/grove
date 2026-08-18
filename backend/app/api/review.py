@@ -184,6 +184,7 @@ async def decide_candidate_endpoint(
 @router.post(
     "/sources/{source_id}/candidates/batch-decision",
     response_model=list[CandidateOut],
+    deprecated=True,
 )
 async def batch_decision_endpoint(
     source_id: int,

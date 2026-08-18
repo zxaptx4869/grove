@@ -55,7 +55,7 @@ def _parse_evidence(raw: str | None) -> list[EvidenceRefOut]:
     return result
 
 
-def _parse_risk_flags(raw: str | None) -> list[str]:
+def parse_risk_flags(raw: str | None) -> list[str]:
     if not raw:
         return []
     try:
@@ -99,7 +99,7 @@ def candidate_out(candidate: Candidate) -> CandidateOut:
         note=candidate.note,
         evidence=_parse_evidence(candidate.evidence_refs),
         reason=candidate.reason,
-        risk_flags=_parse_risk_flags(candidate.risk_flags),
+        risk_flags=parse_risk_flags(candidate.risk_flags),
         status=candidate.status,
         recommended_node_id=candidate.recommended_node_id,
         node_alternatives=_parse_node_alternatives(candidate.node_alternatives),

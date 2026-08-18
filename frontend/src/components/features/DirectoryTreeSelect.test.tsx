@@ -55,8 +55,8 @@ describe('DirectoryTreeSelect', () => {
     await userEvent.click(screen.getByRole('button', { name: '目录' }))
     await userEvent.type(screen.getByLabelText('搜索目录'), '客厅')
 
-    expect(screen.getByRole('option', { name: /空间规划/ })).toBeInTheDocument()
-    expect(screen.getByRole('option', { name: /客厅/ })).toBeInTheDocument()
+    expect(screen.getAllByRole('option', { name: /空间规划/ }).length).toBe(2)
+    expect(screen.getByRole('option', { name: /空间规划 \/ 客厅/ })).toBeInTheDocument()
     expect(screen.queryByRole('option', { name: /施工/ })).not.toBeInTheDocument()
     expect(document.body.querySelector('span.text-ai-candidate')?.textContent).toBe('客厅')
   })

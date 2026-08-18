@@ -170,6 +170,25 @@ async def test_batch_decision(client: httpx.AsyncClient) -> None:
 
 
 @pytest.mark.asyncio
+async def test_source_batch_decision_confirmed_deprecated(
+    client: httpx.AsyncClient,
+) -> None:
+    """Source 级批量接口已废弃确认语义，confirmed 应返回 400。"""
+    await _register(client)
+    project = await _create_project(client)
+    source = await _create_source(client, project["id"])
+    await _process(client, source["id"])
+    candidates = await _candidates(client, source["id"])
+
+    response = await client.post(
+        f"/api/sources/{source['id']}/candidates/batch-decision",
+        json={"candidate_ids": [candidates[0]["id"]], "status": "confirmed"},
+    )
+
+    assert response.status_code == 400
+
+
+@pytest.mark.asyncio
 async def test_review_sources_project_scoped(client: httpx.AsyncClient) -> None:
     """确认台只返回当前项目内的待审 Source。"""
     await _register(client)

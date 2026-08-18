@@ -129,6 +129,7 @@ export function DirectoryTreeSelect({
             expanded: ancestors.has(entry.id) || expandedIds.has(entry.id),
           })),
         hasMatch: matched.size > 0,
+        searching: true,
       }
     }
 
@@ -140,7 +141,7 @@ export function DirectoryTreeSelect({
       }
     }
     for (const entry of childrenByParent.get(null) ?? []) walk(entry)
-    return { rows, hasMatch: true }
+    return { rows, hasMatch: true, searching: false }
   }, [entries, byId, childrenByParent, expandedIds, query])
 
   function toggleExpanded(nodeId: number) {
@@ -260,7 +261,7 @@ export function DirectoryTreeSelect({
                   )}
                   <DirectoryRow
                     depth={0}
-                    label={entry.name}
+                    label={visible.searching ? entry.path : entry.name}
                     count={entry.entryCount}
                     selected={value === entry.id}
                     highlight={query}

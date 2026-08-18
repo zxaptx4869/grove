@@ -511,9 +511,9 @@ export function ReviewPage() {
 
   return (
     <section className="flex h-full min-h-0 flex-col">
-      <header className="flex min-h-[58px] items-center justify-between gap-4 px-6">
+      <header className="grid min-h-[58px] grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-4 px-6">
         <h1 className="text-[22px] font-[650] leading-[30px]">确认台</h1>
-        <div className="mx-auto flex items-center gap-[7px] rounded-md border bg-muted/50 p-[3px]">
+        <div className="flex items-center justify-self-center gap-[7px] rounded-md border bg-muted/50 p-[3px]">
           <button
             type="button"
             onClick={() => setReviewMode('source')}
