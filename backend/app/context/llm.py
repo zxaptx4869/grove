@@ -25,7 +25,6 @@ CONTEXT_SYSTEM_PROMPT = """你是 Grove 的项目上下文生成器。请基于�
 
 def _format_context(
     project: Project,
-    nodes: list[Node],
     entries_summary: dict | None,
     top_level_nodes: list[dict] | None,
     corrections: ProjectContextCorrections | None,
@@ -123,7 +122,6 @@ class LLMProjectContextGenerator(ProjectContextGenerator):
 
         context = _format_context(
             project,
-            nodes,
             entries_summary,
             top_level_nodes,
             corrections,

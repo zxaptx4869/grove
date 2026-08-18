@@ -100,3 +100,22 @@
 
 - **WHEN** 项目目录结构发生变化但快照尚未重新生成
 - **THEN** 前端目录主题徽章仍展示实时目录树中的顶级节点
+
+### Requirement: 生成来源可追溯
+
+系统 MUST 在快照中记录 `provider`（`demo` / `llm` / `offline`）、`model` 与 `is_fallback`；降级生成（无可用密钥或 demo 占位）MUST 标记为降级；前端 MUST 根据来源展示“真实模型 / 离线生成 / 来源未标注”。
+
+#### Scenario: 真实模型生成
+
+- **WHEN** 快照由真实文本模型成功生成
+- **THEN** `provider` 为 `llm`、记录模型名，`is_fallback` 为 false
+
+#### Scenario: 离线降级生成
+
+- **WHEN** 无可用密钥或使用 demo 占位生成快照
+- **THEN** `provider` 为 `offline` 或 `demo`，`is_fallback` 为 true
+
+#### Scenario: 旧快照来源未标注
+
+- **WHEN** 快照尚未包含生成来源字段
+- **THEN** 前端展示“来源未标注”，不冒充真实模型

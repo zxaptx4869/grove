@@ -278,7 +278,7 @@ async def refresh_project_context(
         )
         context.directory_topics = json.dumps(topic_names, ensure_ascii=False)
         context.entries_summary = json.dumps(entries_summary, ensure_ascii=False)
-        context.recent_themes = json.dumps(draft.recent_themes, ensure_ascii=False)
+        context.recent_themes = json.dumps(draft.recent_themes[:5], ensure_ascii=False)
         context.provider = meta.provider
         context.model = meta.model
         context.is_fallback = meta.is_fallback
