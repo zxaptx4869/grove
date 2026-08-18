@@ -810,7 +810,7 @@ export function ProjectPage() {
                 编辑项目信息
               </Button>
             </section>
-            <ProjectContextPanel projectId={id} />
+            <ProjectContextPanel projectId={id} nodes={tree.data ?? []} />
           </div>
 
           <aside className="border-l pl-[22px]">

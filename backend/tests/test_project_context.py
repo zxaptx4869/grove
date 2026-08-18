@@ -13,6 +13,7 @@ from app.db.session import async_session_factory
 from app.main import create_app
 from app.models import ProjectContext
 from app.models.project_context import PENDING, READY
+from app.processing import worker
 from app.services import project_context as service
 
 
@@ -68,6 +69,41 @@ async def _context_row(project_id: int) -> ProjectContext:
                 select(ProjectContext).where(ProjectContext.project_id == project_id)
             )
         ).scalar_one_or_none()
+
+
+async def _create_source(client: httpx.AsyncClient, project_id: int, text: str) -> dict:
+    response = await client.post(
+        "/api/sources",
+        data={"text": text, "project_id": str(project_id)},
+    )
+    assert response.status_code == 201
+    return response.json()
+
+
+async def _process(client: httpx.AsyncClient, source_id: int) -> None:
+    response = await client.post(f"/api/sources/{source_id}/process")
+    assert response.status_code == 200
+    assert await worker.process_one_task() is True
+
+
+async def _candidates(client: httpx.AsyncClient, source_id: int) -> list[dict]:
+    response = await client.get(f"/api/sources/{source_id}/candidates")
+    assert response.status_code == 200
+    return response.json()
+
+
+async def _archive(
+    client: httpx.AsyncClient,
+    node_id: int,
+    source_id: int,
+) -> dict:
+    candidate = (await _candidates(client, source_id))[0]
+    response = await client.post(
+        f"/api/candidates/{candidate['id']}/archive",
+        json={"node_id": node_id},
+    )
+    assert response.status_code == 200
+    return response.json()
 
 
 @pytest.mark.asyncio
@@ -178,7 +214,14 @@ async def test_failure_fallback_keeps_previous_snapshot(
     class FailingGenerator(ProjectContextGenerator):
         provider_name = "failing"
 
-        async def generate(self, project, nodes, corrections=None):
+        async def generate(
+            self,
+            project,
+            nodes,
+            entries_summary=None,
+            top_level_nodes=None,
+            corrections=None,
+        ):
             raise RuntimeError("生成失败")
 
     monkeypatch.setattr(service, "get_project_context_generator", lambda: FailingGenerator())
@@ -203,7 +246,14 @@ async def test_failure_without_snapshot_marks_failed(
     class FailingGenerator(ProjectContextGenerator):
         provider_name = "failing"
 
-        async def generate(self, project, nodes, corrections=None):
+        async def generate(
+            self,
+            project,
+            nodes,
+            entries_summary=None,
+            top_level_nodes=None,
+            corrections=None,
+        ):
             raise RuntimeError("首次生成失败")
 
     monkeypatch.setattr(service, "get_project_context_generator", lambda: FailingGenerator())
@@ -286,3 +336,80 @@ async def test_unavailable_provider_raises() -> None:
     project = Project(id=1, workspace_id=1, name="x", status="active")
     with pytest.raises(NotImplementedError, match="尚未接入"):
         await UnavailableProjectContextGenerator().generate(project, [])
+
+
+@pytest.mark.asyncio
+async def test_refresh_writes_version_entries_summary_and_themes(
+    client: httpx.AsyncClient,
+) -> None:
+    """成功生成应写入版本、知识覆盖摘要与近期主题。"""
+    await _register(client)
+    project = await _create_project(client, description="装修")
+    node = await _create_node(client, project["id"], "施工")
+    source = await _create_source(client, project["id"], "闭水试验知识")
+    await _process(client, source["id"])
+    await _archive(client, node["id"], source["id"])
+
+    response = await client.post(f"/api/projects/{project['id']}/context/refresh")
+
+    assert response.status_code == 200
+    data = response.json()
+    assert data["status"] == READY
+    assert data["version"] == 1
+    assert data["last_update_reason"] == "manual_refresh"
+    assert data["entries_summary"]["total"] == 1
+    assert data["entries_summary"]["by_type"]["knowledge"] == 1
+    assert data["entries_summary"]["by_top_node"][0]["count"] == 1
+    assert data["entries_summary"]["recent"][0]["title"] == data["recent_themes"][0]
+
+
+@pytest.mark.asyncio
+async def test_schedule_refresh_records_reason_and_min_interval(
+    client: httpx.AsyncClient,
+) -> None:
+    """重要变化应记录更新原因，并遵守最小生成间隔。"""
+    await _register(client)
+    project = await _create_project(client, description="装修")
+    await client.post(f"/api/projects/{project['id']}/context/refresh")
+    generated_at = (await _context_row(project["id"])).generated_at
+
+    response = await client.patch(
+        f"/api/projects/{project['id']}",
+        json={"description": "更新后的说明"},
+    )
+
+    assert response.status_code == 200
+    row = await _context_row(project["id"])
+    assert row.last_update_reason == "project_updated"
+    assert row.refresh_due_at is not None
+    assert (row.refresh_due_at - generated_at).total_seconds() >= 299
+
+
+@pytest.mark.asyncio
+async def test_archive_schedules_refresh_but_evidence_does_not(
+    client: httpx.AsyncClient,
+) -> None:
+    """归档 Entry 触发刷新，补充来源证据不触发。"""
+    await _register(client)
+    project = await _create_project(client, description="装修")
+    node = await _create_node(client, project["id"], "施工")
+    first = await _create_source(client, project["id"], "第一条知识")
+    second = await _create_source(client, project["id"], "第二条知识")
+    await _process(client, first["id"])
+    await _process(client, second["id"])
+    entry = await _archive(client, node["id"], first["id"])
+
+    row = await _context_row(project["id"])
+    assert row.last_update_reason == "entry_archived"
+    due_before = row.refresh_due_at
+
+    candidate = (await _candidates(client, second["id"]))[0]
+    response = await client.post(
+        f"/api/candidates/{candidate['id']}/add-evidence",
+        json={"entry_id": entry["id"]},
+    )
+
+    assert response.status_code == 200
+    row = await _context_row(project["id"])
+    assert row.last_update_reason == "entry_archived"
+    assert row.refresh_due_at == due_before

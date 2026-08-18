@@ -4,13 +4,14 @@ import userEvent from '@testing-library/user-event'
 import { MemoryRouter } from 'react-router-dom'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { ProjectContextPanel } from './ProjectContextPanel'
+import type { TreeNodePayload } from '@/lib/api'
 
-function renderPanel() {
+function renderPanel(nodes: TreeNodePayload[] = []) {
   const queryClient = new QueryClient()
   render(
     <QueryClientProvider client={queryClient}>
       <MemoryRouter>
-        <ProjectContextPanel projectId={7} />
+        <ProjectContextPanel projectId={7} nodes={nodes} />
       </MemoryRouter>
     </QueryClientProvider>,
   )
@@ -35,6 +36,19 @@ describe('ProjectContextPanel', () => {
             directory_topics: ['装修准备', '预算'],
             lifecycle_status: 'active',
             generated_at: '2026-08-13T00:00:00Z',
+            version: 3,
+            last_update_reason: 'entry_archived',
+            entries_summary: {
+              total: 5,
+              by_type: { knowledge: 3, method: 2 },
+              by_top_node: [
+                { node_id: 1, name: '装修准备', count: 3 },
+                { node_id: 2, name: '预算', count: 2 },
+              ],
+              recent: [],
+              truncated_count: 0,
+            },
+            recent_themes: ['预算框架', '材料信息'],
             status: 'ready',
             error: null,
             corrections: { project_summary: null, current_focus: null },
@@ -43,11 +57,18 @@ describe('ProjectContextPanel', () => {
       }),
     )
 
-    renderPanel()
+    renderPanel([
+      { id: 1, name: '装修准备', description: null, position: 0, entry_count: 0, children: [] },
+      { id: 2, name: '预算', description: null, position: 0, entry_count: 0, children: [] },
+    ])
 
     expect(await screen.findByText('围绕装修目标整理知识')).toBeInTheDocument()
     expect(screen.getByText('优先确认预算')).toBeInTheDocument()
     expect(screen.getByText('装修准备')).toBeInTheDocument()
+    expect(screen.getByText('预算框架')).toBeInTheDocument()
+    expect(screen.getByText('已确认 5 条正式知识')).toBeInTheDocument()
+    expect(screen.getByText(/版本 v3/)).toBeInTheDocument()
+    expect(screen.getByText(/更新原因 entry_archived/)).toBeInTheDocument()
     expect(screen.getByText('已生成')).toBeInTheDocument()
   })
 
@@ -73,6 +94,10 @@ describe('ProjectContextPanel', () => {
               directory_topics: [],
               lifecycle_status: 'active',
               generated_at: null,
+              version: 0,
+              last_update_reason: null,
+              entries_summary: null,
+              recent_themes: [],
               status: 'pending',
               error: null,
               corrections: { project_summary: '我的纠正概要', current_focus: '只看预算' },
@@ -89,6 +114,10 @@ describe('ProjectContextPanel', () => {
             directory_topics: [],
             lifecycle_status: 'active',
             generated_at: '2026-08-13T00:00:00Z',
+            version: 1,
+            last_update_reason: 'user_correction',
+            entries_summary: null,
+            recent_themes: [],
             status: 'ready',
             error: null,
             corrections: { project_summary: null, current_focus: null },
@@ -132,6 +161,10 @@ describe('ProjectContextPanel', () => {
             directory_topics: [],
             lifecycle_status: 'active',
             generated_at: '2026-08-13T00:00:00Z',
+            version: 2,
+            last_update_reason: 'manual_refresh',
+            entries_summary: null,
+            recent_themes: [],
             status: 'ready',
             error: null,
             corrections: { project_summary: null, current_focus: null },
@@ -151,7 +184,14 @@ describe('ProjectContextPanel', () => {
   })
 
   it('目录主题过多时折叠展示并提示剩余数量', async () => {
-    const topics = Array.from({ length: 10 }, (_, index) => `主题${index + 1}`)
+    const nodes = Array.from({ length: 10 }, (_, index) => ({
+      id: index + 1,
+      name: `主题${index + 1}`,
+      description: null,
+      position: index,
+      entry_count: 0,
+      children: [],
+    }))
     vi.stubGlobal(
       'fetch',
       vi.fn((input: RequestInfo | URL) => {
@@ -164,9 +204,13 @@ describe('ProjectContextPanel', () => {
             user_description: '装修',
             project_summary: '概要',
             current_focus: '关注',
-            directory_topics: topics,
+            directory_topics: [],
             lifecycle_status: 'active',
             generated_at: '2026-08-13T00:00:00Z',
+            version: 1,
+            last_update_reason: null,
+            entries_summary: null,
+            recent_themes: [],
             status: 'ready',
             error: null,
             corrections: { project_summary: null, current_focus: null },
@@ -175,7 +219,7 @@ describe('ProjectContextPanel', () => {
       }),
     )
 
-    renderPanel()
+    renderPanel(nodes)
 
     expect(await screen.findByText('+2')).toBeInTheDocument()
     expect(screen.getByText('主题8')).toBeInTheDocument()

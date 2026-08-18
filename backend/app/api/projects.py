@@ -140,7 +140,7 @@ async def create_project(
     if payload.template == "decoration":
         node_count = await seed_project_nodes(db, project.id, load_decoration_template())
 
-    await schedule_refresh(db, project.id)
+    await schedule_refresh(db, project.id, "project_updated")
     await db.commit()
     await db.refresh(project)
     return ProjectOut(
@@ -167,7 +167,7 @@ async def rename_project(
         project.name = payload.name
     if "description" in payload.model_fields_set:
         project.description = payload.description
-        await schedule_refresh(db, project.id)
+        await schedule_refresh(db, project.id, "project_updated")
     await db.commit()
     await db.refresh(project)
     node_count = (
@@ -305,7 +305,7 @@ async def create_node(
         position=int(sibling_count),
     )
     db.add(node)
-    await schedule_refresh(db, project_id)
+    await schedule_refresh(db, project_id, "directory_changed")
     await db.commit()
     await db.refresh(node)
     return NodeOut(
@@ -366,7 +366,7 @@ async def update_node(
         ).scalars().all()
         node.parent_id = new_parent_id
         node.position = len(new_siblings)
-    await schedule_refresh(db, project_id)
+    await schedule_refresh(db, project_id, "directory_changed")
     await db.commit()
     return NodeOut(
         id=node.id,
@@ -388,7 +388,7 @@ async def delete_node(
     await _get_owned_project(db, workspace.id, project_id)
     node = await _get_project_node(db, project_id, node_id)
     await _delete_node_subtree(db, node.id)
-    await schedule_refresh(db, project_id)
+    await schedule_refresh(db, project_id, "directory_changed")
     await db.commit()
     return {"ok": True}
 
@@ -423,6 +423,6 @@ async def reorder_nodes(
 
     for position, node_id in enumerate(payload.ordered_ids):
         by_id[node_id].position = position
-    await schedule_refresh(db, project_id)
+    await schedule_refresh(db, project_id, "directory_changed")
     await db.commit()
     return {"ok": True}

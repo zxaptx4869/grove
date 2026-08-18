@@ -43,7 +43,12 @@ class Settings(BaseSettings):
 
     # 项目上下文刷新防抖时长（秒）
     context_refresh_debounce_seconds: float = Field(
-        default=1.0, description="项目上下文刷新防抖时长"
+        default=60.0, description="项目上下文刷新防抖时长"
+    )
+
+    # 项目上下文最小生成间隔（秒）：距上次成功生成不足该时长时不立即重新生成
+    context_min_interval_seconds: float = Field(
+        default=300.0, description="项目上下文最小生成间隔"
     )
 
     # 进程内项目上下文 Worker：应用启动时是否开启（测试环境可关闭）

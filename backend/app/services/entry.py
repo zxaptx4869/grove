@@ -114,6 +114,7 @@ async def archive_candidate(
     candidate.status = CANDIDATE_CONFIRMED
     candidate.entry_id = entry.id
     await db.flush()
+    await schedule_refresh(db, source.project_id, "entry_archived")
     return (
         await db.execute(
             select(Entry).options(*entry_eager_options()).where(Entry.id == entry.id)
@@ -186,6 +187,7 @@ async def apply_revision_to_entry(
     candidate.status = CANDIDATE_CONFIRMED
     candidate.entry_id = entry.id
     await db.flush()
+    await schedule_refresh(db, source.project_id, "entry_edited")
     return (
         await db.execute(
             select(Entry).options(*entry_eager_options()).where(Entry.id == entry.id)
@@ -297,6 +299,8 @@ async def edit_entry(
             )
         entry.node_id = payload.node_id
         entry.node = node
+    if payload.model_fields_set:
+        await schedule_refresh(db, entry.project_id, "entry_edited")
     return entry
 
 

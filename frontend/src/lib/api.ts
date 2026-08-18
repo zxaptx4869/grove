@@ -273,6 +273,27 @@ export interface ProjectContextCorrectionsPayload {
   current_focus: string | null
 }
 
+export interface EntryRecentPayload {
+  entry_id: number
+  title: string
+  node_name: string
+  updated_at: string | null
+}
+
+export interface EntryTopNodeCoveragePayload {
+  node_id: number
+  name: string
+  count: number
+}
+
+export interface EntrySummaryPayload {
+  total: number
+  by_type: Record<string, number>
+  by_top_node: EntryTopNodeCoveragePayload[]
+  recent: EntryRecentPayload[]
+  truncated_count: number
+}
+
 export interface ProjectContextPayload {
   project_id: number
   user_description: string | null
@@ -281,6 +302,10 @@ export interface ProjectContextPayload {
   directory_topics: string[]
   lifecycle_status: ProjectStatus
   generated_at: string | null
+  version: number
+  last_update_reason: string | null
+  entries_summary: EntrySummaryPayload | null
+  recent_themes: string[]
   status: ProjectContextStatus
   error: string | null
   corrections: ProjectContextCorrectionsPayload

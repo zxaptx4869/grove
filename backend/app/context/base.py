@@ -20,6 +20,7 @@ class ProjectContextDraft(BaseModel):
     project_summary: str = Field(description="AI 项目概要")
     current_focus: str = Field(description="当前关注方向")
     directory_topics: list[str] = Field(description="目录主题列表")
+    recent_themes: list[str] = Field(default_factory=list, description="近期主题列表")
 
 
 class ProjectContextGenerator(ABC):
@@ -32,6 +33,8 @@ class ProjectContextGenerator(ABC):
         self,
         project: Project,
         nodes: list[Node],
+        entries_summary: dict | None = None,
+        top_level_nodes: list[dict] | None = None,
         corrections: ProjectContextCorrections | None = None,
     ) -> ProjectContextDraft:
         """生成结构化项目上下文草稿；失败时抛出异常。"""

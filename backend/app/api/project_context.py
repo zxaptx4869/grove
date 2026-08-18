@@ -59,6 +59,6 @@ async def regenerate_project_context(
 ) -> ProjectContextOut:
     """手动重新生成项目上下文并返回最新快照。"""
     await _get_owned_project(db, workspace.id, project_id)
-    await refresh_project_context(db, project_id)
+    await refresh_project_context(db, project_id, "manual_refresh")
     await db.commit()
     return await get_project_context_out(db, workspace.id, project_id)

@@ -20,6 +20,7 @@ import {
   refreshProjectContext,
   updateProjectContext,
   type ProjectContextStatus,
+  type TreeNodePayload,
 } from '@/lib/api'
 import { queryKeys } from '@/lib/queryKeys'
 
@@ -50,7 +51,13 @@ function formatGeneratedAt(value: string | null) {
 }
 
 /** 项目上下文面板：展示 AI 候选概要，支持纠正与重新生成。 */
-export function ProjectContextPanel({ projectId }: { projectId: number }) {
+export function ProjectContextPanel({
+  projectId,
+  nodes = [],
+}: {
+  projectId: number
+  nodes?: TreeNodePayload[]
+}) {
   const [correctOpen, setCorrectOpen] = useState(false)
   const [summary, setSummary] = useState('')
   const [focus, setFocus] = useState('')
@@ -106,6 +113,9 @@ export function ProjectContextPanel({ projectId }: { projectId: number }) {
 
   const data = context.data
   if (!data) return null
+  const topicNames = nodes.length > 0 ? nodes.map((node) => node.name) : data.directory_topics
+  const recentThemes = data.recent_themes ?? []
+  const entrySummary = data.entries_summary
 
   const openCorrect = () => {
     setSummary(data.corrections.project_summary ?? data.project_summary ?? '')
@@ -157,16 +167,16 @@ export function ProjectContextPanel({ projectId }: { projectId: number }) {
         </div>
         <div>
           <p className="text-caption font-medium text-muted-foreground">目录主题</p>
-          {data.directory_topics.length > 0 ? (
+          {topicNames.length > 0 ? (
             <div className="mt-1.5 flex flex-wrap gap-1.5">
-              {data.directory_topics.slice(0, MAX_TOPIC_BADGES).map((topic) => (
+              {topicNames.slice(0, MAX_TOPIC_BADGES).map((topic) => (
                 <Badge key={topic} variant="outline" className="bg-muted/40 text-muted-foreground">
                   {topic}
                 </Badge>
               ))}
-              {data.directory_topics.length > MAX_TOPIC_BADGES ? (
+              {topicNames.length > MAX_TOPIC_BADGES ? (
                 <Badge variant="outline" className="bg-muted/40 text-muted-foreground">
-                  +{data.directory_topics.length - MAX_TOPIC_BADGES}
+                  +{topicNames.length - MAX_TOPIC_BADGES}
                 </Badge>
               ) : null}
             </div>
@@ -174,9 +184,47 @@ export function ProjectContextPanel({ projectId }: { projectId: number }) {
             <p className="mt-0.5">目录还是空的</p>
           )}
         </div>
+        <div>
+          <p className="text-caption font-medium text-muted-foreground">近期主题</p>
+          {recentThemes.length > 0 ? (
+            <div className="mt-1.5 flex flex-wrap gap-1.5">
+              {recentThemes.slice(0, MAX_TOPIC_BADGES).map((theme) => (
+                <Badge key={theme} variant="outline" className="bg-brand-soft text-brand">
+                  {theme}
+                </Badge>
+              ))}
+              {recentThemes.length > MAX_TOPIC_BADGES ? (
+                <Badge variant="outline" className="bg-muted/40 text-muted-foreground">
+                  +{recentThemes.length - MAX_TOPIC_BADGES}
+                </Badge>
+              ) : null}
+            </div>
+          ) : (
+            <p className="mt-0.5">暂无近期主题</p>
+          )}
+        </div>
+        <div>
+          <p className="text-caption font-medium text-muted-foreground">知识覆盖</p>
+          <p className="mt-0.5 text-foreground">已确认 {entrySummary?.total ?? 0} 条正式知识</p>
+          {entrySummary && entrySummary.by_top_node.length > 0 ? (
+            <div className="mt-1.5 flex flex-wrap gap-1.5">
+              {entrySummary.by_top_node.slice(0, MAX_TOPIC_BADGES).map((node) => (
+                <Badge key={node.node_id} variant="outline" className="bg-muted/40 text-muted-foreground">
+                  {node.name} · {node.count}
+                </Badge>
+              ))}
+              {entrySummary.by_top_node.length > MAX_TOPIC_BADGES ? (
+                <Badge variant="outline" className="bg-muted/40 text-muted-foreground">
+                  +{entrySummary.by_top_node.length - MAX_TOPIC_BADGES}
+                </Badge>
+              ) : null}
+            </div>
+          ) : null}
+        </div>
         <p className="text-caption text-muted-foreground">
           <Sparkles className="mr-1 inline size-3.5" />
-          AI 候选 · 更新于 {formatGeneratedAt(data.generated_at)} · 生命周期 {data.lifecycle_status}
+          AI 候选 · 更新于 {formatGeneratedAt(data.generated_at)} · 版本 v{data.version ?? 0} ·
+          更新原因 {data.last_update_reason ?? '—'} · 生命周期 {data.lifecycle_status}
         </p>
       </div>
 

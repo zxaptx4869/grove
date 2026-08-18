@@ -39,6 +39,12 @@ class ProjectContext(Base):
     error: Mapped[str | None] = mapped_column(Text, nullable=True)
     generated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     refresh_due_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    version: Mapped[int] = mapped_column(
+        Integer, default=0, server_default="0", nullable=False
+    )
+    last_update_reason: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    entries_summary: Mapped[str | None] = mapped_column(Text, nullable=True)
+    recent_themes: Mapped[str | None] = mapped_column(Text, nullable=True)
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False
     )

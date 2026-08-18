@@ -21,9 +21,11 @@ class UnavailableProjectContextGenerator(ProjectContextGenerator):
         self,
         project: Project,
         nodes: list[Node],
+        entries_summary: dict | None = None,
+        top_level_nodes: list[dict] | None = None,
         corrections: ProjectContextCorrections | None = None,
     ) -> ProjectContextDraft:
-        del project, nodes, corrections
+        del project, nodes, entries_summary, top_level_nodes, corrections
         raise NotImplementedError(
             "项目上下文生成 Provider 尚未接入，请在后续 change 完成实现后再使用。"
         )
