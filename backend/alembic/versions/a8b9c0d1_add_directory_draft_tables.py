@@ -22,7 +22,12 @@ def upgrade() -> None:
     """创建目录草稿与草稿节点表。"""
     op.create_table(
         "directory_drafts",
-        sa.Column("id", sa.BigInteger(), autoincrement=True, primary_key=True),
+        sa.Column(
+            "id",
+            sa.BigInteger().with_variant(sa.Integer(), "sqlite"),
+            autoincrement=True,
+            primary_key=True,
+        ),
         sa.Column(
             "project_id",
             sa.BigInteger(),
@@ -38,8 +43,18 @@ def upgrade() -> None:
         sa.Column("model", sa.String(length=128), nullable=True),
         sa.Column("is_fallback", sa.Boolean(), nullable=False),
         sa.Column("last_error", sa.Text(), nullable=True),
-        sa.Column("created_at", sa.DateTime(timezone=True), nullable=False),
-        sa.Column("updated_at", sa.DateTime(timezone=True), nullable=False),
+        sa.Column(
+            "created_at",
+            sa.DateTime(timezone=True),
+            server_default=sa.text("(CURRENT_TIMESTAMP)"),
+            nullable=False,
+        ),
+        sa.Column(
+            "updated_at",
+            sa.DateTime(timezone=True),
+            server_default=sa.text("(CURRENT_TIMESTAMP)"),
+            nullable=False,
+        ),
     )
     op.create_index(
         "ix_directory_drafts_project_id",
@@ -49,7 +64,12 @@ def upgrade() -> None:
     )
     op.create_table(
         "directory_draft_nodes",
-        sa.Column("id", sa.BigInteger(), autoincrement=True, primary_key=True),
+        sa.Column(
+            "id",
+            sa.BigInteger().with_variant(sa.Integer(), "sqlite"),
+            autoincrement=True,
+            primary_key=True,
+        ),
         sa.Column(
             "draft_id",
             sa.BigInteger(),
@@ -65,8 +85,18 @@ def upgrade() -> None:
         sa.Column("name", sa.String(length=128), nullable=False),
         sa.Column("description", sa.Text(), nullable=True),
         sa.Column("position", sa.Integer(), nullable=False),
-        sa.Column("created_at", sa.DateTime(timezone=True), nullable=False),
-        sa.Column("updated_at", sa.DateTime(timezone=True), nullable=False),
+        sa.Column(
+            "created_at",
+            sa.DateTime(timezone=True),
+            server_default=sa.text("(CURRENT_TIMESTAMP)"),
+            nullable=False,
+        ),
+        sa.Column(
+            "updated_at",
+            sa.DateTime(timezone=True),
+            server_default=sa.text("(CURRENT_TIMESTAMP)"),
+            nullable=False,
+        ),
     )
     op.create_index(
         "ix_directory_draft_nodes_draft_id",
