@@ -385,20 +385,41 @@ export function DirectoryDraftDialog({
     }
     setError('')
     setLoading(true)
-    const request =
-      mode === 'expand' && targetNode
-        ? expandDirectoryDraft(projectId, targetNode.id)
-        : createDirectoryDraft(projectId)
-    request
-      .then((data) => {
-        applyDraftData(data)
-        setLoading(false)
-      })
-      .catch((reason: unknown) => {
-        setError(reason instanceof Error ? reason.message : '创建草稿失败')
-        setLoading(false)
-      })
-    return stopPolling
+    let cancelled = false
+    async function openDraft() {
+      let existing: DirectoryDraftPayload | null = null
+      try {
+        existing = await fetchDirectoryDraft(projectId)
+      } catch {
+        // 无活跃草稿时视为首次发起
+      }
+      const matches =
+        existing != null &&
+        (mode === 'expand'
+          ? existing.kind === 'expand' &&
+            targetNode != null &&
+            existing.target_node_id === targetNode.id
+          : existing.kind === 'draft')
+      try {
+        const data = matches
+          ? existing
+          : mode === 'expand' && targetNode
+            ? await expandDirectoryDraft(projectId, targetNode.id)
+            : await createDirectoryDraft(projectId)
+        if (data && !cancelled) applyDraftData(data)
+      } catch (reason: unknown) {
+        if (!cancelled) {
+          setError(reason instanceof Error ? reason.message : '创建草稿失败')
+        }
+      } finally {
+        if (!cancelled) setLoading(false)
+      }
+    }
+    void openDraft()
+    return () => {
+      cancelled = true
+      stopPolling()
+    }
   }, [open, projectId, mode, targetNode])
 
   useEffect(() => {

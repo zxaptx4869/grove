@@ -398,8 +398,13 @@ export function ProjectPage() {
     setActionError('')
     setCheckingDraft(true)
     try {
-      await fetchDirectoryDraft(id)
-      setOverwriteNode(node)
+      const existing = await fetchDirectoryDraft(id)
+      if (existing.kind === 'expand' && existing.target_node_id === node.id) {
+        // 同一节点的已有拓展草稿直接继续，不重新生成
+        setExpandTarget(node)
+      } else {
+        setOverwriteNode(node)
+      }
     } catch {
       setExpandTarget(node)
     } finally {
