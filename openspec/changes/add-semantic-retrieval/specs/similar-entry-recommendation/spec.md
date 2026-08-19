@@ -29,7 +29,7 @@
 
 #### Scenario: 未配置密钥降级
 - **WHEN** 当前 Workspace 未配置文本模型密钥
-- **THEN** 返回确定性召回结果并标记为降级，不调用外部服务
+- **THEN** 按召回分数降序返回确定性召回结果并标记为降级，不调用外部服务
 
 ### Requirement: 越权项目不可见
 用户请求相似推荐的 Entry 不属于当前 Workspace 时 MUST 失败（404），不暴露其他 Workspace 数据。
