@@ -17,11 +17,11 @@
 
 ## 3. 前端实现
 
-- [ ] 3.1 `lib/api.ts`：新增 expand 接口、diff 类型（added/kept/removed、blocked/blocker_count）与 `DirectoryDraftPayload` 扩展字段
-- [ ] 3.2 `NodeTree.tsx` 节点更多操作菜单新增「AI 拓展」项，`NodeTreeCallbacks` 增加 `onExpand`
-- [ ] 3.3 `ProjectPage.tsx`：内容区（选中节点时）增加「AI 拓展」按钮；已有活跃草稿时先弹覆盖确认；手动删除弹窗在受保护时展示阻断数量与原因
-- [ ] 3.4 `DirectoryDraftDialog.tsx` 支持 `mode="expand"` 与目标节点：标题“AI 拓展节点「xxx」”、打开时调用 expand 接口并轮询、差异面板（新增默认勾选可取消、保留仅展示、建议移除默认勾选且受保护禁用并显示“含 N 条正式知识，不可移除”）、受保护提示条、页脚统计与“应用拓展”按钮、对话区沿用双栏布局
-- [ ] 3.5 前端测试与构建：`bash scripts/frontend-dev-bg.sh` 手工走查 + `npm run build`（或既有测试脚本）通过
+- [x] 3.1 `lib/api.ts`：新增 expand 接口、diff 类型（added/kept/removed、blocked/blocker_count）与 `DirectoryDraftPayload` 扩展字段
+- [x] 3.2 `NodeTree.tsx` 节点更多操作菜单新增「AI 拓展」项，`NodeTreeCallbacks` 增加 `onExpand`
+- [x] 3.3 `ProjectPage.tsx`：内容区（选中节点时）增加「AI 拓展」按钮；已有活跃草稿时先弹覆盖确认；手动删除弹窗在受保护时展示阻断数量与原因
+- [x] 3.4 `DirectoryDraftDialog.tsx` 支持 `mode="expand"` 与目标节点：标题“AI 拓展节点「xxx」”、打开时调用 expand 接口并轮询、差异面板（新增默认勾选可取消、保留仅展示、建议移除默认勾选且受保护禁用并显示“含 N 条正式知识，不可移除”）、受保护提示条、页脚统计与“应用拓展”按钮、对话区沿用双栏布局
+- [x] 3.5 前端测试与构建：`bash scripts/frontend-dev-bg.sh` 手工走查 + `npm run build`（或既有测试脚本）通过
 
 ## 4. 验证与收尾
 

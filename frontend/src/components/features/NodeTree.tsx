@@ -10,6 +10,7 @@ import {
   MoreHorizontal,
   Pencil,
   Plus,
+  Sparkles,
   Trash2,
 } from 'lucide-react'
 
@@ -28,6 +29,7 @@ export interface NodeTreeCallbacks {
   onRename: (node: TreeNodePayload) => void
   onDelete: (node: TreeNodePayload) => void
   onMove: (node: TreeNodePayload) => void
+  onExpand: (node: TreeNodePayload) => void
   onReorder: (parentId: number | null, orderedIds: number[]) => void
 }
 
@@ -125,6 +127,7 @@ export function NodeTree({ nodes, callbacks, selectedId = null, onSelect }: Node
               <DropdownMenuContent align="start" className="w-40">
                 <DropdownMenuItem onSelect={() => callbacks.onAddChild(node)}><Plus />添加子节点</DropdownMenuItem>
                 <DropdownMenuItem onSelect={() => callbacks.onRename(node)}><Pencil />编辑节点</DropdownMenuItem>
+                <DropdownMenuItem onSelect={() => callbacks.onExpand(node)}><Sparkles />AI 拓展</DropdownMenuItem>
                 <DropdownMenuItem onSelect={() => callbacks.onMove(node)}><FolderInput />移动到…</DropdownMenuItem>
                 <DropdownMenuSeparator />
                 <DropdownMenuItem disabled={index === 0} onSelect={() => callbacks.onReorder(parentId, swapIds(items, index, index - 1))}><ArrowUp />上移</DropdownMenuItem>

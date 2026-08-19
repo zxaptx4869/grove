@@ -49,6 +49,7 @@ import {
   createNode,
   deleteNode,
   deleteProject,
+  fetchDirectoryDraft,
   fetchProjects,
   fetchProjectTree,
   fetchNodeEntries,
@@ -219,6 +220,9 @@ export function ProjectPage() {
   const [projectDescription, setProjectDescription] = useState('')
   const [deleteProjectOpen, setDeleteProjectOpen] = useState(false)
   const [aiOpen, setAiOpen] = useState(false)
+  const [expandTarget, setExpandTarget] = useState<TreeNodePayload | null>(null)
+  const [overwriteNode, setOverwriteNode] = useState<TreeNodePayload | null>(null)
+  const [checkingDraft, setCheckingDraft] = useState(false)
   const [captureOpen, setCaptureOpen] = useState(false)
   const [actionError, setActionError] = useState('')
   const [viewMode, setViewMode] = useState<'card' | 'list'>(() =>
@@ -356,6 +360,19 @@ export function ProjectPage() {
   function openAddNode(parent: TreeNodePayload | null) {
     setActionError('')
     setNodeForm({ mode: 'create', parent, node: null })
+  }
+
+  async function handleExpand(node: TreeNodePayload) {
+    setActionError('')
+    setCheckingDraft(true)
+    try {
+      await fetchDirectoryDraft(id)
+      setOverwriteNode(node)
+    } catch {
+      setExpandTarget(node)
+    } finally {
+      setCheckingDraft(false)
+    }
   }
 
   function openProjectEdit() {
@@ -532,6 +549,9 @@ export function ProjectPage() {
                     setActionError('')
                     setDeleteNodeTarget(node)
                   },
+                  onExpand: (node) => {
+                    void handleExpand(node)
+                  },
                   onReorder: (parentId, orderedIds) => reorder.mutate({ parentId, orderedIds }),
                 }}
               />
@@ -705,14 +725,25 @@ export function ProjectPage() {
                           {selectedNode.description || '尚未填写节点说明。'}
                         </p>
                       </div>
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        onClick={() => setNodeForm({ mode: 'edit', parent: null, node: selectedNode })}
-                      >
-                        <Pencil />
-                        编辑节点
-                      </Button>
+                      <div className="flex shrink-0 gap-2">
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          onClick={() => void handleExpand(selectedNode)}
+                          disabled={checkingDraft}
+                        >
+                          <Sparkles />
+                          AI 拓展
+                        </Button>
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          onClick={() => setNodeForm({ mode: 'edit', parent: null, node: selectedNode })}
+                        >
+                          <Pencil />
+                          编辑节点
+                        </Button>
+                      </div>
                     </div>
                     {entries.isLoading ? (
                       <div className="py-10 text-center text-body-sm text-muted-foreground">
@@ -893,6 +924,37 @@ export function ProjectPage() {
       </Dialog>
 
       <Dialog
+        open={overwriteNode !== null}
+        onOpenChange={(open) => {
+          if (!open) setOverwriteNode(null)
+        }}
+      >
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>覆盖当前草稿</DialogTitle>
+            <DialogDescription>
+              项目已有进行中的 AI 草稿，继续将覆盖未应用的候选内容，正式目录不受影响。
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setOverwriteNode(null)}>
+              取消
+            </Button>
+            <Button
+              disabled={checkingDraft}
+              onClick={() => {
+                const node = overwriteNode
+                setOverwriteNode(null)
+                if (node) setExpandTarget(node)
+              }}
+            >
+              覆盖并继续
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog
         open={moveTarget !== null}
         onOpenChange={(open) => {
           if (!open) {
@@ -1031,8 +1093,15 @@ export function ProjectPage() {
 
       <DirectoryDraftDialog
         projectId={id}
-        open={aiOpen}
-        onOpenChange={setAiOpen}
+        mode={expandTarget ? 'expand' : 'draft'}
+        targetNode={expandTarget}
+        open={aiOpen || expandTarget !== null}
+        onOpenChange={(open) => {
+          if (!open) {
+            setAiOpen(false)
+            setExpandTarget(null)
+          }
+        }}
         onApplied={() => {
           queryClient.invalidateQueries({ queryKey: queryKeys.projectTree(id) })
           queryClient.invalidateQueries({ queryKey: queryKeys.projects })

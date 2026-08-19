@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { Pencil, RotateCw, Trash2, X } from 'lucide-react'
+import { Lock, Pencil, RotateCw, Trash2, X } from 'lucide-react'
 
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -9,17 +9,20 @@ import {
   applyDirectoryDraft,
   createDirectoryDraft,
   discardDirectoryDraft,
+  expandDirectoryDraft,
   fetchDirectoryDraft,
   submitDirectoryDraftMessage,
   submitDirectoryDraftClarify,
   updateDirectoryDraftNodes,
   type DirectoryDraftPayload,
+  type DraftDiffNodePayload,
   type DraftMessagePayload,
   type DraftNodePayload,
 } from '@/lib/api'
 
 interface EditableNode {
   uid: string
+  id: number | null
   name: string
   description: string | null
   selected: boolean
@@ -39,6 +42,7 @@ function flattenToNested(nodes: DraftNodePayload[]): EditableNode[] {
       .sort((left, right) => left.position - right.position)
       .map((node) => ({
         uid: `draft-${uid++}`,
+        id: node.id,
         name: node.name,
         description: node.description,
         selected: node.selected ?? true,
@@ -79,6 +83,17 @@ function removeNode(nodes: readonly EditableNode[], uid: string): EditableNode[]
   return nodes
     .filter((node) => node.uid !== uid)
     .map((node) => ({ ...node, children: removeNode(node.children, uid) }))
+}
+
+function mapById(
+  nodes: readonly EditableNode[],
+  id: number,
+  updater: (node: EditableNode) => EditableNode,
+): EditableNode[] {
+  return nodes.map((node) => {
+    if (node.id === id) return updater(node)
+    return { ...node, children: mapById(node.children, id, updater) }
+  })
 }
 
 function sourceBadge(draft: DirectoryDraftPayload) {
@@ -197,13 +212,106 @@ function TreeNodeEditor({
   )
 }
 
+function DiffTree({
+  diff,
+  depth,
+  selectedByDraftId,
+  removedIds,
+  onToggleAdded,
+  onToggleRemoved,
+}: {
+  diff: readonly DraftDiffNodePayload[]
+  depth: number
+  selectedByDraftId: ReadonlyMap<number, boolean>
+  removedIds: ReadonlySet<number>
+  onToggleAdded: (nodeId: number, selected: boolean) => void
+  onToggleRemoved: (realNodeId: number, checked: boolean) => void
+}) {
+  return (
+    <div className="space-y-2 border-l-2 border-muted pl-3" style={{ marginLeft: depth * 12 }}>
+      {diff.map((entry) => {
+        const key =
+          entry.kind === 'removed'
+            ? `removed-${entry.real_node_id}`
+            : `draft-${entry.node_id}`
+        return (
+          <div key={key}>
+            <div className="flex min-h-8 items-center gap-2">
+              {entry.kind === 'added' ? (
+                <input
+                  type="checkbox"
+                  aria-label={`采用新增节点 ${entry.name}`}
+                  checked={selectedByDraftId.get(entry.node_id ?? -1) ?? true}
+                  onChange={(event) => {
+                    if (entry.node_id != null) {
+                      onToggleAdded(entry.node_id, event.target.checked)
+                    }
+                  }}
+                />
+              ) : entry.kind === 'removed' ? (
+                entry.blocked ? (
+                  <Lock className="size-4 shrink-0 text-muted-foreground" aria-hidden />
+                ) : (
+                  <input
+                    type="checkbox"
+                    aria-label={`移除节点 ${entry.name}`}
+                    checked={removedIds.has(entry.real_node_id ?? -1)}
+                    onChange={(event) => {
+                      if (entry.real_node_id != null) {
+                        onToggleRemoved(entry.real_node_id, event.target.checked)
+                      }
+                    }}
+                  />
+                )
+              ) : (
+                <span className="w-4 shrink-0" aria-hidden />
+              )}
+              <span
+                className={`shrink-0 rounded px-1.5 text-[11px] leading-5 ${
+                  entry.kind === 'added'
+                    ? 'bg-brand-soft text-brand'
+                    : entry.kind === 'removed'
+                      ? 'bg-error-soft text-destructive'
+                      : 'bg-muted text-muted-foreground'
+                }`}
+              >
+                {entry.kind === 'added' ? '新增' : entry.kind === 'kept' ? '保留' : '建议移除'}
+              </span>
+              <span className="truncate text-body-sm font-medium">{entry.name}</span>
+              {entry.blocked ? (
+                <span className="shrink-0 text-caption text-destructive">
+                  含 {entry.blocker_count} 条正式知识，不可移除
+                </span>
+              ) : null}
+            </div>
+            {entry.children.length > 0 ? (
+              <DiffTree
+                diff={entry.children}
+                depth={depth + 1}
+                selectedByDraftId={selectedByDraftId}
+                removedIds={removedIds}
+                onToggleAdded={onToggleAdded}
+                onToggleRemoved={onToggleRemoved}
+              />
+            ) : null}
+          </div>
+        )
+      })}
+    </div>
+  )
+}
+
 export function DirectoryDraftDialog({
   projectId,
+  mode = 'draft',
+  targetNode,
   open,
   onOpenChange,
   onApplied,
 }: {
   projectId: number
+  mode?: 'draft' | 'expand'
+  targetNode?: { id: number; name: string } | null
   open: boolean
   onOpenChange: (open: boolean) => void
   onApplied?: () => void
@@ -220,12 +328,35 @@ export function DirectoryDraftDialog({
   const [thinking, setThinking] = useState(false)
   const [error, setError] = useState('')
   const [waitSeconds, setWaitSeconds] = useState(0)
+  const [removedIds, setRemovedIds] = useState<ReadonlySet<number>>(new Set())
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null)
+  const lastDiffRef = useRef('')
 
   function applyDraftData(data: DirectoryDraftPayload) {
     setDraft(data)
     setMessages(data.messages ?? [])
     if (data.status === 'pending_confirm') setTree(flattenToNested(data.nodes))
+    if (data.kind === 'expand') {
+      const key = JSON.stringify(data.diff ?? [])
+      if (key !== lastDiffRef.current) {
+        lastDiffRef.current = key
+        const next = new Set<number>()
+        const collect = (entries: readonly DraftDiffNodePayload[]) => {
+          for (const entry of entries) {
+            if (
+              entry.kind === 'removed' &&
+              entry.real_node_id != null &&
+              !entry.blocked
+            ) {
+              next.add(entry.real_node_id)
+            }
+            collect(entry.children)
+          }
+        }
+        collect(data.diff ?? [])
+        setRemovedIds(next)
+      }
+    }
   }
 
   function updateTree(
@@ -249,7 +380,11 @@ export function DirectoryDraftDialog({
     }
     setError('')
     setLoading(true)
-    createDirectoryDraft(projectId)
+    const request =
+      mode === 'expand' && targetNode
+        ? expandDirectoryDraft(projectId, targetNode.id)
+        : createDirectoryDraft(projectId)
+    request
       .then((data) => {
         applyDraftData(data)
         setLoading(false)
@@ -259,7 +394,7 @@ export function DirectoryDraftDialog({
         setLoading(false)
       })
     return stopPolling
-  }, [open, projectId])
+  }, [open, projectId, mode, targetNode])
 
   useEffect(() => {
     if (!draft || draft.status !== 'drafting') {
@@ -282,6 +417,27 @@ export function DirectoryDraftDialog({
 
   const nodeCount = useMemo(() => countNodes(tree), [tree])
   const selectedCount = useMemo(() => countSelected(tree), [tree])
+  const selectedByDraftId = useMemo(() => {
+    const map = new Map<number, boolean>()
+    if (!draft) return map
+    for (const node of draft.nodes) map.set(node.id, node.selected)
+    return map
+  }, [draft])
+  const diffStats = useMemo(() => {
+    const stats = { added: 0, removed: 0, blocked: 0 }
+    const collect = (entries: readonly DraftDiffNodePayload[]) => {
+      for (const entry of entries) {
+        if (entry.kind === 'added') stats.added += 1
+        if (entry.kind === 'removed') {
+          stats.removed += 1
+          if (entry.blocked) stats.blocked += 1
+        }
+        collect(entry.children)
+      }
+    }
+    collect(draft?.diff ?? [])
+    return stats
+  }, [draft])
 
   async function persistTree(force = false) {
     if (!force && !dirty) return
@@ -302,6 +458,19 @@ export function DirectoryDraftDialog({
     }, 600)
     return () => clearTimeout(timer)
   }, [dirty, tree, draft?.status])
+
+  function toggleAddedNode(nodeId: number, selected: boolean) {
+    updateTree((current) => mapById(current, nodeId, (node) => ({ ...node, selected })))
+  }
+
+  function toggleRemovedNode(realNodeId: number, checked: boolean) {
+    setRemovedIds((current) => {
+      const next = new Set(current)
+      if (checked) next.add(realNodeId)
+      else next.delete(realNodeId)
+      return next
+    })
+  }
 
   function toggleOption(questionId: string, option: string, multiple: boolean) {
     setAnswers((current) => {
@@ -344,7 +513,10 @@ export function DirectoryDraftDialog({
     setError('')
     try {
       await persistTree(true)
-      const data = await applyDirectoryDraft(projectId)
+      const data =
+        draft?.kind === 'expand'
+          ? await applyDirectoryDraft(projectId, [...removedIds])
+          : await applyDirectoryDraft(projectId)
       setDraft(data)
       onApplied?.()
       onOpenChange(false)
@@ -395,7 +567,10 @@ export function DirectoryDraftDialog({
     setBusy(true)
     setError('')
     try {
-      const data = await createDirectoryDraft(projectId)
+      const data =
+        mode === 'expand' && targetNode
+          ? await expandDirectoryDraft(projectId, targetNode.id)
+          : await createDirectoryDraft(projectId)
       applyDraftData(data)
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : '重新发起失败')
@@ -422,13 +597,17 @@ export function DirectoryDraftDialog({
       <aside
         role="dialog"
         aria-modal="true"
-        aria-label="与 AI 共创目录"
+        aria-label={mode === 'expand' ? 'AI 拓展节点' : '与 AI 共创目录'}
         className="absolute right-0 top-0 flex h-full w-[min(960px,100vw)] flex-col bg-card shadow-lg"
         onClick={(event) => event.stopPropagation()}
       >
         <header className="flex items-center justify-between gap-3 border-b px-6 py-4">
           <div className="min-w-0">
-            <h2 className="text-[18px] font-[650] leading-6">与 AI 共创目录</h2>
+            <h2 className="text-[18px] font-[650] leading-6">
+              {mode === 'expand'
+                ? `AI 拓展节点「${targetNode?.name ?? ''}」`
+                : '与 AI 共创目录'}
+            </h2>
             <p className="text-caption text-muted-foreground">
               AI 只生成候选草稿，确认后才会创建正式节点。
             </p>
@@ -459,7 +638,9 @@ export function DirectoryDraftDialog({
               <span>
                 {draft?.next_action === 'clarify'
                   ? `AI 正在生成澄清问题…（已等待 ${waitSeconds} 秒）`
-                  : `AI 正在生成候选树…（已等待 ${waitSeconds} 秒）`}
+                  : mode === 'expand'
+                    ? `AI 正在生成拓展结构…（已等待 ${waitSeconds} 秒）`
+                    : `AI 正在生成候选树…（已等待 ${waitSeconds} 秒）`}
                 {waitSeconds >= 20 ? (
                   <span className="mt-1 block text-amber-600">
                     生成较慢，可稍候或关闭后重新发起。
@@ -523,20 +704,44 @@ export function DirectoryDraftDialog({
           ) : draft?.status === 'pending_confirm' ? (
             <div className="grid h-full grid-cols-2 gap-4">
               <div className="min-h-0 space-y-2 overflow-y-auto pr-2">
-                <p className="text-caption text-muted-foreground">
-                  已选 {selectedCount} / {nodeCount} 个节点 · 受影响 Entry 0 条
-                </p>
-                {tree.map((node) => (
-                  <TreeNodeEditor
-                    key={node.uid}
-                    node={node}
-                    depth={0}
-                    onChange={(updated) =>
-                      updateTree((current) => mapNodes(current, updated.uid, () => updated))
-                    }
-                    onRemove={() => updateTree((current) => removeNode(current, node.uid))}
-                  />
-                ))}
+                {draft?.kind === 'expand' ? (
+                  <>
+                    <p className="text-caption text-muted-foreground">
+                      新增 {diffStats.added} · 建议移除 {diffStats.removed}
+                      {diffStats.blocked > 0 ? `（其中 ${diffStats.blocked} 个受保护不可移除）` : ''}
+                    </p>
+                    {diffStats.blocked > 0 ? (
+                      <p className="rounded-md border-l-2 border-destructive bg-error-soft px-3 py-2 text-caption text-destructive">
+                        含正式知识的节点无法由 AI 移除，如需改名/移动/改说明请使用手动编辑。
+                      </p>
+                    ) : null}
+                    <DiffTree
+                      diff={draft?.diff ?? []}
+                      depth={0}
+                      selectedByDraftId={selectedByDraftId}
+                      removedIds={removedIds}
+                      onToggleAdded={toggleAddedNode}
+                      onToggleRemoved={toggleRemovedNode}
+                    />
+                  </>
+                ) : (
+                  <>
+                    <p className="text-caption text-muted-foreground">
+                      已选 {selectedCount} / {nodeCount} 个节点 · 受影响 Entry 0 条
+                    </p>
+                    {tree.map((node) => (
+                      <TreeNodeEditor
+                        key={node.uid}
+                        node={node}
+                        depth={0}
+                        onChange={(updated) =>
+                          updateTree((current) => mapNodes(current, updated.uid, () => updated))
+                        }
+                        onRemove={() => updateTree((current) => removeNode(current, node.uid))}
+                      />
+                    ))}
+                  </>
+                )}
               </div>
               <div className="flex min-h-0 flex-col">
                 <div className="min-h-0 flex-1 space-y-2 overflow-y-auto rounded-md border p-3">
@@ -613,8 +818,16 @@ export function DirectoryDraftDialog({
           ) : null}
           {draft?.status === 'pending_confirm' ? (
             <>
-              <Button disabled={busy || selectedCount === 0} onClick={applyDraft}>
-                应用目录
+              <Button
+                disabled={
+                  busy ||
+                  (draft?.kind === 'expand'
+                    ? diffStats.added === 0 && removedIds.size === 0
+                    : selectedCount === 0)
+                }
+                onClick={applyDraft}
+              >
+                {draft?.kind === 'expand' ? '应用拓展' : '应用目录'}
               </Button>
             </>
           ) : null}

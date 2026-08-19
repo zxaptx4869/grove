@@ -678,11 +678,14 @@ export interface DraftNodePayload {
 export interface DirectoryDraftPayload {
   id: number
   project_id: number
+  kind: 'draft' | 'expand'
+  target_node_id: number | null
   status: DirectoryDraftStatus
   next_action: 'clarify' | 'generate'
   clarify_batches: number
   clarify: ClarifyQuestionPayload[]
   nodes: DraftNodePayload[]
+  diff: DraftDiffNodePayload[]
   messages: DraftMessagePayload[]
   provider: string | null
   model: string | null
@@ -690,6 +693,17 @@ export interface DirectoryDraftPayload {
   last_error: string | null
   created_at: string
   updated_at: string
+}
+
+export interface DraftDiffNodePayload {
+  kind: 'added' | 'kept' | 'removed'
+  node_id: number | null
+  real_node_id: number | null
+  name: string
+  description: string | null
+  blocked: boolean
+  blocker_count: number
+  children: DraftDiffNodePayload[]
 }
 
 export interface DraftMessagePayload {
@@ -718,6 +732,15 @@ export const createDirectoryDraft = (
 export const fetchDirectoryDraft = (projectId: number) =>
   request<DirectoryDraftPayload>(`/api/projects/${projectId}/directory-draft`)
 
+export const expandDirectoryDraft = (projectId: number, nodeId: number) =>
+  request<DirectoryDraftPayload>(
+    `/api/projects/${projectId}/directory-draft/expand`,
+    {
+      method: 'POST',
+      body: JSON.stringify({ node_id: nodeId }),
+    },
+  )
+
 export const submitDirectoryDraftClarify = (
   projectId: number,
   answers: Record<string, string | string[]>,
@@ -742,9 +765,13 @@ export const updateDirectoryDraftNodes = (
     },
   )
 
-export const applyDirectoryDraft = (projectId: number) =>
+export const applyDirectoryDraft = (
+  projectId: number,
+  removedNodeIds: number[] = [],
+) =>
   request<DirectoryDraftPayload>(`/api/projects/${projectId}/directory-draft/apply`, {
     method: 'POST',
+    body: JSON.stringify({ removed_node_ids: removedNodeIds }),
   })
 
 export const discardDirectoryDraft = (projectId: number) =>

@@ -15,6 +15,7 @@ describe('NodeTree', () => {
       onRename: vi.fn(),
       onMove: vi.fn(),
       onDelete: vi.fn(),
+      onExpand: vi.fn(),
       onReorder: vi.fn(),
     }
     render(<NodeTree nodes={NODES} callbacks={callbacks} />)
@@ -25,8 +26,37 @@ describe('NodeTree', () => {
     expect(callbacks.onReorder).toHaveBeenCalledWith(null, [2, 1])
   })
 
+  it('点击 AI 拓展触发拓展回调', async () => {
+    const callbacks: NodeTreeCallbacks = {
+      onAddChild: vi.fn(),
+      onRename: vi.fn(),
+      onMove: vi.fn(),
+      onDelete: vi.fn(),
+      onExpand: vi.fn(),
+      onReorder: vi.fn(),
+    }
+    render(<NodeTree nodes={NODES} callbacks={callbacks} />)
+
+    await userEvent.click(screen.getByRole('button', { name: '节点1 更多操作' }))
+    await userEvent.click(await screen.findByRole('menuitem', { name: 'AI 拓展' }))
+
+    expect(callbacks.onExpand).toHaveBeenCalledWith(NODES[0])
+  })
+
   it('空目录不渲染伪节点', () => {
-    render(<NodeTree nodes={[]} callbacks={{ onAddChild: vi.fn(), onRename: vi.fn(), onMove: vi.fn(), onDelete: vi.fn(), onReorder: vi.fn() }} />)
+    render(
+      <NodeTree
+        nodes={[]}
+        callbacks={{
+          onAddChild: vi.fn(),
+          onRename: vi.fn(),
+          onMove: vi.fn(),
+          onDelete: vi.fn(),
+          onExpand: vi.fn(),
+          onReorder: vi.fn(),
+        }}
+      />,
+    )
 
     expect(screen.queryByRole('treeitem')).not.toBeInTheDocument()
   })
