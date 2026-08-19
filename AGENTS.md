@@ -13,7 +13,7 @@
 
 - 所有功能变更遵循 OpenSpec 流程：`proposal → specs → design → tasks → 实施 → validate → sync specs → archive → commit`。
 - 变更以 change 为单位：先创建 `openspec/changes/<name>/` 并写满四个工件，`openspec validate --all --strict` 通过后再动业务代码。
-- 实施完成后执行 `openspec archive <change>` 同步主规格，再提交代码。
+- 实施完成后执行 `openspec archive <change>` 同步主规格，再提交代码。**归档时机**：归档必须在实施、验证与手动走查全部完成后、最终提交与推送合并之前执行；未归档的 change 不算完成。若因临时安排先推送了代码，必须立即补归档并同步主规格，不允许长期遗留 active change。
 - **推送与合并必须经用户确认**：完成实现后先停留在本地分支（可提交、可 push 前待命），用户验证无问题并明确确认后，再推送远端或合并分支。
 - **本地提交及时化**：每次完成一段可验证的代码修改（功能、修复、测试、文档或配置）后，立即在本地提交一次，避免改动长期滞留工作区导致丢失或难以回溯；推送与合并仍须经用户确认。
 - **分支策略**：开发新功能（OpenSpec change）时，自 proposal 阶段起新建 `codex/<change>` 特性分支，不在 main 上直接开发；小 bug 修复、文档与配置调整不强制新分支。推送与合并前仍须经用户确认。

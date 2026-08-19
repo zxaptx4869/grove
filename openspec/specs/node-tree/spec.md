@@ -59,7 +59,7 @@ TBD - created by archiving change add-projects. Update Purpose after archive.
 - **THEN** 树读取按新顺序返回，且刷新后保持一致
 
 ### Requirement: 知识空间目录工作台
-知识空间 SHALL 作为项目上下文中的独立视图，使用真实目录树 API 和 250px 树栏加剩余知识内容区的桌面工作台结构。树栏 MUST 承载根节点创建、节点选择和节点上下文操作；非空目录的根节点创建动作 MUST 仅在树栏标题区提供，不得在页头重复呈现为主按钮。非空目录首次加载 SHALL 默认选择第一个根节点，内容区 MUST 展示选中节点的路径、名称、可选说明、编辑入口，并在有正式知识时展示知识、无正式知识时展示真实空态。创建、编辑、移动、排序和删除 SHALL 继续使用真实接口，删除保留二次确认；AI 共创入口 SHALL 明确 Directory Agent 尚未实现。内容区 MUST 提供卡片与列表两种视图切换，并支持「仅本节点」与「仅后代」两种知识范围切换；目录树节点徽标 MUST 显示该节点直接 Entry 数。思维导图浏览 MUST NOT 显示可操作入口。
+知识空间 SHALL 作为项目上下文中的独立视图，使用真实目录树 API 和 250px 树栏加剩余知识内容区的桌面工作台结构。树栏 MUST 承载根节点创建、节点选择和节点上下文操作；非空目录的根节点创建动作 MUST 仅在树栏标题区提供，不得在页头重复呈现为主按钮。非空目录首次加载 SHALL 默认选择第一个根节点，内容区 MUST 展示选中节点的路径、名称、可选说明、编辑入口，并在有正式知识时展示知识、无正式知识时展示真实空态。创建、编辑、移动、排序和删除 SHALL 继续使用真实接口，删除保留二次确认；AI 共创入口 SHALL 发起目录起草流程。内容区 MUST 提供卡片与列表两种视图切换，并支持「仅本节点」与「仅后代」两种知识范围切换；目录树节点徽标 MUST 显示该节点直接 Entry 数。思维导图浏览 MUST NOT 显示可操作入口。
 
 #### Scenario: 非空目录工作台
 - **WHEN** 用户打开包含目录节点的知识空间
@@ -77,9 +77,9 @@ TBD - created by archiving change add-projects. Update Purpose after archive.
 - **WHEN** 用户创建、编辑、移动、排序或删除目录节点
 - **THEN** 相应动作具有 disabled、错误、成功反馈和必要的破坏性确认，操作完成后刷新真实目录树，不显示静态节点或静态知识
 
-#### Scenario: AI 共创能力未实现
+#### Scenario: AI 共创入口发起起草
 - **WHEN** 用户选择「与 AI 共创目录」
-- **THEN** 页面明确说明入口已预留但 Directory Agent 尚未实现，不生成或应用伪目录草稿
+- **THEN** 打开目录起草工作区并创建或复用活跃草稿，不直接修改正式目录
 
 #### Scenario: 卡片与列表视图切换
 - **WHEN** 用户在知识空间切换卡片或列表视图
@@ -92,4 +92,3 @@ TBD - created by archiving change add-projects. Update Purpose after archive.
 #### Scenario: 未实现知识模式不冒充可用
 - **WHEN** 思维导图浏览尚无当前 OpenSpec 实现
 - **THEN** 页面不显示可操作的思维导图入口或静态思维导图内容
-
