@@ -49,6 +49,7 @@ import {
   createNode,
   deleteNode,
   deleteProject,
+  discardDirectoryDraft,
   fetchDirectoryDraft,
   fetchProjects,
   fetchProjectTree,
@@ -193,8 +194,29 @@ export function ProjectPage() {
     queryFn: () => fetchProjectTree(id),
     enabled: Number.isFinite(id),
   })
+  const draftQuery = useQuery({
+    queryKey: queryKeys.directoryDraft(id),
+    queryFn: () => fetchDirectoryDraft(id),
+    enabled: Number.isFinite(id),
+    retry: false,
+  })
   const project = projects.data?.find((item) => item.id === id)
-  const nodes = tree.data ?? []
+  const nodes = useMemo(() => tree.data ?? [], [tree.data])
+  const activeDraft = draftQuery.data ?? null
+  const draftTargetNode = useMemo(() => {
+    if (!activeDraft || activeDraft.kind !== 'expand' || activeDraft.target_node_id == null) {
+      return null
+    }
+    const walk = (items: TreeNodePayload[]): TreeNodePayload | null => {
+      for (const node of items) {
+        if (node.id === activeDraft.target_node_id) return node
+        const found = walk(node.children)
+        if (found) return found
+      }
+      return null
+    }
+    return walk(nodes)
+  }, [activeDraft, nodes])
 
   const [nodeForm, setNodeForm] = useState<NodeFormState | null>(null)
   const [selectedId, setSelectedId] = useState<number | null>(null)
@@ -286,6 +308,14 @@ export function ProjectPage() {
     },
     onError: (error) => setActionError(error instanceof Error ? error.message : '删除失败，请重试'),
   })
+  const discardDraft = useGroveMutation({
+    mutationFn: () => discardDirectoryDraft(id),
+    invalidates: [queryKeys.directoryDraft(id)],
+    onSuccess: () => {
+      toast.success('AI 草稿已放弃')
+    },
+    onError: (error) => setActionError(error instanceof Error ? error.message : '放弃草稿失败'),
+  })
   const reorder = useGroveMutation({
     mutationFn: ({ parentId, orderedIds }: { parentId: number | null; orderedIds: number[] }) =>
       reorderNodes(id, parentId, orderedIds),
@@ -372,6 +402,17 @@ export function ProjectPage() {
       setExpandTarget(node)
     } finally {
       setCheckingDraft(false)
+    }
+  }
+
+  function continueActiveDraft() {
+    setActionError('')
+    if (activeDraft?.kind === 'expand' && draftTargetNode) {
+      setExpandTarget(draftTargetNode)
+      return
+    }
+    if (activeDraft?.kind === 'draft') {
+      setAiOpen(true)
     }
   }
 
@@ -508,11 +549,38 @@ export function ProjectPage() {
       {isSourcesView ? (
         <ProjectSources projectId={id} />
       ) : isDirectoryView ? (
-        <div
-          data-testid="knowledge-layout"
-          className="grid min-h-0 flex-1 grid-cols-[250px_minmax(0,1fr)] border-t"
-        >
-          <aside className="min-h-0 min-w-0 overflow-y-auto border-r px-[10px] py-[14px]">
+        <div className="flex min-h-0 flex-1 flex-col">
+          {activeDraft ? (
+            <div className="flex items-center justify-between gap-3 border-b bg-brand-soft/60 px-4 py-2">
+              <div className="flex min-w-0 items-center gap-2 text-body-sm">
+                <Sparkles className="size-4 shrink-0 text-brand" />
+                <span className="truncate">
+                  {activeDraft.kind === 'expand'
+                    ? `AI 拓展草稿进行中：正在拓展「${draftTargetNode?.name ?? '目标节点'}」`
+                    : '与 AI 共创目录草稿进行中'}
+                </span>
+              </div>
+              <div className="flex shrink-0 gap-2">
+                <Button
+                  size="sm"
+                  variant="outline"
+                  disabled={discardDraft.isPending}
+                  onClick={() => discardDraft.mutate()}
+                >
+                  <X />
+                  放弃草稿
+                </Button>
+                <Button size="sm" onClick={continueActiveDraft}>
+                  继续处理
+                </Button>
+              </div>
+            </div>
+          ) : null}
+          <div
+            data-testid="knowledge-layout"
+            className="grid min-h-0 flex-1 grid-cols-[250px_minmax(0,1fr)] border-t"
+          >
+            <aside className="min-h-0 min-w-0 overflow-y-auto border-r px-[10px] py-[14px]">
             <div className="mb-2 flex h-[34px] items-center justify-between px-1">
               <div className="flex min-w-0 items-baseline gap-2">
                 <h2 className="truncate text-body font-[650]">项目目录</h2>
@@ -785,6 +853,7 @@ export function ProjectPage() {
                 )}
               </div>
             )}
+            </div>
           </div>
         </div>
       ) : (
@@ -933,7 +1002,11 @@ export function ProjectPage() {
           <DialogHeader>
             <DialogTitle>覆盖当前草稿</DialogTitle>
             <DialogDescription>
-              项目已有进行中的 AI 草稿，继续将覆盖未应用的候选内容，正式目录不受影响。
+              项目已有进行中的
+              {activeDraft?.kind === 'expand'
+                ? `「AI 拓展 ${draftTargetNode?.name ?? '目标节点'}」草稿`
+                : '「与 AI 共创目录」草稿'}
+              ，继续将覆盖未应用的候选内容，正式目录不受影响。
             </DialogDescription>
           </DialogHeader>
           <DialogFooter>
@@ -1100,11 +1173,13 @@ export function ProjectPage() {
           if (!open) {
             setAiOpen(false)
             setExpandTarget(null)
+            queryClient.invalidateQueries({ queryKey: queryKeys.directoryDraft(id) })
           }
         }}
         onApplied={() => {
           queryClient.invalidateQueries({ queryKey: queryKeys.projectTree(id) })
           queryClient.invalidateQueries({ queryKey: queryKeys.projects })
+          queryClient.invalidateQueries({ queryKey: queryKeys.directoryDraft(id) })
         }}
       />
     </section>

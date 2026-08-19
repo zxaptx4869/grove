@@ -4,6 +4,7 @@ export const queryKeys = {
   projects: ['projects'],
   sources: ['sources'],
   projectTree: (projectId: number) => ['project-tree', projectId],
+  directoryDraft: (projectId: number) => ['directory-draft', projectId],
   projectContext: (projectId: number) => ['project-context', projectId],
   aiSettings: ['ai-settings'],
   sourceCandidates: (sourceId: number) => ['source-candidates', sourceId],

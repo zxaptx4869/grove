@@ -5,7 +5,15 @@ import { MemoryRouter, Route, Routes } from 'react-router-dom'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { ProjectPage } from './ProjectPage'
 
-function mockProjectApi({ emptyTree = false }: { emptyTree?: boolean } = {}) {
+function mockProjectApi({
+  emptyTree = false,
+  draftKind = 'draft',
+  draftTargetId = null,
+}: {
+  emptyTree?: boolean
+  draftKind?: 'draft' | 'expand'
+  draftTargetId?: number | null
+} = {}) {
   vi.stubGlobal(
     'fetch',
     vi.fn((input: RequestInfo | URL) => {
@@ -52,6 +60,8 @@ function mockProjectApi({ emptyTree = false }: { emptyTree?: boolean } = {}) {
           json: async () => ({
             id: 10,
             project_id: 1,
+            kind: draftKind,
+            target_node_id: draftTargetId,
             status: 'awaiting_input',
             next_action: 'clarify',
             clarify_batches: 0,
@@ -64,6 +74,8 @@ function mockProjectApi({ emptyTree = false }: { emptyTree?: boolean } = {}) {
               },
             ],
             nodes: [],
+            diff: [],
+            messages: [],
             provider: 'offline',
             model: null,
             is_fallback: true,
@@ -154,6 +166,24 @@ describe('ProjectPage', () => {
       'true',
     )
     expect(screen.getByText('装修准备 / 需求确认')).toBeInTheDocument()
+  })
+
+  it('存在进行中草稿时展示提示条与操作', async () => {
+    mockProjectApi()
+    renderProject('/projects/1?view=directory')
+
+    expect(await screen.findByText('与 AI 共创目录草稿进行中')).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: '继续处理' })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: '放弃草稿' })).toBeInTheDocument()
+  })
+
+  it('拓展草稿提示条显示目标节点名称', async () => {
+    mockProjectApi({ draftKind: 'expand', draftTargetId: 2 })
+    renderProject('/projects/1?view=directory')
+
+    expect(
+      await screen.findByText('AI 拓展草稿进行中：正在拓展「需求确认」'),
+    ).toBeInTheDocument()
   })
 
   it('空知识空间保留两个平等的目录起点', async () => {
