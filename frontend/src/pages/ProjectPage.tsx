@@ -814,12 +814,12 @@ export function ProjectPage() {
                     ) : viewMode === 'card' ? (
                       <div className="space-y-3 pt-4">
                         {searchResults.data?.map((entry) => (
-                          <EntryCard key={entry.id} entry={entry} />
+                          <EntryCard key={entry.id} entry={entry} highlightQuery={debouncedSearch} />
                         ))}
                       </div>
                     ) : (
                       <div className="pt-4">
-                        <EntryList entries={searchResults.data ?? []} />
+                        <EntryList entries={searchResults.data ?? []} highlightQuery={debouncedSearch} />
                       </div>
                     )}
                   </div>

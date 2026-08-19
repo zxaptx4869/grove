@@ -50,14 +50,40 @@ function formatDate(value: string): string {
   })
 }
 
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+}
+
+/** 搜索结果高亮：只染命中文字，不加背景不加粗。 */
+export function HighlightText({ text, query }: { text: string; query?: string }) {
+  if (!query) return <>{text}</>
+  const parts = text.split(new RegExp(`(${escapeRegExp(query)})`, 'gi'))
+  const lowered = query.toLowerCase()
+  return (
+    <>
+      {parts.map((part, index) =>
+        part !== '' && part.toLowerCase() === lowered ? (
+          <span key={index} className="text-brand">
+            {part}
+          </span>
+        ) : (
+          part
+        ),
+      )}
+    </>
+  )
+}
+
 /** 卡片视图：突出内容与来源，适合阅读与回顾。 */
 export function EntryCard({
   entry,
   showProject = false,
+  highlightQuery,
   onSelect,
 }: {
   entry: EntryViewPayload
   showProject?: boolean
+  highlightQuery?: string
   onSelect?: (entry: EntryViewPayload) => void
 }) {
   const clickable = Boolean(onSelect)
@@ -95,11 +121,15 @@ export function EntryCard({
               </Badge>
             ) : null}
           </div>
-          <h3 className="mt-1 text-body font-[650]">{entry.title}</h3>
+          <h3 className="mt-1 text-body font-[650]">
+            <HighlightText text={entry.title} query={highlightQuery} />
+          </h3>
         </div>
         <Badge className="shrink-0 bg-confirmed-soft text-confirmed">已确认</Badge>
       </div>
-      <p className="mt-2 whitespace-pre-wrap text-body-sm leading-6">{entry.content}</p>
+      <p className="mt-2 whitespace-pre-wrap text-body-sm leading-6">
+        <HighlightText text={entry.content} query={highlightQuery} />
+      </p>
       {entry.applicable_condition ? (
         <p className="mt-2 text-body-sm text-muted-foreground">
           适用条件：{entry.applicable_condition}
@@ -129,10 +159,12 @@ export function EntryCard({
 export function EntryList({
   entries,
   showProject = false,
+  highlightQuery,
   onSelect,
 }: {
   entries: EntryViewPayload[]
   showProject?: boolean
+  highlightQuery?: string
   onSelect?: (entry: EntryViewPayload) => void
 }) {
   return (
@@ -162,7 +194,9 @@ export function EntryList({
               </TableCell>
             ) : null}
             <TableCell className="text-body font-medium">
-              <span className="block truncate">{entry.title}</span>
+              <span className="block truncate">
+                <HighlightText text={entry.title} query={highlightQuery} />
+              </span>
             </TableCell>
             <TableCell>
               <span className="block truncate text-muted-foreground">{entry.node_name}</span>

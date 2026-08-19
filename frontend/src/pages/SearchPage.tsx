@@ -117,6 +117,7 @@ export function SearchPage() {
                   key={entry.id}
                   entry={entry}
                   showProject
+                  highlightQuery={debounced}
                   onSelect={(selected) => openEntry(selected.project_id)}
                 />
               ))}
@@ -125,6 +126,7 @@ export function SearchPage() {
             <EntryList
               entries={results.data ?? []}
               showProject
+              highlightQuery={debounced}
               onSelect={(selected) => openEntry(selected.project_id)}
             />
           )}
