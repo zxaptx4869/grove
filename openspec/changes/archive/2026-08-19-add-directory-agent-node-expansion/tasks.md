@@ -25,7 +25,7 @@
 
 ## 4. 验证与收尾
 
-- [ ] 4.1 运行 ruff（`backend/.venv/bin/ruff check backend`）、后端与前端测试，全部通过
-- [ ] 4.2 手工走查：演示项目节点拓展全流程（生成 → 差异 → 受保护提示 → 应用 → 目录刷新），并验证手动删除含 Entry 节点被拒绝、删除目标节点后草稿作废
-- [ ] 4.3 运行 `openspec validate --all --strict` 通过
-- [ ] 4.4 执行 `openspec archive add-directory-agent-node-expansion` 同步主规格，确认无遗留 active change 后本地提交
+- [x] 4.1 运行 ruff（`backend/.venv/bin/ruff check backend`）、后端与前端测试，全部通过
+- [x] 4.2 手工走查：演示项目节点拓展全流程（生成 → 差异 → 受保护提示 → 应用 → 目录刷新），并验证手动删除含 Entry 节点被拒绝、删除目标节点后草稿作废
+- [x] 4.3 运行 `openspec validate --all --strict` 通过
+- [x] 4.4 执行 `openspec archive add-directory-agent-node-expansion` 同步主规格，确认无遗留 active change 后本地提交

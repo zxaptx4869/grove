@@ -37,19 +37,27 @@ TBD - created by archiving change add-projects. Update Purpose after archive.
 - **THEN** 树读取返回更新后的内容
 
 ### Requirement: 节点删除与级联
-系统 MUST 支持删除节点并级联删除后代；前端对包含子节点的删除 MUST 展示受影响数量并要求二次确认。
+系统 MUST 支持删除节点并级联删除后代；前端对包含子节点的删除 MUST 展示受影响数量并要求二次确认；节点子树的任何节点挂有正式 Entry 时 MUST 禁止删除并返回阻断数量；删除节点时若该节点是活跃节点拓展草稿的目标节点，MUST 将该草稿置为已放弃。
 
 #### Scenario: 删除空节点
-- **WHEN** 用户确认删除没有子节点的节点
+- **WHEN** 用户确认删除没有子节点且无正式 Entry 的节点
 - **THEN** 该节点从树中消失
 
 #### Scenario: 删除子树
-- **WHEN** 用户确认删除含后代的节点
+- **WHEN** 用户确认删除含子节点但无正式 Entry 的节点
 - **THEN** 该节点及全部后代从树中消失，并显示完成反馈
 
 #### Scenario: 删除后子树消失
-- **WHEN** 用户删除一个含子节点的节点
+- **WHEN** 用户删除一个无正式 Entry 的节点
 - **THEN** 该节点及其全部后代从树中消失
+
+#### Scenario: 受保护节点禁止删除
+- **WHEN** 用户尝试删除子树含正式 Entry 的节点
+- **THEN** 请求失败并返回阻断数量，节点与 Entry 均不删除
+
+#### Scenario: 删除目标节点作废拓展草稿
+- **WHEN** 用户删除某节点且它是活跃节点拓展草稿的目标节点
+- **THEN** 该草稿置为已放弃，后续无法确认或继续会话
 
 ### Requirement: 同级节点排序
 系统 MUST 支持调整同一父节点下子节点的顺序，顺序变更 MUST 持久化并在树读取中生效。
@@ -92,3 +100,19 @@ TBD - created by archiving change add-projects. Update Purpose after archive.
 #### Scenario: 未实现知识模式不冒充可用
 - **WHEN** 思维导图浏览尚无当前 OpenSpec 实现
 - **THEN** 页面不显示可操作的思维导图入口或静态思维导图内容
+
+### Requirement: 节点 AI 拓展入口
+知识空间 SHALL 在目录树节点的更多操作菜单与选中节点的内容区提供「AI 拓展」入口；发起 MUST 打开节点拓展工作区并针对该节点生成候选目标子树，MUST NOT 直接修改正式目录；项目存在活跃草稿时 MUST 先提示覆盖确认。
+
+#### Scenario: 树菜单发起拓展
+- **WHEN** 用户在目录树节点的更多操作菜单点击「AI 拓展」
+- **THEN** 打开该节点的拓展工作区，正式目录不变
+
+#### Scenario: 内容区发起拓展
+- **WHEN** 用户在选中节点的内容区点击「AI 拓展」
+- **THEN** 打开同一节点的拓展工作区，正式目录不变
+
+#### Scenario: 活跃草稿覆盖确认
+- **WHEN** 项目已有活跃草稿且用户发起其他节点的拓展
+- **THEN** 提示覆盖确认，确认前不改变现有草稿
+
