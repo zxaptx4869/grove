@@ -17,4 +17,10 @@ export const queryKeys = {
     scope,
   ],
   search: (q: string, projectId?: number) => ['search', q, projectId ?? 'global'],
+  semanticSearch: (q: string, projectId?: number) => [
+    'semantic-search',
+    q,
+    projectId ?? 'global',
+  ],
+  similarEntries: (entryId: number) => ['similar-entries', entryId],
 } as const

@@ -79,11 +79,15 @@ export function EntryCard({
   entry,
   showProject = false,
   highlightQuery,
+  reason,
+  isFallback = false,
   onSelect,
 }: {
   entry: EntryViewPayload
   showProject?: boolean
   highlightQuery?: string
+  reason?: string
+  isFallback?: boolean
   onSelect?: (entry: EntryViewPayload) => void
 }) {
   const clickable = Boolean(onSelect)
@@ -137,6 +141,14 @@ export function EntryCard({
       ) : null}
       {entry.note ? (
         <p className="mt-2 text-body-sm text-muted-foreground">补充说明：{entry.note}</p>
+      ) : null}
+      {reason ? (
+        <p className="mt-2 text-caption text-muted-foreground">相关理由：{reason}</p>
+      ) : null}
+      {isFallback ? (
+        <Badge variant="outline" className="mt-2 bg-muted/60">
+          已降级
+        </Badge>
       ) : null}
       {entry.evidences.length > 0 ? (
         <details className="mt-3 border-t pt-2 text-caption text-muted-foreground">

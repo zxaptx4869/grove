@@ -42,6 +42,7 @@ import { Input } from '@/components/ui/input'
 import { Textarea } from '@/components/ui/textarea'
 import { CaptureDialog } from '@/components/features/CaptureDialog'
 import { DirectoryDraftDialog } from '@/components/features/DirectoryDraftDialog'
+import { EntryDetailDialog } from '@/components/features/EntryDetailDialog'
 import { ProjectContextPanel } from '@/components/features/ProjectContextPanel'
 import { useGroveMutation } from '@/hooks/useGroveMutation'
 import { ProjectSources } from '@/pages/ProjectSources'
@@ -59,6 +60,7 @@ import {
   updateNode,
   updateProject,
   updateProjectStatus,
+  type EntryPayload,
   type ProjectStatus,
   type TreeNodePayload,
 } from '@/lib/api'
@@ -256,6 +258,7 @@ export function ProjectPage() {
   const [scope, setScope] = useState<'direct' | 'descendants'>('direct')
   const [searchInput, setSearchInput] = useState('')
   const [submittedSearch, setSubmittedSearch] = useState('')
+  const [detailEntry, setDetailEntry] = useState<EntryPayload | null>(null)
 
   function submitSearch() {
     setSubmittedSearch(searchInput.trim())
@@ -830,12 +833,21 @@ export function ProjectPage() {
                     ) : viewMode === 'card' ? (
                       <div className="space-y-3 pt-4">
                         {searchResults.data?.map((entry) => (
-                          <EntryCard key={entry.id} entry={entry} highlightQuery={submittedSearch} />
+                          <EntryCard
+                            key={entry.id}
+                            entry={entry}
+                            highlightQuery={submittedSearch}
+                            onSelect={(selected) => setDetailEntry(selected)}
+                          />
                         ))}
                       </div>
                     ) : (
                       <div className="pt-4">
-                        <EntryList entries={searchResults.data ?? []} highlightQuery={submittedSearch} />
+                        <EntryList
+                          entries={searchResults.data ?? []}
+                          highlightQuery={submittedSearch}
+                          onSelect={(selected) => setDetailEntry(selected)}
+                        />
                       </div>
                     )}
                   </div>
@@ -860,12 +872,19 @@ export function ProjectPage() {
                     ) : viewMode === 'card' ? (
                       <div className="space-y-3 pt-4">
                         {entries.data?.map((entry) => (
-                          <EntryCard key={entry.id} entry={entry} />
+                          <EntryCard
+                            key={entry.id}
+                            entry={entry}
+                            onSelect={(selected) => setDetailEntry(selected)}
+                          />
                         ))}
                       </div>
                     ) : (
                       <div className="pt-4">
-                        <EntryList entries={entries.data ?? []} />
+                        <EntryList
+                          entries={entries.data ?? []}
+                          onSelect={(selected) => setDetailEntry(selected)}
+                        />
                       </div>
                     )}
                   </div>
@@ -1210,6 +1229,14 @@ export function ProjectPage() {
           queryClient.removeQueries({ queryKey: queryKeys.directoryDraft(id) })
           queryClient.invalidateQueries({ queryKey: queryKeys.directoryDraft(id) })
         }}
+      />
+      <EntryDetailDialog
+        entry={detailEntry}
+        open={detailEntry != null}
+        onOpenChange={(open) => {
+          if (!open) setDetailEntry(null)
+        }}
+        onSelectEntry={(next) => setDetailEntry(next)}
       />
     </section>
   )

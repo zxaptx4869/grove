@@ -1,12 +1,16 @@
 import { useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
-import { LayoutGrid, List, Search, X } from 'lucide-react'
+import { LayoutGrid, List, Search, Sparkles, X } from 'lucide-react'
 import { useNavigate } from 'react-router-dom'
 
 import { EmptyState } from '@/components/features/EmptyState'
 import { EntryCard, EntryList } from '@/components/features/EntryViews'
 import { Input } from '@/components/ui/input'
-import { searchEntries } from '@/lib/api'
+import {
+  searchEntries,
+  semanticSearchEntries,
+  type SemanticEntryPayload,
+} from '@/lib/api'
 import { queryKeys } from '@/lib/queryKeys'
 
 /** 全局搜索：跨项目查找已确认 Entry，点击跳转到对应项目知识空间。 */
@@ -15,22 +19,29 @@ export function SearchPage() {
   const [input, setInput] = useState('')
   const [submitted, setSubmitted] = useState('')
   const [viewMode, setViewMode] = useState<'card' | 'list'>('card')
+  const [semanticMode, setSemanticMode] = useState(false)
 
   function submitSearch() {
     setSubmitted(input.trim())
   }
 
+  function openEntry(projectId: number) {
+    navigate(`/projects/${projectId}?view=directory`)
+  }
+
   const results = useQuery({
-    queryKey: queryKeys.search(submitted),
-    queryFn: () => searchEntries(submitted),
+    queryKey: semanticMode ? queryKeys.semanticSearch(submitted) : queryKeys.search(submitted),
+    queryFn: async (): Promise<SemanticEntryPayload[]> => {
+      if (semanticMode) {
+        return semanticSearchEntries(submitted)
+      }
+      const items = await searchEntries(submitted)
+      return items.map((item) => ({ ...item, reason: '', is_fallback: false }))
+    },
     enabled: submitted.length > 0,
   })
 
   const active = submitted.length > 0
-
-  function openEntry(projectId: number) {
-    navigate(`/projects/${projectId}?view=directory`)
-  }
 
   return (
     <section className="mx-auto w-full max-w-5xl px-6 pb-[30px] pt-[22px]">
@@ -77,6 +88,19 @@ export function SearchPage() {
             </button>
           ) : null}
         </div>
+        <button
+          type="button"
+          onClick={() => setSemanticMode((value) => !value)}
+          aria-pressed={semanticMode}
+          className={`flex h-10 items-center gap-1.5 rounded-md border px-3 text-body-sm transition-colors ${
+            semanticMode
+              ? 'border-brand bg-brand-soft text-brand'
+              : 'text-muted-foreground hover:text-foreground'
+          }`}
+        >
+          <Sparkles className="size-4" />
+          语义搜索
+        </button>
         <div className="flex items-center rounded-md border" role="group" aria-label="视图切换">
           <button
             type="button"
@@ -122,6 +146,8 @@ export function SearchPage() {
         <div>
           <p className="mb-3 text-caption text-muted-foreground">
             共 {results.data?.length ?? 0} 条结果
+            {semanticMode ? ' · 语义搜索' : ''}
+            {semanticMode && results.data?.some((item) => item.is_fallback) ? ' · 已降级' : ''}
           </p>
           {viewMode === 'card' ? (
             <div className="space-y-3">
@@ -131,6 +157,8 @@ export function SearchPage() {
                   entry={entry}
                   showProject
                   highlightQuery={submitted}
+                  reason={entry.reason || undefined}
+                  isFallback={entry.is_fallback}
                   onSelect={(selected) => openEntry(selected.project_id)}
                 />
               ))}

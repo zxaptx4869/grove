@@ -651,6 +651,20 @@ export const searchEntries = (q: string, projectId?: number) => {
   return request<SearchEntryPayload[]>(`/api/search?${params.toString()}`)
 }
 
+export interface SemanticEntryPayload extends SearchEntryPayload {
+  reason: string
+  is_fallback: boolean
+}
+
+export const semanticSearchEntries = (q: string, projectId?: number) => {
+  const params = new URLSearchParams({ q })
+  if (projectId != null) params.set('project_id', String(projectId))
+  return request<SemanticEntryPayload[]>(`/api/semantic-search?${params.toString()}`)
+}
+
+export const fetchSimilarEntries = (entryId: number) =>
+  request<SemanticEntryPayload[]>(`/api/entries/${entryId}/similar`)
+
 export type DirectoryDraftStatus =
   | 'drafting'
   | 'awaiting_input'
