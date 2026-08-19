@@ -278,6 +278,11 @@ function DiffTree({
                 {entry.kind === 'added' ? '新增' : entry.kind === 'kept' ? '保留' : '建议移除'}
               </span>
               <span className="truncate text-body-sm font-medium">{entry.name}</span>
+              {entry.description ? (
+                <span className="min-w-0 flex-1 truncate text-caption text-muted-foreground">
+                  {entry.description}
+                </span>
+              ) : null}
               {entry.blocked ? (
                 <span className="shrink-0 text-caption text-destructive">
                   含 {entry.blocker_count} 条正式知识，不可移除
