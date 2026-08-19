@@ -63,7 +63,7 @@ export function HighlightText({ text, query }: { text: string; query?: string })
     <>
       {parts.map((part, index) =>
         part !== '' && part.toLowerCase() === lowered ? (
-          <span key={index} className="text-brand">
+          <span key={index} className="text-[#b45309]">
             {part}
           </span>
         ) : (
