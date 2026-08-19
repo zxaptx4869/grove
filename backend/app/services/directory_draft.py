@@ -39,7 +39,7 @@ from app.schemas.directory_draft import (
     DraftOut,
 )
 from app.services.nodes import (
-    count_subtree_entries_total,
+    subtree_ids_in_memory,
     subtree_node_ids,
 )
 from app.services.project_context import schedule_refresh
@@ -426,8 +426,10 @@ async def expansion_diff(
     )
     real_by_id = {node.id: node for node in real_nodes}
     real_children: dict[int | None, list[Node]] = {}
+    children_ids: dict[int | None, list[int]] = {}
     for node in real_nodes:
         real_children.setdefault(node.parent_id, []).append(node)
+        children_ids.setdefault(node.parent_id, []).append(node.id)
     for siblings in real_children.values():
         siblings.sort(key=lambda item: item.position)
 
@@ -445,6 +447,8 @@ async def expansion_diff(
         draft_children.setdefault(node.parent_id, []).append(node)
     for siblings in draft_children.values():
         siblings.sort(key=lambda item: item.position)
+
+    removed_entries: list[DraftDiffNodeOut] = []
 
     async def diff_level(
         draft_siblings: list[DirectoryDraftNode],
@@ -489,34 +493,61 @@ async def expansion_diff(
         for real in real_siblings:
             if real.id in matched:
                 continue
-            subtree_ids = await subtree_node_ids(db, draft.project_id, real.id)
-            total = await count_subtree_entries_total(
-                db, draft.project_id, subtree_ids
+            entry = DraftDiffNodeOut(
+                kind="removed",
+                node_id=None,
+                real_node_id=real.id,
+                name=real.name,
+                description=real.description,
+                children=await diff_level(
+                    [],
+                    real_children.get(real.id, []),
+                ),
             )
-            result.append(
-                DraftDiffNodeOut(
-                    kind="removed",
-                    node_id=None,
-                    real_node_id=real.id,
-                    name=real.name,
-                    description=real.description,
-                    blocked=total > 0,
-                    blocker_count=total,
-                    children=await diff_level(
-                        [],
-                        real_children.get(real.id, []),
-                    ),
-                )
-            )
+            removed_entries.append(entry)
+            result.append(entry)
         return result
 
     target = real_by_id.get(draft.target_node_id)
     if target is None:
         return []
-    return await diff_level(
+    diff = await diff_level(
         draft_children.get(None, []),
         real_children.get(target.id, []),
     )
+    # 一次性批量统计建议移除子树的正式 Entry 数量，避免逐节点查询
+    if removed_entries:
+        removed_subtrees: dict[int, set[int]] = {}
+        removed_ids_all: set[int] = set()
+        for entry in removed_entries:
+            if entry.real_node_id is None:
+                continue
+            ids = subtree_ids_in_memory(entry.real_node_id, children_ids)
+            removed_subtrees[entry.real_node_id] = ids
+            removed_ids_all.update(ids)
+        counts: dict[int, int] = {}
+        if removed_ids_all:
+            rows = (
+                await db.execute(
+                    select(Entry.node_id, func.count())
+                    .where(
+                        Entry.project_id == draft.project_id,
+                        Entry.node_id.in_(removed_ids_all),
+                    )
+                    .group_by(Entry.node_id)
+                )
+            ).all()
+            counts = {node_id: count for node_id, count in rows}
+        for entry in removed_entries:
+            if entry.real_node_id is None:
+                continue
+            total = sum(
+                counts.get(node_id, 0)
+                for node_id in removed_subtrees[entry.real_node_id]
+            )
+            entry.blocked = total > 0
+            entry.blocker_count = total
+    return diff
 
 
 async def run_generate_step(
@@ -676,6 +707,9 @@ async def create_or_reuse_expand_draft(
         existing.clarify_batches = 0
         existing.conversation_rounds = 0
         existing.last_error = None
+        existing.provider = None
+        existing.model = None
+        existing.is_fallback = False
         existing.claimed_at = None
         await db.execute(
             delete(DirectoryDraftNode).where(
@@ -759,7 +793,8 @@ async def process_next_draft_step() -> bool:
             else:
                 await run_generate_step(db, draft, project)
             draft.claimed_at = None
-            draft.last_error = None
+            if draft.status != DRAFT_DISCARDED:
+                draft.last_error = None
         except Exception as exc:  # noqa: BLE001
             logger.exception("处理目录草稿步骤失败：%s", draft_id)
             draft.status = DRAFT_FAILED
@@ -921,6 +956,9 @@ async def _apply_expand_draft(
         ).scalars().all()
     )
     real_by_id = {node.id: node for node in real_nodes}
+    children_ids: dict[int | None, list[int]] = {}
+    for node in real_nodes:
+        children_ids.setdefault(node.parent_id, []).append(node.id)
     removal_roots: list[int] = []
     for real_id in removed_node_ids:
         entry = removed_by_real.get(real_id)
@@ -991,7 +1029,7 @@ async def _apply_expand_draft(
     # 删除勾选的建议移除子树
     removal_all: set[int] = set()
     for real_id in removal_roots:
-        removal_all.update(await subtree_node_ids(db, project.id, real_id))
+        removal_all.update(subtree_ids_in_memory(real_id, children_ids))
     if removal_all:
         await db.execute(delete(Node).where(Node.id.in_(removal_all)))
         await db.flush()

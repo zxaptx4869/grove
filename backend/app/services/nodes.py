@@ -7,6 +7,20 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.models import Entry, Node
 
 
+def subtree_ids_in_memory(
+    root_id: int,
+    children_by_parent: dict[int | None, list[int]],
+) -> set[int]:
+    """内存中收集节点自身与全部后代的 id（避免逐节点查库）。"""
+    result: set[int] = {root_id}
+    stack = list(children_by_parent.get(root_id, []))
+    while stack:
+        current = stack.pop()
+        result.add(current)
+        stack.extend(children_by_parent.get(current, []))
+    return result
+
+
 async def subtree_node_ids(
     db: AsyncSession,
     project_id: int,
@@ -23,13 +37,7 @@ async def subtree_node_ids(
     children_by_parent: dict[int | None, list[int]] = {}
     for node_id, parent_id in all_nodes:
         children_by_parent.setdefault(parent_id, []).append(node_id)
-    result: set[int] = {root_id}
-    stack = list(children_by_parent.get(root_id, []))
-    while stack:
-        current = stack.pop()
-        result.add(current)
-        stack.extend(children_by_parent.get(current, []))
-    return result
+    return subtree_ids_in_memory(root_id, children_by_parent)
 
 
 async def count_subtree_entries_total(

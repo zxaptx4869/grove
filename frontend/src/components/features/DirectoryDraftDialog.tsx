@@ -465,14 +465,16 @@ export function DirectoryDraftDialog({
     return stats
   }, [draft])
 
-  async function persistTree(force = false) {
-    if (!force && !dirty) return
+  async function persistTree(force = false): Promise<boolean> {
+    if (!force && !dirty) return true
     try {
       const data = await updateDirectoryDraftNodes(projectId, tree)
       setDraft(data)
       setDirty(false)
+      return true
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : '保存草稿失败')
+      return false
     }
   }
 
@@ -537,7 +539,8 @@ export function DirectoryDraftDialog({
     setBusy(true)
     setError('')
     try {
-      await persistTree(true)
+      const saved = await persistTree(true)
+      if (!saved) return
       const data =
         draft?.kind === 'expand'
           ? await applyDirectoryDraft(projectId, [...removedIds])
@@ -577,7 +580,8 @@ export function DirectoryDraftDialog({
       { id: -Date.now(), role: 'user', content, created_at: new Date().toISOString() },
     ])
     try {
-      await persistTree(true)
+      const saved = await persistTree(true)
+      if (!saved) return
       const data = await submitDirectoryDraftMessage(projectId, content)
       applyDraftData(data)
     } catch (reason) {

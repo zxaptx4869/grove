@@ -317,6 +317,9 @@ export function ProjectPage() {
     },
     onError: (error) => setActionError(error instanceof Error ? error.message : '放弃草稿失败'),
   })
+  const continueDraftDisabled =
+    discardDraft.isPending ||
+    (activeDraft?.kind === 'expand' && draftTargetNode === null)
   const reorder = useGroveMutation({
     mutationFn: ({ parentId, orderedIds }: { parentId: number | null; orderedIds: number[] }) =>
       reorderNodes(id, parentId, orderedIds),
@@ -570,13 +573,13 @@ export function ProjectPage() {
                 <Button
                   size="sm"
                   variant="outline"
-                  disabled={discardDraft.isPending}
+                  disabled={continueDraftDisabled}
                   onClick={() => discardDraft.mutate()}
                 >
                   <X />
                   放弃草稿
                 </Button>
-                <Button size="sm" onClick={continueActiveDraft}>
+                <Button size="sm" disabled={continueDraftDisabled} onClick={continueActiveDraft}>
                   继续处理
                 </Button>
               </div>

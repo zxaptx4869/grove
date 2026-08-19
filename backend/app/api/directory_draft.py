@@ -7,7 +7,7 @@ from sqlalchemy import select
 
 from app.api.deps import DbSession, get_current_workspace
 from app.models import Node, Project, Workspace
-from app.models.directory_draft import DirectoryDraft
+from app.models.directory_draft import DRAFT_PENDING_CONFIRM, DirectoryDraft
 from app.schemas.directory_draft import (
     ClarifySubmitRequest,
     DraftApplyRequest,
@@ -56,7 +56,11 @@ async def _load_out(db: DbSession, draft: DirectoryDraft) -> DraftOut:
         )
     ).scalars().all()
     messages = await list_draft_messages(db, draft.id)
-    diff = await expansion_diff(db, draft) if draft.kind == "expand" else []
+    diff = (
+        await expansion_diff(db, draft)
+        if draft.kind == "expand" and draft.status == DRAFT_PENDING_CONFIRM
+        else []
+    )
     return draft_out(draft, list(nodes), messages, diff=diff)
 
 

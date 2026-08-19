@@ -259,6 +259,9 @@ async def test_expand_overwrites_active_draft(client) -> None:
     assert data["target_node_id"] == second["id"]
     assert data["status"] == "drafting"
     assert data["nodes"] == []
+    assert data["diff"] == []
+    assert data["provider"] is None
+    assert data["is_fallback"] is False
 
 
 @pytest.mark.asyncio
