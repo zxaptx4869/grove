@@ -470,7 +470,6 @@ export function DirectoryDraftDialog({
     try {
       const data = await updateDirectoryDraftNodes(projectId, tree)
       setDraft(data)
-      setMessages(data.messages ?? [])
       setDirty(false)
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : '保存草稿失败')
