@@ -661,7 +661,52 @@ export function ProjectPage() {
               </div>
             ) : (
               <div>
-                <div className="mb-4 flex flex-wrap items-center gap-2 border-b pb-3">
+                {searchActive ? (
+                  <div className="mb-4 flex min-h-[50px] items-center justify-between gap-4 border-b">
+                    <div className="min-w-0">
+                      <h2 className="truncate text-[16px] font-[650] leading-6">搜索结果</h2>
+                      <p className="truncate text-caption text-muted-foreground">
+                        “{debouncedSearch}” · 项目内 {searchResults.data?.length ?? 0} 条
+                      </p>
+                    </div>
+                  </div>
+                ) : selectedNode ? (
+                  <div className="mb-4 border-b">
+                    <p className="truncate text-caption text-muted-foreground">
+                      {effectiveSelectedPath?.map((node) => node.name).join(' / ')}
+                    </p>
+                    <div className="flex min-h-[50px] items-center justify-between gap-4">
+                      <div className="min-w-0">
+                        <h2 className="truncate text-[16px] font-[650] leading-6">
+                          {selectedNode.name}
+                        </h2>
+                        <p className="truncate text-caption text-muted-foreground">
+                          {selectedNode.description || '尚未填写节点说明。'}
+                        </p>
+                      </div>
+                      <div className="flex shrink-0 gap-2">
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          onClick={() => void handleExpand(selectedNode)}
+                          disabled={checkingDraft}
+                        >
+                          <Sparkles />
+                          AI 拓展
+                        </Button>
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          onClick={() => setNodeForm({ mode: 'edit', parent: null, node: selectedNode })}
+                        >
+                          <Pencil />
+                          编辑节点
+                        </Button>
+                      </div>
+                    </div>
+                  </div>
+                ) : null}
+                <div className="mb-4 flex flex-wrap items-center gap-2">
                   <div className="relative min-w-0 flex-1">
                     <Search className="absolute left-2.5 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
                     <Input
@@ -752,14 +797,6 @@ export function ProjectPage() {
 
                 {searchActive ? (
                   <div>
-                    <div className="flex min-h-[50px] items-center justify-between gap-4 border-b">
-                      <div className="min-w-0">
-                        <h2 className="truncate text-[16px] font-[650] leading-6">搜索结果</h2>
-                        <p className="truncate text-caption text-muted-foreground">
-                          “{debouncedSearch}” · 项目内 {searchResults.data?.length ?? 0} 条
-                        </p>
-                      </div>
-                    </div>
                     {searchResults.isLoading ? (
                       <div className="py-10 text-center text-body-sm text-muted-foreground">
                         正在搜索…
@@ -788,38 +825,6 @@ export function ProjectPage() {
                   </div>
                 ) : selectedNode ? (
                   <div>
-                    <p className="truncate text-caption text-muted-foreground">
-                      {effectiveSelectedPath?.map((node) => node.name).join(' / ')}
-                    </p>
-                    <div className="flex min-h-[50px] items-center justify-between gap-4 border-b">
-                      <div className="min-w-0">
-                        <h2 className="truncate text-[16px] font-[650] leading-6">
-                          {selectedNode.name}
-                        </h2>
-                        <p className="truncate text-caption text-muted-foreground">
-                          {selectedNode.description || '尚未填写节点说明。'}
-                        </p>
-                      </div>
-                      <div className="flex shrink-0 gap-2">
-                        <Button
-                          variant="outline"
-                          size="sm"
-                          onClick={() => void handleExpand(selectedNode)}
-                          disabled={checkingDraft}
-                        >
-                          <Sparkles />
-                          AI 拓展
-                        </Button>
-                        <Button
-                          variant="outline"
-                          size="sm"
-                          onClick={() => setNodeForm({ mode: 'edit', parent: null, node: selectedNode })}
-                        >
-                          <Pencil />
-                          编辑节点
-                        </Button>
-                      </div>
-                    </div>
                     {entries.isLoading ? (
                       <div className="py-10 text-center text-body-sm text-muted-foreground">
                         加载正式知识…
