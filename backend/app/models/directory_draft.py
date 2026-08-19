@@ -18,6 +18,9 @@ DRAFT_CONFIRMED = "confirmed"
 DRAFT_DISCARDED = "discarded"
 DRAFT_FAILED = "failed"
 
+DRAFT_KIND_DRAFT = "draft"
+DRAFT_KIND_EXPAND = "expand"
+
 DRAFT_ACTIVE = {
     DRAFT_DRAFTING,
     DRAFT_AWAITING_INPUT,
@@ -42,6 +45,15 @@ class DirectoryDraft(Base):
         ForeignKey("projects.id", ondelete="CASCADE"),
         index=True,
         nullable=False,
+    )
+    kind: Mapped[str] = mapped_column(
+        String(16), default=DRAFT_KIND_DRAFT, nullable=False
+    )
+    target_node_id: Mapped[int | None] = mapped_column(
+        BigInteger,
+        ForeignKey("nodes.id", ondelete="SET NULL"),
+        index=True,
+        nullable=True,
     )
     status: Mapped[str] = mapped_column(
         String(16), default=DRAFT_DRAFTING, nullable=False

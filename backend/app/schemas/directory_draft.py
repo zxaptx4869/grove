@@ -25,16 +25,35 @@ class DraftNodeOut(BaseModel):
     selected: bool
 
 
+class DraftDiffNodeOut(BaseModel):
+    """节点拓展差异快照：新增 / 保留 / 建议移除（递归）。"""
+
+    kind: str
+    node_id: int | None
+    real_node_id: int | None
+    name: str
+    description: str | None
+    blocked: bool = False
+    blocker_count: int = 0
+    children: list["DraftDiffNodeOut"] = []
+
+
+DraftDiffNodeOut.model_rebuild()
+
+
 class DraftOut(BaseModel):
     """目录草稿响应。"""
 
     id: int
     project_id: int
+    kind: str = "draft"
+    target_node_id: int | None = None
     status: str
     next_action: str
     clarify_batches: int
     clarify: list[ClarifyQuestionOut] = []
     nodes: list[DraftNodeOut] = []
+    diff: list[DraftDiffNodeOut] = []
     messages: list["DraftMessageOut"] = []
     provider: str | None
     model: str | None
@@ -60,6 +79,12 @@ class DraftCreateRequest(BaseModel):
     """创建草稿的可选背景说明。"""
 
     background: str | None = Field(default=None, max_length=2000)
+
+
+class ExpandRequest(BaseModel):
+    """发起节点拓展的请求体。"""
+
+    node_id: int
 
 
 class ClarifySubmitRequest(BaseModel):
