@@ -202,7 +202,8 @@ export function ProjectPage() {
   })
   const project = projects.data?.find((item) => item.id === id)
   const nodes = useMemo(() => tree.data ?? [], [tree.data])
-  const activeDraft = draftQuery.data ?? null
+  // 只在查询成功态读取草稿：应用/放弃后重查 404 或缓存残留都不应再显示提示条
+  const activeDraft = draftQuery.isSuccess ? (draftQuery.data ?? null) : null
   const draftTargetNode = useMemo(() => {
     if (!activeDraft || activeDraft.kind !== 'expand' || activeDraft.target_node_id == null) {
       return null
@@ -312,6 +313,7 @@ export function ProjectPage() {
     mutationFn: () => discardDirectoryDraft(id),
     invalidates: [queryKeys.directoryDraft(id)],
     onSuccess: () => {
+      queryClient.removeQueries({ queryKey: queryKeys.directoryDraft(id) })
       toast.success('AI 草稿已放弃')
     },
     onError: (error) => setActionError(error instanceof Error ? error.message : '放弃草稿失败'),
@@ -1179,6 +1181,7 @@ export function ProjectPage() {
         onApplied={() => {
           queryClient.invalidateQueries({ queryKey: queryKeys.projectTree(id) })
           queryClient.invalidateQueries({ queryKey: queryKeys.projects })
+          queryClient.removeQueries({ queryKey: queryKeys.directoryDraft(id) })
           queryClient.invalidateQueries({ queryKey: queryKeys.directoryDraft(id) })
         }}
       />
