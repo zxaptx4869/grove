@@ -2,7 +2,6 @@
 
 import json
 import logging
-import re
 
 from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -17,46 +16,9 @@ from app.models.extraction import (
     RELATION_SUPPLEMENT,
 )
 from app.services.extraction import get_active_candidates
+from app.services.similarity import text_pair_similarity
 
 logger = logging.getLogger(__name__)
-
-_PUNCT_RE = re.compile(r"[\s\W_]+", re.UNICODE)
-
-
-def _normalize(value: str) -> str:
-    """归一化文本：去空白/标点并转小写。"""
-    return _PUNCT_RE.sub("", value).casefold()
-
-
-def _bigrams(value: str) -> set[str]:
-    """提取字符 bigram 集合。"""
-    normalized = _normalize(value)
-    return {normalized[i : i + 2] for i in range(max(0, len(normalized) - 1))}
-
-
-def _overlap(left: set[str], right: set[str]) -> float:
-    """计算两个集合的 Jaccard 重叠。"""
-    if not left and not right:
-        return 0.0
-    union = left | right
-    return len(left & right) / len(union) if union else 0.0
-
-
-def _similarity_score(candidate: Candidate, entry: Entry) -> float:
-    """计算候选与 Entry 的确定性相似度。"""
-    candidate_title = _normalize(candidate.title)
-    entry_title = _normalize(entry.title)
-    score = 0.0
-    if candidate_title and candidate_title == entry_title:
-        score += 100
-    elif candidate_title and entry_title and (
-        candidate_title in entry_title or entry_title in candidate_title
-    ):
-        score += 40
-
-    score += _overlap(_bigrams(candidate.title), _bigrams(entry.title)) * 30
-    score += _overlap(_bigrams(candidate.content), _bigrams(entry.content)) * 20
-    return score
 
 
 def retrieve_similar_entries(
@@ -65,11 +27,13 @@ def retrieve_similar_entries(
     top_k: int = 5,
 ) -> list[Entry]:
     """从项目 Entry 中为候选返回 top-K 相似 Entry。"""
-    scored = [
-        (score, entry)
-        for entry in entries
-        if (score := _similarity_score(candidate, entry)) > 0
-    ]
+    scored: list[tuple[float, Entry]] = []
+    for entry in entries:
+        score = text_pair_similarity(
+            candidate.title, candidate.content, entry.title, entry.content
+        )
+        if score > 0:
+            scored.append((score, entry))
     scored.sort(key=lambda item: item[0], reverse=True)
     return [entry for _, entry in scored[:top_k]]
 
