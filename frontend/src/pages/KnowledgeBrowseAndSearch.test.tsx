@@ -170,6 +170,7 @@ describe('知识空间浏览与项目内搜索', () => {
 
     const input = await screen.findByRole('textbox', { name: '搜索本项目知识' })
     fireEvent.change(input, { target: { value: '闭水' } })
+    fireEvent.keyDown(input, { key: 'Enter' })
 
     expect(await screen.findByRole('heading', { name: '搜索结果' })).toBeInTheDocument()
     expect(await screen.findByRole('heading', { name: '闭水试验' })).toBeInTheDocument()
@@ -207,6 +208,7 @@ describe('全局搜索', () => {
 
     const input = screen.getByRole('textbox', { name: '全局搜索' })
     fireEvent.change(input, { target: { value: '闭水' } })
+    fireEvent.keyDown(input, { key: 'Enter' })
 
     expect(await screen.findByText('房子装修')).toBeInTheDocument()
     fireEvent.click(screen.getByRole('button', { name: /闭水试验/ }))

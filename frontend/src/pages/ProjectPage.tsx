@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useMemo, useState } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import {
   ArrowRight,
@@ -255,12 +255,11 @@ export function ProjectPage() {
   )
   const [scope, setScope] = useState<'direct' | 'descendants'>('direct')
   const [searchInput, setSearchInput] = useState('')
-  const [debouncedSearch, setDebouncedSearch] = useState('')
+  const [submittedSearch, setSubmittedSearch] = useState('')
 
-  useEffect(() => {
-    const timer = setTimeout(() => setDebouncedSearch(searchInput.trim()), 300)
-    return () => clearTimeout(timer)
-  }, [searchInput])
+  function submitSearch() {
+    setSubmittedSearch(searchInput.trim())
+  }
 
   const create = useGroveMutation({
     mutationFn: ({
@@ -375,7 +374,7 @@ export function ProjectPage() {
   const effectiveSelectedPath = selectedPath ?? (nodes[0] ? [nodes[0]] : null)
   const effectiveSelectedId = effectiveSelectedPath?.at(-1)?.id ?? null
   const selectedNode = effectiveSelectedPath?.at(-1) ?? null
-  const searchActive = debouncedSearch.length > 0
+  const searchActive = submittedSearch.length > 0
   const directCount = selectedNode?.entry_count ?? 0
   const descendantCount = selectedNode ? descendantEntryCount(selectedNode) : 0
   const entries = useQuery({
@@ -384,8 +383,8 @@ export function ProjectPage() {
     enabled: isDirectoryView && !searchActive && effectiveSelectedId !== null,
   })
   const searchResults = useQuery({
-    queryKey: queryKeys.search(debouncedSearch, id),
-    queryFn: () => searchEntries(debouncedSearch, id),
+    queryKey: queryKeys.search(submittedSearch, id),
+    queryFn: () => searchEntries(submittedSearch, id),
     enabled: isDirectoryView && searchActive && Number.isFinite(id),
   })
 
@@ -666,7 +665,7 @@ export function ProjectPage() {
                     <div className="min-w-0">
                       <h2 className="truncate text-[16px] font-[650] leading-6">搜索结果</h2>
                       <p className="truncate text-caption text-muted-foreground">
-                        “{debouncedSearch}” · 项目内 {searchResults.data?.length ?? 0} 条
+                        “{submittedSearch}” · 项目内 {searchResults.data?.length ?? 0} 条
                       </p>
                     </div>
                   </div>
@@ -712,15 +711,29 @@ export function ProjectPage() {
                     <Input
                       value={searchInput}
                       onChange={(event) => setSearchInput(event.target.value)}
+                      onKeyDown={(event) => {
+                        if (event.key === 'Enter') submitSearch()
+                      }}
                       placeholder="搜索本项目的知识…"
-                      className="pl-8 pr-8"
+                      className="pl-8 pr-16"
                       aria-label="搜索本项目知识"
                     />
+                    <button
+                      type="button"
+                      onClick={submitSearch}
+                      aria-label="执行搜索"
+                      className="absolute right-2 top-1/2 -translate-y-1/2 rounded-md p-1 text-muted-foreground hover:bg-muted hover:text-foreground"
+                    >
+                      <Search className="size-4" />
+                    </button>
                     {searchInput ? (
                       <button
                         type="button"
-                        onClick={() => setSearchInput('')}
-                        className="absolute right-2 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
+                        onClick={() => {
+                          setSearchInput('')
+                          setSubmittedSearch('')
+                        }}
+                        className="absolute right-9 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
                         aria-label="清空搜索"
                       >
                         <X className="size-4" />
@@ -814,12 +827,12 @@ export function ProjectPage() {
                     ) : viewMode === 'card' ? (
                       <div className="space-y-3 pt-4">
                         {searchResults.data?.map((entry) => (
-                          <EntryCard key={entry.id} entry={entry} highlightQuery={debouncedSearch} />
+                          <EntryCard key={entry.id} entry={entry} highlightQuery={submittedSearch} />
                         ))}
                       </div>
                     ) : (
                       <div className="pt-4">
-                        <EntryList entries={searchResults.data ?? []} highlightQuery={debouncedSearch} />
+                        <EntryList entries={searchResults.data ?? []} highlightQuery={submittedSearch} />
                       </div>
                     )}
                   </div>

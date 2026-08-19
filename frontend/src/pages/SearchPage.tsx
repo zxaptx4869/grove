@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { LayoutGrid, List, Search, X } from 'lucide-react'
 import { useNavigate } from 'react-router-dom'
@@ -13,21 +13,20 @@ import { queryKeys } from '@/lib/queryKeys'
 export function SearchPage() {
   const navigate = useNavigate()
   const [input, setInput] = useState('')
-  const [debounced, setDebounced] = useState('')
+  const [submitted, setSubmitted] = useState('')
   const [viewMode, setViewMode] = useState<'card' | 'list'>('card')
 
-  useEffect(() => {
-    const timer = setTimeout(() => setDebounced(input.trim()), 300)
-    return () => clearTimeout(timer)
-  }, [input])
+  function submitSearch() {
+    setSubmitted(input.trim())
+  }
 
   const results = useQuery({
-    queryKey: queryKeys.search(debounced),
-    queryFn: () => searchEntries(debounced),
-    enabled: debounced.length > 0,
+    queryKey: queryKeys.search(submitted),
+    queryFn: () => searchEntries(submitted),
+    enabled: submitted.length > 0,
   })
 
-  const active = debounced.length > 0
+  const active = submitted.length > 0
 
   function openEntry(projectId: number) {
     navigate(`/projects/${projectId}?view=directory`)
@@ -48,16 +47,30 @@ export function SearchPage() {
           <Input
             value={input}
             onChange={(event) => setInput(event.target.value)}
+            onKeyDown={(event) => {
+              if (event.key === 'Enter') submitSearch()
+            }}
             placeholder="输入关键词搜索标题、内容、目录或来源…"
-            className="h-10 pl-9 pr-9"
+            className="h-10 pl-9 pr-16"
             aria-label="全局搜索"
             autoFocus
           />
+          <button
+            type="button"
+            onClick={submitSearch}
+            aria-label="执行搜索"
+            className="absolute right-2 top-1/2 -translate-y-1/2 rounded-md p-1 text-muted-foreground hover:bg-muted hover:text-foreground"
+          >
+            <Search className="size-4" />
+          </button>
           {input ? (
             <button
               type="button"
-              onClick={() => setInput('')}
-              className="absolute right-2.5 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
+              onClick={() => {
+                setInput('')
+                setSubmitted('')
+              }}
+              className="absolute right-9 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
               aria-label="清空搜索"
             >
               <X className="size-4" />
@@ -117,7 +130,7 @@ export function SearchPage() {
                   key={entry.id}
                   entry={entry}
                   showProject
-                  highlightQuery={debounced}
+                  highlightQuery={submitted}
                   onSelect={(selected) => openEntry(selected.project_id)}
                 />
               ))}
@@ -126,7 +139,7 @@ export function SearchPage() {
             <EntryList
               entries={results.data ?? []}
               showProject
-              highlightQuery={debounced}
+              highlightQuery={submitted}
               onSelect={(selected) => openEntry(selected.project_id)}
             />
           )}
