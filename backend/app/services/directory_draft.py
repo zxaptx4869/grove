@@ -12,10 +12,11 @@ from app.agents.directory import (
     DirectoryNodeDraft,
     run_directory_clarify,
     run_directory_draft,
+    run_directory_expand,
     run_directory_refine,
 )
 from app.db.session import async_session_factory
-from app.models import Node, Project, ProjectContext
+from app.models import Entry, Node, Project, ProjectContext
 from app.models.directory_draft import (
     DRAFT_AWAITING_INPUT,
     DRAFT_CLARIFY,
@@ -24,6 +25,7 @@ from app.models.directory_draft import (
     DRAFT_DRAFTING,
     DRAFT_FAILED,
     DRAFT_GENERATE,
+    DRAFT_KIND_EXPAND,
     DRAFT_PENDING_CONFIRM,
     DirectoryDraft,
     DirectoryDraftMessage,
@@ -31,9 +33,14 @@ from app.models.directory_draft import (
 )
 from app.schemas.directory_draft import (
     ClarifyQuestionOut,
+    DraftDiffNodeOut,
     DraftMessageOut,
     DraftNodeOut,
     DraftOut,
+)
+from app.services.nodes import (
+    count_subtree_entries_total,
+    subtree_node_ids,
 )
 from app.services.project_context import schedule_refresh
 
@@ -41,6 +48,10 @@ logger = logging.getLogger(__name__)
 
 MAX_DRAFT_NODES = 200
 MAX_CONVERSATION_ROUNDS = 30
+MAX_EXPAND_ENTRIES = 40
+MAX_EXPAND_ENTRY_LENGTH = 200
+MAX_EXPAND_ADDED_NODES = 30
+MAX_EXPAND_ADDED_DEPTH = 2
 
 
 def _parse_clarify(raw: str | None) -> list[ClarifyQuestionOut]:
@@ -86,12 +97,16 @@ def draft_out(
     draft: DirectoryDraft,
     nodes: list[DirectoryDraftNode],
     messages: list[DirectoryDraftMessage] | None = None,
+    diff: list[DraftDiffNodeOut] | None = None,
 ) -> DraftOut:
     """组装草稿响应。"""
     messages = messages or []
+    diff = diff or []
     return DraftOut(
         id=draft.id,
         project_id=draft.project_id,
+        kind=draft.kind,
+        target_node_id=draft.target_node_id,
         status=draft.status,
         next_action=draft.next_action,
         clarify_batches=draft.clarify_batches,
@@ -116,6 +131,7 @@ def draft_out(
             )
             for message in messages
         ],
+        diff=diff,
         provider=draft.provider,
         model=draft.model,
         is_fallback=draft.is_fallback,
@@ -150,32 +166,133 @@ async def get_active_draft(
     ).scalar_one_or_none()
 
 
+async def _load_project_context(db: AsyncSession, project_id: int) -> ProjectContext | None:
+    """读取项目上下文快照。"""
+    return (
+        await db.execute(
+            select(ProjectContext).where(ProjectContext.project_id == project_id)
+        )
+    ).scalar_one_or_none()
+
+
+def _append_snapshot_parts(parts: list[str], context: ProjectContext | None) -> None:
+    """把 Project Context 快照的关键字段追加到 Agent 输入。"""
+    if context is None:
+        return
+    if context.project_summary:
+        parts.append(f"项目概要：{context.project_summary}")
+    if context.current_focus:
+        parts.append(f"当前关注：{context.current_focus}")
+    try:
+        topics = json.loads(context.directory_topics or "[]")
+        if topics:
+            parts.append("目录主题：" + "、".join(str(item) for item in topics))
+    except json.JSONDecodeError:
+        pass
+    try:
+        themes = json.loads(context.recent_themes or "[]")
+        if themes:
+            parts.append("近期主题：" + "、".join(str(item) for item in themes))
+    except json.JSONDecodeError:
+        pass
+
+
 async def _build_context_text(db: AsyncSession, project: Project) -> str:
     """组装 Directory Agent 输入：项目说明 + Project Context 快照。"""
     parts = [f"项目：{project.name}"]
     parts.append(f"项目说明：{project.description or '（未填写）'}")
-    context = (
-        await db.execute(
-            select(ProjectContext).where(ProjectContext.project_id == project.id)
+    _append_snapshot_parts(parts, await _load_project_context(db, project.id))
+    return "\n".join(parts)
+
+
+def _node_path(nodes: list[Node], node: Node) -> str:
+    """计算节点祖先路径文本。"""
+    by_id = {item.id: item for item in nodes}
+    path: list[str] = []
+    current: Node | None = node
+    while current is not None:
+        path.append(current.name)
+        current = by_id.get(current.parent_id) if current.parent_id is not None else None
+    return " / ".join(reversed(path))
+
+
+def _subtree_lines(
+    children_by_parent: dict[int | None, list[Node]],
+    parent_id: int | None,
+    depth: int,
+    max_depth: int,
+) -> list[str]:
+    """把现有子树渲染成缩进文本（用于 Agent 输入）。"""
+    lines: list[str] = []
+    if depth > max_depth:
+        return lines
+    for node in sorted(
+        children_by_parent.get(parent_id, []),
+        key=lambda item: item.position,
+    ):
+        desc = f"：{node.description}" if node.description else ""
+        lines.append(f"{'  ' * depth}- {node.name}{desc}")
+        lines.extend(
+            _subtree_lines(children_by_parent, node.id, depth + 1, max_depth)
         )
-    ).scalar_one_or_none()
-    if context is not None:
-        if context.project_summary:
-            parts.append(f"项目概要：{context.project_summary}")
-        if context.current_focus:
-            parts.append(f"当前关注：{context.current_focus}")
-        try:
-            topics = json.loads(context.directory_topics or "[]")
-            if topics:
-                parts.append("目录主题：" + "、".join(str(item) for item in topics))
-        except json.JSONDecodeError:
-            pass
-        try:
-            themes = json.loads(context.recent_themes or "[]")
-            if themes:
-                parts.append("近期主题：" + "、".join(str(item) for item in themes))
-        except json.JSONDecodeError:
-            pass
+    return lines
+
+
+async def _build_expand_context(
+    db: AsyncSession,
+    project: Project,
+    target: Node,
+) -> str:
+    """组装节点拓展输入：目标节点 + 现有子树 + 快照 + 相关 Entry。"""
+    parts = [f"项目：{project.name}"]
+    parts.append(f"项目说明：{project.description or '（未填写）'}")
+    _append_snapshot_parts(parts, await _load_project_context(db, project.id))
+
+    all_nodes = list(
+        (
+            await db.execute(
+                select(Node).where(Node.project_id == project.id)
+            )
+        ).scalars().all()
+    )
+    children_by_parent: dict[int | None, list[Node]] = {}
+    for node in all_nodes:
+        children_by_parent.setdefault(node.parent_id, []).append(node)
+    parts.append(f"目标节点路径：{_node_path(all_nodes, target)}")
+    parts.append(f"目标节点说明：{target.description or '（未填写）'}")
+    existing = _subtree_lines(children_by_parent, target.id, 0, 2)
+    if existing:
+        parts.append("目标节点现有子节点：\n" + "\n".join(existing))
+    else:
+        parts.append("目标节点暂无子节点")
+
+    subtree_ids = await subtree_node_ids(db, project.id, target.id)
+    entries = list(
+        (
+            await db.execute(
+                select(Entry)
+                .where(Entry.project_id == project.id, Entry.node_id.in_(subtree_ids))
+                .order_by(Entry.updated_at.desc())
+                .limit(MAX_EXPAND_ENTRIES)
+            )
+        ).scalars().all()
+    )
+    if entries:
+        lines = []
+        for entry in entries:
+            content = entry.content or ""
+            truncated = len(content) > MAX_EXPAND_ENTRY_LENGTH
+            content = content[:MAX_EXPAND_ENTRY_LENGTH]
+            suffix = "…（已截断）" if truncated else ""
+            lines.append(f"- [{entry.title}]（{entry.main_type}）：{content}{suffix}")
+        parts.append(
+            "相关 Entry（目标节点子树内，最多 "
+            f"{MAX_EXPAND_ENTRIES} 条）：\n" + "\n".join(lines)
+        )
+        if len(entries) >= MAX_EXPAND_ENTRIES:
+            parts.append("（相关知识较多，仅取最近 40 条，其余未展示）")
+    else:
+        parts.append("目标节点子树暂无已确认 Entry")
     return "\n".join(parts)
 
 
@@ -293,6 +410,115 @@ def _count_tree(nodes: list[DirectoryNodeDraft]) -> int:
     return sum(1 + _count_tree(node.children) for node in nodes)
 
 
+async def expansion_diff(
+    db: AsyncSession,
+    draft: DirectoryDraft,
+) -> list[DraftDiffNodeOut]:
+    """递归计算目标节点现有子树与草稿目标子树的差异。"""
+    if draft.target_node_id is None:
+        return []
+    real_nodes = list(
+        (
+            await db.execute(
+                select(Node).where(Node.project_id == draft.project_id)
+            )
+        ).scalars().all()
+    )
+    real_by_id = {node.id: node for node in real_nodes}
+    real_children: dict[int | None, list[Node]] = {}
+    for node in real_nodes:
+        real_children.setdefault(node.parent_id, []).append(node)
+    for siblings in real_children.values():
+        siblings.sort(key=lambda item: item.position)
+
+    draft_nodes = list(
+        (
+            await db.execute(
+                select(DirectoryDraftNode).where(
+                    DirectoryDraftNode.draft_id == draft.id
+                )
+            )
+        ).scalars().all()
+    )
+    draft_children: dict[int | None, list[DirectoryDraftNode]] = {}
+    for node in draft_nodes:
+        draft_children.setdefault(node.parent_id, []).append(node)
+    for siblings in draft_children.values():
+        siblings.sort(key=lambda item: item.position)
+
+    async def diff_level(
+        draft_siblings: list[DirectoryDraftNode],
+        real_siblings: list[Node],
+    ) -> list[DraftDiffNodeOut]:
+        real_by_name = {
+            node.name.strip().casefold(): node for node in real_siblings
+        }
+        result: list[DraftDiffNodeOut] = []
+        matched: set[int] = set()
+        for draft_node in draft_siblings:
+            real = real_by_name.get(draft_node.name.strip().casefold())
+            if real is not None:
+                matched.add(real.id)
+                result.append(
+                    DraftDiffNodeOut(
+                        kind="kept",
+                        node_id=draft_node.id,
+                        real_node_id=real.id,
+                        name=draft_node.name,
+                        description=draft_node.description,
+                        children=await diff_level(
+                            draft_children.get(draft_node.id, []),
+                            real_children.get(real.id, []),
+                        ),
+                    )
+                )
+            else:
+                result.append(
+                    DraftDiffNodeOut(
+                        kind="added",
+                        node_id=draft_node.id,
+                        real_node_id=None,
+                        name=draft_node.name,
+                        description=draft_node.description,
+                        children=await diff_level(
+                            draft_children.get(draft_node.id, []),
+                            [],
+                        ),
+                    )
+                )
+        for real in real_siblings:
+            if real.id in matched:
+                continue
+            subtree_ids = await subtree_node_ids(db, draft.project_id, real.id)
+            total = await count_subtree_entries_total(
+                db, draft.project_id, subtree_ids
+            )
+            result.append(
+                DraftDiffNodeOut(
+                    kind="removed",
+                    node_id=None,
+                    real_node_id=real.id,
+                    name=real.name,
+                    description=real.description,
+                    blocked=total > 0,
+                    blocker_count=total,
+                    children=await diff_level(
+                        [],
+                        real_children.get(real.id, []),
+                    ),
+                )
+            )
+        return result
+
+    target = real_by_id.get(draft.target_node_id)
+    if target is None:
+        return []
+    return await diff_level(
+        draft_children.get(None, []),
+        real_children.get(target.id, []),
+    )
+
+
 async def run_generate_step(
     db: AsyncSession,
     draft: DirectoryDraft,
@@ -318,6 +544,38 @@ async def run_generate_step(
     draft.last_error = None
     if meta.is_fallback:
         logger.warning("Directory Draft 降级生成：provider=%s", meta.provider)
+
+
+async def run_expand_step(
+    db: AsyncSession,
+    draft: DirectoryDraft,
+    project: Project,
+) -> None:
+    """运行节点拓展步骤并写入完整目标子树。"""
+    if draft.target_node_id is None:
+        raise ValueError("节点拓展草稿缺少目标节点")
+    target = await db.get(Node, draft.target_node_id)
+    if target is None or target.project_id != project.id:
+        draft.status = DRAFT_DISCARDED
+        draft.last_error = "目标节点不存在，草稿已作废"
+        return
+    context_text = await _build_expand_context(db, project, target)
+    result, meta = await run_directory_expand(
+        db,
+        project.workspace_id,
+        project,
+        context_text,
+        target.name,
+    )
+    await _replace_draft_nodes(db, draft, result.nodes)
+    draft.provider = meta.provider
+    draft.model = meta.model
+    draft.is_fallback = meta.is_fallback
+    draft.next_action = DRAFT_GENERATE
+    draft.status = DRAFT_PENDING_CONFIRM
+    draft.last_error = None
+    if meta.is_fallback:
+        logger.warning("Directory Draft 节点拓展降级生成：provider=%s", meta.provider)
 
 
 async def run_clarify_step(
@@ -401,6 +659,47 @@ async def create_or_reuse_draft(
     return draft
 
 
+async def create_or_reuse_expand_draft(
+    db: AsyncSession,
+    project: Project,
+    target_node: Node,
+) -> DirectoryDraft:
+    """创建或复用活跃草稿并发起节点拓展（覆盖时重置内容）。"""
+    existing = await get_active_draft(db, project.id)
+    if existing is not None:
+        existing.kind = DRAFT_KIND_EXPAND
+        existing.target_node_id = target_node.id
+        existing.status = DRAFT_DRAFTING
+        existing.next_action = DRAFT_GENERATE
+        existing.clarify_json = None
+        existing.clarify_answers_json = None
+        existing.clarify_batches = 0
+        existing.conversation_rounds = 0
+        existing.last_error = None
+        existing.claimed_at = None
+        await db.execute(
+            delete(DirectoryDraftNode).where(
+                DirectoryDraftNode.draft_id == existing.id
+            )
+        )
+        await db.execute(
+            delete(DirectoryDraftMessage).where(
+                DirectoryDraftMessage.draft_id == existing.id
+            )
+        )
+        return existing
+    draft = DirectoryDraft(
+        project_id=project.id,
+        kind=DRAFT_KIND_EXPAND,
+        target_node_id=target_node.id,
+        status=DRAFT_DRAFTING,
+        next_action=DRAFT_GENERATE,
+    )
+    db.add(draft)
+    await db.flush()
+    return draft
+
+
 async def submit_clarify_answers(
     db: AsyncSession,
     draft: DirectoryDraft,
@@ -453,7 +752,9 @@ async def process_next_draft_step() -> bool:
         if draft is None or project is None:
             return True
         try:
-            if draft.next_action == DRAFT_CLARIFY:
+            if draft.kind == DRAFT_KIND_EXPAND:
+                await run_expand_step(db, draft, project)
+            elif draft.next_action == DRAFT_CLARIFY:
                 await run_clarify_step(db, draft, project)
             else:
                 await run_generate_step(db, draft, project)
@@ -484,6 +785,7 @@ async def apply_draft(
     db: AsyncSession,
     draft: DirectoryDraft,
     project: Project,
+    removed_node_ids: list[int] | None = None,
 ) -> DirectoryDraft:
     """校验并原子应用草稿为正式目录。"""
     if draft.status != DRAFT_PENDING_CONFIRM:
@@ -499,6 +801,13 @@ async def apply_draft(
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=f"草稿节点数超过上限 {MAX_DRAFT_NODES}",
+        )
+    if draft.kind == DRAFT_KIND_EXPAND:
+        return await _apply_expand_draft(
+            db,
+            draft,
+            project,
+            removed_node_ids or [],
         )
     existing_count = (
         await db.execute(
@@ -554,6 +863,190 @@ async def apply_draft(
     return draft
 
 
+async def _apply_expand_draft(
+    db: AsyncSession,
+    draft: DirectoryDraft,
+    project: Project,
+    removed_node_ids: list[int],
+) -> DirectoryDraft:
+    """应用节点拓展草稿：创建新增、删除勾选的建议移除子树。"""
+    if draft.target_node_id is None:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="拓展草稿缺少目标节点")
+    target = await db.get(Node, draft.target_node_id)
+    if target is None or target.project_id != project.id:
+        draft.status = DRAFT_DISCARDED
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="目标节点已不存在，草稿已作废",
+        )
+
+    nodes = list(
+        (
+            await db.execute(
+                select(DirectoryDraftNode).where(
+                    DirectoryDraftNode.draft_id == draft.id
+                )
+            )
+        ).scalars().all()
+    )
+    by_id = {node.id: node for node in nodes}
+    children_by_parent: dict[int | None, list[DirectoryDraftNode]] = {}
+    for node in nodes:
+        if node.parent_id is not None and node.parent_id not in by_id:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="草稿包含非法父引用",
+            )
+        children_by_parent.setdefault(node.parent_id, []).append(node)
+    selected_by_id = {node.id: node.selected for node in nodes}
+
+    # 递归收集差异中的建议移除项
+    diff = await expansion_diff(db, draft)
+    removed_by_real: dict[int, DraftDiffNodeOut] = {}
+
+    def collect_removed(entries: list[DraftDiffNodeOut]) -> None:
+        for entry in entries:
+            if entry.kind == "removed" and entry.real_node_id is not None:
+                removed_by_real[entry.real_node_id] = entry
+            collect_removed(entry.children)
+
+    collect_removed(diff)
+
+    # 校验勾选的移除项
+    real_nodes = list(
+        (
+            await db.execute(
+                select(Node).where(Node.project_id == project.id)
+            )
+        ).scalars().all()
+    )
+    real_by_id = {node.id: node for node in real_nodes}
+    removal_roots: list[int] = []
+    for real_id in removed_node_ids:
+        entry = removed_by_real.get(real_id)
+        if entry is None:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="所选移除节点不在 AI 建议移除范围内",
+            )
+        if entry.blocked:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail=f"「{entry.name}」含 {entry.blocker_count} 条正式知识，无法移除",
+            )
+        ancestor_ids: set[int] = set()
+        current = real_by_id.get(real_id)
+        while current is not None and current.parent_id is not None:
+            parent = real_by_id.get(current.parent_id)
+            if parent is None:
+                break
+            ancestor_ids.add(parent.id)
+            current = parent
+        if ancestor_ids & set(removal_roots):
+            continue
+        removal_roots.append(real_id)
+
+    # 校验新增数量与层级
+    draft_depth: dict[int, int] = {}
+
+    def depth_walk(parent_id: int | None, depth: int) -> None:
+        for node in sorted(
+            children_by_parent.get(parent_id, []),
+            key=lambda item: item.position,
+        ):
+            draft_depth[node.id] = depth
+            depth_walk(node.id, depth + 1)
+
+    depth_walk(None, 1)
+    added_ids: set[int | None] = set()
+
+    def collect_added(entries: list[DraftDiffNodeOut]) -> None:
+        for entry in entries:
+            if entry.kind == "added":
+                added_ids.add(entry.node_id)
+            collect_added(entry.children)
+
+    collect_added(diff)
+    added_count = sum(
+        1
+        for draft_id in added_ids
+        if draft_id is not None and selected_by_id.get(draft_id, False)
+    )
+    for draft_id in added_ids:
+        if (
+            draft_id is not None
+            and selected_by_id.get(draft_id, False)
+            and draft_depth.get(draft_id, 1) > MAX_EXPAND_ADDED_DEPTH
+        ):
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"新增节点层级超过上限 {MAX_EXPAND_ADDED_DEPTH}",
+            )
+    if added_count > MAX_EXPAND_ADDED_NODES:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"新增节点数超过上限 {MAX_EXPAND_ADDED_NODES}",
+        )
+
+    # 删除勾选的建议移除子树
+    removal_all: set[int] = set()
+    for real_id in removal_roots:
+        removal_all.update(await subtree_node_ids(db, project.id, real_id))
+    if removal_all:
+        await db.execute(delete(Node).where(Node.id.in_(removal_all)))
+        await db.flush()
+
+    # 重新加载实时节点，创建新增节点并映射保留节点
+    real_nodes = list(
+        (
+            await db.execute(
+                select(Node).where(Node.project_id == project.id)
+            )
+        ).scalars().all()
+    )
+    real_children: dict[int | None, list[Node]] = {}
+    for node in real_nodes:
+        real_children.setdefault(node.parent_id, []).append(node)
+    for siblings in real_children.values():
+        siblings.sort(key=lambda item: item.position)
+
+    async def create_from(draft_parent_id: int | None, real_parent_id: int | None) -> None:
+        for node in sorted(
+            children_by_parent.get(draft_parent_id, []),
+            key=lambda item: item.position,
+        ):
+            existing = next(
+                (
+                    real
+                    for real in real_children.get(real_parent_id, [])
+                    if real.name.strip().casefold() == node.name.strip().casefold()
+                ),
+                None,
+            )
+            if existing is not None:
+                await create_from(node.id, existing.id)
+                continue
+            if not node.selected:
+                continue
+            siblings = real_children.get(real_parent_id, [])
+            formal = Node(
+                project_id=project.id,
+                parent_id=real_parent_id,
+                name=node.name,
+                description=node.description,
+                position=len(siblings),
+            )
+            db.add(formal)
+            await db.flush()
+            real_children.setdefault(real_parent_id, []).append(formal)
+            await create_from(node.id, formal.id)
+
+    await create_from(None, target.id)
+    draft.status = DRAFT_CONFIRMED
+    await schedule_refresh(db, project.id, "directory_changed")
+    return draft
+
+
 async def discard_draft(db: AsyncSession, draft: DirectoryDraft) -> DirectoryDraft:
     """丢弃草稿。"""
     draft.status = DRAFT_DISCARDED
@@ -587,7 +1080,21 @@ async def submit_draft_message(
     draft.conversation_rounds += 1
     await db.flush()
 
-    context_text = await _build_context_text(db, project)
+    if draft.kind == DRAFT_KIND_EXPAND:
+        if draft.target_node_id is None:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="拓展草稿缺少目标节点",
+            )
+        target = await db.get(Node, draft.target_node_id)
+        if target is None or target.project_id != project.id:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="目标节点已不存在，草稿已作废",
+            )
+        context_text = await _build_expand_context(db, project, target)
+    else:
+        context_text = await _build_context_text(db, project)
     tree_json = await _draft_tree_json(db, draft)
     messages = await list_draft_messages(db, draft.id)
     convo = [

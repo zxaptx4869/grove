@@ -7,6 +7,7 @@ from sqlalchemy import func, select
 
 from app.api.deps import DbSession, get_current_workspace
 from app.models import Entry, Node, Project, Source, Workspace
+from app.models.directory_draft import DRAFT_DISCARDED, DirectoryDraft
 from app.schemas.project import (
     NodeCreate,
     NodeOut,
@@ -18,6 +19,7 @@ from app.schemas.project import (
     ProjectUpdate,
 )
 from app.services.knowledge_tree import load_decoration_template, seed_project_nodes
+from app.services.nodes import assert_subtree_removable, subtree_node_ids
 from app.services.project_context import schedule_refresh
 
 router = APIRouter(prefix="/api/projects", tags=["projects"])
@@ -384,9 +386,25 @@ async def delete_node(
     db: DbSession,
     workspace: CurrentWorkspace,
 ) -> dict[str, bool]:
-    """删除节点并级联删除后代。"""
+    """删除节点并级联删除后代；子树含正式 Entry 时拒绝。"""
     await _get_owned_project(db, workspace.id, project_id)
     node = await _get_project_node(db, project_id, node_id)
+    subtree_ids = await subtree_node_ids(db, project_id, node.id)
+    await assert_subtree_removable(db, project_id, subtree_ids)
+    draft = (
+        await db.execute(
+            select(DirectoryDraft).where(
+                DirectoryDraft.project_id == project_id,
+                DirectoryDraft.kind == "expand",
+                DirectoryDraft.target_node_id == node.id,
+                DirectoryDraft.status.in_(
+                    ["drafting", "awaiting_input", "pending_confirm", "failed"]
+                ),
+            )
+        )
+    ).scalar_one_or_none()
+    if draft is not None:
+        draft.status = DRAFT_DISCARDED
     await _delete_node_subtree(db, node.id)
     await schedule_refresh(db, project_id, "directory_changed")
     await db.commit()

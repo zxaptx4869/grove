@@ -111,6 +111,12 @@ class DraftNodesUpdateRequest(BaseModel):
     nodes: list[DraftNodeInput] = []
 
 
+class DraftApplyRequest(BaseModel):
+    """应用节点拓展草稿时提交的移除项。"""
+
+    removed_node_ids: list[int] = []
+
+
 class DraftMessageSubmitRequest(BaseModel):
     """发送一条对话调整消息。"""
 

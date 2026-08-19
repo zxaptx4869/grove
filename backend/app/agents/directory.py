@@ -67,6 +67,18 @@ DRAFT_SYSTEM_PROMPT = """你是 Grove 的 Directory Agent 起草步骤。
 3. 输出始终是候选草稿，不创建或修改正式目录。"""
 
 
+EXPAND_SYSTEM_PROMPT = """你是 Grove 的 Directory Agent 节点拓展步骤。
+请基于目标节点、现有子树、项目上下文与相关 Entry，输出目标节点下的完整目标子树。
+
+要求：
+1. 输出的是目标节点下的子节点数组（嵌套 children），代表拓展后的完整目标子树。
+2. 现有子节点必须按原名原样保留，禁止改名；如确需改名，保留原名并在回复中说明需手动操作。
+3. 只新增更细的结构：新增节点名称简洁（2-8 字），description 用一句话说明用途。
+4. 新增层级不超过 2 层，新增节点数不超过 30。
+5. 目标节点自身的名称与说明由系统固定，不得出现在输出中。
+6. 输出始终是候选草稿，不创建或修改正式目录。"""
+
+
 REFINE_SYSTEM_PROMPT = """你是 Grove 的 Directory Agent 调整步骤。
 请基于当前候选树与对话调整目录草稿。
 
@@ -137,6 +149,38 @@ def _offline_refine() -> ChatRoundResultDraft:
     return ChatRoundResultDraft(reply_text="已收到你的消息，当前草稿保持不变。")
 
 
+def _offline_expand(target_name: str) -> DirectoryDraftDraft:
+    """离线确定性节点拓展：返回三级通用细化结构。"""
+    return DirectoryDraftDraft(
+        nodes=[
+            DirectoryNodeDraft(
+                name="细化目标",
+                description=f"围绕「{target_name}」梳理具体目标与边界",
+                children=[
+                    DirectoryNodeDraft(name="目标拆解", description="把大目标拆成可执行子项"),
+                    DirectoryNodeDraft(name="范围界定", description="明确做什么与不做什么"),
+                ],
+            ),
+            DirectoryNodeDraft(
+                name="关键要点",
+                description="执行过程中的关键注意事项",
+                children=[
+                    DirectoryNodeDraft(name="步骤要点", description="按顺序记录关键动作"),
+                    DirectoryNodeDraft(name="易错提醒", description="常见错误与规避"),
+                ],
+            ),
+            DirectoryNodeDraft(
+                name="相关经验",
+                description="沉淀与目标节点相关的经验教训",
+                children=[
+                    DirectoryNodeDraft(name="成功做法", description="已验证有效的做法"),
+                    DirectoryNodeDraft(name="失败教训", description="踩坑记录与反思"),
+                ],
+            ),
+        ]
+    )
+
+
 async def run_directory_clarify(
     db,
     workspace_id: int,
@@ -188,6 +232,34 @@ async def run_directory_draft(
     result = await agent.run(context_text)
     if result.output is None:
         raise RuntimeError("Directory Agent 起草步骤未返回结构化结果")
+    model_name = getattr(text_model, "model_name", None) or "unknown"
+    return result.output, GenerationMeta(provider="llm", model=str(model_name), is_fallback=False)
+
+
+async def run_directory_expand(
+    db,
+    workspace_id: int,
+    project: Project,
+    context_text: str,
+    target_name: str,
+) -> tuple[DirectoryDraftDraft, GenerationMeta]:
+    """运行节点拓展步骤，返回完整目标子树与生成来源。"""
+    text_model = await get_text_model(db, workspace_id)
+    if isinstance(text_model, TestModel):
+        return (
+            _offline_expand(target_name),
+            GenerationMeta(provider="offline", model=None, is_fallback=True),
+        )
+
+    agent = Agent(
+        text_model,
+        output_type=DirectoryDraftDraft,
+        system_prompt=EXPAND_SYSTEM_PROMPT,
+        retries=1,
+    )
+    result = await agent.run(context_text)
+    if result.output is None:
+        raise RuntimeError("Directory Agent 节点拓展步骤未返回结构化结果")
     model_name = getattr(text_model, "model_name", None) or "unknown"
     return result.output, GenerationMeta(provider="llm", model=str(model_name), is_fallback=False)
 
