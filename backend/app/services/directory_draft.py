@@ -1131,10 +1131,14 @@ async def submit_draft_message(
             f"已应用目录，共 {node_count} 个节点",
         )
     else:
+        reply_text = result.reply_text.strip()
+        # 兜底：模型把内部字段（tree/null）写进回复时，替换为自然文案
+        if "tree" in reply_text.lower() and "null" in reply_text.lower():
+            reply_text = "已收到，当前草稿保持不变。"
         await _append_draft_message(
             db,
             draft.id,
             "assistant",
-            result.reply_text.strip() or "（已收到你的消息）",
+            reply_text or "（已收到你的消息）",
         )
     return draft
