@@ -6,6 +6,7 @@ import httpx
 import pytest
 
 from app.main import create_app
+from app.models import Entry
 from app.processing import worker
 
 
@@ -182,3 +183,47 @@ async def test_similar_entries_respects_workspace_isolation(client: httpx.AsyncC
         await _register(other_client)
         response = await other_client.get(f"/api/entries/{entry['id']}/similar")
         assert response.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_semantic_agent_falls_back_on_model_error(monkeypatch) -> None:
+    """模型调用失败时语义重排降级为确定性结果并带错误标记。"""
+    from app.agents.semantic import run_semantic_agent
+
+    class FakeModel:
+        model_name = "fake-model"
+
+    async def fake_get_text_model(db, workspace_id):
+        del db, workspace_id
+        return FakeModel()
+
+    class FailingAgent:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        async def run(self, context):
+            del context
+            raise RuntimeError("余额不足")
+
+    monkeypatch.setattr("app.agents.semantic.get_text_model", fake_get_text_model)
+    monkeypatch.setattr("app.agents.semantic.Agent", FailingAgent)
+
+    candidates = [
+        Entry(
+            id=1,
+            project_id=1,
+            node_id=10,
+            title="闭水试验",
+            content="闭水试验通常持续 24 小时",
+            main_type="knowledge",
+        )
+    ]
+    draft, provider, model, is_fallback, error = await run_semantic_agent(
+        None, 1, "闭水试验", candidates
+    )
+
+    assert is_fallback is True
+    assert provider == "llm"
+    assert model == "fake-model"
+    assert "余额不足" in error
+    assert [item.entry_id for item in draft.results] == [1]

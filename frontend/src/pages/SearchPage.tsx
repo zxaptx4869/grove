@@ -42,6 +42,7 @@ export function SearchPage() {
         is_fallback: false,
         provider: null,
         model: null,
+        error: null,
       }))
     },
     enabled: submitted.length > 0,
@@ -165,6 +166,7 @@ export function SearchPage() {
                   highlightQuery={submitted}
                   reason={entry.reason || undefined}
                   isFallback={entry.is_fallback}
+                  error={entry.error || undefined}
                   onSelect={(selected) => openEntry(selected.project_id)}
                 />
               ))}

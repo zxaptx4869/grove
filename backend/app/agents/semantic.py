@@ -1,11 +1,15 @@
 """语义重排 Agent：对确定性召回的候选按语义相关度排序。"""
 
+import logging
+
 from pydantic import BaseModel
 from pydantic_ai import Agent
 from pydantic_ai.models.test import TestModel
 
 from app.models import Entry
 from app.services.ai_models import get_text_model
+
+logger = logging.getLogger(__name__)
 
 
 class SemanticRankResult(BaseModel):
@@ -56,11 +60,11 @@ async def run_semantic_agent(
     workspace_id: int,
     query: str,
     candidates: list[Entry],
-) -> tuple[SemanticRankingDraft, str, str | None, bool]:
-    """运行语义重排 Agent，返回 (结构化草稿, provider, model, 是否降级)。"""
+) -> tuple[SemanticRankingDraft, str, str | None, bool, str | None]:
+    """运行语义重排 Agent，返回 (草稿, provider, model, 是否降级, 降级原因)。"""
     text_model = await get_text_model(db, workspace_id)
     if isinstance(text_model, TestModel):
-        return _offline_ranking(candidates), "offline", None, True
+        return _offline_ranking(candidates), "offline", None, True, "未配置文本模型密钥"
 
     context = _format_context(query, candidates)
     agent = Agent(
@@ -69,8 +73,25 @@ async def run_semantic_agent(
         system_prompt=SEMANTIC_SYSTEM_PROMPT,
         retries=1,
     )
-    result = await agent.run(context)
-    if result.output is None:
-        raise RuntimeError("语义重排 Agent 未返回结构化结果")
     model_name = getattr(text_model, "model_name", None) or getattr(text_model, "model", "unknown")
-    return result.output, "llm", str(model_name), False
+    try:
+        result = await agent.run(context)
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("语义重排模型调用失败，降级为确定性结果：%s", exc)
+        return (
+            _offline_ranking(candidates),
+            "llm",
+            str(model_name),
+            True,
+            f"模型调用失败：{exc}",
+        )
+    if result.output is None:
+        logger.warning("语义重排未返回结构化结果，降级为确定性结果")
+        return (
+            _offline_ranking(candidates),
+            "llm",
+            str(model_name),
+            True,
+            "模型未返回结构化结果",
+        )
+    return result.output, "llm", str(model_name), False, None

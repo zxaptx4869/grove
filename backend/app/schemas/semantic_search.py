@@ -10,4 +10,5 @@ class SemanticEntryOut(EntryOut):
     reason: str = ""
     provider: str | None = None
     model: str | None = None
+    error: str | None = None
     is_fallback: bool = False

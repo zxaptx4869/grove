@@ -83,6 +83,7 @@ export function EntryCard({
   highlightQuery,
   reason,
   isFallback = false,
+  error,
   onSelect,
   onShowSimilar,
 }: {
@@ -91,6 +92,7 @@ export function EntryCard({
   highlightQuery?: string
   reason?: string
   isFallback?: boolean
+  error?: string
   onSelect?: (entry: EntryViewPayload) => void
   onShowSimilar?: (entry: EntryViewPayload) => void
 }) {
@@ -151,7 +153,7 @@ export function EntryCard({
       ) : null}
       {isFallback ? (
         <Badge variant="outline" className="mt-2 bg-muted/60">
-          已降级
+          {error ? '模型调用失败 · 已降级' : '已降级'}
         </Badge>
       ) : null}
       {onShowSimilar ? (

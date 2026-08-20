@@ -48,7 +48,7 @@ export function SimilarEntriesDrawer({
                     <span className="text-body-sm font-[650]">{item.title}</span>
                     {item.is_fallback ? (
                       <Badge variant="outline" className="shrink-0">
-                        已降级
+                        {item.error ? '模型调用失败 · 已降级' : '已降级'}
                       </Badge>
                     ) : null}
                   </div>

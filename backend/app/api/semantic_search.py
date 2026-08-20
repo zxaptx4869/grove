@@ -15,7 +15,7 @@ CurrentWorkspace = Annotated[Workspace, Depends(get_current_workspace)]
 
 
 def _to_response(
-    results: list[tuple[Entry, str, str, str | None, bool]],
+    results: list[tuple[Entry, str, str, str | None, bool, str | None]],
 ) -> list[SemanticEntryOut]:
     """把语义检索结果组装为响应模型。"""
     return [
@@ -25,9 +25,10 @@ def _to_response(
             reason=reason,
             provider=provider,
             model=model,
+            error=error,
             is_fallback=is_fallback,
         )
-        for entry, reason, provider, model, is_fallback in results
+        for entry, reason, provider, model, is_fallback, error in results
     ]
 
 
