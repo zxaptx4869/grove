@@ -1,3 +1,5 @@
+import { Sparkles } from 'lucide-react'
+
 import { Badge } from '@/components/ui/badge'
 import {
   Table,
@@ -82,6 +84,7 @@ export function EntryCard({
   reason,
   isFallback = false,
   onSelect,
+  onShowSimilar,
 }: {
   entry: EntryViewPayload
   showProject?: boolean
@@ -89,6 +92,7 @@ export function EntryCard({
   reason?: string
   isFallback?: boolean
   onSelect?: (entry: EntryViewPayload) => void
+  onShowSimilar?: (entry: EntryViewPayload) => void
 }) {
   const clickable = Boolean(onSelect)
   return (
@@ -149,6 +153,21 @@ export function EntryCard({
         <Badge variant="outline" className="mt-2 bg-muted/60">
           已降级
         </Badge>
+      ) : null}
+      {onShowSimilar ? (
+        <div className="mt-3 border-t pt-2">
+          <button
+            type="button"
+            onClick={(event) => {
+              event.stopPropagation()
+              onShowSimilar(entry)
+            }}
+            className="inline-flex items-center gap-1.5 rounded-md px-2 py-1 text-body-sm text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+          >
+            <Sparkles className="size-4" />
+            相关知识
+          </button>
+        </div>
       ) : null}
       {entry.evidences.length > 0 ? (
         <details className="mt-3 border-t pt-2 text-caption text-muted-foreground">

@@ -42,8 +42,8 @@ import { Input } from '@/components/ui/input'
 import { Textarea } from '@/components/ui/textarea'
 import { CaptureDialog } from '@/components/features/CaptureDialog'
 import { DirectoryDraftDialog } from '@/components/features/DirectoryDraftDialog'
-import { EntryDetailDialog } from '@/components/features/EntryDetailDialog'
 import { ProjectContextPanel } from '@/components/features/ProjectContextPanel'
+import { SimilarEntriesDrawer } from '@/components/features/SimilarEntriesDrawer'
 import { useGroveMutation } from '@/hooks/useGroveMutation'
 import { ProjectSources } from '@/pages/ProjectSources'
 import {
@@ -258,7 +258,7 @@ export function ProjectPage() {
   const [scope, setScope] = useState<'direct' | 'descendants'>('direct')
   const [searchInput, setSearchInput] = useState('')
   const [submittedSearch, setSubmittedSearch] = useState('')
-  const [detailEntry, setDetailEntry] = useState<EntryPayload | null>(null)
+  const [similarEntry, setSimilarEntry] = useState<EntryPayload | null>(null)
 
   function submitSearch() {
     setSubmittedSearch(searchInput.trim())
@@ -837,17 +837,13 @@ export function ProjectPage() {
                             key={entry.id}
                             entry={entry}
                             highlightQuery={submittedSearch}
-                            onSelect={(selected) => setDetailEntry(selected)}
+                            onShowSimilar={(selected) => setSimilarEntry(selected)}
                           />
                         ))}
                       </div>
                     ) : (
                       <div className="pt-4">
-                        <EntryList
-                          entries={searchResults.data ?? []}
-                          highlightQuery={submittedSearch}
-                          onSelect={(selected) => setDetailEntry(selected)}
-                        />
+                        <EntryList entries={searchResults.data ?? []} highlightQuery={submittedSearch} />
                       </div>
                     )}
                   </div>
@@ -875,16 +871,13 @@ export function ProjectPage() {
                           <EntryCard
                             key={entry.id}
                             entry={entry}
-                            onSelect={(selected) => setDetailEntry(selected)}
+                            onShowSimilar={(selected) => setSimilarEntry(selected)}
                           />
                         ))}
                       </div>
                     ) : (
                       <div className="pt-4">
-                        <EntryList
-                          entries={entries.data ?? []}
-                          onSelect={(selected) => setDetailEntry(selected)}
-                        />
+                        <EntryList entries={entries.data ?? []} />
                       </div>
                     )}
                   </div>
@@ -1230,13 +1223,12 @@ export function ProjectPage() {
           queryClient.invalidateQueries({ queryKey: queryKeys.directoryDraft(id) })
         }}
       />
-      <EntryDetailDialog
-        entry={detailEntry}
-        open={detailEntry != null}
+      <SimilarEntriesDrawer
+        entry={similarEntry}
+        open={similarEntry != null}
         onOpenChange={(open) => {
-          if (!open) setDetailEntry(null)
+          if (!open) setSimilarEntry(null)
         }}
-        onSelectEntry={(next) => setDetailEntry(next)}
       />
     </section>
   )
