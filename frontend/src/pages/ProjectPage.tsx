@@ -843,7 +843,11 @@ export function ProjectPage() {
                       </div>
                     ) : (
                       <div className="pt-4">
-                        <EntryList entries={searchResults.data ?? []} highlightQuery={submittedSearch} />
+                        <EntryList
+                          entries={searchResults.data ?? []}
+                          highlightQuery={submittedSearch}
+                          onShowSimilar={(selected) => setSimilarEntry(selected)}
+                        />
                       </div>
                     )}
                   </div>
@@ -877,7 +881,10 @@ export function ProjectPage() {
                       </div>
                     ) : (
                       <div className="pt-4">
-                        <EntryList entries={entries.data ?? []} />
+                        <EntryList
+                          entries={entries.data ?? []}
+                          onShowSimilar={(selected) => setSimilarEntry(selected)}
+                        />
                       </div>
                     )}
                   </div>

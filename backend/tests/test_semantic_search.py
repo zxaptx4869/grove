@@ -75,6 +75,8 @@ async def test_semantic_search_ranks_results_and_falls_back(client: httpx.AsyncC
     assert len(data) == 2
     assert all(item["is_fallback"] is True for item in data)
     assert all(item["reason"] == "" for item in data)
+    assert all(item["provider"] == "offline" for item in data)
+    assert all(item["model"] is None for item in data)
     # 完全匹配的「闭水试验」应排在「闭水试验规范」之前
     assert data[0]["title"] == "闭水试验"
     assert data[0]["project_name"] == "语义项目"

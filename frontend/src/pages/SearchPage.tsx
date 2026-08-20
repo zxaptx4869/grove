@@ -36,7 +36,13 @@ export function SearchPage() {
         return semanticSearchEntries(submitted)
       }
       const items = await searchEntries(submitted)
-      return items.map((item) => ({ ...item, reason: '', is_fallback: false }))
+      return items.map((item) => ({
+        ...item,
+        reason: '',
+        is_fallback: false,
+        provider: null,
+        model: null,
+      }))
     },
     enabled: submitted.length > 0,
   })

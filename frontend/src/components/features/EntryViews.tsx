@@ -192,22 +192,25 @@ export function EntryList({
   showProject = false,
   highlightQuery,
   onSelect,
+  onShowSimilar,
 }: {
   entries: EntryViewPayload[]
   showProject?: boolean
   highlightQuery?: string
   onSelect?: (entry: EntryViewPayload) => void
+  onShowSimilar?: (entry: EntryViewPayload) => void
 }) {
   return (
     <Table className="table-fixed">
       <TableHeader>
         <TableRow>
-          {showProject ? <TableHead className="w-[16%]">项目</TableHead> : null}
-          <TableHead className={showProject ? 'w-[26%]' : 'w-[32%]'}>标题</TableHead>
-          <TableHead className={showProject ? 'w-[14%]' : 'w-[18%]'}>目录</TableHead>
-          <TableHead className={showProject ? 'w-[10%]' : 'w-[12%]'}>类型</TableHead>
-          <TableHead className={showProject ? 'w-[22%]' : 'w-[26%]'}>来源</TableHead>
-          <TableHead className="w-[12%]">更新时间</TableHead>
+          {showProject ? <TableHead className="w-[14%]">项目</TableHead> : null}
+          <TableHead className={showProject ? 'w-[24%]' : 'w-[30%]'}>标题</TableHead>
+          <TableHead className={showProject ? 'w-[12%]' : 'w-[16%]'}>目录</TableHead>
+          <TableHead className={showProject ? 'w-[9%]' : 'w-[12%]'}>类型</TableHead>
+          <TableHead className={showProject ? 'w-[21%]' : 'w-[22%]'}>来源</TableHead>
+          <TableHead className="w-[10%]">更新时间</TableHead>
+          {onShowSimilar ? <TableHead className="w-[10%]">操作</TableHead> : null}
         </TableRow>
       </TableHeader>
       <TableBody>
@@ -243,6 +246,23 @@ export function EntryList({
             <TableCell className="text-caption text-muted-foreground">
               {formatDate(entry.updated_at)}
             </TableCell>
+            {onShowSimilar ? (
+              <TableCell>
+                <button
+                  type="button"
+                  onClick={(event) => {
+                    event.stopPropagation()
+                    onShowSimilar(entry)
+                  }}
+                  aria-label={`查看「${entry.title}」的相关知识`}
+                  title="相关知识"
+                  className="inline-flex items-center gap-1 rounded-md px-2 py-1 text-body-sm text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+                >
+                  <Sparkles className="size-4" />
+                  相关知识
+                </button>
+              </TableCell>
+            ) : null}
           </TableRow>
         ))}
       </TableBody>

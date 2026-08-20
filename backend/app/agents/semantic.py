@@ -56,11 +56,11 @@ async def run_semantic_agent(
     workspace_id: int,
     query: str,
     candidates: list[Entry],
-) -> tuple[SemanticRankingDraft, bool]:
-    """运行语义重排 Agent，返回 (结构化草稿, 是否降级)。"""
+) -> tuple[SemanticRankingDraft, str, str | None, bool]:
+    """运行语义重排 Agent，返回 (结构化草稿, provider, model, 是否降级)。"""
     text_model = await get_text_model(db, workspace_id)
     if isinstance(text_model, TestModel):
-        return _offline_ranking(candidates), True
+        return _offline_ranking(candidates), "offline", None, True
 
     context = _format_context(query, candidates)
     agent = Agent(
@@ -72,4 +72,5 @@ async def run_semantic_agent(
     result = await agent.run(context)
     if result.output is None:
         raise RuntimeError("语义重排 Agent 未返回结构化结果")
-    return result.output, False
+    model_name = getattr(text_model, "model_name", None) or getattr(text_model, "model", "unknown")
+    return result.output, "llm", str(model_name), False

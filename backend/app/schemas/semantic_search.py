@@ -8,4 +8,6 @@ class SemanticEntryOut(EntryOut):
 
     project_name: str
     reason: str = ""
+    provider: str | None = None
+    model: str | None = None
     is_fallback: bool = False

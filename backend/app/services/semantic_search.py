@@ -77,17 +77,19 @@ async def _load_entries(
 def _order_by_ranking(
     candidates: list[Entry],
     draft: SemanticRankingDraft,
+    provider: str,
+    model: str | None,
     is_fallback: bool,
     limit: int,
-) -> list[tuple[Entry, str, bool]]:
-    """按语义重排结果映射回 Entry 并附理由，返回 (Entry, reason, is_fallback)。"""
+) -> list[tuple[Entry, str, str, str | None, bool]]:
+    """按语义重排结果映射回 Entry，返回 (Entry, reason, provider, model, is_fallback)。"""
     by_id = {entry.id: entry for entry in candidates}
-    ordered: list[tuple[Entry, str, bool]] = []
+    ordered: list[tuple[Entry, str, str, str | None, bool]] = []
     for item in draft.results[:limit]:
         entry = by_id.get(item.entry_id)
         if entry is None:
             continue
-        ordered.append((entry, item.reason, is_fallback))
+        ordered.append((entry, item.reason, provider, model, is_fallback))
     return ordered
 
 
@@ -96,23 +98,27 @@ async def semantic_search_entries(
     workspace_id: int,
     query: str,
     project_id: int | None = None,
-) -> list[tuple[Entry, str, bool]]:
-    """语义搜索：确定性召回 + 语义重排，返回 (Entry, reason, is_fallback)。"""
+) -> list[tuple[Entry, str, str, str | None, bool]]:
+    """语义搜索：确定性召回 + 语义重排，返回 (Entry, reason, provider, model, is_fallback)。"""
     if not query.strip():
         return []
     entries = await _load_entries(db, workspace_id, project_id)
     candidates = _recall_by_query(entries, query, _RECALL_LIMIT)
     if not candidates:
         return []
-    draft, is_fallback = await run_semantic_agent(db, workspace_id, query, candidates)
-    return _order_by_ranking(candidates, draft, is_fallback, _RESULT_LIMIT)
+    draft, provider, model, is_fallback = await run_semantic_agent(
+        db, workspace_id, query, candidates
+    )
+    if is_fallback:
+        logger.warning("语义搜索降级：provider=%s model=%s", provider, model)
+    return _order_by_ranking(candidates, draft, provider, model, is_fallback, _RESULT_LIMIT)
 
 
 async def recommend_similar_entries(
     db: AsyncSession,
     workspace_id: int,
     target: Entry,
-) -> list[tuple[Entry, str, bool]]:
+) -> list[tuple[Entry, str, str, str | None, bool]]:
     """为指定 Entry 推荐同一项目内语义相关的其他 Entry。"""
     entries = await _load_entries(db, workspace_id, target.project_id)
     others = [entry for entry in entries if entry.id != target.id]
@@ -122,5 +128,9 @@ async def recommend_similar_entries(
     if not candidates:
         return []
     query = f"{target.title}\n{target.content[:300]}"
-    draft, is_fallback = await run_semantic_agent(db, workspace_id, query, candidates)
-    return _order_by_ranking(candidates, draft, is_fallback, _RESULT_LIMIT)
+    draft, provider, model, is_fallback = await run_semantic_agent(
+        db, workspace_id, query, candidates
+    )
+    if is_fallback:
+        logger.warning("相似推荐降级：provider=%s model=%s", provider, model)
+    return _order_by_ranking(candidates, draft, provider, model, is_fallback, _RESULT_LIMIT)

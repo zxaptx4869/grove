@@ -654,6 +654,8 @@ export const searchEntries = (q: string, projectId?: number) => {
 export interface SemanticEntryPayload extends SearchEntryPayload {
   reason: string
   is_fallback: boolean
+  provider: string | null
+  model: string | null
 }
 
 export const semanticSearchEntries = (q: string, projectId?: number) => {
