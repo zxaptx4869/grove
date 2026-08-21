@@ -452,15 +452,14 @@ export function KnowledgeOverviewPrototype() {
                         type="button"
                         onClick={(event) => {
                           setPinnedEntry((current) => (current?.id === entry.id ? null : entry))
-                          setPinnedPos({ x: event.clientX, y: event.clientY })
+                          const rect = event.currentTarget.getBoundingClientRect()
+                          setPinnedPos({ x: rect.left, y: rect.top })
                         }}
                         onMouseEnter={(event) => {
                           setPreviewEntry(entry)
-                          setPreviewPos({ x: event.clientX, y: event.clientY })
+                          const rect = event.currentTarget.getBoundingClientRect()
+                          setPreviewPos({ x: rect.left, y: rect.top })
                         }}
-                        onMouseMove={(event) =>
-                          setPreviewPos({ x: event.clientX, y: event.clientY })
-                        }
                         onMouseLeave={() => setPreviewEntry(null)}
                         className={`w-full rounded-md border px-3 py-2 text-left transition-colors ${
                           pinnedEntry?.id === entry.id
@@ -537,8 +536,11 @@ function EntryPopover({
   onClose: () => void
 }) {
   if (!entry) return null
-  const left = Math.min(position.x + 14, window.innerWidth - 340)
-  const top = Math.min(position.y + 14, window.innerHeight - 280)
+  const left =
+    position.x - 14 - 320 >= 0
+      ? position.x - 14 - 320
+      : Math.min(position.x + 14, window.innerWidth - 340)
+  const top = Math.min(position.y, window.innerHeight - 300)
   return (
     <div
       className={`fixed z-50 max-h-[45vh] w-[320px] overflow-y-auto rounded-md border bg-card px-3 py-2.5 shadow-lg ${

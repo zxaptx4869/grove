@@ -568,15 +568,16 @@
           <div class="k-title">${entry.title}</div>
           <div class="k-path">${selected.path.concat(selected.name).join(' / ')}</div>
         `
-        li.addEventListener('mouseenter', (event) => showEntryPopover(entry, event))
-        li.addEventListener('mousemove', (event) => moveEntryPopover(event))
+        li.addEventListener('mouseenter', (event) =>
+          showEntryPopover(entry, event.currentTarget.getBoundingClientRect()),
+        )
         li.addEventListener('mouseleave', hideEntryPopover)
         ul.appendChild(li)
       })
       box.appendChild(ul)
     }
 
-    function showEntryPopover(entry, event) {
+    function showEntryPopover(entry, rect) {
       const pop = document.getElementById('entry-pop')
       pop.style.display = 'block'
       pop.innerHTML = `
@@ -589,12 +590,11 @@
         ${entry.applicable ? `<div class="meta">适用条件：${entry.applicable}</div>` : ''}
         ${entry.sources.map((source) => `<div class="src">来源：${source}</div>`).join('')}
       `
-      moveEntryPopover(event)
-    }
-    function moveEntryPopover(event) {
-      const pop = document.getElementById('entry-pop')
-      pop.style.left = `${event.clientX + 14}px`
-      pop.style.top = `${event.clientY + 14}px`
+      const width = 320
+      const margin = 14
+      const left = rect.left - margin - width >= 0 ? rect.left - margin - width : rect.left + margin
+      pop.style.left = `${left}px`
+      pop.style.top = `${rect.top}px`
     }
     function hideEntryPopover() {
       document.getElementById('entry-pop').style.display = 'none'
