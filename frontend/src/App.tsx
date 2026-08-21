@@ -17,11 +17,6 @@ const ProjectPage = lazy(() =>
 const ReviewPage = lazy(() =>
   import('@/pages/ReviewPage').then((module) => ({ default: module.ReviewPage })),
 )
-const KnowledgeOverviewPrototype = lazy(() =>
-  import('@/components/features/KnowledgeOverviewPrototype').then((module) => ({
-    default: module.KnowledgeOverviewPrototype,
-  })),
-)
 const InboxPage = lazy(() =>
   import('@/pages/InboxPage').then((module) => ({ default: module.InboxPage })),
 )
@@ -74,8 +69,6 @@ export default function App() {
           <Route path="/projects" element={<Suspense fallback={<PageFallback />}><ProjectsPage /></Suspense>} />
           <Route path="/projects/:projectId" element={<Suspense fallback={<PageFallback />}><ProjectPage /></Suspense>} />
           <Route path="/projects/:projectId/review" element={<Suspense fallback={<PageFallback />}><ReviewPage /></Suspense>} />
-          {/* 探索原型：知识全景（旭日图 + 大纲），临时页面不进产品导航 */}
-          <Route path="/projects/:projectId/overview" element={<Suspense fallback={<PageFallback />}><KnowledgeOverviewPrototype /></Suspense>} />
           <Route path="/inbox" element={<Suspense fallback={<PageFallback />}><InboxPage /></Suspense>} />
           <Route path="/search" element={<Suspense fallback={<PageFallback />}><SearchPage /></Suspense>} />
           <Route path="/settings/ai" element={<Suspense fallback={<PageFallback />}><AISettingsPage /></Suspense>} />
