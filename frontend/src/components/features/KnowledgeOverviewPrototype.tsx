@@ -267,7 +267,9 @@ export function KnowledgeOverviewPrototype() {
   if (tree.isError || projects.isError) {
     return (
       <div className="m-6 border-l-2 border-destructive px-4 py-3">
-        <p className="text-body-sm">加载失败，请重试。</p>
+        <p className="text-body-sm">
+          加载失败：请确认访问的项目属于当前账号（项目 ID 可在项目页地址栏查看）。
+        </p>
         <Button
           className="mt-3"
           variant="outline"
