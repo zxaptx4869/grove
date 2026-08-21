@@ -116,6 +116,29 @@
     }
     #tooltip .t-path { color: #bcd8c8; }
     #tooltip strong { font-size: 13px; }
+    #entry-pop {
+      position: fixed;
+      z-index: 21;
+      max-width: 320px;
+      max-height: 45vh;
+      overflow-y: auto;
+      display: none;
+      background: var(--g-surface);
+      color: var(--g-text);
+      border: 1px solid var(--g-border);
+      border-radius: 6px;
+      padding: 10px 12px;
+      font-size: 12px;
+      line-height: 1.6;
+      box-shadow: 0 8px 24px rgba(0, 0, 0, 0.12);
+      pointer-events: none;
+    }
+    #entry-pop .pop-head { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; }
+    #entry-pop .pop-type { color: var(--g-green); font-weight: 600; font-size: 11px; }
+    #entry-pop .pop-path { color: var(--g-muted); font-size: 11px; margin-top: 2px; }
+    #entry-pop p { margin: 8px 0; white-space: pre-wrap; }
+    #entry-pop .meta { color: var(--g-muted); font-size: 11px; }
+    #entry-pop .src { color: var(--g-muted); font-size: 11px; border-left: 2px solid var(--g-border); padding-left: 8px; margin-top: 6px; }
     aside {
       display: flex;
       flex-direction: column;
@@ -192,6 +215,7 @@
   <main>
     <div class="map-wrap">
       <div id="tooltip"></div>
+      <div id="entry-pop"></div>
       <div class="legend">
         <span><i style="background:#2f7d4f"></i>深度 1</span>
         <span><i style="background:#4b9a6a"></i>深度 2</span>
@@ -544,31 +568,36 @@
           <div class="k-title">${entry.title}</div>
           <div class="k-path">${selected.path.concat(selected.name).join(' / ')}</div>
         `
-        li.addEventListener('click', () => {
-          selectedEntry = entry
-          renderKnowledge()
-          renderDetail()
-        })
+        li.addEventListener('mouseenter', (event) => showEntryPopover(entry, event))
+        li.addEventListener('mousemove', (event) => moveEntryPopover(event))
+        li.addEventListener('mouseleave', hideEntryPopover)
         ul.appendChild(li)
       })
       box.appendChild(ul)
-      renderDetail()
     }
 
-    function renderDetail() {
-      const box = document.getElementById('knowledge')
-      const old = box.querySelector('.detail')
-      if (old) old.remove()
-      if (!selectedEntry) return
-      const div = document.createElement('div')
-      div.className = 'detail'
-      div.innerHTML = `
-        <h3>${selectedEntry.title}</h3>
-        <p>${selectedEntry.content}</p>
-        <div class="meta">类型：${selectedEntry.type}${selectedEntry.applicable ? ` · 适用条件：${selectedEntry.applicable}` : ''}</div>
-        ${selectedEntry.sources.map((source) => `<div class="src">来源：${source}</div>`).join('')}
+    function showEntryPopover(entry, event) {
+      const pop = document.getElementById('entry-pop')
+      pop.style.display = 'block'
+      pop.innerHTML = `
+        <div class="pop-head">
+          <strong>${entry.title}</strong>
+          <span class="pop-type">${entry.type}</span>
+        </div>
+        <div class="pop-path">${selected.path.concat(selected.name).join(' / ')}</div>
+        <p>${entry.content}</p>
+        ${entry.applicable ? `<div class="meta">适用条件：${entry.applicable}</div>` : ''}
+        ${entry.sources.map((source) => `<div class="src">来源：${source}</div>`).join('')}
       `
-      box.appendChild(div)
+      moveEntryPopover(event)
+    }
+    function moveEntryPopover(event) {
+      const pop = document.getElementById('entry-pop')
+      pop.style.left = `${event.clientX + 14}px`
+      pop.style.top = `${event.clientY + 14}px`
+    }
+    function hideEntryPopover() {
+      document.getElementById('entry-pop').style.display = 'none'
     }
 
     /* ---------------- 悬浮提示 ---------------- */

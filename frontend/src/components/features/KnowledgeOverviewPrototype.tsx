@@ -108,7 +108,10 @@ export function KnowledgeOverviewPrototype() {
   const id = Number(projectId)
   const [rootId, setRootId] = useState<number>(PROJECT_ROOT_ID)
   const [selectedId, setSelectedId] = useState<number>(PROJECT_ROOT_ID)
-  const [selectedEntry, setSelectedEntry] = useState<EntryPayload | null>(null)
+  const [pinnedEntry, setPinnedEntry] = useState<EntryPayload | null>(null)
+  const [pinnedPos, setPinnedPos] = useState<{ x: number; y: number } | null>(null)
+  const [previewEntry, setPreviewEntry] = useState<EntryPayload | null>(null)
+  const [previewPos, setPreviewPos] = useState<{ x: number; y: number } | null>(null)
   const [hoverIds, setHoverIds] = useState<number[] | null>(null)
   const [tooltip, setTooltip] = useState<TooltipState | null>(null)
 
@@ -173,7 +176,8 @@ export function KnowledgeOverviewPrototype() {
     }
     setRootId(next.id)
     setSelectedId(next.id)
-    setSelectedEntry(null)
+    setPinnedEntry(null)
+    setPinnedPos(null)
   }
 
   function renderSlices(node: SunNode, start: number, span: number, depth: number): ReactNode[] {
@@ -327,7 +331,8 @@ export function KnowledgeOverviewPrototype() {
                 onClick={() => {
                   setRootId(PROJECT_ROOT_ID)
                   setSelectedId(PROJECT_ROOT_ID)
-                  setSelectedEntry(null)
+                  setPinnedEntry(null)
+                  setPinnedPos(null)
                 }}
               >
                 项目根
@@ -352,7 +357,7 @@ export function KnowledgeOverviewPrototype() {
       </header>
 
       <div className="grid min-h-0 flex-1 grid-cols-[minmax(0,1fr)_320px]">
-        <div className="relative flex min-h-0 min-w-0 items-center justify-center overflow-hidden p-2">
+        <div className="relative flex min-h-0 min-w-0 items-center justify-center overflow-hidden p-1">
           <svg
             className="block h-full w-full"
             viewBox={`0 0 ${SIZE} ${SIZE}`}
@@ -390,7 +395,8 @@ export function KnowledgeOverviewPrototype() {
                   onClick={() => {
                     setRootId(PROJECT_ROOT_ID)
                     setSelectedId(PROJECT_ROOT_ID)
-                    setSelectedEntry(null)
+                    setPinnedEntry(null)
+                    setPinnedPos(null)
                   }}
                 >
                   ← 项目根
@@ -444,9 +450,20 @@ export function KnowledgeOverviewPrototype() {
                     <li key={entry.id}>
                       <button
                         type="button"
-                        onClick={() => setSelectedEntry(entry)}
+                        onClick={(event) => {
+                          setPinnedEntry((current) => (current?.id === entry.id ? null : entry))
+                          setPinnedPos({ x: event.clientX, y: event.clientY })
+                        }}
+                        onMouseEnter={(event) => {
+                          setPreviewEntry(entry)
+                          setPreviewPos({ x: event.clientX, y: event.clientY })
+                        }}
+                        onMouseMove={(event) =>
+                          setPreviewPos({ x: event.clientX, y: event.clientY })
+                        }
+                        onMouseLeave={() => setPreviewEntry(null)}
                         className={`w-full rounded-md border px-3 py-2 text-left transition-colors ${
-                          selectedEntry?.id === entry.id
+                          pinnedEntry?.id === entry.id
                             ? 'border-brand bg-brand-soft'
                             : 'border-border hover:bg-muted'
                         }`}
@@ -465,32 +482,29 @@ export function KnowledgeOverviewPrototype() {
                   ))}
                 </ul>
               )}
-              {selectedEntry ? (
-                <div className="mt-4 border-t pt-3">
-                  <h3 className="text-body font-[650]">{selectedEntry.title}</h3>
-                  <p className="mt-2 whitespace-pre-wrap text-body-sm leading-6">
-                    {selectedEntry.content}
-                  </p>
-                  {selectedEntry.applicable_condition ? (
-                    <p className="mt-2 text-body-sm text-muted-foreground">
-                      适用条件：{selectedEntry.applicable_condition}
-                    </p>
-                  ) : null}
-                  {selectedEntry.evidences.length > 0 ? (
-                    <div className="mt-3 space-y-1">
-                      {selectedEntry.evidences.map((evidence) => (
-                        <p key={evidence.id} className="border-l-2 pl-2 text-caption text-muted-foreground">
-                          来源：{evidence.source_title}
-                        </p>
-                      ))}
-                    </div>
-                  ) : null}
-                </div>
-              ) : null}
             </div>
           </section>
         </aside>
       </div>
+
+      {pinnedEntry && pinnedPos ? (
+        <EntryPopover
+          entry={pinnedEntry}
+          position={pinnedPos}
+          pinned
+          onClose={() => {
+            setPinnedEntry(null)
+            setPinnedPos(null)
+          }}
+        />
+      ) : previewEntry && previewPos ? (
+        <EntryPopover
+          entry={previewEntry}
+          position={previewPos}
+          pinned={false}
+          onClose={() => undefined}
+        />
+      ) : null}
 
       {tooltip ? (
         <div
@@ -504,6 +518,68 @@ export function KnowledgeOverviewPrototype() {
             {tooltip.node.subtreeCount - tooltip.node.directCount} · 合计{' '}
             {tooltip.node.subtreeCount}
           </div>
+        </div>
+      ) : null}
+    </div>
+  )
+}
+
+/** 知识详情悬浮小窗：hover 预览，点击后钉住可滚动。 */
+function EntryPopover({
+  entry,
+  position,
+  pinned,
+  onClose,
+}: {
+  entry: EntryPayload | null
+  position: { x: number; y: number }
+  pinned: boolean
+  onClose: () => void
+}) {
+  if (!entry) return null
+  const left = Math.min(position.x + 14, window.innerWidth - 340)
+  const top = Math.min(position.y + 14, window.innerHeight - 280)
+  return (
+    <div
+      className={`fixed z-50 max-h-[45vh] w-[320px] overflow-y-auto rounded-md border bg-card px-3 py-2.5 shadow-lg ${
+        pinned ? '' : 'pointer-events-none'
+      }`}
+      style={{ left, top }}
+    >
+      <div className="flex items-start justify-between gap-2">
+        <div className="min-w-0">
+          <h3 className="text-body font-[650]">{entry.title}</h3>
+          <p className="mt-0.5 truncate text-caption text-muted-foreground">
+            {entry.node_name}
+          </p>
+        </div>
+        {pinned ? (
+          <button
+            type="button"
+            onClick={onClose}
+            className="shrink-0 rounded px-1 text-caption text-muted-foreground hover:text-foreground"
+          >
+            关闭
+          </button>
+        ) : null}
+      </div>
+      <p className="mt-1 text-caption font-semibold text-brand">{entry.main_type}</p>
+      <p className="mt-2 whitespace-pre-wrap text-body-sm leading-6">{entry.content}</p>
+      {entry.applicable_condition ? (
+        <p className="mt-2 text-body-sm text-muted-foreground">
+          适用条件：{entry.applicable_condition}
+        </p>
+      ) : null}
+      {entry.note ? (
+        <p className="mt-1 text-body-sm text-muted-foreground">补充说明：{entry.note}</p>
+      ) : null}
+      {entry.evidences.length > 0 ? (
+        <div className="mt-3 space-y-1 border-t pt-2">
+          {entry.evidences.map((evidence) => (
+            <p key={evidence.id} className="border-l-2 pl-2 text-caption text-muted-foreground">
+              来源：{evidence.source_title}
+            </p>
+          ))}
         </div>
       ) : null}
     </div>

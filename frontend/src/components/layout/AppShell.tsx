@@ -182,6 +182,8 @@ export function AppShell() {
   const navigate = useNavigate()
   const location = useLocation()
   const isMindMapView = new URLSearchParams(location.search).get('view') === 'mindmap'
+  // 沉浸式视图：思维导图与知识全景原型均隐藏应用壳侧栏与顶栏占位
+  const immersiveView = isMindMapView || location.pathname.endsWith('/overview')
   const [logoutOpen, setLogoutOpen] = useState(false)
   const projectId = Number(location.pathname.match(/^\/projects\/(\d+)/)?.[1]) || null
   const currentProject = projects.data?.find((project) => project.id === projectId)
@@ -200,12 +202,12 @@ export function AppShell() {
     <div className="h-screen overflow-hidden bg-background text-foreground">
       <div
         className={`grid h-screen ${
-          isMindMapView
+          immersiveView
             ? 'grid-cols-[minmax(0,1fr)]'
             : 'grid-cols-[216px_minmax(0,1fr)] max-[1119px]:grid-cols-[184px_minmax(0,1fr)]'
         }`}
       >
-        {!isMindMapView ? (
+        {!immersiveView ? (
           <aside className="flex h-full min-h-0 min-w-0 flex-col border-r bg-sidebar">
             <Link to="/projects" className="flex h-[52px] shrink-0 items-center gap-2.5 border-b px-4 text-body font-[650]" aria-label="知林 Grove 项目">
               <span className="flex size-7 items-center justify-center rounded-md bg-brand text-[13px] font-bold text-white" aria-hidden="true">G</span>
@@ -242,7 +244,7 @@ export function AppShell() {
           </aside>
         ) : null}
         <main className="flex h-full min-h-0 min-w-0 flex-col bg-background">
-          {!isMindMapView ? <div className="h-[52px] shrink-0 border-b bg-card" aria-hidden="true" /> : null}
+          {!immersiveView ? <div className="h-[52px] shrink-0 border-b bg-card" aria-hidden="true" /> : null}
           <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain"><Outlet /></div>
         </main>
       </div>
