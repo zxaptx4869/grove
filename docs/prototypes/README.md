@@ -13,6 +13,7 @@
 - 全局收集箱与项目内采集来源；
 - 确认台的按采集审阅和批量处理；
 - 知识空间的目录、卡片、列表和思维导图；
+- 知识全景原型（旭日图全局视图 + 目录大纲联动阅读）；
 - 目录共创草稿；
 - AI 阅读与引用；
 - 全局搜索、账户和小屏阻断状态。
@@ -61,3 +62,7 @@ python3 -m http.server 8899 --bind 127.0.0.1
 | 目录共创 | `add-directory-agent-drafting`、`add-directory-agent-node-expansion` |
 | AI 阅读 | `add-reader-agent-with-citations` |
 | 思维导图 | `add-directory-mind-map-view` |
+| 知识全景（旭日图 + 大纲） | 探索性原型，未排期；如确认方向再创建 change |
+
+> `grove-knowledge-overview.html` 是展示型探索原型：以旭日图呈现目录结构与知识密度，
+> 点击扇区或大纲节点联动阅读。纯前端单文件、无外部依赖、使用静态示例数据，不代表正式功能。

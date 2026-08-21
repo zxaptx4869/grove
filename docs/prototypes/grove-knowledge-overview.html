@@ -1,0 +1,587 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>知林 Grove · 知识全景原型（旭日图 + 大纲）</title>
+  <style>
+    :root {
+      --g-border: #dfe7e2;
+      --g-muted: #6b7a72;
+      --g-surface: #ffffff;
+      --g-soft: #f4f8f5;
+      --g-green: #2f7d4f;
+      --g-green-soft: #e7f2ec;
+      --g-dark: #1f5137;
+      --g-ring: #ffffff;
+      --g-hover: #1f6b41;
+      --g-text: #17201b;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: -apple-system, BlinkMacSystemFont, "PingFang SC", "Microsoft YaHei", sans-serif;
+      color: var(--g-text);
+      background: #fbfdfc;
+    }
+    header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 16px;
+      height: 52px;
+      padding: 0 20px;
+      border-bottom: 1px solid var(--g-border);
+      background: var(--g-surface);
+    }
+    header h1 { font-size: 15px; font-weight: 650; margin: 0; }
+    header .hint { font-size: 12px; color: var(--g-muted); }
+    .crumbs {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      font-size: 12px;
+      color: var(--g-muted);
+    }
+    .crumbs button {
+      border: 0;
+      background: none;
+      color: var(--g-muted);
+      font-size: 12px;
+      cursor: pointer;
+      padding: 2px 4px;
+      border-radius: 4px;
+    }
+    .crumbs button:hover { color: var(--g-green); background: var(--g-green-soft); }
+    .crumbs .current { color: var(--g-text); font-weight: 600; }
+    main {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) 320px;
+      height: calc(100vh - 52px);
+    }
+    .map-wrap {
+      position: relative;
+      min-width: 0;
+      padding: 16px;
+      overflow: hidden;
+    }
+    svg { display: block; margin: 0 auto; }
+    .arc { cursor: pointer; transition: opacity 0.12s ease; }
+    .arc.dim { opacity: 0.25; }
+    .arc.hl { opacity: 1; }
+    .arc-label {
+      font-size: 11px;
+      fill: #f3faf6;
+      font-weight: 550;
+      pointer-events: none;
+      user-select: none;
+    }
+    .legend {
+      position: absolute;
+      left: 20px;
+      bottom: 14px;
+      font-size: 12px;
+      color: var(--g-muted);
+      display: flex;
+      gap: 14px;
+      align-items: center;
+      background: rgba(255, 255, 255, 0.85);
+      border: 1px solid var(--g-border);
+      border-radius: 6px;
+      padding: 6px 10px;
+    }
+    .legend i {
+      display: inline-block;
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      margin-right: 4px;
+    }
+    #tooltip {
+      position: fixed;
+      z-index: 20;
+      max-width: 260px;
+      display: none;
+      background: #17201b;
+      color: #fff;
+      border-radius: 6px;
+      padding: 8px 10px;
+      font-size: 12px;
+      line-height: 1.5;
+      box-shadow: 0 6px 18px rgba(0, 0, 0, 0.18);
+      pointer-events: none;
+    }
+    #tooltip .t-path { color: #bcd8c8; }
+    #tooltip strong { font-size: 13px; }
+    aside {
+      display: flex;
+      flex-direction: column;
+      min-height: 0;
+      border-left: 1px solid var(--g-border);
+      background: var(--g-surface);
+    }
+    .panel {
+      display: flex;
+      flex-direction: column;
+      min-height: 0;
+      padding: 14px 16px;
+    }
+    .panel-title { font-size: 12px; color: var(--g-muted); margin: 0 0 8px; }
+    .outline {
+      overflow-y: auto;
+      border: 1px solid var(--g-border);
+      border-radius: 6px;
+      padding: 6px;
+      max-height: 42%;
+    }
+    .o-row {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      width: 100%;
+      border: 0;
+      background: none;
+      text-align: left;
+      font-size: 13px;
+      padding: 5px 6px;
+      border-radius: 5px;
+      cursor: pointer;
+      color: var(--g-text);
+    }
+    .o-row:hover { background: var(--g-soft); }
+    .o-row.active { background: var(--g-green-soft); color: var(--g-green); }
+    .o-row .count { margin-left: auto; color: var(--g-muted); font-size: 11px; }
+    .knowledge { flex: 1; min-height: 0; overflow-y: auto; margin-top: 12px; }
+    .k-list { margin: 0; padding: 0; list-style: none; }
+    .k-list li {
+      border: 1px solid var(--g-border);
+      border-radius: 6px;
+      padding: 8px 10px;
+      margin-bottom: 8px;
+      cursor: pointer;
+    }
+    .k-list li:hover { background: var(--g-soft); }
+    .k-list li.active { border-color: var(--g-green); background: var(--g-green-soft); }
+    .k-type { font-size: 11px; color: var(--g-green); font-weight: 600; }
+    .k-title { font-size: 13px; font-weight: 600; margin-top: 3px; }
+    .k-path { font-size: 11px; color: var(--g-muted); margin-top: 3px; }
+    .detail {
+      border-top: 1px solid var(--g-border);
+      padding-top: 12px;
+      margin-top: 12px;
+    }
+    .detail h3 { font-size: 14px; margin: 0 0 6px; }
+    .detail p { font-size: 13px; line-height: 1.7; margin: 0 0 8px; white-space: pre-wrap; }
+    .detail .meta { font-size: 12px; color: var(--g-muted); }
+    .detail .src { font-size: 12px; color: var(--g-muted); border-left: 2px solid var(--g-border); padding-left: 8px; margin-top: 6px; }
+    .empty { color: var(--g-muted); font-size: 12px; padding: 12px 0; }
+  </style>
+</head>
+<body>
+  <header>
+    <div style="display:flex;align-items:baseline;gap:12px">
+      <h1>房子装修 · 知识全景</h1>
+      <span class="hint">原型：旭日图看全局，大纲找知识，点按阅读</span>
+    </div>
+    <div class="crumbs" id="crumbs"></div>
+  </header>
+
+  <main>
+    <div class="map-wrap">
+      <div id="tooltip"></div>
+      <div class="legend">
+        <span><i style="background:#2f7d4f"></i>深度 1</span>
+        <span><i style="background:#4b9a6a"></i>深度 2</span>
+        <span><i style="background:#7fbf9b"></i>深度 3</span>
+        <span><i style="background:#1f5137;width:8px;height:8px"></i>直接知识</span>
+        <span>扇区宽度 = 子树知识量</span>
+      </div>
+    </div>
+    <aside>
+      <section class="panel">
+        <p class="panel-title">目录大纲（点击联动旭日图）</p>
+        <div class="outline" id="outline"></div>
+      </section>
+      <section class="panel" style="flex:1">
+        <p class="panel-title" id="knowledge-title">直接知识</p>
+        <div class="knowledge" id="knowledge"></div>
+      </section>
+    </aside>
+  </main>
+
+  <script>
+    'use strict'
+
+    /* ---------------- 示例数据（与产品原型同源，仅用于展示） ---------------- */
+    const DATA = {
+      name: '房子装修',
+      direct: [
+        {
+          title: '先定总预算，再按空间分项',
+          type: '方法',
+          content: '整体预算先确定，再按硬装、家电、软装分项，避免单项超支后整体失控。',
+          applicable: '预算有限、需要取舍时',
+          note: null,
+          sources: ['装修预算笔记'],
+        },
+        {
+          title: '工期预估按工种排队',
+          type: '知识',
+          content: '水电、泥瓦、木工、油漆存在先后依赖，预估工期按排队而非并行计算。',
+          applicable: null,
+          note: null,
+          sources: ['工期规划截图'],
+        },
+      ],
+      children: [
+        {
+          name: '空间规划',
+          direct: [
+            {
+              title: '无主灯布局先确定使用场景',
+              type: '方法',
+              content: '区分观影、会客和日常活动，再决定筒灯、射灯与灯带组合。',
+              applicable: null,
+              note: null,
+              sources: ['客厅灯光笔记'],
+            },
+          ],
+          children: [
+            { name: '客厅', direct: [
+              { title: '窗帘盒应预留电机检修空间', type: '参数', content: '电动窗帘除双轨宽度外，还应预留电源与电机检修空间。', applicable: '安装电动窗帘时', note: null, sources: ['窗帘盒参考图'] },
+              { title: '沙发与电视墙间距参考 3–3.5m', type: '参数', content: '65 英寸电视的观看距离约 3–3.5 米。', applicable: null, note: null, sources: ['客厅尺寸笔记'] },
+            ], children: [] },
+            { name: '厨房', direct: [
+              { title: '台面动线按取-洗-切-炒排布', type: '方法', content: '冰箱、水槽、备餐、灶具依次排布，减少来回走动。', applicable: null, note: null, sources: ['厨房设计截图'] },
+            ], children: [] },
+            { name: '卧室', direct: [
+              { title: '衣柜深度建议 ≥600mm', type: '参数', content: '挂衣区深度不足会压皱衣物。', applicable: '定制衣柜', note: null, sources: ['衣柜尺寸笔记'] },
+            ], children: [] },
+            { name: '动线', direct: [
+              { title: '家务动线避免穿过客厅核心区', type: '方法', content: '洗衣、晾晒、收纳尽量集中，减少穿越活动区。', applicable: null, note: null, sources: ['动线规划笔记'] },
+            ], children: [] },
+          ],
+        },
+        {
+          name: '施工',
+          direct: [],
+          children: [
+            { name: '防水', direct: [
+              { title: '闭水试验至少 24 小时', type: '提醒', content: '防水做完必须闭水试验，蓄水高度不低于 20mm。', applicable: '卫生间、阳台', note: null, sources: ['防水验收标准'] },
+              { title: '防水层允许局部空鼓需复验', type: '知识', content: '局部空鼓面积超标时要求返工后重新闭水。', applicable: null, note: null, sources: ['防水验收标准'] },
+            ], children: [] },
+            { name: '水电', direct: [
+              { title: '水电改造要在封槽前完成验收', type: '提醒', content: '拍照存档管线走向，封槽前完成打压和通断测试。', applicable: null, note: null, sources: ['水电验收清单'] },
+            ], children: [] },
+            { name: '木工', direct: [], children: [] },
+            { name: '油漆', direct: [], children: [] },
+          ],
+        },
+        {
+          name: '家电',
+          direct: [],
+          children: [
+            { name: '洗烘设备', direct: [
+              { title: '晶蕾烘干使用时需要手动勾选', type: '提醒', content: '晶蕾烘干不是默认程序，使用时需要手动勾选。', applicable: null, note: null, sources: ['洗烘使用体验.png'] },
+              { title: '洗烘叠放需核对总高度与散热空间', type: '参数', content: '叠放前核对设备总高度与柜体散热空间。', applicable: '选购叠放机型', note: null, sources: ['洗烘设备笔记'] },
+            ], children: [] },
+            { name: '厨房电器', direct: [], children: [] },
+            { name: '空调新风', direct: [], children: [] },
+          ],
+        },
+      ],
+    }
+
+    /* ---------------- 数据准备：节点 id、路径、计数 ---------------- */
+    let uid = 0
+    function prepare(node, ancestors, path) {
+      const id = ++uid
+      node.id = id
+      node.ancestors = ancestors
+      node.path = path
+      node.directCount = node.direct.length
+      node.children.forEach((child) =>
+        prepare(child, ancestors.concat(node), path.concat(node.name)),
+      )
+      node.subtreeCount =
+        node.directCount + node.children.reduce((sum, child) => sum + child.subtreeCount, 0)
+      return node
+    }
+    prepare(DATA, [], [])
+
+    const nodeById = new Map()
+    ;(function index(node) {
+      nodeById.set(node.id, node)
+      node.children.forEach(index)
+    })(DATA)
+
+    /* ---------------- 状态 ---------------- */
+    let root = DATA
+    let selected = DATA
+    let selectedEntry = null
+    let hoverPath = null
+
+    /* ---------------- 渲染：旭日图（零依赖手写几何） ---------------- */
+    const SIZE = 620
+    const CX = SIZE / 2
+    const CY = SIZE / 2
+    const RING = 118
+    const PALETTE = ['#2f7d4f', '#4b9a6a', '#7fbf9b', '#b7dcc8']
+    const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg')
+    svg.setAttribute('width', SIZE)
+    svg.setAttribute('height', SIZE)
+    svg.setAttribute('viewBox', `0 0 ${SIZE} ${SIZE}`)
+    document.querySelector('.map-wrap').prepend(svg)
+
+    function polar(cx, cy, r, angle) {
+      return [cx + r * Math.cos(angle), cy + r * Math.sin(angle)]
+    }
+
+    function arcPath(r0, r1, a0, a1) {
+      const large = a1 - a0 > Math.PI ? 1 : 0
+      const [x0, y0] = polar(CX, CY, r0, a0)
+      const [x1, y1] = polar(CX, CY, r0, a1)
+      const [x2, y2] = polar(CX, CY, r1, a1)
+      const [x3, y3] = polar(CX, CY, r1, a0)
+      return [
+        `M ${x0} ${y0}`,
+        `A ${r0} ${r0} 0 ${large} 1 ${x1} ${y1}`,
+        `L ${x2} ${y2}`,
+        `A ${r1} ${r1} 0 ${large} 0 ${x3} ${y3}`,
+        'Z',
+      ].join(' ')
+    }
+
+    function slice(node, start, span, depth) {
+      const total = Math.max(node.subtreeCount, 1)
+      const r0 = depth * RING
+      const r1 = (depth + 1) * RING
+      const color = PALETTE[Math.min(depth, PALETTE.length - 1)]
+      // 节点自身的直接知识：在扇区起始处画一段深色楔形
+      if (node.directCount > 0) {
+        const directSpan = (span * node.directCount) / total
+        appendArc(node, r0, r1, start, start + directSpan, color, true, depth)
+        start += directSpan
+      }
+      const childSpan = span - (span * node.directCount) / total
+      if (childSpan > 0) {
+        const childTotal = Math.max(
+          node.children.reduce((sum, child) => sum + child.subtreeCount, 0),
+          1,
+        )
+        node.children.forEach((child) => {
+          const part = (childSpan * child.subtreeCount) / childTotal
+          slice(child, start, part, depth + 1)
+          start += part
+        })
+      }
+    }
+
+    function appendArc(node, r0, r1, a0, a1, color, isDirect, depth) {
+      if (a1 - a0 < 0.002) return
+      const g = document.createElementNS('http://www.w3.org/2000/svg', 'g')
+      const path = document.createElementNS('http://www.w3.org/2000/svg', 'path')
+      path.setAttribute('d', arcPath(r0, r1, a0, a1))
+      path.setAttribute('fill', isDirect ? '#1f5137' : color)
+      path.setAttribute('stroke', '#ffffff')
+      path.setAttribute('stroke-width', 1)
+      path.classList.add('arc')
+      if (isDirect) {
+        path.dataset.direct = '1'
+        path.setAttribute('aria-label', `${node.name} 直接知识 ${node.directCount} 条`)
+      }
+      path.dataset.nodeId = String(node.id)
+      path.addEventListener('mouseenter', () => {
+        hoverPath = node.path.map((n) => n.id).concat(node.id)
+        refresh()
+        showTooltip(node)
+      })
+      path.addEventListener('mousemove', (event) => moveTooltip(event))
+      path.addEventListener('mouseleave', () => {
+        hoverPath = null
+        hideTooltip()
+        refresh()
+      })
+      path.addEventListener('click', () => {
+        if (node === root) {
+          // 点击当前根（中心扇区）返回上一层
+          if (node.ancestors.length > 0) root = node.ancestors[node.ancestors.length - 1]
+        } else {
+          root = node
+        }
+        select(root)
+      })
+      g.appendChild(path)
+      // 名称标签：空间足够时绘制
+      const mid = (a0 + a1) / 2
+      const midR = (r0 + r1) / 2
+      const angleDeg = ((a1 - a0) * 180) / Math.PI
+      if (!isDirect && angleDeg > 10 && RING > 30) {
+        const [lx, ly] = polar(CX, CY, midR, mid)
+        const text = document.createElementNS('http://www.w3.org/2000/svg', 'text')
+        text.setAttribute('x', lx)
+        text.setAttribute('y', ly + 3)
+        text.setAttribute('text-anchor', 'middle')
+        text.setAttribute('class', 'arc-label')
+        text.textContent = node.name.length > 6 ? node.name.slice(0, 6) : node.name
+        g.appendChild(text)
+      }
+      svg.appendChild(g)
+    }
+
+    function render() {
+      while (svg.firstChild) svg.removeChild(svg.firstChild)
+      slice(root, 0, Math.PI * 2, 0)
+      renderCrumbs()
+      renderOutline()
+    }
+
+    function refresh() {
+      const arcs = svg.querySelectorAll('path.arc')
+      arcs.forEach((path) => path.classList.remove('dim', 'hl'))
+      arcs.forEach((path) => {
+        const nodeId = Number(path.dataset.nodeId)
+        if (hoverPath && !hoverPath.includes(nodeId)) path.classList.add('dim')
+        else if (hoverPath) path.classList.add('hl')
+      })
+    }
+
+    /* ---------------- 面包屑 ---------------- */
+    function renderCrumbs() {
+      const box = document.getElementById('crumbs')
+      box.innerHTML = ''
+      const items = [{ label: '项目根', node: DATA }].concat(
+        root === DATA
+          ? []
+          : root.ancestors
+              .map((ancestor) => ({ label: ancestor.name, node: ancestor }))
+              .concat([{ label: root.name, node: root }]),
+      )
+      items.forEach((item, index) => {
+        if (index > 0) box.appendChild(document.createTextNode(' / '))
+        if (item.node === root) {
+          const span = document.createElement('span')
+          span.className = 'current'
+          span.textContent = item.label
+          box.appendChild(span)
+        } else {
+          const button = document.createElement('button')
+          button.textContent = item.label
+          button.addEventListener('click', () => {
+            root = item.node
+            select(root)
+          })
+          box.appendChild(button)
+        }
+      })
+    }
+
+    /* ---------------- 大纲与知识面板 ---------------- */
+    function renderOutline() {
+      const box = document.getElementById('outline')
+      box.innerHTML = ''
+      const walk = (node, depth) => {
+        const row = document.createElement('button')
+        row.className = 'o-row' + (node.id === selected.id ? ' active' : '')
+        row.style.paddingLeft = `${8 + depth * 16}px`
+        row.innerHTML = `<span>${node.name}</span><span class="count">${node.directCount} / ${node.subtreeCount}</span>`
+        row.addEventListener('click', () => {
+          root = node
+          select(node)
+        })
+        box.appendChild(row)
+        node.children.forEach((child) => walk(child, depth + 1))
+      }
+      if (root !== DATA) {
+        const back = document.createElement('button')
+        back.className = 'o-row'
+        back.textContent = '← 项目根'
+        back.addEventListener('click', () => {
+          root = DATA
+          select(DATA)
+        })
+        box.appendChild(back)
+      }
+      walk(root, root === DATA ? 0 : 1)
+    }
+
+    function select(node) {
+      selected = node
+      selectedEntry = null
+      document.getElementById('knowledge-title').textContent =
+        `${node.name} · 直接知识 ${node.directCount} 条`
+      render()
+      renderKnowledge()
+    }
+
+    function renderKnowledge() {
+      const box = document.getElementById('knowledge')
+      box.innerHTML = ''
+      if (selected.direct.length === 0) {
+        const p = document.createElement('p')
+        p.className = 'empty'
+        p.textContent = '该节点没有直接知识，可点击子节点查看。'
+        box.appendChild(p)
+        return
+      }
+      const ul = document.createElement('ul')
+      ul.className = 'k-list'
+      selected.direct.forEach((entry) => {
+        const li = document.createElement('li')
+        if (selectedEntry === entry) li.classList.add('active')
+        li.innerHTML = `
+          <div class="k-type">${entry.type}</div>
+          <div class="k-title">${entry.title}</div>
+          <div class="k-path">${selected.path.concat(selected.name).join(' / ')}</div>
+        `
+        li.addEventListener('click', () => {
+          selectedEntry = entry
+          renderKnowledge()
+          renderDetail()
+        })
+        ul.appendChild(li)
+      })
+      box.appendChild(ul)
+      renderDetail()
+    }
+
+    function renderDetail() {
+      const box = document.getElementById('knowledge')
+      const old = box.querySelector('.detail')
+      if (old) old.remove()
+      if (!selectedEntry) return
+      const div = document.createElement('div')
+      div.className = 'detail'
+      div.innerHTML = `
+        <h3>${selectedEntry.title}</h3>
+        <p>${selectedEntry.content}</p>
+        <div class="meta">类型：${selectedEntry.type}${selectedEntry.applicable ? ` · 适用条件：${selectedEntry.applicable}` : ''}</div>
+        ${selectedEntry.sources.map((source) => `<div class="src">来源：${source}</div>`).join('')}
+      `
+      box.appendChild(div)
+    }
+
+    /* ---------------- 悬浮提示 ---------------- */
+    function showTooltip(node) {
+      const tip = document.getElementById('tooltip')
+      tip.style.display = 'block'
+      tip.innerHTML = `
+        <strong>${node.name}</strong>
+        <div class="t-path">${node.path.concat(node.name).join(' / ')}</div>
+        <div>直接 ${node.directCount} 条 · 子树 ${node.subtreeCount} 条</div>
+      `
+    }
+    function moveTooltip(event) {
+      const tip = document.getElementById('tooltip')
+      tip.style.left = `${event.clientX + 14}px`
+      tip.style.top = `${event.clientY + 14}px`
+    }
+    function hideTooltip() {
+      document.getElementById('tooltip').style.display = 'none'
+    }
+
+    /* ---------------- 启动 ---------------- */
+    select(DATA)
+  </script>
+</body>
+</html>
