@@ -385,6 +385,12 @@
       ].join(' ')
     }
 
+    function fullCirclePath(r) {
+      const [x0, y0] = polar(CX, CY, r, 0)
+      const [x1, y1] = polar(CX, CY, r, Math.PI)
+      return `M ${x0} ${y0} A ${r} ${r} 0 1 1 ${x1} ${y1} A ${r} ${r} 0 1 1 ${x0} ${y0} Z`
+    }
+
     function slice(node, start, span, depth) {
       const total = Math.max(node.subtreeCount, 1)
       const r0 = depth * RING
@@ -411,7 +417,16 @@
       if (a1 - a0 < 0.002) return
       const g = document.createElementNS('http://www.w3.org/2000/svg', 'g')
       const path = document.createElementNS('http://www.w3.org/2000/svg', 'path')
-      path.setAttribute('d', arcPath(r0, r1, a0, a1))
+      const full = a1 - a0 >= Math.PI * 2 - 0.001
+      path.setAttribute(
+        'd',
+        full
+          ? r0 === 0
+            ? fullCirclePath(r1)
+            : `${fullCirclePath(r1)} ${fullCirclePath(r0)}`
+          : arcPath(r0, r1, a0, a1),
+      )
+      if (full) path.setAttribute('fill-rule', 'evenodd')
       path.setAttribute('fill', isDirect ? '#1f5137' : color)
       path.setAttribute('stroke', '#ffffff')
       path.setAttribute('stroke-width', 1)

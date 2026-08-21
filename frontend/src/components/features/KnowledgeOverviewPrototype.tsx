@@ -102,6 +102,13 @@ function arcPath(r0: number, r1: number, a0: number, a1: number): string {
   ].join(' ')
 }
 
+/** 完整圆（环）路径：拆成两段半圆，避免 SVG 对重合端点不渲染。 */
+function fullCirclePath(r: number): string {
+  const [x0, y0] = polar(CX, CY, r, 0)
+  const [x1, y1] = polar(CX, CY, r, Math.PI)
+  return `M ${x0} ${y0} A ${r} ${r} 0 1 1 ${x1} ${y1} A ${r} ${r} 0 1 1 ${x0} ${y0} Z`
+}
+
 /** 探索原型：旭日图全局视图 + 目录大纲联动阅读，使用真实项目数据。 */
 export function KnowledgeOverviewPrototype() {
   const { projectId } = useParams()
@@ -205,12 +212,20 @@ export function KnowledgeOverviewPrototype() {
       onClick: () => drill(node),
     }
 
-    // 节点主体扇区：宽度 = 该节点子树知识量
+    // 节点主体扇区：宽度 = 该节点子树知识量；占满整圆时改用完整圆路径
+    const isFullCircle = span >= Math.PI * 2 - 0.001
     parts.push(
       <path
         key={`${node.id}-main`}
-        d={arcPath(r0, r1, start, start + span)}
+        d={
+          isFullCircle
+            ? r0 === 0
+              ? fullCirclePath(r1)
+              : `${fullCirclePath(r1)} ${fullCirclePath(r0)}`
+            : arcPath(r0, r1, start, start + span)
+        }
         fill={color}
+        fillRule={isFullCircle ? 'evenodd' : undefined}
         stroke="#ffffff"
         strokeWidth={1}
         className={baseClass}
