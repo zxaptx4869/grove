@@ -19,6 +19,7 @@ from app.api.health import router as health_router
 from app.api.me import router as me_router
 from app.api.project_context import router as project_context_router
 from app.api.projects import router as projects_router
+from app.api.reader import router as reader_router
 from app.api.review import router as review_router
 from app.api.search import router as search_router
 from app.api.semantic_search import router as semantic_search_router
@@ -83,6 +84,7 @@ def create_app() -> FastAPI:
     app.include_router(me_router)
     app.include_router(project_context_router)
     app.include_router(projects_router)
+    app.include_router(reader_router)
     app.include_router(review_router)
     app.include_router(search_router)
     app.include_router(semantic_search_router)
