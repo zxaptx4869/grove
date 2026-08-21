@@ -287,9 +287,11 @@ function AssistantAnswer({
         </div>
       ) : null}
       {answer.citations.length > 0 ? (
-        <div>
-          <p className="mb-1 text-caption text-muted-foreground">引用（{answer.citations.length}）</p>
-          <div className="space-y-1">
+        <details className="mt-1">
+          <summary className="cursor-pointer text-caption text-muted-foreground">
+            引用（{answer.citations.length}）
+          </summary>
+          <div className="mt-1 space-y-1">
             {answer.citations.map((citation) => (
               <button
                 key={`${citation.entry_id}-${citation.source_id}`}
@@ -309,7 +311,7 @@ function AssistantAnswer({
               </button>
             ))}
           </div>
-        </div>
+        </details>
       ) : null}
       {answer.conflicts.length > 0 ? (
         <div className="space-y-1">

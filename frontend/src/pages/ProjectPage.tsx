@@ -482,7 +482,9 @@ export function ProjectPage() {
 
   return (
     <section
-      className={`w-full px-6 pb-[30px] pt-[22px] ${isDirectoryView ? 'flex h-full flex-col' : ''}`}
+      className={`w-full px-6 pb-[30px] pt-[22px] ${
+        isDirectoryView || isAiReadView ? 'flex h-full flex-col' : ''
+      }`}
     >
       <header className="mb-5 flex min-h-[60px] items-start justify-between gap-6">
         <div className="min-w-0">
