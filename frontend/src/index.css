@@ -123,8 +123,8 @@
 .mind-map-grid {
   background-image: radial-gradient(
     circle,
-    color-mix(in srgb, var(--border) 45%, transparent) 1px,
-    transparent 1px
+    color-mix(in srgb, var(--muted-foreground) 45%, transparent) 1.5px,
+    transparent 1.5px
   );
-  background-size: 24px 24px;
+  background-size: 26px 26px;
 }
