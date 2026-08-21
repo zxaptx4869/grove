@@ -8,7 +8,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
-from app.agents.reader import run_reader_agent
+from app.agents.reader import ReaderCitationDraft, run_reader_agent
 from app.agents.semantic import run_semantic_agent
 from app.models import Attachment, Candidate, Entry, Extraction, Node, Project, Source
 from app.models.extraction import (
@@ -89,6 +89,35 @@ def _top_entries(candidates: list[Entry], draft, limit: int) -> list[Entry]:
     return ordered
 
 
+def _validate_citations(
+    citations: list[ReaderCitationDraft],
+    entries: list[Entry],
+) -> list[ReaderCitationOut]:
+    """保留属于范围内 Entry 且来源有效的引用，丢弃非法引用。"""
+    entry_by_id = {entry.id: entry for entry in entries}
+    validated: list[ReaderCitationOut] = []
+    for citation in citations:
+        entry = entry_by_id.get(citation.entry_id)
+        if entry is None:
+            continue
+        evidence = next(
+            (item for item in entry.evidences if item.source_id == citation.source_id),
+            None,
+        )
+        if evidence is None:
+            continue
+        validated.append(
+            ReaderCitationOut(
+                entry_id=entry.id,
+                entry_title=entry.title,
+                source_id=evidence.source_id,
+                source_title=evidence.source.title or "未命名来源",
+                quote=citation.quote or evidence.quote or "",
+            )
+        )
+    return validated
+
+
 async def ask_reader(
     db: AsyncSession,
     workspace_id: int,
@@ -142,28 +171,8 @@ async def ask_reader(
         project_context_text,
     )
 
-    entry_by_id = {entry.id: entry for entry in entries}
-    valid_entry_ids = set(entry_by_id)
-    citations: list[ReaderCitationOut] = []
-    for citation in answer_draft.citations:
-        entry = entry_by_id.get(citation.entry_id)
-        if entry is None:
-            continue
-        evidence = next(
-            (item for item in entry.evidences if item.source_id == citation.source_id),
-            None,
-        )
-        if evidence is None:
-            continue
-        citations.append(
-            ReaderCitationOut(
-                entry_id=entry.id,
-                entry_title=entry.title,
-                source_id=evidence.source_id,
-                source_title=evidence.source.title or "未命名来源",
-                quote=citation.quote or evidence.quote or "",
-            )
-        )
+    citations = _validate_citations(answer_draft.citations, entries)
+    valid_entry_ids = {entry.id for entry in entries}
 
     conflicts = [
         ReaderConflictOut(

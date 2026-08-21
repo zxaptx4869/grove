@@ -46,7 +46,8 @@ READER_SYSTEM_PROMPT = """你是 Grove 的 Reader Agent，负责基于已确认�
    quote 为原文片段。
 3. 多条 Entry 说法矛盾时，用 conflicts 并列展示双方 Entry 与各自观点，不要替用户裁决。
 4. citations 与 conflicts 的 entry_id 必须是给定的 Entry id。
-5. 即时回答不是正式知识，不得修改任何正式数据。"""
+5. citations 的 source_id 必须是给定 Entry 的「来源」列表中出现的 id，不得编造。
+6. 即时回答不是正式知识，不得修改任何正式数据。"""
 
 
 def _format_context(
@@ -63,13 +64,12 @@ def _format_context(
     for entry in entries:
         parts.append(f"- Entry {entry.id}：{entry.title}")
         parts.append(f"  内容：{entry.content[:300]}")
-        source_titles: list[str] = []
+        source_refs: list[str] = []
         for evidence in entry.evidences:
-            title = evidence.source.title if evidence.source else None
-            if title and title not in source_titles:
-                source_titles.append(title)
-        if source_titles:
-            parts.append(f"  来源：{'、'.join(source_titles)[:200]}")
+            title = evidence.source.title if evidence.source else "未命名来源"
+            source_refs.append(f"{evidence.source_id}（{title}）")
+        if source_refs:
+            parts.append(f"  来源：{'、'.join(source_refs)[:200]}")
     return "\n".join(parts)
 
 

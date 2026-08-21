@@ -213,3 +213,44 @@ async def test_reader_respects_workspace_isolation(client: httpx.AsyncClient) ->
             },
         )
         assert save.status_code == 404
+
+
+def test_validate_citations_keeps_valid_and_drops_invalid() -> None:
+    """引用校验保留有效引用、丢弃非法 entry 与非法 source。"""
+    from app.agents.reader import ReaderCitationDraft
+    from app.models import Entry, EntrySourceEvidence, Source
+    from app.services.reader import _validate_citations
+
+    source = Source(id=68, workspace_id=79, project_id=26, title="来源A")
+    evidence = EntrySourceEvidence(
+        id=1,
+        entry_id=10,
+        source_id=68,
+        attachment_id=5,
+        quote="原文片段",
+    )
+    entry = Entry(
+        id=10,
+        project_id=26,
+        node_id=1,
+        title="闭水试验",
+        content="闭水试验通常持续 24 小时",
+        main_type="knowledge",
+    )
+    evidence.source = source
+    entry.evidences = [evidence]
+
+    citations = [
+        ReaderCitationDraft(entry_id=10, source_id=68, quote="有效引用"),
+        ReaderCitationDraft(entry_id=999, source_id=68, quote="非法 Entry"),
+        ReaderCitationDraft(entry_id=10, source_id=999, quote="非法 Source"),
+    ]
+
+    result = _validate_citations(citations, [entry])
+
+    assert len(result) == 1
+    assert result[0].entry_id == 10
+    assert result[0].source_id == 68
+    assert result[0].entry_title == "闭水试验"
+    assert result[0].source_title == "来源A"
+    assert result[0].quote == "有效引用"
