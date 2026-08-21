@@ -8,6 +8,7 @@ import {
   LayoutGrid,
   List,
   MoreHorizontal,
+  Network,
   Pencil,
   Plus,
   Search,
@@ -44,6 +45,7 @@ import { CaptureDialog } from '@/components/features/CaptureDialog'
 import { DirectoryDraftDialog } from '@/components/features/DirectoryDraftDialog'
 import { ProjectContextPanel } from '@/components/features/ProjectContextPanel'
 import { ReaderView } from '@/components/features/ReaderView'
+import { MindMapView } from '@/components/features/MindMapView'
 import { SimilarEntriesDrawer } from '@/components/features/SimilarEntriesDrawer'
 import { useGroveMutation } from '@/hooks/useGroveMutation'
 import { ProjectSources } from '@/pages/ProjectSources'
@@ -178,11 +180,18 @@ function NodeFormDialog({
 
 export function ProjectPage() {
   const { projectId } = useParams()
-  const [searchParams] = useSearchParams()
+  const [searchParams, setSearchParams] = useSearchParams()
   const id = Number(projectId)
   const isDirectoryView = searchParams.get('view') === 'directory'
   const isSourcesView = searchParams.get('view') === 'sources'
   const isAiReadView = searchParams.get('view') === 'ai-read'
+  const isMindMapView = searchParams.get('view') === 'mindmap'
+  // 思维导图「在知识空间中打开」通过 node 参数定位目录节点，URL 作为选中来源
+  const nodeParam = searchParams.get('node')
+  const requestedNodeId =
+    isDirectoryView && nodeParam != null && Number.isFinite(Number(nodeParam))
+      ? Number(nodeParam)
+      : null
   const navigate = useNavigate()
   const queryClient = useQueryClient()
 
@@ -308,6 +317,7 @@ export function ProjectPage() {
     onSuccess: () => {
       setDeleteNodeTarget(null)
       setSelectedId(null)
+      setSearchParams({ view: 'directory' }, { replace: true })
       setActionError('')
       toast.success('目录节点已删除')
     },
@@ -378,7 +388,8 @@ export function ProjectPage() {
     onError: (error) => setActionError(error instanceof Error ? error.message : '删除失败，请重试'),
   })
 
-  const selectedPath = selectedId ? findNodeWithPath(nodes, selectedId) : null
+  const activeSelectedId = requestedNodeId ?? selectedId
+  const selectedPath = activeSelectedId ? findNodeWithPath(nodes, activeSelectedId) : null
   const effectiveSelectedPath = selectedPath ?? (nodes[0] ? [nodes[0]] : null)
   const effectiveSelectedId = effectiveSelectedPath?.at(-1)?.id ?? null
   const selectedNode = effectiveSelectedPath?.at(-1) ?? null
@@ -479,6 +490,9 @@ export function ProjectPage() {
         项目不存在，或你无权访问该项目。
       </div>
     )
+  if (isMindMapView) {
+    return <MindMapView projectId={id} projectName={project.name} />
+  }
 
   return (
     <section
@@ -519,6 +533,14 @@ export function ProjectPage() {
             <Button size="sm" onClick={() => setCaptureOpen(true)}>
               <Plus />
               采集到项目
+            </Button>
+          ) : null}
+          {isDirectoryView ? (
+            <Button asChild size="sm" variant="outline">
+              <Link to={`/projects/${id}?view=mindmap`}>
+                <Network />
+                思维导图
+              </Link>
             </Button>
           ) : null}
           <DropdownMenu>
@@ -625,7 +647,10 @@ export function ProjectPage() {
               <NodeTree
                 nodes={nodes}
                 selectedId={effectiveSelectedId}
-                onSelect={(node) => setSelectedId(node.id)}
+                onSelect={(node) => {
+                  setSelectedId(node.id)
+                  setSearchParams({ view: 'directory', node: String(node.id) }, { replace: true })
+                }}
                 callbacks={{
                   onAddChild: openAddNode,
                   onRename: (node) => {
@@ -928,12 +953,20 @@ export function ProjectPage() {
                     {project.node_count} 个节点
                   </span>
                 </div>
-                <Button asChild size="sm" variant="ghost">
-                  <Link to={`/projects/${id}?view=directory`}>
-                    进入知识空间
-                    <ArrowRight />
-                  </Link>
-                </Button>
+                <div className="flex items-center gap-1">
+                  <Button asChild size="sm" variant="ghost">
+                    <Link to={`/projects/${id}?view=mindmap`}>
+                      <Network />
+                      思维导图
+                    </Link>
+                  </Button>
+                  <Button asChild size="sm" variant="ghost">
+                    <Link to={`/projects/${id}?view=directory`}>
+                      进入知识空间
+                      <ArrowRight />
+                    </Link>
+                  </Button>
+                </div>
               </div>
               <div className="mt-3 border-y">
                 <Link

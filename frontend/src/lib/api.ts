@@ -639,7 +639,7 @@ export const updateEntry = (entryId: number, payload: EntryUpdatePayload) =>
 export const fetchNodeEntries = (
   projectId: number,
   nodeId: number,
-  scope: 'direct' | 'descendants' = 'direct',
+  scope: 'direct' | 'descendants' | 'subtree' = 'direct',
 ) =>
   request<EntryPayload[]>(
     `/api/projects/${projectId}/nodes/${nodeId}/entries?scope=${scope}`,

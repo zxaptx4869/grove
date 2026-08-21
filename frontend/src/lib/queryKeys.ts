@@ -10,7 +10,11 @@ export const queryKeys = {
   sourceCandidates: (sourceId: number) => ['source-candidates', sourceId],
   reviewSources: (projectId: number) => ['review-sources', projectId],
   reviewCandidates: (projectId: number) => ['review-candidates', projectId],
-  nodeEntries: (projectId: number, nodeId: number, scope: 'direct' | 'descendants') => [
+  nodeEntries: (
+    projectId: number,
+    nodeId: number,
+    scope: 'direct' | 'descendants' | 'subtree',
+  ) => [
     'node-entries',
     projectId,
     nodeId,

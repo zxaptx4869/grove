@@ -181,6 +181,7 @@ export function AppShell() {
   const logout = useLogout()
   const navigate = useNavigate()
   const location = useLocation()
+  const isMindMapView = new URLSearchParams(location.search).get('view') === 'mindmap'
   const [logoutOpen, setLogoutOpen] = useState(false)
   const projectId = Number(location.pathname.match(/^\/projects\/(\d+)/)?.[1]) || null
   const currentProject = projects.data?.find((project) => project.id === projectId)
@@ -197,43 +198,51 @@ export function AppShell() {
 
   return (
     <div className="h-screen overflow-hidden bg-background text-foreground">
-      <div className="grid h-screen grid-cols-[216px_minmax(0,1fr)] max-[1119px]:grid-cols-[184px_minmax(0,1fr)]">
-        <aside className="flex h-full min-h-0 min-w-0 flex-col border-r bg-sidebar">
-          <Link to="/projects" className="flex h-[52px] shrink-0 items-center gap-2.5 border-b px-4 text-body font-[650]" aria-label="知林 Grove 项目">
-            <span className="flex size-7 items-center justify-center rounded-md bg-brand text-[13px] font-bold text-white" aria-hidden="true">G</span>
-            <span>知林 Grove</span>
-          </Link>
+      <div
+        className={`grid h-screen ${
+          isMindMapView
+            ? 'grid-cols-[minmax(0,1fr)]'
+            : 'grid-cols-[216px_minmax(0,1fr)] max-[1119px]:grid-cols-[184px_minmax(0,1fr)]'
+        }`}
+      >
+        {!isMindMapView ? (
+          <aside className="flex h-full min-h-0 min-w-0 flex-col border-r bg-sidebar">
+            <Link to="/projects" className="flex h-[52px] shrink-0 items-center gap-2.5 border-b px-4 text-body font-[650]" aria-label="知林 Grove 项目">
+              <span className="flex size-7 items-center justify-center rounded-md bg-brand text-[13px] font-bold text-white" aria-hidden="true">G</span>
+              <span>知林 Grove</span>
+            </Link>
 
-          <div className="min-h-0 flex-1 overflow-y-auto">
-            {projectId ? <ProjectNavigation project={currentProject} /> : <GlobalNavigation projects={projects.data ?? []} />}
-          </div>
+            <div className="min-h-0 flex-1 overflow-y-auto">
+              {projectId ? <ProjectNavigation project={currentProject} /> : <GlobalNavigation projects={projects.data ?? []} />}
+            </div>
 
-          <div className="shrink-0 border-t px-2 pb-2 pt-1.5">
-            <DropdownMenu>
-              <DropdownMenuTrigger asChild>
-                <Button variant="ghost" className="h-11 w-full justify-start gap-2 px-2 font-normal">
-                  <span className="flex size-7 items-center justify-center rounded-md border bg-white"><UserRound className="size-4" /></span>
-                  <span className="min-w-0 flex-1 text-left">
-                    <span className="block truncate text-body-sm font-medium">{me.data?.user.username ?? '当前账户'}</span>
-                    <span className="block truncate text-caption text-muted-foreground">{me.data?.workspace.name ?? 'Workspace'}</span>
-                  </span>
-                  <ChevronDown className="size-3.5 text-muted-foreground" />
-                </Button>
-              </DropdownMenuTrigger>
-              <DropdownMenuContent align="start" side="top" className="w-[200px]">
-                <DropdownMenuLabel>{me.data?.workspace.name ?? '当前 Workspace'}</DropdownMenuLabel>
-                <DropdownMenuSeparator />
-                <DropdownMenuItem onSelect={() => navigate('/settings/ai')}>
-                  <KeyRound />模型设置
-                </DropdownMenuItem>
-                <DropdownMenuSeparator />
-                <DropdownMenuItem onSelect={() => setLogoutOpen(true)}><LogOut />退出登录</DropdownMenuItem>
-              </DropdownMenuContent>
-            </DropdownMenu>
-          </div>
-        </aside>
+            <div className="shrink-0 border-t px-2 pb-2 pt-1.5">
+              <DropdownMenu>
+                <DropdownMenuTrigger asChild>
+                  <Button variant="ghost" className="h-11 w-full justify-start gap-2 px-2 font-normal">
+                    <span className="flex size-7 items-center justify-center rounded-md border bg-white"><UserRound className="size-4" /></span>
+                    <span className="min-w-0 flex-1 text-left">
+                      <span className="block truncate text-body-sm font-medium">{me.data?.user.username ?? '当前账户'}</span>
+                      <span className="block truncate text-caption text-muted-foreground">{me.data?.workspace.name ?? 'Workspace'}</span>
+                    </span>
+                    <ChevronDown className="size-3.5 text-muted-foreground" />
+                  </Button>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align="start" side="top" className="w-[200px]">
+                  <DropdownMenuLabel>{me.data?.workspace.name ?? '当前 Workspace'}</DropdownMenuLabel>
+                  <DropdownMenuSeparator />
+                  <DropdownMenuItem onSelect={() => navigate('/settings/ai')}>
+                    <KeyRound />模型设置
+                  </DropdownMenuItem>
+                  <DropdownMenuSeparator />
+                  <DropdownMenuItem onSelect={() => setLogoutOpen(true)}><LogOut />退出登录</DropdownMenuItem>
+                </DropdownMenuContent>
+              </DropdownMenu>
+            </div>
+          </aside>
+        ) : null}
         <main className="flex h-full min-h-0 min-w-0 flex-col bg-background">
-          <div className="h-[52px] shrink-0 border-b bg-card" aria-hidden="true" />
+          {!isMindMapView ? <div className="h-[52px] shrink-0 border-b bg-card" aria-hidden="true" /> : null}
           <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain"><Outlet /></div>
         </main>
       </div>
