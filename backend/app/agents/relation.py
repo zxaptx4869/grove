@@ -53,7 +53,9 @@ RELATION_SYSTEM_PROMPT = """你是 Grove 整理 Agent 的关系判断步骤。
 4. supplement 必须给出 revision_draft：字段为建议的最终值；未变化的字段可以留空；
    change_summary 用一句话说明改了什么。
 5. conflict 必须给出 target_entry_id 与 reason，可以同时给出 revision_draft 作为「修订现有」的建议。
-6. AI 输出永远是候选，不得直接修改正式 Entry。"""
+6. AI 输出永远是候选，不得直接修改正式 Entry。
+7. status 必须与 reason 一致：若理由说明候选与已有 Entry 重合或内容相同，
+   relation_status 必须为 duplicate 或 supplement，不得输出 new。"""
 
 
 def _format_relation_context(
@@ -110,6 +112,7 @@ async def run_relation_agent(
         output_type=RelationDraft,
         system_prompt=RELATION_SYSTEM_PROMPT,
         retries=1,
+        model_settings={"temperature": 0},
     )
     result = await agent.run(context)
     if result.output is None:

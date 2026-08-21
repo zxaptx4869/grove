@@ -72,6 +72,7 @@ async def run_semantic_agent(
         output_type=SemanticRankingDraft,
         system_prompt=SEMANTIC_SYSTEM_PROMPT,
         retries=1,
+        model_settings={"temperature": 0},
     )
     model_name = getattr(text_model, "model_name", None) or getattr(text_model, "model", "unknown")
     try:

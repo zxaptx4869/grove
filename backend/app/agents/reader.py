@@ -106,6 +106,7 @@ async def run_reader_agent(
         output_type=ReaderAnswerDraft,
         system_prompt=READER_SYSTEM_PROMPT,
         retries=1,
+        model_settings={"temperature": 0.5},
     )
     model_name = getattr(text_model, "model_name", None) or getattr(text_model, "model", "unknown")
     try:
