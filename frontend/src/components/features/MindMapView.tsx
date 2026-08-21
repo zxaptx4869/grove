@@ -658,7 +658,8 @@ export function MindMapView({
                         type="button"
                         onClick={() => {
                           selectNode(item.id)
-                          toggleReveal(item.id)
+                          // 仅在有直接知识时切换展开，避免项目总根/空节点发起无效请求
+                          if (item.entryCount > 0) toggleReveal(item.id)
                         }}
                         className={`flex min-w-0 flex-1 items-center gap-2 rounded-md px-2.5 text-left text-body-sm ${
                           isMatched ? 'ring-2 ring-brand/40' : ''
