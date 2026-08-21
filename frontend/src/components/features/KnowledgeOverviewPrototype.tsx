@@ -19,8 +19,7 @@ const PROJECT_STATUSES: ProjectStatus[] = ['active', 'paused', 'completed', 'arc
 const SIZE = 620
 const CX = SIZE / 2
 const CY = SIZE / 2
-const RING = 118
-const PALETTE = ['#2f7d4f', '#4b9a6a', '#7fbf9b', '#b7dcc8']
+const PALETTE = ['#256b43', '#2f7d4f', '#4b9a6a', '#7fbf9b', '#9fd4b6', '#c3e4d1']
 const DIRECT_COLOR = '#1f5137'
 const PROJECT_ROOT_ID = -1
 
@@ -75,6 +74,14 @@ function findSunNode(nodes: readonly SunNode[], id: number): SunNode | null {
     if (found) return found
   }
   return null
+}
+
+/** 计算子树最大相对深度（根为 0）。 */
+function subtreeDepth(node: SunNode): number {
+  return node.children.reduce(
+    (max, child) => Math.max(max, subtreeDepth(child) + 1),
+    0,
+  )
 }
 
 function polar(cx: number, cy: number, r: number, angle: number): [number, number] {
@@ -139,6 +146,10 @@ export function KnowledgeOverviewPrototype() {
     if (rootId === PROJECT_ROOT_ID) return projectRoot
     return findSunNode(sunRoots, rootId)
   }, [rootId, projectRoot, sunRoots])
+  const ringHeight = Math.max(
+    24,
+    Math.floor((SIZE / 2 - 14) / (currentRoot ? subtreeDepth(currentRoot) + 1 : 1)),
+  )
   const selectedNode = useMemo(() => {
     if (selectedId === PROJECT_ROOT_ID) return projectRoot
     return findSunNode(sunRoots, selectedId)
@@ -169,8 +180,8 @@ export function KnowledgeOverviewPrototype() {
   function renderSlices(node: SunNode, start: number, span: number, depth: number): ReactNode[] {
     const parts: ReactNode[] = []
     const total = Math.max(node.subtreeCount, 1)
-    const r0 = depth * RING
-    const r1 = (depth + 1) * RING
+    const r0 = depth * ringHeight
+    const r1 = (depth + 1) * ringHeight
     const color = PALETTE[Math.min(depth, PALETTE.length - 1)]
     let cursor = start
     const dimmed = hoverIds != null && !hoverIds.includes(node.id)
@@ -234,20 +245,25 @@ export function KnowledgeOverviewPrototype() {
       })
     }
 
-    const angleDeg = (span * 180) / Math.PI
-    if (angleDeg > 10) {
+    const midR = (r0 + r1) / 2
+    const arcLength = midR * span
+    const isHovered = hoverIds?.includes(node.id) ?? false
+    if (arcLength > (isHovered ? 14 : 30) && span > (isHovered ? 0.04 : 0.1)) {
       const mid = start + span / 2
-      const midR = (r0 + r1) / 2
       const [lx, ly] = polar(CX, CY, midR, mid)
+      const maxChars = Math.max(2, Math.min(8, Math.floor(arcLength / 7)))
+      const label = node.name.length > maxChars ? node.name.slice(0, maxChars) : node.name
       parts.push(
         <text
           key={`${node.id}-label`}
           x={lx}
           y={ly + 3}
           textAnchor="middle"
-          className="pointer-events-none select-none fill-[#f3faf6] text-[11px] font-medium"
+          className={`pointer-events-none select-none text-[11px] font-medium ${
+            depth >= 4 ? 'fill-[#1f5137]' : 'fill-[#f3faf6]'
+          }`}
         >
-          {node.name.length > 6 ? node.name.slice(0, 6) : node.name}
+          {label}
         </text>,
       )
     }

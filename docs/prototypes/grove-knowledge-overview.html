@@ -315,6 +315,13 @@
       node.children.forEach(index)
     })(DATA)
 
+    function subtreeDepth(node) {
+      return node.children.reduce(
+        (max, child) => Math.max(max, subtreeDepth(child) + 1),
+        0,
+      )
+    }
+
     /* ---------------- 状态 ---------------- */
     let root = DATA
     let selected = DATA
@@ -325,8 +332,8 @@
     const SIZE = 620
     const CX = SIZE / 2
     const CY = SIZE / 2
-    const RING = 118
-    const PALETTE = ['#2f7d4f', '#4b9a6a', '#7fbf9b', '#b7dcc8']
+    let RING = 118
+    const PALETTE = ['#256b43', '#2f7d4f', '#4b9a6a', '#7fbf9b', '#9fd4b6', '#c3e4d1']
     const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg')
     svg.setAttribute('width', SIZE)
     svg.setAttribute('height', SIZE)
@@ -414,18 +421,21 @@
         select(root)
       })
       g.appendChild(path)
-      // 名称标签：空间足够时绘制
-      const mid = (a0 + a1) / 2
+      // 名称标签：按弧长与 hover 状态决定是否绘制
+      const span = a1 - a0
       const midR = (r0 + r1) / 2
-      const angleDeg = ((a1 - a0) * 180) / Math.PI
-      if (!isDirect && angleDeg > 10 && RING > 30) {
-        const [lx, ly] = polar(CX, CY, midR, mid)
+      const arcLength = midR * span
+      const isHovered = hoverPath && hoverPath.includes(node.id)
+      if (!isDirect && arcLength > (isHovered ? 14 : 30) && span > (isHovered ? 0.04 : 0.1)) {
+        const [lx, ly] = polar(CX, CY, midR, (a0 + a1) / 2)
         const text = document.createElementNS('http://www.w3.org/2000/svg', 'text')
         text.setAttribute('x', lx)
         text.setAttribute('y', ly + 3)
         text.setAttribute('text-anchor', 'middle')
         text.setAttribute('class', 'arc-label')
-        text.textContent = node.name.length > 6 ? node.name.slice(0, 6) : node.name
+        const maxChars = Math.max(2, Math.min(8, Math.floor(arcLength / 7)))
+        text.textContent = node.name.length > maxChars ? node.name.slice(0, maxChars) : node.name
+        text.style.fill = depth >= 4 ? '#1f5137' : '#f3faf6'
         g.appendChild(text)
       }
       svg.appendChild(g)
@@ -433,6 +443,7 @@
 
     function render() {
       while (svg.firstChild) svg.removeChild(svg.firstChild)
+      RING = Math.max(24, Math.floor((SIZE / 2 - 14) / (subtreeDepth(root) + 1)))
       slice(root, 0, Math.PI * 2, 0)
       renderCrumbs()
       renderOutline()
