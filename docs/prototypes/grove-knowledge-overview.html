@@ -69,7 +69,6 @@
       justify-content: center;
     }
     svg { display: block; }
-    .marker-label { fill: #fff; font-size: 8px; font-weight: 600; user-select: none; }
     .arc { cursor: pointer; transition: opacity 0.12s ease; }
     .arc.dim { opacity: 0.25; }
     .arc.hl { opacity: 1; }
@@ -197,8 +196,7 @@
         <span><i style="background:#2f7d4f"></i>深度 1</span>
         <span><i style="background:#4b9a6a"></i>深度 2</span>
         <span><i style="background:#7fbf9b"></i>深度 3</span>
-        <span><i style="background:#1f5137;width:8px;height:8px"></i>直接知识条数</span>
-        <span>扇区宽度 = 子树知识量</span>
+        <span>扇区宽度 = 知识量（直接 + 后代）</span>
       </div>
     </div>
     <aside>
@@ -370,8 +368,6 @@
       const color = PALETTE[Math.min(depth, PALETTE.length - 1)]
       // 节点主体扇区：宽度 = 该节点子树知识量
       appendArc(node, r0, r1, start, start + span, color, false, depth)
-      // 直接知识：扇区起始处的深色圆点数字标记
-      if (node.directCount > 0) appendDirectMarker(node, r0, r1, start, span, depth)
       const childSpan = span - (span * node.directCount) / total
       if (childSpan > 0) {
         const childTotal = Math.max(
@@ -385,27 +381,6 @@
           childStart += part
         })
       }
-    }
-
-    function appendDirectMarker(node, r0, r1, start, span, depth) {
-      const markerR = Math.max(4, RING * 0.16)
-      const markerAngle = start + Math.min(span * 0.15, 0.05)
-      const [mx, my] = polar(CX, CY, (r0 + r1) / 2, markerAngle)
-      const circle = document.createElementNS('http://www.w3.org/2000/svg', 'circle')
-      circle.setAttribute('cx', mx)
-      circle.setAttribute('cy', my)
-      circle.setAttribute('r', markerR)
-      circle.setAttribute('fill', '#1f5137')
-      circle.style.pointerEvents = 'none'
-      const text = document.createElementNS('http://www.w3.org/2000/svg', 'text')
-      text.setAttribute('x', mx)
-      text.setAttribute('y', my + 3)
-      text.setAttribute('text-anchor', 'middle')
-      text.setAttribute('class', 'marker-label')
-      text.textContent = node.directCount
-      text.style.pointerEvents = 'none'
-      svg.appendChild(circle)
-      svg.appendChild(text)
     }
 
     function appendArc(node, r0, r1, a0, a1, color, isDirect, depth) {
@@ -519,7 +494,7 @@
         const row = document.createElement('button')
         row.className = 'o-row' + (node.id === selected.id ? ' active' : '')
         row.style.paddingLeft = `${8 + depth * 16}px`
-        row.innerHTML = `<span>${node.name}</span><span class="count">${node.directCount} / ${node.subtreeCount}</span>`
+        row.innerHTML = `<span>${node.name}</span><span class="count">直 ${node.directCount} · 后 ${node.subtreeCount - node.directCount}</span>`
         row.addEventListener('click', () => {
           root = node
           select(node)
@@ -603,7 +578,7 @@
       tip.innerHTML = `
         <strong>${node.name}</strong>
         <div class="t-path">${node.path.concat(node.name).join(' / ')}</div>
-        <div>直接 ${node.directCount} 条 · 子树 ${node.subtreeCount} 条</div>
+        <div>直接 ${node.directCount} · 后代 ${node.subtreeCount - node.directCount} · 合计 ${node.subtreeCount}</div>
       `
     }
     function moveTooltip(event) {

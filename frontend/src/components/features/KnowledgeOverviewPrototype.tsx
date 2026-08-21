@@ -20,7 +20,6 @@ const SIZE = 720
 const CX = SIZE / 2
 const CY = SIZE / 2
 const PALETTE = ['#256b43', '#2f7d4f', '#4b9a6a', '#7fbf9b', '#9fd4b6', '#c3e4d1']
-const DIRECT_COLOR = '#1f5137'
 const PROJECT_ROOT_ID = -1
 
 interface SunNode {
@@ -214,26 +213,6 @@ export function KnowledgeOverviewPrototype() {
         {...handlers}
       />,
     )
-    // 直接知识：扇区起始处的深色圆点数字标记（不参与双色切分）
-    if (node.directCount > 0) {
-      const markerR = Math.max(4, ringHeight * 0.16)
-      const markerAngle = start + Math.min(span * 0.15, 0.05)
-      const [mx, my] = polar(CX, CY, (r0 + r1) / 2, markerAngle)
-      parts.push(
-        <g key={`${node.id}-direct-marker`} className="pointer-events-none">
-          <circle cx={mx} cy={my} r={markerR} fill={DIRECT_COLOR} />
-          <text
-            x={mx}
-            y={my + 3}
-            textAnchor="middle"
-            className="select-none fill-white text-[8px] font-semibold"
-          >
-            {node.directCount}
-          </text>
-        </g>,
-      )
-    }
-
     const childSpan = span - (span * node.directCount) / total
     if (childSpan > 0 && node.children.length > 0) {
       const childTotal = Math.max(
@@ -394,11 +373,7 @@ export function KnowledgeOverviewPrototype() {
               <i className="size-2 rounded-full bg-[#7fbf9b]" />
               深度 3
             </span>
-            <span className="flex items-center gap-1">
-              <i className="size-2 rounded-full bg-[#1f5137]" />
-              直接知识条数
-            </span>
-            <span>扇区宽度 = 子树知识量</span>
+            <span>扇区宽度 = 知识量（直接 + 后代）</span>
           </div>
         </div>
 
@@ -525,7 +500,9 @@ export function KnowledgeOverviewPrototype() {
           <strong>{tooltip.node.name}</strong>
           <div className="text-caption opacity-80">{tooltip.node.path}</div>
           <div className="text-caption opacity-80">
-            直接 {tooltip.node.directCount} 条 · 子树 {tooltip.node.subtreeCount} 条
+            直接 {tooltip.node.directCount} · 后代{' '}
+            {tooltip.node.subtreeCount - tooltip.node.directCount} · 合计{' '}
+            {tooltip.node.subtreeCount}
           </div>
         </div>
       ) : null}
@@ -556,7 +533,7 @@ function OutlineRow({
       >
         <span className="truncate">{node.name}</span>
         <span className="ml-auto shrink-0 text-caption text-muted-foreground">
-          {node.directCount} / {node.subtreeCount}
+          直 {node.directCount} · 后 {node.subtreeCount - node.directCount}
         </span>
       </button>
       {node.children.map((child) => (
