@@ -248,6 +248,47 @@ async def test_list_entries_subtree_foreign_project_404(client: httpx.AsyncClien
 
 
 @pytest.mark.asyncio
+async def test_list_project_entries(client: httpx.AsyncClient) -> None:
+    """按项目读取应返回该项目全部已确认 Entry。"""
+    await _register(client)
+    project = await _create_project(client)
+    parent = await _create_node(client, project["id"], "施工")
+    child = await _create_child_node(client, project["id"], parent["id"], "水电")
+
+    for node_id in (parent["id"], child["id"]):
+        source = await _create_source(client, project["id"])
+        await _process(client, source["id"])
+        candidate = (await _candidates(client, source["id"]))[0]
+        await client.post(
+            f"/api/candidates/{candidate['id']}/archive",
+            json={"node_id": node_id},
+        )
+
+    entries = (
+        await client.get(f"/api/projects/{project['id']}/entries")
+    ).json()
+
+    assert {entry["node_id"] for entry in entries} == {parent["id"], child["id"]}
+
+
+@pytest.mark.asyncio
+async def test_list_project_entries_foreign_project_404(
+    client: httpx.AsyncClient,
+) -> None:
+    """其他 Workspace 用户读取项目全部 Entry 应返回 404。"""
+    await _register(client)
+    project = await _create_project(client)
+    await _create_node(client, project["id"], "施工")
+
+    transport = httpx.ASGITransport(app=create_app())
+    async with httpx.AsyncClient(transport=transport, base_url="http://test") as other:
+        await _register(other)
+        response = await other.get(f"/api/projects/{project['id']}/entries")
+
+    assert response.status_code == 404
+
+
+@pytest.mark.asyncio
 async def test_archive_marks_source_reviewed(client: httpx.AsyncClient) -> None:
     """采纳（归档）全部候选后，Source 应从待处理来源中消失。"""
     await _register(client)

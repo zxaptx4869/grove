@@ -8,7 +8,7 @@ import { MindMapView } from './MindMapView'
 const tree = [
   {
     id: 1,
-    name: '房子装修',
+    name: '装修准备',
     description: null,
     position: 0,
     entry_count: 1,
@@ -84,6 +84,9 @@ function mockMindMapApi() {
       if (url.includes('/api/projects/1/tree')) {
         return ok(tree)
       }
+      if (url.includes('/api/projects/1/entries')) {
+        return ok(entries)
+      }
       if (url.includes('/nodes/') && url.includes('/entries')) {
         const params = new URL(url, 'http://localhost').searchParams
         const scope = params.get('scope')
@@ -125,10 +128,37 @@ describe('MindMapView', () => {
 
     const canvas = within(await screen.findByTestId('mind-map-canvas'))
     const root = await canvas.findByRole('button', { name: /房子装修/ })
-    expect(root).toHaveTextContent('1 / 3')
+    expect(root).toHaveTextContent('0 / 3')
+    expect(canvas.getByRole('button', { name: /装修准备/ })).toHaveTextContent('1 / 3')
     expect(canvas.getByRole('button', { name: /空间规划/ })).toHaveTextContent('1 / 2')
     expect(canvas.getByRole('button', { name: /客厅/ })).toHaveTextContent('1 / 1')
-    expect(screen.queryByText('整体预算')).not.toBeInTheDocument()
+    expect(screen.getByText('整体预算')).toBeInTheDocument()
+  })
+
+  it('首行节点不被画布顶部裁剪', async () => {
+    mockMindMapApi()
+    renderMindMap()
+
+    const canvas = within(await screen.findByTestId('mind-map-canvas'))
+    const buttons = canvas.getAllByRole('button')
+    expect(buttons.length).toBeGreaterThan(0)
+    for (const button of buttons) {
+      const top = Number.parseFloat(button.style.top)
+      expect(top).toBeGreaterThanOrEqual(0)
+    }
+  })
+
+  it('默认选中项目总根并在侧栏展示项目全部知识', async () => {
+    mockMindMapApi()
+    renderMindMap()
+
+    expect(await screen.findByText(/全部正式知识/)).toHaveTextContent('共 3 条')
+    expect(await screen.findByText('整体预算')).toBeInTheDocument()
+    expect(screen.getByText('动线规划')).toBeInTheDocument()
+    expect(screen.getByText('无主灯')).toBeInTheDocument()
+    expect(
+      screen.queryByRole('checkbox', { name: /包含子树/ }),
+    ).not.toBeInTheDocument()
   })
 
   it('展开 / 收起全局控制可见节点', async () => {
@@ -225,9 +255,9 @@ describe('MindMapView', () => {
     renderMindMap()
 
     const canvas = within(await screen.findByTestId('mind-map-canvas'))
-    fireEvent.click(await canvas.findByRole('button', { name: /房子装修/ }))
+    fireEvent.click(await canvas.findByRole('button', { name: /空间规划/ }))
     const link = await screen.findByRole('link', { name: /在知识空间中打开/ })
-    expect(link).toHaveAttribute('href', '/projects/1?view=directory&node=1')
+    expect(link).toHaveAttribute('href', '/projects/1?view=directory&node=2')
   })
 
   it('画布与侧栏不出现任何目录管理入口', async () => {
@@ -235,7 +265,7 @@ describe('MindMapView', () => {
     renderMindMap()
 
     const canvas = within(await screen.findByTestId('mind-map-canvas'))
-    fireEvent.click(await canvas.findByRole('button', { name: /房子装修/ }))
+    fireEvent.click(await canvas.findByRole('button', { name: /空间规划/ }))
     expect(screen.queryByRole('button', { name: /AI 拓展/ })).not.toBeInTheDocument()
     expect(screen.queryByRole('button', { name: /编辑节点/ })).not.toBeInTheDocument()
     expect(screen.queryByRole('button', { name: /删除节点/ })).not.toBeInTheDocument()

@@ -20,6 +20,7 @@ export const queryKeys = {
     nodeId,
     scope,
   ],
+  projectEntries: (projectId: number) => ['project-entries', projectId],
   search: (q: string, projectId?: number) => ['search', q, projectId ?? 'global'],
   semanticSearch: (q: string, projectId?: number) => [
     'semantic-search',

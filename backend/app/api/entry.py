@@ -24,6 +24,7 @@ from app.services.entry import (
     entry_eager_options,
     entry_out,
     list_entries_by_node,
+    list_project_entries,
 )
 
 router = APIRouter(prefix="/api", tags=["entry"])
@@ -168,4 +169,18 @@ async def list_node_entries(
     if node is None or node.project_id != project_id:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="节点不存在")
     entries = await list_entries_by_node(db, project_id, node_id, scope)
+    return [entry_out(entry) for entry in entries]
+
+
+@router.get("/projects/{project_id}/entries", response_model=list[EntryOut])
+async def list_all_project_entries(
+    project_id: int,
+    db: DbSession,
+    workspace: CurrentWorkspace,
+) -> list[EntryOut]:
+    """返回某项目全部已确认 Entry（思维导图项目总根使用）。"""
+    project = await db.get(Project, project_id)
+    if project is None or project.workspace_id != workspace.id:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="项目不存在")
+    entries = await list_project_entries(db, project_id)
     return [entry_out(entry) for entry in entries]

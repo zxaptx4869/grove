@@ -645,6 +645,9 @@ export const fetchNodeEntries = (
     `/api/projects/${projectId}/nodes/${nodeId}/entries?scope=${scope}`,
   )
 
+export const fetchProjectEntries = (projectId: number) =>
+  request<EntryPayload[]>(`/api/projects/${projectId}/entries`)
+
 export const searchEntries = (q: string, projectId?: number) => {
   const params = new URLSearchParams({ q })
   if (projectId != null) params.set('project_id', String(projectId))

@@ -18,3 +18,16 @@
 #### Scenario: 越权项目不可见
 - **WHEN** 用户请求读取不属于当前 Workspace 项目的 Entry
 - **THEN** 请求失败（404），不暴露数据
+
+## ADDED Requirements
+
+### Requirement: Entry 按项目读取
+系统 MUST 支持读取某项目全部已确认 Entry，结果 MUST 按创建时间倒序返回；读取 MUST 校验项目属于当前 Workspace。
+
+#### Scenario: 返回项目全部 Entry
+- **WHEN** 用户读取某项目的全部 Entry
+- **THEN** 返回该项目全部已确认 Entry，按创建时间倒序
+
+#### Scenario: 越权项目不可见
+- **WHEN** 用户请求读取不属于当前 Workspace 项目的全部 Entry
+- **THEN** 请求失败（404），不暴露数据

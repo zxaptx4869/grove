@@ -11,6 +11,7 @@ import {
   FolderInput,
   FolderOpen,
   FolderTree,
+  Network,
   Search,
   UnfoldVertical,
   X,
@@ -22,6 +23,7 @@ import { Input } from '@/components/ui/input'
 import {
   fetchEntry,
   fetchNodeEntries,
+  fetchProjectEntries,
   fetchProjectTree,
   type TreeNodePayload,
 } from '@/lib/api'
@@ -31,8 +33,10 @@ const NODE_WIDTH = 200
 const NODE_HEIGHT = 36
 const COLUMN_GAP = 260
 const ROW_GAP = 56
+const CANVAS_PAD = 28
 const MAX_VISIBLE_NODES = 60
 const MAX_DEPTH = 3
+const VIRTUAL_ROOT_ID = -1
 
 interface PlacedNode {
   id: number
@@ -118,12 +122,12 @@ function placeTree(
     const y =
       childCount > 0
         ? (out[childStart].y + out[out.length - 1].y) / 2
-        : state.nextSlot++ * ROW_GAP
+        : state.nextSlot++ * ROW_GAP + CANVAS_PAD
     out.push({
       id: node.id,
       name: node.name,
       depth,
-      x: depth * COLUMN_GAP,
+      x: depth * COLUMN_GAP + CANVAS_PAD,
       y,
       parentId,
       entryCount: node.entry_count,
@@ -146,7 +150,7 @@ export function MindMapView({
   const [selectedId, setSelectedId] = useState<number | null>(() => {
     const raw = searchParams.get('node')
     const parsed = raw ? Number(raw) : NaN
-    return Number.isFinite(parsed) ? parsed : null
+    return Number.isFinite(parsed) ? parsed : VIRTUAL_ROOT_ID
   })
   const [focusId, setFocusId] = useState<number | null>(null)
   const [collapsedIds, setCollapsedIds] = useState<ReadonlySet<number>>(new Set())
@@ -161,14 +165,37 @@ export function MindMapView({
     enabled: Number.isFinite(projectId),
   })
 
-  const counts = useMemo(() => subtreeCountMap(tree.data ?? []), [tree.data])
-  const pathNames = useMemo(() => pathNameMap(tree.data ?? []), [tree.data])
-  const roots = useMemo(() => {
+  const counts = useMemo(() => {
+    const map = subtreeCountMap(tree.data ?? [])
+    const total =
+      tree.data?.reduce((sum, node) => sum + (map.get(node.id) ?? node.entry_count), 0) ?? 0
+    map.set(VIRTUAL_ROOT_ID, total)
+    return map
+  }, [tree.data])
+  const pathNames = useMemo(() => {
+    const map = pathNameMap(tree.data ?? [])
+    map.set(VIRTUAL_ROOT_ID, projectName)
+    return map
+  }, [tree.data, projectName])
+  const virtualRoot = useMemo<TreeNodePayload | null>(() => {
     const nodes = tree.data ?? []
-    if (focusId == null) return nodes
-    const path = findNodePath(nodes, focusId)
-    return path ? [path[path.length - 1]] : nodes
-  }, [tree.data, focusId])
+    if (nodes.length === 0) return null
+    return {
+      id: VIRTUAL_ROOT_ID,
+      name: projectName,
+      description: null,
+      position: 0,
+      entry_count: 0,
+      children: nodes,
+    }
+  }, [tree.data, projectName])
+  const roots = useMemo(() => {
+    if (focusId != null) {
+      const path = findNodePath(tree.data ?? [], focusId)
+      return path ? [path[path.length - 1]] : []
+    }
+    return virtualRoot ? [virtualRoot] : []
+  }, [tree.data, focusId, virtualRoot])
   const focusPath = useMemo(
     () => (focusId != null ? findNodePath(tree.data ?? [], focusId) : null),
     [tree.data, focusId],
@@ -196,27 +223,36 @@ export function MindMapView({
     return { out, state }
   }, [roots, collapsedIds, searchActive, counts])
   const hiddenCount = Math.max(0, totalNodeCount(roots) - placed.out.length)
-  const canvasWidth = Math.max(1, ...placed.out.map((item) => item.depth + 1)) * COLUMN_GAP + 24
-  const canvasHeight = placed.state.nextSlot * ROW_GAP + 48
+  const canvasWidth =
+    Math.max(1, ...placed.out.map((item) => item.depth + 1)) * COLUMN_GAP +
+    NODE_WIDTH +
+    CANVAS_PAD * 2
+  const canvasHeight = placed.state.nextSlot * ROW_GAP + CANVAS_PAD * 2
 
   const selectedNode = useMemo(() => {
     if (selectedId == null) return null
+    if (selectedId === VIRTUAL_ROOT_ID) return virtualRoot
     const path = findNodePath(tree.data ?? [], selectedId)
     return path ? path[path.length - 1] : null
-  }, [tree.data, selectedId])
+  }, [tree.data, selectedId, virtualRoot])
 
+  const isProjectRootSelected = selectedId === VIRTUAL_ROOT_ID
   const entries = useQuery({
-    queryKey: queryKeys.nodeEntries(
-      projectId,
-      selectedId ?? 0,
-      includeSubtree ? 'subtree' : 'direct',
-    ),
+    queryKey: isProjectRootSelected
+      ? queryKeys.projectEntries(projectId)
+      : queryKeys.nodeEntries(
+          projectId,
+          selectedId ?? 0,
+          includeSubtree ? 'subtree' : 'direct',
+        ),
     queryFn: () =>
-      fetchNodeEntries(
-        projectId,
-        selectedId as number,
-        includeSubtree ? 'subtree' : 'direct',
-      ),
+      isProjectRootSelected
+        ? fetchProjectEntries(projectId)
+        : fetchNodeEntries(
+            projectId,
+            selectedId as number,
+            includeSubtree ? 'subtree' : 'direct',
+          ),
     enabled: sideOpen && selectedId != null,
   })
   const preview = useQuery({
@@ -321,7 +357,7 @@ export function MindMapView({
               <Button
                 size="sm"
                 variant="outline"
-                disabled={selectedId == null}
+                disabled={selectedId == null || selectedId === VIRTUAL_ROOT_ID}
                 onClick={() => selectedId != null && focusNode(selectedId)}
               >
                 <Focus />
@@ -386,7 +422,10 @@ export function MindMapView({
               ) : null}
             </div>
             <div className="min-h-0 flex-1 overflow-auto" data-testid="mind-map-canvas">
-              <div className="relative" style={{ width: canvasWidth, height: canvasHeight }}>
+              <div
+                className="mind-map-grid relative"
+                style={{ width: canvasWidth, height: canvasHeight }}
+              >
                 <svg
                   className="absolute inset-0"
                   width={canvasWidth}
@@ -432,7 +471,9 @@ export function MindMapView({
                       title={item.name}
                       aria-pressed={isSelected}
                     >
-                      {item.hasChildren && !item.collapsed ? (
+                      {item.id === VIRTUAL_ROOT_ID ? (
+                        <Network className="size-4 shrink-0 text-brand" />
+                      ) : item.hasChildren && !item.collapsed ? (
                         <FolderOpen className="size-4 shrink-0 text-brand" />
                       ) : (
                         <Folder className="size-4 shrink-0 text-muted-foreground" />
@@ -457,32 +498,45 @@ export function MindMapView({
                   {pathNames.get(selectedNode.id) ?? selectedNode.name}
                 </p>
               </div>
-              <Button asChild size="sm" variant="ghost" className="mt-2 w-full justify-start px-2">
-                <Link to={`/projects/${projectId}?view=directory&node=${selectedNode.id}`}>
-                  <FolderInput />
-                  在知识空间中打开
-                </Link>
-              </Button>
-              <label className="mt-4 flex cursor-pointer items-center justify-between rounded-md border px-3 py-2.5">
-                <span className="flex items-center gap-2">
-                  <input
-                    type="checkbox"
-                    checked={includeSubtree}
-                    onChange={(event) => setIncludeSubtree(event.target.checked)}
-                    className="size-4"
-                  />
-                  <span>
-                    <span className="block text-body-sm font-medium">包含子树</span>
-                    <span className="block text-caption text-muted-foreground">
-                      共{' '}
-                      {includeSubtree
-                        ? counts.get(selectedNode.id) ?? selectedNode.entry_count
-                        : selectedNode.entry_count}{' '}
-                      条正式知识
+              {!isProjectRootSelected ? (
+                <>
+                  <Button
+                    asChild
+                    size="sm"
+                    variant="ghost"
+                    className="mt-2 w-full justify-start px-2"
+                  >
+                    <Link to={`/projects/${projectId}?view=directory&node=${selectedNode.id}`}>
+                      <FolderInput />
+                      在知识空间中打开
+                    </Link>
+                  </Button>
+                  <label className="mt-4 flex cursor-pointer items-center justify-between rounded-md border px-3 py-2.5">
+                    <span className="flex items-center gap-2">
+                      <input
+                        type="checkbox"
+                        checked={includeSubtree}
+                        onChange={(event) => setIncludeSubtree(event.target.checked)}
+                        className="size-4"
+                      />
+                      <span>
+                        <span className="block text-body-sm font-medium">包含子树</span>
+                        <span className="block text-caption text-muted-foreground">
+                          共{' '}
+                          {includeSubtree
+                            ? counts.get(selectedNode.id) ?? selectedNode.entry_count
+                            : selectedNode.entry_count}{' '}
+                          条正式知识
+                        </span>
+                      </span>
                     </span>
-                  </span>
-                </span>
-              </label>
+                  </label>
+                </>
+              ) : (
+                <p className="mt-4 rounded-md border bg-muted/40 px-3 py-2.5 text-body-sm">
+                  全部正式知识 · 共 {counts.get(VIRTUAL_ROOT_ID) ?? 0} 条
+                </p>
+              )}
               <div className="mt-3 min-h-0 flex-1">
                 {entries.isLoading ? (
                   <p className="py-6 text-center text-caption text-muted-foreground">

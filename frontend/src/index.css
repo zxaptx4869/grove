@@ -118,3 +118,13 @@
     letter-spacing: 0;
   }
 }
+
+/* 思维导图画布：低对比点阵背景，让节点与连线成为视觉主体。 */
+.mind-map-grid {
+  background-image: radial-gradient(
+    circle,
+    color-mix(in srgb, var(--border) 45%, transparent) 1px,
+    transparent 1px
+  );
+  background-size: 24px 24px;
+}

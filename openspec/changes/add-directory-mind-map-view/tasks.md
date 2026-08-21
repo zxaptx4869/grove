@@ -44,3 +44,11 @@
 - [ ] 6.3 按 grove-ui-conventions 视觉流程在 1280 / 1440 / 1600 对照原型截图验收，记录与原型的有意偏离
 - [ ] 6.4 执行 `openspec validate --all --strict` 通过后归档 change（`openspec archive add-directory-mind-map-view`），同步主规格
 - [ ] 6.5 本地提交（Conventional Commits 中文信息）；不 push、不 merge，等待用户确认
+
+## 7. 走查修订
+
+- [x] 7.1 修复画布顶部节点被裁剪：布局增加四周内边距（`CANVAS_PAD`），首行节点完整可见
+- [x] 7.2 思维导图增加项目总根节点：项目名作为总根，显示「0 / 项目 Entry 总数」，默认选中并在侧栏展示项目全部正式知识
+- [x] 7.3 新增后端 `GET /api/projects/{id}/entries` 与前端 `fetchProjectEntries`，配套测试
+- [x] 7.4 画布增加低对比点阵背景（`mind-map-grid`），节点层次微调；与原型差异记录在 design.md
+- [x] 7.5 更新 MindMapView 测试（项目总根、裁剪、项目 Entry）并全量回归

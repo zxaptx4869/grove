@@ -326,6 +326,17 @@ async def list_entries_by_node(
     return list(result.scalars().all())
 
 
+async def list_project_entries(db: AsyncSession, project_id: int) -> list[Entry]:
+    """返回某项目全部已确认 Entry（按创建时间倒序，思维导图项目总根使用）。"""
+    result = await db.execute(
+        select(Entry)
+        .options(*entry_eager_options())
+        .where(Entry.project_id == project_id)
+        .order_by(Entry.created_at.desc())
+    )
+    return list(result.scalars().all())
+
+
 async def _descendant_node_ids(
     db: AsyncSession,
     project_id: int,
