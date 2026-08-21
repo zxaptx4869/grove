@@ -23,4 +23,5 @@ export const queryKeys = {
     projectId ?? 'global',
   ],
   similarEntries: (entryId: number) => ['similar-entries', entryId],
+  readerPreview: (entryId: number) => ['reader-preview', entryId],
 } as const

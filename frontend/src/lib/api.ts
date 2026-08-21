@@ -668,6 +668,59 @@ export const semanticSearchEntries = (q: string, projectId?: number) => {
 export const fetchSimilarEntries = (entryId: number) =>
   request<SemanticEntryPayload[]>(`/api/entries/${entryId}/similar`)
 
+export type ReaderScope = 'project' | 'node'
+
+export interface ReaderCitationPayload {
+  entry_id: number
+  entry_title: string
+  source_id: number
+  source_title: string
+  quote: string
+}
+
+export interface ReaderConflictPayload {
+  entry_id_a: number
+  entry_id_b: number
+  summary: string
+}
+
+export interface ReaderAnswerPayload {
+  answer: string
+  citations: ReaderCitationPayload[]
+  insufficient: boolean
+  insufficient_note: string | null
+  conflicts: ReaderConflictPayload[]
+  provider: string | null
+  model: string | null
+  is_fallback: boolean
+  error: string | null
+}
+
+export interface ReaderAskPayload {
+  message: string
+  scope: ReaderScope
+  node_id?: number | null
+}
+
+export interface ReaderSavePayload {
+  question: string
+  title: string
+  content: string
+  citations: { entry_id: number; source_id: number; quote: string }[]
+}
+
+export const askReader = (projectId: number, payload: ReaderAskPayload) =>
+  request<ReaderAnswerPayload>(`/api/projects/${projectId}/reader/ask`, {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  })
+
+export const saveReaderAnswer = (projectId: number, payload: ReaderSavePayload) =>
+  request<CandidatePayload>(`/api/projects/${projectId}/reader/save-candidate`, {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  })
+
 export type DirectoryDraftStatus =
   | 'drafting'
   | 'awaiting_input'

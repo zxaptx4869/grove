@@ -43,6 +43,7 @@ import { Textarea } from '@/components/ui/textarea'
 import { CaptureDialog } from '@/components/features/CaptureDialog'
 import { DirectoryDraftDialog } from '@/components/features/DirectoryDraftDialog'
 import { ProjectContextPanel } from '@/components/features/ProjectContextPanel'
+import { ReaderView } from '@/components/features/ReaderView'
 import { SimilarEntriesDrawer } from '@/components/features/SimilarEntriesDrawer'
 import { useGroveMutation } from '@/hooks/useGroveMutation'
 import { ProjectSources } from '@/pages/ProjectSources'
@@ -181,6 +182,7 @@ export function ProjectPage() {
   const id = Number(projectId)
   const isDirectoryView = searchParams.get('view') === 'directory'
   const isSourcesView = searchParams.get('view') === 'sources'
+  const isAiReadView = searchParams.get('view') === 'ai-read'
   const navigate = useNavigate()
   const queryClient = useQueryClient()
 
@@ -486,9 +488,15 @@ export function ProjectPage() {
         <div className="min-w-0">
           <div className="flex items-center gap-2">
             <h1 className="truncate text-[22px] font-[650] leading-[30px]">
-              {isSourcesView ? '采集与来源' : isDirectoryView ? '知识空间' : project.name}
+              {isSourcesView
+                ? '采集与来源'
+                : isDirectoryView
+                ? '知识空间'
+                : isAiReadView
+                ? 'AI 阅读'
+                : project.name}
             </h1>
-            {!isDirectoryView && !isSourcesView ? (
+            {!isDirectoryView && !isSourcesView && !isAiReadView ? (
               <Badge variant="outline" className="shrink-0">
                 {PROJECT_STATUSES.find(({ key }) => key === project.status)?.label}
               </Badge>
@@ -499,6 +507,8 @@ export function ProjectPage() {
               ? `${project.name} · 管理这个项目的原始材料。`
               : isDirectoryView
               ? `${project.name} · 按目录浏览和维护项目知识。`
+              : isAiReadView
+              ? `${project.name} · 基于已确认知识提问，回答附引用。`
               : project.description || '尚未填写项目目标与背景'}
           </p>
         </div>
@@ -903,6 +913,8 @@ export function ProjectPage() {
             </div>
           </div>
         </div>
+      ) : isAiReadView ? (
+        <ReaderView projectId={id} />
       ) : (
         <div className="grid min-h-[604px] grid-cols-[minmax(0,1.4fr)_minmax(280px,.8fr)] gap-7">
           <div className="min-w-0">
