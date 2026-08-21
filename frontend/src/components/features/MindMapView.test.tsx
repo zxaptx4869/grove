@@ -153,24 +153,35 @@ describe('MindMapView', () => {
     renderMindMap()
 
     const canvas = within(await screen.findByTestId('mind-map-canvas'))
-    fireEvent.click(
-      screen.getByRole('button', { name: '展开 空间规划 的直接知识' }),
-    )
+    fireEvent.click(await canvas.findByRole('button', { name: /^空间规划/ }))
 
     expect(await canvas.findByRole('button', { name: /动线规划/ })).toBeInTheDocument()
   })
 
-  it('点击知识小卡后在侧栏阅读全文并可返回列表', async () => {
+  it('点击知识小卡后悬浮窗展示全文并可关闭', async () => {
     mockMindMapApi()
     renderMindMap()
 
     const canvas = within(await screen.findByTestId('mind-map-canvas'))
-    fireEvent.click(screen.getByRole('button', { name: '展开 空间规划 的直接知识' }))
+    fireEvent.click(await canvas.findByRole('button', { name: /^空间规划/ }))
     fireEvent.click(await canvas.findByRole('button', { name: /动线规划/ }))
 
     expect(await screen.findByText('先确定主要使用场景。')).toBeInTheDocument()
-    expect(screen.getByRole('button', { name: '返回列表' })).toBeInTheDocument()
-    expect(screen.queryByRole('checkbox', { name: /包含子树/ })).not.toBeInTheDocument()
+    expect(screen.getByRole('button', { name: '关闭' })).toBeInTheDocument()
+  })
+
+  it('hover 知识小卡时预览悬浮窗，移开后消失', async () => {
+    mockMindMapApi()
+    renderMindMap()
+
+    const canvas = within(await screen.findByTestId('mind-map-canvas'))
+    fireEvent.click(await canvas.findByRole('button', { name: /^空间规划/ }))
+    const card = await canvas.findByRole('button', { name: /动线规划/ })
+    fireEvent.mouseEnter(card)
+    expect(await screen.findByText('先确定主要使用场景。')).toBeInTheDocument()
+
+    fireEvent.mouseLeave(card)
+    expect(screen.queryByText('先确定主要使用场景。')).not.toBeInTheDocument()
   })
 
   it('再次点击收起后知识小卡消失', async () => {
@@ -178,9 +189,9 @@ describe('MindMapView', () => {
     renderMindMap()
 
     const canvas = within(await screen.findByTestId('mind-map-canvas'))
-    fireEvent.click(screen.getByRole('button', { name: '展开 空间规划 的直接知识' }))
+    fireEvent.click(await canvas.findByRole('button', { name: /^空间规划/ }))
     await canvas.findByRole('button', { name: /动线规划/ })
-    fireEvent.click(screen.getByRole('button', { name: '收起 空间规划 的直接知识' }))
+    fireEvent.click(await canvas.findByRole('button', { name: /^空间规划/ }))
 
     expect(canvas.queryByRole('button', { name: /动线规划/ })).not.toBeInTheDocument()
   })
@@ -275,7 +286,7 @@ describe('MindMapView', () => {
     expect(screen.queryByText('动线规划')).not.toBeInTheDocument()
   })
 
-  it('点击列表条目后在侧栏阅读详情', async () => {
+  it('点击列表条目后悬浮窗展示详情', async () => {
     mockMindMapApi()
     renderMindMap()
 

@@ -13,16 +13,14 @@ import {
   FolderOpen,
   FolderTree,
   Lightbulb,
-  Minus,
   Network,
-  Plus,
   Ruler,
   Search,
   UnfoldVertical,
   X,
 } from 'lucide-react'
 
-import { Badge } from '@/components/ui/badge'
+import { EntryPopover } from '@/components/features/EntryPopover'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import {
@@ -38,19 +36,13 @@ const NODE_WIDTH = 210
 const NODE_HEIGHT = 36
 const CARD_WIDTH = 168
 const CARD_HEIGHT = 32
+const CARD_GAP = 34
 const COLUMN_GAP = 260
 const ROW_GAP = 56
 const CANVAS_PAD = 28
 const MAX_VISIBLE_NODES = 60
 const MAX_DEPTH = 3
 const VIRTUAL_ROOT_ID = -1
-
-const ENTRY_TYPE_LABELS: Record<string, string> = {
-  knowledge: '知识',
-  method: '方法',
-  parameter: '参数',
-  reminder: '提醒',
-}
 
 const ENTRY_TYPE_ICONS: Record<string, ComponentType<{ className?: string }>> = {
   knowledge: BookOpen,
@@ -64,6 +56,7 @@ interface PlacedNode {
   name: string
   kind: 'node' | 'entry'
   entryType?: string
+  belowStack?: boolean
   depth: number
   x: number
   y: number
@@ -122,7 +115,11 @@ function pathNameMap(
   return map
 }
 
-/** 左→右分层布局：父节点垂直居中于其子节点，叶子按行分配槽位。 */
+/**
+ * 左→右分层布局：父节点垂直居中于其子节点，叶子按行分配槽位。
+ * 点击节点展开知识时：叶子节点在右侧列堆叠、非叶子节点在同列下方堆叠，
+ * 并通过行计数器预留堆叠高度，把后续兄弟节点整体下推。
+ */
 function placeTree(
   nodes: readonly TreeNodePayload[],
   parentId: number | null,
@@ -154,39 +151,51 @@ function placeTree(
         state,
       )
     }
-    // 知识小卡：该节点直接 Entry 以终端分支形式就地展示
+    const childCount = out.length - childStart
+    const x = depth * COLUMN_GAP + CANVAS_PAD
+    const y =
+      childCount > 0
+        ? (out[childStart].y + out[out.length - 1].y) / 2
+        : state.nextSlot++ * ROW_GAP + CANVAS_PAD
+
+    // 知识小卡：叶子节点右侧列 / 非叶子节点同列下方，紧凑堆叠并预留行位
     const revealedEntries = revealedNodes.has(node.id) ? (entriesByNode.get(node.id) ?? []) : []
     if (!collapsed && revealedEntries.length > 0 && depth + 1 <= MAX_DEPTH) {
-      for (const entry of revealedEntries) {
-        if (out.length >= MAX_VISIBLE_NODES) continue
-        const y = state.nextSlot++ * ROW_GAP + CANVAS_PAD
+      const stackTop = y + NODE_HEIGHT / 2 + 6
+      const cardX = hasChildren
+        ? x + (NODE_WIDTH - CARD_WIDTH) / 2
+        : (depth + 1) * COLUMN_GAP + CANVAS_PAD
+      revealedEntries.forEach((entry, index) => {
+        if (out.length >= MAX_VISIBLE_NODES) return
         out.push({
           id: entry.id,
           name: entry.title,
           kind: 'entry',
           entryType: entry.main_type,
-          depth: depth + 1,
-          x: (depth + 1) * COLUMN_GAP + CANVAS_PAD,
-          y,
+          belowStack: hasChildren,
+          depth: hasChildren ? depth : depth + 1,
+          x: cardX,
+          y: stackTop + index * CARD_GAP,
           parentId: node.id,
           entryCount: 0,
           subtreeCount: 0,
           hasChildren: false,
           collapsed: false,
         })
-      }
+      })
+      const stackRows = Math.max(
+        1,
+        Math.ceil((revealedEntries.length * CARD_GAP + 44) / ROW_GAP),
+      )
+      state.nextSlot += stackRows
     }
-    const childCount = out.length - childStart
-    const y =
-      childCount > 0
-        ? (out[childStart].y + out[out.length - 1].y) / 2
-        : state.nextSlot++ * ROW_GAP + CANVAS_PAD
+
     out.push({
       id: node.id,
       name: node.name,
       kind: 'node',
       depth,
-      x: depth * COLUMN_GAP + CANVAS_PAD,
+      x,
       y,
       parentId,
       entryCount: node.entry_count,
@@ -211,7 +220,10 @@ export function MindMapView({
     const parsed = raw ? Number(raw) : NaN
     return Number.isFinite(parsed) ? parsed : VIRTUAL_ROOT_ID
   })
-  const [selectedEntry, setSelectedEntry] = useState<EntryPayload | null>(null)
+  const [pinnedEntry, setPinnedEntry] = useState<EntryPayload | null>(null)
+  const [pinnedPos, setPinnedPos] = useState<{ x: number; y: number } | null>(null)
+  const [previewEntry, setPreviewEntry] = useState<EntryPayload | null>(null)
+  const [previewPos, setPreviewPos] = useState<{ x: number; y: number } | null>(null)
   const [focusId, setFocusId] = useState<number | null>(null)
   const [collapsedIds, setCollapsedIds] = useState<ReadonlySet<number>>(new Set())
   const [revealedNodes, setRevealedNodes] = useState<ReadonlySet<number>>(new Set())
@@ -386,12 +398,23 @@ export function MindMapView({
 
   function selectNode(nodeId: number) {
     setSelectedId(nodeId)
-    setSelectedEntry(null)
+    setPinnedEntry(null)
+    setPinnedPos(null)
+    setPreviewEntry(null)
+    setPreviewPos(null)
   }
 
-  function selectEntry(entry: EntryPayload) {
+  function pinEntry(entry: EntryPayload, event: React.MouseEvent<HTMLElement>) {
     setSelectedId(entry.node_id)
-    setSelectedEntry(entry)
+    setPinnedEntry((current) => (current?.id === entry.id ? null : entry))
+    const rect = event.currentTarget.getBoundingClientRect()
+    setPinnedPos({ x: rect.left, y: rect.top })
+  }
+
+  function previewEntryAt(entry: EntryPayload, event: React.MouseEvent<HTMLElement>) {
+    setPreviewEntry(entry)
+    const rect = event.currentTarget.getBoundingClientRect()
+    setPreviewPos({ x: rect.left, y: rect.top })
   }
 
   if (tree.isLoading) {
@@ -549,10 +572,14 @@ export function MindMapView({
                     return (
                       <line
                         key={`${parent.id}-${item.id}-${item.kind}`}
-                        x1={parent.x + NODE_WIDTH}
-                        y1={parent.y}
-                        x2={item.x}
-                        y2={item.y}
+                        x1={
+                          item.belowStack ? parent.x + NODE_WIDTH / 2 : parent.x + NODE_WIDTH
+                        }
+                        y1={
+                          item.belowStack ? parent.y + NODE_HEIGHT / 2 : parent.y
+                        }
+                        x2={item.belowStack ? item.x + CARD_WIDTH / 2 : item.x}
+                        y2={item.belowStack ? item.y - CARD_HEIGHT / 2 : item.y}
                         className="stroke-border"
                         strokeWidth={1}
                       />
@@ -561,26 +588,26 @@ export function MindMapView({
                 </svg>
                 {placed.out.map((item) => {
                   if (item.kind === 'entry') {
-                    const isSelected = selectedEntry?.id === item.id
+                    const entry = entriesByNode
+                      .get(item.parentId ?? -1)
+                      ?.find((candidate) => candidate.id === item.id)
+                    const isSelected = pinnedEntry?.id === item.id
                     const TypeIcon = ENTRY_TYPE_ICONS[item.entryType ?? 'knowledge'] ?? BookOpen
                     return (
                       <button
                         key={`entry-${item.id}`}
                         type="button"
                         data-map-item="true"
-                        onClick={() => {
-                          const entry = entriesByNode
-                            .get(item.parentId ?? -1)
-                            ?.find((candidate) => candidate.id === item.id)
-                          if (entry) selectEntry(entry)
-                        }}
+                        onClick={(event) => entry && pinEntry(entry, event)}
+                        onMouseEnter={(event) => entry && previewEntryAt(entry, event)}
+                        onMouseLeave={() => setPreviewEntry(null)}
                         className={`absolute flex h-8 items-center gap-1.5 rounded-full border px-2.5 text-left text-caption transition-colors ${
                           isSelected
                             ? 'border-brand/60 bg-brand-soft text-foreground'
                             : 'border-border bg-card hover:bg-muted'
                         }`}
                         style={{
-                          left: item.x + NODE_WIDTH - CARD_WIDTH,
+                          left: item.x,
                           top: item.y - CARD_HEIGHT / 2,
                           width: CARD_WIDTH,
                         }}
@@ -595,7 +622,6 @@ export function MindMapView({
                   const isSelected = item.id === selectedId
                   const isMatched = searchActive && matches.has(item.id)
                   const dimmed = searchActive && !isMatched
-                  const revealed = revealedNodes.has(item.id)
                   return (
                     <div
                       key={`node-${item.id}`}
@@ -613,8 +639,11 @@ export function MindMapView({
                     >
                       <button
                         type="button"
-                        onClick={() => selectNode(item.id)}
-                        className={`flex min-w-0 flex-1 items-center gap-2 rounded-l-md px-2.5 text-left text-body-sm ${
+                        onClick={() => {
+                          selectNode(item.id)
+                          toggleReveal(item.id)
+                        }}
+                        className={`flex min-w-0 flex-1 items-center gap-2 rounded-md px-2.5 text-left text-body-sm ${
                           isMatched ? 'ring-2 ring-brand/40' : ''
                         } ${isSelected ? 'text-foreground' : 'hover:bg-muted/60'}`}
                         aria-pressed={isSelected}
@@ -632,18 +661,6 @@ export function MindMapView({
                           {item.entryCount} / {item.subtreeCount}
                         </span>
                       </button>
-                      {item.entryCount > 0 ? (
-                        <button
-                          type="button"
-                          onClick={() => toggleReveal(item.id)}
-                          aria-label={`${revealed ? '收起' : '展开'} ${item.name} 的直接知识`}
-                          title={revealed ? '收起直接知识' : '展开直接知识'}
-                          className="flex h-9 shrink-0 items-center gap-0.5 rounded-r-md px-1.5 text-caption text-muted-foreground hover:bg-muted hover:text-foreground"
-                        >
-                          {revealed ? <Minus className="size-3.5" /> : <Plus className="size-3.5" />}
-                          {item.entryCount}
-                        </button>
-                      ) : null}
                     </div>
                   )
                 })}
@@ -653,160 +670,124 @@ export function MindMapView({
 
           {sideOpen && selectedNode ? (
             <aside className="flex w-[300px] shrink-0 flex-col overflow-y-auto border-l px-4 py-4">
-              {selectedEntry ? (
-                <div className="min-h-0 flex-1">
-                  <div className="flex items-start justify-between gap-2">
-                    <div className="min-w-0">
-                      <p className="text-caption text-muted-foreground">知识详情</p>
-                      <h2 className="mt-0.5 text-body font-[650]">{selectedEntry.title}</h2>
-                      <p className="mt-0.5 truncate text-caption text-muted-foreground">
-                        {pathNames.get(selectedEntry.node_id) ?? selectedEntry.node_name}
-                      </p>
-                    </div>
+              <div className="min-w-0">
+                <p className="text-caption text-muted-foreground">当前节点</p>
+                <h2 className="mt-0.5 truncate text-body font-[650]">{selectedNode.name}</h2>
+                <p className="mt-0.5 truncate text-caption text-muted-foreground">
+                  {pathNames.get(selectedNode.id) ?? selectedNode.name}
+                </p>
+              </div>
+              {!isProjectRootSelected ? (
+                <>
+                  <Button
+                    asChild
+                    size="sm"
+                    variant="ghost"
+                    className="mt-2 w-full justify-start px-2"
+                  >
+                    <Link to={`/projects/${projectId}?view=directory&node=${selectedNode.id}`}>
+                      <FolderInput />
+                      在知识空间中打开
+                    </Link>
+                  </Button>
+                  <label className="mt-4 flex cursor-pointer items-center justify-between rounded-md border px-3 py-2.5">
+                    <span className="flex items-center gap-2">
+                      <input
+                        type="checkbox"
+                        checked={includeSubtree}
+                        onChange={(event) => setIncludeSubtree(event.target.checked)}
+                        className="size-4"
+                      />
+                      <span>
+                        <span className="block text-body-sm font-medium">包含子树</span>
+                        <span className="block text-caption text-muted-foreground">
+                          共{' '}
+                          {includeSubtree
+                            ? counts.get(selectedNode.id) ?? selectedNode.entry_count
+                            : selectedNode.entry_count}{' '}
+                          条正式知识
+                        </span>
+                      </span>
+                    </span>
+                  </label>
+                </>
+              ) : (
+                <p className="mt-4 rounded-md border bg-muted/40 px-3 py-2.5 text-body-sm">
+                  全部正式知识 · 共 {counts.get(VIRTUAL_ROOT_ID) ?? 0} 条
+                </p>
+              )}
+              <div className="mt-3 min-h-0 flex-1">
+                {entries.isLoading ? (
+                  <p className="py-6 text-center text-caption text-muted-foreground">
+                    加载知识…
+                  </p>
+                ) : entries.isError ? (
+                  <div className="rounded-md border border-destructive/30 px-3 py-2 text-caption text-destructive">
+                    知识加载失败。
                     <Button
                       size="sm"
-                      variant="ghost"
-                      className="shrink-0"
-                      onClick={() => setSelectedEntry(null)}
+                      variant="outline"
+                      className="mt-2"
+                      onClick={() => void entries.refetch()}
                     >
-                      返回列表
+                      重试
                     </Button>
                   </div>
-                  <Badge variant="outline" className="mt-3 bg-brand-soft text-brand">
-                    {ENTRY_TYPE_LABELS[selectedEntry.main_type] ?? selectedEntry.main_type}
-                  </Badge>
-                  <p className="mt-3 whitespace-pre-wrap text-body-sm leading-6">
-                    {selectedEntry.content}
-                  </p>
-                  {selectedEntry.applicable_condition ? (
-                    <p className="mt-3 text-body-sm text-muted-foreground">
-                      适用条件：{selectedEntry.applicable_condition}
-                    </p>
-                  ) : null}
-                  {selectedEntry.note ? (
-                    <p className="mt-2 text-body-sm text-muted-foreground">
-                      补充说明：{selectedEntry.note}
-                    </p>
-                  ) : null}
-                  {selectedEntry.evidences.length > 0 ? (
-                    <div className="mt-4 border-t pt-3">
-                      <p className="text-caption text-muted-foreground">
-                        来源证据 {selectedEntry.evidences.length} 条
-                      </p>
-                      {selectedEntry.evidences.map((evidence) => (
-                        <blockquote key={evidence.id} className="mt-2 border-l-2 pl-2 text-caption">
-                          <span className="font-medium text-foreground">
-                            {evidence.source_title}
-                          </span>
-                          <span className="mt-0.5 block text-muted-foreground">
-                            {evidence.quote || '（无引用片段）'}
-                          </span>
-                        </blockquote>
-                      ))}
-                    </div>
-                  ) : null}
-                </div>
-              ) : (
-                <>
-                  <div className="min-w-0">
-                    <p className="text-caption text-muted-foreground">当前节点</p>
-                    <h2 className="mt-0.5 truncate text-body font-[650]">
-                      {selectedNode.name}
-                    </h2>
-                    <p className="mt-0.5 truncate text-caption text-muted-foreground">
-                      {pathNames.get(selectedNode.id) ?? selectedNode.name}
+                ) : (entries.data?.length ?? 0) === 0 ? (
+                  <div className="py-8 text-center">
+                    <BookOpen className="mx-auto size-5 text-muted-foreground" />
+                    <p className="mt-2 text-caption text-muted-foreground">
+                      这里还没有正式知识
                     </p>
                   </div>
-                  {!isProjectRootSelected ? (
-                    <>
-                      <Button
-                        asChild
-                        size="sm"
-                        variant="ghost"
-                        className="mt-2 w-full justify-start px-2"
-                      >
-                        <Link to={`/projects/${projectId}?view=directory&node=${selectedNode.id}`}>
-                          <FolderInput />
-                          在知识空间中打开
-                        </Link>
-                      </Button>
-                      <label className="mt-4 flex cursor-pointer items-center justify-between rounded-md border px-3 py-2.5">
-                        <span className="flex items-center gap-2">
-                          <input
-                            type="checkbox"
-                            checked={includeSubtree}
-                            onChange={(event) => setIncludeSubtree(event.target.checked)}
-                            className="size-4"
-                          />
-                          <span>
-                            <span className="block text-body-sm font-medium">包含子树</span>
-                            <span className="block text-caption text-muted-foreground">
-                              共{' '}
-                              {includeSubtree
-                                ? counts.get(selectedNode.id) ?? selectedNode.entry_count
-                                : selectedNode.entry_count}{' '}
-                              条正式知识
-                            </span>
-                          </span>
-                        </span>
-                      </label>
-                    </>
-                  ) : (
-                    <p className="mt-4 rounded-md border bg-muted/40 px-3 py-2.5 text-body-sm">
-                      全部正式知识 · 共 {counts.get(VIRTUAL_ROOT_ID) ?? 0} 条
-                    </p>
-                  )}
-                  <div className="mt-3 min-h-0 flex-1">
-                    {entries.isLoading ? (
-                      <p className="py-6 text-center text-caption text-muted-foreground">
-                        加载知识…
-                      </p>
-                    ) : entries.isError ? (
-                      <div className="rounded-md border border-destructive/30 px-3 py-2 text-caption text-destructive">
-                        知识加载失败。
-                        <Button
-                          size="sm"
-                          variant="outline"
-                          className="mt-2"
-                          onClick={() => void entries.refetch()}
+                ) : (
+                  <ul className="divide-y">
+                    {entries.data?.map((entry) => (
+                      <li key={entry.id}>
+                        <button
+                          type="button"
+                          onClick={(event) => pinEntry(entry, event)}
+                          onMouseEnter={(event) => previewEntryAt(entry, event)}
+                          onMouseLeave={() => setPreviewEntry(null)}
+                          className={`w-full px-1 py-2.5 text-left hover:bg-muted/60 ${
+                            pinnedEntry?.id === entry.id ? 'bg-brand-soft' : ''
+                          }`}
                         >
-                          重试
-                        </Button>
-                      </div>
-                    ) : (entries.data?.length ?? 0) === 0 ? (
-                      <div className="py-8 text-center">
-                        <BookOpen className="mx-auto size-5 text-muted-foreground" />
-                        <p className="mt-2 text-caption text-muted-foreground">
-                          这里还没有正式知识
-                        </p>
-                      </div>
-                    ) : (
-                      <ul className="divide-y">
-                        {entries.data?.map((entry) => (
-                          <li key={entry.id}>
-                            <button
-                              type="button"
-                              onClick={() => setSelectedEntry(entry)}
-                              className="w-full px-1 py-2.5 text-left hover:bg-muted/60"
-                            >
-                              <span className="block truncate text-body-sm font-medium">
-                                {entry.title}
-                              </span>
-                              <span className="mt-0.5 block truncate text-caption text-muted-foreground">
-                                {pathNames.get(entry.node_id) ?? entry.node_name}
-                              </span>
-                            </button>
-                          </li>
-                        ))}
-                      </ul>
-                    )}
-                  </div>
-                </>
-              )}
+                          <span className="block truncate text-body-sm font-medium">
+                            {entry.title}
+                          </span>
+                          <span className="mt-0.5 block truncate text-caption text-muted-foreground">
+                            {pathNames.get(entry.node_id) ?? entry.node_name}
+                          </span>
+                        </button>
+                      </li>
+                    ))}
+                  </ul>
+                )}
+              </div>
             </aside>
           ) : null}
         </div>
       )}
+
+      {pinnedEntry && pinnedPos ? (
+        <EntryPopover
+          entry={pinnedEntry}
+          position={pinnedPos}
+          pinned
+          onClose={() => {
+            setPinnedEntry(null)
+            setPinnedPos(null)
+          }}
+        />
+      ) : previewEntry && previewPos ? (
+        <EntryPopover
+          entry={previewEntry}
+          position={previewPos}
+          pinned={false}
+          onClose={() => undefined}
+        />
+      ) : null}
     </div>
   )
 }
