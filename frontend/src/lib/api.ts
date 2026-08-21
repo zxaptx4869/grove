@@ -680,7 +680,9 @@ export interface ReaderCitationPayload {
 
 export interface ReaderConflictPayload {
   entry_id_a: number
+  entry_title_a: string
   entry_id_b: number
+  entry_title_b: string
   summary: string
 }
 

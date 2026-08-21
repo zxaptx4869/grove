@@ -27,7 +27,9 @@ class ReaderConflictOut(BaseModel):
     """矛盾 Entry 展示。"""
 
     entry_id_a: int
+    entry_title_a: str = ""
     entry_id_b: int
+    entry_title_b: str = ""
     summary: str
 
 

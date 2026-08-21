@@ -175,11 +175,14 @@ async def ask_reader(
 
     citations = _validate_citations(answer_draft.citations, entries)
     valid_entry_ids = {entry.id for entry in entries}
+    entry_by_id = {entry.id: entry for entry in entries}
 
     conflicts = [
         ReaderConflictOut(
             entry_id_a=item.entry_id_a,
+            entry_title_a=entry_by_id[item.entry_id_a].title,
             entry_id_b=item.entry_id_b,
+            entry_title_b=entry_by_id[item.entry_id_b].title,
             summary=item.summary,
         )
         for item in answer_draft.conflicts
@@ -295,7 +298,10 @@ async def save_answer_as_candidate(
     )
     db.add(candidate)
     await db.flush()
-    await route_source(db, source.id)
-    await route_relations(db, source.id)
+    try:
+        await route_source(db, source.id)
+        await route_relations(db, source.id)
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("保存候选后目录推荐/关系判断失败，候选保持待确认：%s", exc)
     await db.flush()
     return candidate_out(candidate)

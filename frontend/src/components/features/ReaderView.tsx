@@ -31,6 +31,7 @@ interface ReaderMessage {
   role: 'user' | 'assistant'
   content: string
   answer?: ReaderAnswerPayload
+  question?: string
 }
 
 const MAIN_TYPE_LABELS: Record<string, string> = {
@@ -106,7 +107,10 @@ export function ReaderView({ projectId }: { projectId: number }) {
         scope,
         node_id: scope === 'node' ? nodeId : undefined,
       })
-      setMessages((prev) => [...prev, { role: 'assistant', content: answer.answer, answer }])
+      setMessages((prev) => [
+        ...prev,
+        { role: 'assistant', content: answer.answer, answer, question: text },
+      ])
     } catch (error) {
       setMessages((prev) => [
         ...prev,
@@ -195,9 +199,10 @@ export function ReaderView({ projectId }: { projectId: number }) {
                       answer={message.answer}
                       onPreview={(entryId) => setPreviewEntryId(entryId)}
                       onSave={() => {
-                        const lastQuestion =
-                          [...messages].reverse().find((item) => item.role === 'user')?.content ?? ''
-                        setSaveTarget({ question: lastQuestion, answer: message.answer! })
+                        setSaveTarget({
+                          question: message.question ?? '',
+                          answer: message.answer!,
+                        })
                       }}
                     />
                   ) : null}
@@ -317,8 +322,15 @@ function AssistantAnswer({
         <div className="space-y-1">
           <p className="text-caption text-muted-foreground">存在冲突观点</p>
           {answer.conflicts.map((conflict, index) => (
-            <div key={index} className="rounded-md border border-destructive/40 bg-error-soft/60 p-2 text-body-sm">
-              {conflict.summary}
+            <div
+              key={index}
+              className="rounded-md border border-destructive/40 bg-error-soft/60 p-2 text-body-sm"
+            >
+              <span className="font-medium">
+                {conflict.entry_title_a || `Entry ${conflict.entry_id_a}`} ↔{' '}
+                {conflict.entry_title_b || `Entry ${conflict.entry_id_b}`}
+              </span>
+              <span className="mt-0.5 block">{conflict.summary}</span>
             </div>
           ))}
         </div>
