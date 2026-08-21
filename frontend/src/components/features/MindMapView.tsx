@@ -161,8 +161,23 @@ function placeTree(
     // 知识小卡：叶子节点右侧列 / 非叶子节点同列下方，紧凑堆叠并预留行位
     const revealedEntries = revealedNodes.has(node.id) ? (entriesByNode.get(node.id) ?? []) : []
     if (!collapsed && revealedEntries.length > 0) {
-      // 卡中心起点：节点底边 + 间隙 + 半卡高，避免首卡被节点遮挡
-      const stackTop = y + NODE_HEIGHT / 2 + 8 + CARD_HEIGHT / 2
+      const count = revealedEntries.length
+      let cardCenters: number[]
+      let stackBottom: number
+      if (hasChildren) {
+        // 非叶子：卡中心起点在节点底边下方，向下堆叠
+        const stackTop = y + NODE_HEIGHT / 2 + 8 + CARD_HEIGHT / 2
+        cardCenters = revealedEntries.map((_, index) => stackTop + index * CARD_GAP)
+        stackBottom = stackTop + (count - 1) * CARD_GAP + CARD_HEIGHT / 2
+      } else {
+        // 叶子：堆叠以节点为中心上下对称展开；向上不越过上一个兄弟，超出则整体下移
+        const idealTop = y - ((count - 1) * CARD_GAP) / 2 - CARD_HEIGHT / 2
+        const top = Math.max(idealTop, y - 32)
+        cardCenters = revealedEntries.map(
+          (_, index) => top + CARD_HEIGHT / 2 + index * CARD_GAP,
+        )
+        stackBottom = top + (count - 1) * CARD_GAP + CARD_HEIGHT
+      }
       const cardX = hasChildren
         ? x + (NODE_WIDTH - CARD_WIDTH) / 2
         : (depth + 1) * COLUMN_GAP + CANVAS_PAD
@@ -176,7 +191,7 @@ function placeTree(
           belowStack: hasChildren,
           depth: hasChildren ? depth : depth + 1,
           x: cardX,
-          y: stackTop + index * CARD_GAP,
+          y: cardCenters[index],
           parentId: node.id,
           entryCount: 0,
           subtreeCount: 0,
@@ -185,8 +200,6 @@ function placeTree(
         })
       })
       // 只预留堆叠实际占用的行位：保证下一个节点顶部不进入堆叠底部
-      const stackBottom =
-        stackTop + (revealedEntries.length - 1) * CARD_GAP + CARD_HEIGHT / 2
       const stackRows = Math.max(
         0,
         Math.ceil((stackBottom - 2) / ROW_GAP) - state.nextSlot,
