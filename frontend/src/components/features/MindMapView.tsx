@@ -35,8 +35,8 @@ import { queryKeys } from '@/lib/queryKeys'
 const NODE_WIDTH = 210
 const NODE_HEIGHT = 36
 const CARD_WIDTH = 168
-const CARD_HEIGHT = 32
-const CARD_GAP = 34
+const CARD_HEIGHT = 28
+const CARD_GAP = 26
 const COLUMN_GAP = 260
 const ROW_GAP = 56
 const CANVAS_PAD = 28
@@ -160,8 +160,9 @@ function placeTree(
 
     // 知识小卡：叶子节点右侧列 / 非叶子节点同列下方，紧凑堆叠并预留行位
     const revealedEntries = revealedNodes.has(node.id) ? (entriesByNode.get(node.id) ?? []) : []
-    if (!collapsed && revealedEntries.length > 0 && depth + 1 <= MAX_DEPTH) {
-      const stackTop = y + NODE_HEIGHT / 2 + 6
+    if (!collapsed && revealedEntries.length > 0) {
+      // 卡中心起点：节点底边 + 间隙 + 半卡高，避免首卡被节点遮挡
+      const stackTop = y + NODE_HEIGHT / 2 + 8 + CARD_HEIGHT / 2
       const cardX = hasChildren
         ? x + (NODE_WIDTH - CARD_WIDTH) / 2
         : (depth + 1) * COLUMN_GAP + CANVAS_PAD
@@ -183,9 +184,12 @@ function placeTree(
           collapsed: false,
         })
       })
+      // 只预留堆叠实际占用的行位：保证下一个节点顶部不进入堆叠底部
+      const stackBottom =
+        stackTop + (revealedEntries.length - 1) * CARD_GAP + CARD_HEIGHT / 2
       const stackRows = Math.max(
-        1,
-        Math.ceil((revealedEntries.length * CARD_GAP + 44) / ROW_GAP),
+        0,
+        Math.ceil((stackBottom - 2) / ROW_GAP) - state.nextSlot,
       )
       state.nextSlot += stackRows
     }
@@ -669,7 +673,10 @@ export function MindMapView({
           </div>
 
           {sideOpen && selectedNode ? (
-            <aside className="flex w-[300px] shrink-0 flex-col overflow-y-auto border-l px-4 py-4">
+            <aside
+              aria-label="阅读侧栏"
+              className="flex w-[300px] shrink-0 flex-col overflow-y-auto border-l px-4 py-4"
+            >
               <div className="min-w-0">
                 <p className="text-caption text-muted-foreground">当前节点</p>
                 <h2 className="mt-0.5 truncate text-body font-[650]">{selectedNode.name}</h2>

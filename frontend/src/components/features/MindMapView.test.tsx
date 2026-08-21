@@ -278,10 +278,10 @@ describe('MindMapView', () => {
     expect(checkbox).toBeChecked()
     expect(await screen.findByText('整体预算')).toBeInTheDocument()
     expect(screen.getByText('动线规划')).toBeInTheDocument()
-    expect(screen.getByText('无主灯')).toBeInTheDocument()
+    expect(screen.getAllByText('无主灯').length).toBeGreaterThan(0)
 
     fireEvent.click(checkbox)
-    expect(await screen.findByText('无主灯')).toBeInTheDocument()
+    expect(screen.getAllByText('无主灯').length).toBeGreaterThan(0)
     expect(screen.queryByText('整体预算')).not.toBeInTheDocument()
     expect(screen.queryByText('动线规划')).not.toBeInTheDocument()
   })
@@ -292,7 +292,8 @@ describe('MindMapView', () => {
 
     const canvas = within(await screen.findByTestId('mind-map-canvas'))
     fireEvent.click(await canvas.findByRole('button', { name: /^客厅/ }))
-    fireEvent.click(await screen.findByRole('button', { name: /无主灯/ }))
+    const aside = within(await screen.findByRole('complementary', { name: '阅读侧栏' }))
+    fireEvent.click(await aside.findByRole('button', { name: /无主灯/ }))
 
     expect(await screen.findByText('无主灯布局先确定使用场景。')).toBeInTheDocument()
     expect(screen.getByRole('heading', { name: '无主灯' })).toBeInTheDocument()
