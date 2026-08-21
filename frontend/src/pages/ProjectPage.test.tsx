@@ -151,9 +151,9 @@ describe('ProjectPage', () => {
       'aria-selected',
       'true',
     )
-    expect(screen.getByRole('link', { name: /思维导图/ })).toHaveAttribute(
+    expect(screen.getByRole('link', { name: /知识全景/ })).toHaveAttribute(
       'href',
-      '/projects/1?view=mindmap',
+      '/projects/1?view=overview',
     )
     expect(screen.queryByText('正式知识', { exact: true })).not.toBeInTheDocument()
   })

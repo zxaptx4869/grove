@@ -181,9 +181,9 @@ export function AppShell() {
   const logout = useLogout()
   const navigate = useNavigate()
   const location = useLocation()
-  const isMindMapView = new URLSearchParams(location.search).get('view') === 'mindmap'
-  // 沉浸式视图：思维导图隐藏应用壳侧栏与顶栏占位
-  const immersiveView = isMindMapView
+  const currentView = new URLSearchParams(location.search).get('view')
+  // 沉浸式视图：知识全景（旭日图/思维导图）隐藏应用壳侧栏与顶栏占位
+  const immersiveView = currentView === 'mindmap' || currentView === 'overview'
   const [logoutOpen, setLogoutOpen] = useState(false)
   const projectId = Number(location.pathname.match(/^\/projects\/(\d+)/)?.[1]) || null
   const currentProject = projects.data?.find((project) => project.id === projectId)

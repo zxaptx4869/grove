@@ -3,12 +3,12 @@ import { useQuery, useQueryClient } from '@tanstack/react-query'
 import {
   ArrowRight,
   BookOpen,
+  ChartPie,
   FolderPlus,
   FolderTree,
   LayoutGrid,
   List,
   MoreHorizontal,
-  Network,
   Pencil,
   Plus,
   Search,
@@ -16,7 +16,7 @@ import {
   Trash2,
   X,
 } from 'lucide-react'
-import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom'
+import { Link, Navigate, useNavigate, useParams, useSearchParams } from 'react-router-dom'
 import { toast } from 'sonner'
 
 import { NodeTree } from '@/components/features/NodeTree'
@@ -45,7 +45,7 @@ import { CaptureDialog } from '@/components/features/CaptureDialog'
 import { DirectoryDraftDialog } from '@/components/features/DirectoryDraftDialog'
 import { ProjectContextPanel } from '@/components/features/ProjectContextPanel'
 import { ReaderView } from '@/components/features/ReaderView'
-import { MindMapView } from '@/components/features/MindMapView'
+import { KnowledgeOverviewView } from '@/components/features/KnowledgeOverviewView'
 import { SimilarEntriesDrawer } from '@/components/features/SimilarEntriesDrawer'
 import { useGroveMutation } from '@/hooks/useGroveMutation'
 import { ProjectSources } from '@/pages/ProjectSources'
@@ -186,6 +186,7 @@ export function ProjectPage() {
   const isSourcesView = searchParams.get('view') === 'sources'
   const isAiReadView = searchParams.get('view') === 'ai-read'
   const isMindMapView = searchParams.get('view') === 'mindmap'
+  const isOverviewView = searchParams.get('view') === 'overview'
   // 思维导图「在知识空间中打开」通过 node 参数定位目录节点，URL 作为选中来源
   const nodeParam = searchParams.get('node')
   const requestedNodeId =
@@ -460,6 +461,13 @@ export function ProjectPage() {
         项目地址无效。
       </div>
     )
+  // 旧思维导图入口兼容重定向：并入知识全景的思维导图模式
+  if (isMindMapView) {
+    const target = `/projects/${id}?view=overview&mode=mindmap${
+      nodeParam ? `&node=${nodeParam}` : ''
+    }`
+    return <Navigate to={target} replace />
+  }
   if (projects.isLoading || tree.isLoading)
     return (
       <div className="space-y-5 px-6 py-[22px]" aria-label="项目加载中">
@@ -490,8 +498,8 @@ export function ProjectPage() {
         项目不存在，或你无权访问该项目。
       </div>
     )
-  if (isMindMapView) {
-    return <MindMapView projectId={id} projectName={project.name} />
+  if (isOverviewView) {
+    return <KnowledgeOverviewView projectId={id} projectName={project.name} />
   }
 
   return (
@@ -537,9 +545,9 @@ export function ProjectPage() {
           ) : null}
           {isDirectoryView ? (
             <Button asChild size="sm" variant="outline">
-              <Link to={`/projects/${id}?view=mindmap`}>
-                <Network />
-                思维导图
+              <Link to={`/projects/${id}?view=overview`}>
+                <ChartPie />
+                知识全景
               </Link>
             </Button>
           ) : null}
@@ -955,9 +963,9 @@ export function ProjectPage() {
                 </div>
                 <div className="flex items-center gap-1">
                   <Button asChild size="sm" variant="ghost">
-                    <Link to={`/projects/${id}?view=mindmap`}>
-                      <Network />
-                      思维导图
+                    <Link to={`/projects/${id}?view=overview`}>
+                      <ChartPie />
+                      知识全景
                     </Link>
                   </Button>
                   <Button asChild size="sm" variant="ghost">

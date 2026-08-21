@@ -227,9 +227,15 @@ function placeTree(
 export function MindMapView({
   projectId,
   projectName,
+  embedded = false,
+  sideOpen: sideOpenProp,
+  onToggleSide,
 }: {
   projectId: number
   projectName: string
+  embedded?: boolean
+  sideOpen?: boolean
+  onToggleSide?: () => void
 }) {
   const [searchParams] = useSearchParams()
   const [selectedId, setSelectedId] = useState<number | null>(() => {
@@ -246,7 +252,9 @@ export function MindMapView({
   const [revealedNodes, setRevealedNodes] = useState<ReadonlySet<number>>(new Set())
   const [searchInput, setSearchInput] = useState('')
   const [includeSubtree, setIncludeSubtree] = useState(true)
-  const [sideOpen, setSideOpen] = useState(true)
+  const [sideOpenInternal, setSideOpenInternal] = useState(true)
+  const sideOpen = sideOpenProp ?? sideOpenInternal
+  const toggleSide = onToggleSide ?? (() => setSideOpenInternal((open) => !open))
 
   const tree = useQuery({
     queryKey: queryKeys.projectTree(projectId),
@@ -456,26 +464,28 @@ export function MindMapView({
 
   return (
     <div className="flex h-full min-h-0 flex-col">
-      <header className="flex h-[52px] shrink-0 items-center justify-between gap-3 border-b px-4">
-        <div className="flex min-w-0 items-center gap-2">
-          <Button asChild size="sm" variant="ghost">
-            <Link to={`/projects/${projectId}?view=directory`}>
-              <ArrowLeft />
-              返回知识空间
-            </Link>
+      {!embedded ? (
+        <header className="flex h-[52px] shrink-0 items-center justify-between gap-3 border-b px-4">
+          <div className="flex min-w-0 items-center gap-2">
+            <Button asChild size="sm" variant="ghost">
+              <Link to={`/projects/${projectId}?view=directory`}>
+                <ArrowLeft />
+                返回知识空间
+              </Link>
+            </Button>
+            <h1 className="truncate text-body font-[650]">{projectName} · 思维导图</h1>
+          </div>
+          <Button
+            size="icon-sm"
+            variant="ghost"
+            onClick={toggleSide}
+            aria-label={sideOpen ? '收起阅读侧栏' : '展开阅读侧栏'}
+            title={sideOpen ? '收起阅读侧栏' : '展开阅读侧栏'}
+          >
+            <Columns3 className="size-4" />
           </Button>
-          <h1 className="truncate text-body font-[650]">{projectName} · 思维导图</h1>
-        </div>
-        <Button
-          size="icon-sm"
-          variant="ghost"
-          onClick={() => setSideOpen((open) => !open)}
-          aria-label={sideOpen ? '收起阅读侧栏' : '展开阅读侧栏'}
-          title={sideOpen ? '收起阅读侧栏' : '展开阅读侧栏'}
-        >
-          <Columns3 className="size-4" />
-        </Button>
-      </header>
+        </header>
+      ) : null}
 
       {empty ? (
         <div className="flex min-h-0 flex-1 items-center justify-center">
