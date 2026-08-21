@@ -33,6 +33,21 @@ interface ReaderMessage {
   answer?: ReaderAnswerPayload
 }
 
+const MAIN_TYPE_LABELS: Record<string, string> = {
+  knowledge: '知识',
+  method: '方法',
+  parameter: '参数',
+  reminder: '提醒',
+}
+
+const INFO_NATURE_LABELS: Record<string, string> = {
+  fact: '事实',
+  experience: '经验',
+  advice: '建议',
+  speculation: '推测',
+  other: '其他',
+}
+
 /** AI 阅读视图：节点或项目范围的带引用问答，回答可保存为候选。 */
 export function ReaderView({ projectId }: { projectId: number }) {
   const queryClient = useQueryClient()
@@ -65,6 +80,8 @@ export function ReaderView({ projectId }: { projectId: number }) {
       title: string
       content: string
       citations: { entry_id: number; source_id: number; quote: string }[]
+      main_type?: 'knowledge' | 'method' | 'parameter' | 'reminder' | null
+      info_nature?: 'fact' | 'experience' | 'advice' | 'speculation' | 'other' | null
     }) => saveReaderAnswer(projectId, payload),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: queryKeys.reviewCandidates(projectId) })
@@ -243,6 +260,8 @@ export function ReaderView({ projectId }: { projectId: number }) {
               source_id: citation.source_id,
               quote: citation.quote,
             })),
+            main_type: saveTarget.answer.main_type,
+            info_nature: saveTarget.answer.info_nature,
           })
         }}
       />
@@ -302,10 +321,12 @@ function AssistantAnswer({
           ))}
         </div>
       ) : null}
-      <Button size="sm" variant="outline" onClick={onSave}>
-        <BookOpen />
-        保存为知识
-      </Button>
+      {answer.save_recommended ? (
+        <Button size="sm" variant="outline" onClick={onSave}>
+          <BookOpen />
+          保存为知识
+        </Button>
+      ) : null}
     </div>
   )
 }
@@ -369,6 +390,21 @@ function SaveAnswerDialog({
           </DialogDescription>
         </DialogHeader>
         <div className="space-y-3">
+          {answer?.main_type || answer?.info_nature ? (
+            <div className="flex flex-wrap items-center gap-2 text-body-sm">
+              <span className="text-muted-foreground">AI 推荐类型：</span>
+              {answer?.main_type ? (
+                <Badge variant="outline">
+                  {MAIN_TYPE_LABELS[answer.main_type] ?? answer.main_type}
+                </Badge>
+              ) : null}
+              {answer?.info_nature ? (
+                <Badge variant="outline">
+                  {INFO_NATURE_LABELS[answer.info_nature] ?? answer.info_nature}
+                </Badge>
+              ) : null}
+            </div>
+          ) : null}
           <label className="block">
             <span className="mb-1 block text-body-sm font-medium">标题</span>
             <Input

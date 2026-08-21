@@ -54,6 +54,28 @@ TBD - created by archiving change add-reader-agent-with-citations. Update Purpos
 - **WHEN** 问答范围内存在说法矛盾的已确认 Entry
 - **THEN** 回答展示冲突双方及其观点
 
+### Requirement: 回答类型推荐
+系统 MUST 在回答中推荐主类型 `main_type`（knowledge / method / parameter / reminder）与信息性质 `info_nature`（fact / experience / advice / speculation / other）；推荐 MUST 由文本模型基于回答内容生成，降级时 MUST 为空。
+
+#### Scenario: 模型推荐类型
+- **WHEN** 问答由真实文本模型完成
+- **THEN** 回答附带推荐的主类型与信息性质
+
+#### Scenario: 降级不推荐类型
+- **WHEN** 问答降级
+- **THEN** 主类型与信息性质为空
+
+### Requirement: 保存建议
+系统 MUST 在回答中返回 `save_recommended`；知识不足（`insufficient`）或有效引用少于 2 条时 MUST 为 false，不得建议用户把复述或知识不足的回答保存为新知识。
+
+#### Scenario: 综合回答建议保存
+- **WHEN** 回答基于至少 2 条已确认 Entry 综合且非知识不足
+- **THEN** `save_recommended` 为 true
+
+#### Scenario: 复述或知识不足不建议保存
+- **WHEN** 回答知识不足或仅引用 1 条已有 Entry
+- **THEN** `save_recommended` 为 false
+
 ### Requirement: 可观测性
 系统 MUST 在问答响应中记录 `provider` / `model` / `is_fallback` / `error`；未配置密钥或模型调用失败 MUST 明确标记降级原因，禁止静默降级。
 
@@ -64,4 +86,3 @@ TBD - created by archiving change add-reader-agent-with-citations. Update Purpos
 #### Scenario: 降级回答记录原因
 - **WHEN** 问答降级为确定性上下文
 - **THEN** 响应标记 `is_fallback=true` 并带降级原因
-

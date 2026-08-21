@@ -1,6 +1,7 @@
 """Reader Agent：基于已确认 Entry 生成带引用的问答草稿。"""
 
 import logging
+from typing import Literal
 
 from pydantic import BaseModel
 from pydantic_ai import Agent
@@ -36,6 +37,8 @@ class ReaderAnswerDraft(BaseModel):
     insufficient: bool = False
     insufficient_note: str | None = None
     conflicts: list[ReaderConflictDraft] = []
+    main_type: Literal["knowledge", "method", "parameter", "reminder"] | None = None
+    info_nature: Literal["fact", "experience", "advice", "speculation", "other"] | None = None
 
 
 READER_SYSTEM_PROMPT = """你是 Grove 的 Reader Agent，负责基于已确认知识回答用户问题。
@@ -47,7 +50,9 @@ READER_SYSTEM_PROMPT = """你是 Grove 的 Reader Agent，负责基于已确认�
 3. 多条 Entry 说法矛盾时，用 conflicts 并列展示双方 Entry 与各自观点，不要替用户裁决。
 4. citations 与 conflicts 的 entry_id 必须是给定的 Entry id。
 5. citations 的 source_id 必须是给定 Entry 的「来源」列表中出现的 id，不得编造。
-6. 即时回答不是正式知识，不得修改任何正式数据。"""
+6. 为回答推荐主类型 main_type（knowledge/method/parameter/reminder）与
+   信息性质 info_nature（fact/experience/advice/speculation/other），基于回答内容判断。
+7. 即时回答不是正式知识，不得修改任何正式数据。"""
 
 
 def _format_context(

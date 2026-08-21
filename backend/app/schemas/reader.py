@@ -39,6 +39,9 @@ class ReaderAnswerOut(BaseModel):
     insufficient: bool = False
     insufficient_note: str | None = None
     conflicts: list[ReaderConflictOut] = []
+    main_type: Literal["knowledge", "method", "parameter", "reminder"] | None = None
+    info_nature: Literal["fact", "experience", "advice", "speculation", "other"] | None = None
+    save_recommended: bool = False
     provider: str | None = None
     model: str | None = None
     is_fallback: bool = False
@@ -60,3 +63,5 @@ class ReaderSaveRequest(BaseModel):
     title: str = Field(min_length=1, max_length=255)
     content: str = Field(min_length=1, max_length=8000)
     citations: list[ReaderCitationIn] = []
+    main_type: Literal["knowledge", "method", "parameter", "reminder"] | None = None
+    info_nature: Literal["fact", "experience", "advice", "speculation", "other"] | None = None

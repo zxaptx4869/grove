@@ -79,6 +79,7 @@ async def test_reader_ask_project_scope_falls_back(client: httpx.AsyncClient) ->
     assert "没有可用的文本模型" in data["answer"]
     assert data["provider"] == "offline"
     assert data["citations"] == []
+    assert data["save_recommended"] is False
 
 
 @pytest.mark.asyncio
@@ -161,6 +162,10 @@ async def test_reader_save_candidate_creates_virtual_source(client: httpx.AsyncC
     assert candidate["title"] == "闭水试验做法"
     assert candidate["source_id"] > 0
     assert candidate["evidence"][0]["quote"] == "持续 24 小时"
+    # 保存后应补上目录推荐与关系判断
+    assert candidate["routing_status"] == "recommended"
+    assert candidate["recommended_node_id"] is not None
+    assert candidate["relation_status"] == "new"
 
     sources = (await client.get("/api/sources", params={"project_id": project["id"]})).json()
     virtual_source = next(item for item in sources if item["id"] == candidate["source_id"])

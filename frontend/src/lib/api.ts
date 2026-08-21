@@ -690,6 +690,9 @@ export interface ReaderAnswerPayload {
   insufficient: boolean
   insufficient_note: string | null
   conflicts: ReaderConflictPayload[]
+  main_type: 'knowledge' | 'method' | 'parameter' | 'reminder' | null
+  info_nature: 'fact' | 'experience' | 'advice' | 'speculation' | 'other' | null
+  save_recommended: boolean
   provider: string | null
   model: string | null
   is_fallback: boolean
@@ -707,6 +710,8 @@ export interface ReaderSavePayload {
   title: string
   content: string
   citations: { entry_id: number; source_id: number; quote: string }[]
+  main_type?: 'knowledge' | 'method' | 'parameter' | 'reminder' | null
+  info_nature?: 'fact' | 'experience' | 'advice' | 'speculation' | 'other' | null
 }
 
 export const askReader = (projectId: number, payload: ReaderAskPayload) =>

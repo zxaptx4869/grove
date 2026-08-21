@@ -25,8 +25,10 @@ from app.schemas.reader import (
     ReaderSaveRequest,
 )
 from app.services.entry import entry_eager_options, list_entries_by_node
+from app.services.entry_relation import route_relations
 from app.services.extraction import candidate_out
 from app.services.project_context import get_project_context_out
+from app.services.routing import route_source
 from app.services.semantic_search import _recall_by_query
 
 logger = logging.getLogger(__name__)
@@ -190,6 +192,9 @@ async def ask_reader(
         insufficient=answer_draft.insufficient,
         insufficient_note=answer_draft.insufficient_note,
         conflicts=conflicts,
+        main_type=answer_draft.main_type,
+        info_nature=answer_draft.info_nature,
+        save_recommended=not answer_draft.insufficient and len(citations) >= 2,
         provider=provider,
         model=model,
         is_fallback=is_fallback,
@@ -279,8 +284,8 @@ async def save_answer_as_candidate(
         candidate_kind=CANDIDATE_KIND_RECOMMENDED,
         title=request.title,
         content=request.content,
-        main_type="knowledge",
-        info_nature=None,
+        main_type=request.main_type or "knowledge",
+        info_nature=request.info_nature,
         applicable_condition=None,
         note=None,
         evidence_refs=json.dumps(evidence_refs, ensure_ascii=False),
@@ -289,5 +294,8 @@ async def save_answer_as_candidate(
         status=CANDIDATE_PENDING,
     )
     db.add(candidate)
+    await db.flush()
+    await route_source(db, source.id)
+    await route_relations(db, source.id)
     await db.flush()
     return candidate_out(candidate)

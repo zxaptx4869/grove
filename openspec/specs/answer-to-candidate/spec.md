@@ -26,15 +26,26 @@ TBD - created by archiving change add-reader-agent-with-citations. Update Purpos
 - **THEN** 请求失败（404），不创建任何数据
 
 ### Requirement: 回答转 Candidate
-系统 MUST 把编辑后的回答创建为待采纳 Candidate，归属该虚拟 Source；Candidate 的证据 MUST 引用被引用 Entry 的原始 Source 证据（attachment 与原文片段）；候选进入确认台，等待用户确认后走既有归档流程。
+系统 MUST 把编辑后的回答创建为待采纳 Candidate，归属该虚拟 Source；Candidate 的主类型与信息性质 MUST 使用 AI 推荐值（推荐为空时主类型默认 knowledge）；Candidate 的证据 MUST 引用被引用 Entry 的原始 Source 证据（attachment 与原文片段）；候选进入确认台，等待用户确认后走既有归档流程。
 
 #### Scenario: 候选进入确认台
 - **WHEN** 回答保存成功
-- **THEN** 创建待采纳 Candidate，证据引用原始 Source 的 attachment 与原文片段
+- **THEN** 创建待采纳 Candidate，使用 AI 推荐的主类型与信息性质，证据引用原始 Source 的 attachment 与原文片段
 
 #### Scenario: 不直接写入 Entry
 - **WHEN** 回答被保存为候选
 - **THEN** 不创建或修改任何正式 Entry，正式归档仍由用户确认后完成
+
+### Requirement: 保存后目录推荐与关系判断
+系统 MUST 在创建 Candidate 后执行与普通采集候选一致的目录推荐与关系判断：为候选推荐目录节点并判断与已有 Entry 的关系；结果 MUST 落库并在确认台可见。
+
+#### Scenario: 保存候选带目录推荐
+- **WHEN** 回答保存成功
+- **THEN** 候选获得目录节点推荐与关系判断结果，确认台可查看
+
+#### Scenario: 无合适目录
+- **WHEN** 目录推荐无法匹配现有节点
+- **THEN** 候选标记为「暂无合适位置」并可建议新节点
 
 ### Requirement: 引用校验
 系统 MUST 在保存请求中校验引用的 `entry_id` / `source_id` 属于当前 Workspace 与项目；非法或越权引用 MUST 使请求失败（400），不创建数据。
@@ -42,4 +53,3 @@ TBD - created by archiving change add-reader-agent-with-citations. Update Purpos
 #### Scenario: 非法引用被拒绝
 - **WHEN** 保存请求包含不属于当前项目或 Workspace 的引用
 - **THEN** 请求失败（400），不创建任何数据
-
