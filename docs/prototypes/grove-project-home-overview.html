@@ -1,0 +1,486 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>知林 Grove · 项目首页全景卡原型</title>
+  <style>
+    :root {
+      --g-border: #dfe7e2;
+      --g-muted: #6b7a72;
+      --g-surface: #ffffff;
+      --g-soft: #f4f8f5;
+      --g-green: #2f7d4f;
+      --g-green-soft: #e7f2ec;
+      --g-text: #17201b;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: -apple-system, BlinkMacSystemFont, "PingFang SC", "Microsoft YaHei", sans-serif;
+      color: var(--g-text);
+      background: #fbfdfc;
+      height: 100vh;
+      overflow: hidden;
+    }
+    .shell { display: grid; grid-template-columns: 216px minmax(0, 1fr); height: 100vh; }
+    .sidebar {
+      display: flex;
+      flex-direction: column;
+      border-right: 1px solid var(--g-border);
+      background: #f6faf7;
+      min-height: 0;
+    }
+    .brand {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      height: 52px;
+      padding: 0 16px;
+      border-bottom: 1px solid var(--g-border);
+      font-weight: 650;
+      font-size: 14px;
+    }
+    .brand i {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      width: 26px;
+      height: 26px;
+      border-radius: 6px;
+      background: var(--g-green);
+      color: #fff;
+      font-style: normal;
+      font-weight: 700;
+      font-size: 13px;
+    }
+    .nav { padding: 10px 8px; }
+    .nav-item {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      min-height: 36px;
+      padding: 0 10px;
+      border-radius: 6px;
+      color: var(--g-muted);
+      font-size: 13px;
+      cursor: pointer;
+    }
+    .nav-item:hover { background: var(--g-soft); color: var(--g-text); }
+    .nav-item.active { background: var(--g-green-soft); color: var(--g-green); font-weight: 600; }
+    .nav-label { font-size: 11px; color: var(--g-muted); padding: 14px 10px 6px; }
+    .main { display: flex; flex-direction: column; min-width: 0; min-height: 0; }
+    .topbar { height: 52px; border-bottom: 1px solid var(--g-border); background: var(--g-surface); }
+    .content { flex: 1; min-height: 0; overflow-y: auto; padding: 22px 26px 30px; }
+    .page-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; margin-bottom: 18px; }
+    .page-head h1 { font-size: 22px; font-weight: 650; margin: 0; }
+    .page-head .sub { color: var(--g-muted); font-size: 14px; margin-top: 4px; }
+    .badge { display: inline-block; padding: 1px 8px; border-radius: 999px; background: var(--g-green-soft); color: var(--g-green); font-size: 12px; }
+    .actions { display: flex; gap: 8px; }
+    .btn {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      height: 32px;
+      padding: 0 12px;
+      border: 1px solid var(--g-border);
+      border-radius: 6px;
+      background: var(--g-surface);
+      color: var(--g-text);
+      font-size: 13px;
+      cursor: pointer;
+    }
+    .btn:hover { background: var(--g-soft); }
+    .btn.primary { background: var(--g-green); border-color: var(--g-green); color: #fff; }
+    .btn.primary:hover { background: #256b43; }
+    .home-grid { display: grid; grid-template-columns: minmax(0, 1.7fr) minmax(240px, 0.8fr); gap: 18px; }
+    .card { background: var(--g-surface); border: 1px solid var(--g-border); border-radius: 8px; padding: 16px; }
+    .card-title { display: flex; align-items: center; justify-content: space-between; font-size: 12px; color: var(--g-muted); margin-bottom: 8px; }
+    .card-title .more { color: var(--g-green); cursor: pointer; }
+    .map-box { position: relative; display: flex; align-items: center; justify-content: center; min-height: 360px; }
+    svg { display: block; max-width: 100%; max-height: 380px; }
+    .arc { cursor: pointer; transition: opacity 0.12s ease; }
+    .arc.dim { opacity: 0.25; }
+    .arc-label { font-size: 10px; fill: #f3faf6; font-weight: 550; pointer-events: none; user-select: none; }
+    .metrics { display: flex; flex-direction: column; gap: 10px; }
+    .metric {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      min-height: 52px;
+      padding: 0 12px;
+      border: 1px solid var(--g-border);
+      border-radius: 6px;
+      cursor: pointer;
+    }
+    .metric:hover { background: var(--g-soft); }
+    .metric .label { font-size: 12px; color: var(--g-muted); }
+    .metric .value { font-size: 18px; font-weight: 650; }
+    .metric .value .unit { font-size: 11px; color: var(--g-muted); font-weight: 400; margin-left: 2px; }
+    .metric .go { color: var(--g-muted); font-size: 12px; }
+    .metric.hot { border-color: #e0b64a; background: #fffaf0; }
+    .bottom-cards { margin-top: 18px; }
+    .goal-line { display: flex; align-items: center; gap: 10px; }
+    .goal-line .text { min-width: 0; flex: 1; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-size: 13px; color: var(--g-muted); }
+    .goal-line .edit { color: var(--g-green); font-size: 12px; cursor: pointer; flex-shrink: 0; }
+    .ai-summary { margin-top: 12px; border-top: 1px solid var(--g-border); padding-top: 12px; }
+    .ai-summary .head { display: flex; align-items: center; gap: 8px; font-size: 13px; font-weight: 600; cursor: pointer; }
+    .ai-summary .head .chevron { transition: transform 0.15s ease; color: var(--g-muted); }
+    .ai-summary.open .head .chevron { transform: rotate(90deg); }
+    .ai-summary .body { display: none; margin-top: 10px; font-size: 13px; line-height: 1.8; color: var(--g-muted); }
+    .ai-summary.open .body { display: block; }
+    #tooltip {
+      position: fixed;
+      z-index: 20;
+      max-width: 260px;
+      display: none;
+      background: #17201b;
+      color: #fff;
+      border-radius: 6px;
+      padding: 8px 10px;
+      font-size: 12px;
+      line-height: 1.5;
+      box-shadow: 0 6px 18px rgba(0, 0, 0, 0.18);
+      pointer-events: none;
+    }
+    #toast {
+      position: fixed;
+      left: 50%;
+      bottom: 24px;
+      transform: translateX(-50%);
+      display: none;
+      background: #17201b;
+      color: #fff;
+      border-radius: 6px;
+      padding: 8px 14px;
+      font-size: 12px;
+      box-shadow: 0 6px 18px rgba(0, 0, 0, 0.18);
+      z-index: 30;
+    }
+    .hint { font-size: 11px; color: var(--g-muted); margin-top: 8px; }
+  </style>
+</head>
+<body>
+  <div class="shell">
+    <aside class="sidebar">
+      <div class="brand"><i>G</i>知林 Grove</div>
+      <div class="nav">
+        <div class="nav-item active">项目</div>
+        <div class="nav-item">收集箱</div>
+        <div class="nav-item">搜索</div>
+      </div>
+      <div class="nav-label">最近项目</div>
+      <div class="nav">
+        <div class="nav-item active">房子装修</div>
+        <div class="nav-item">找工作</div>
+        <div class="nav-item">新疆旅行</div>
+      </div>
+      <div class="nav-label" style="margin-top:auto">项目</div>
+      <div class="nav">
+        <div class="nav-item active">项目首页</div>
+        <div class="nav-item">知识空间</div>
+        <div class="nav-item">确认台</div>
+        <div class="nav-item">采集与来源</div>
+        <div class="nav-item">AI 阅读</div>
+      </div>
+    </aside>
+
+    <main class="main">
+      <div class="topbar"></div>
+      <div class="content">
+        <header class="page-head">
+          <div>
+            <h1>房子装修 <span class="badge">进行中</span></h1>
+            <p class="sub">完成新家装修 · 按空间和施工阶段整理知识与经验</p>
+          </div>
+          <div class="actions">
+            <button class="btn">采集到项目</button>
+            <button class="btn">思维导图</button>
+            <button class="btn primary">进入知识空间</button>
+          </div>
+        </header>
+
+        <div class="home-grid">
+          <section class="card">
+            <div class="card-title">
+              <span>知识全景</span>
+              <span class="more" onclick="toast('跳转全屏知识全景（原型示意）')">放大查看 ›</span>
+            </div>
+            <div class="map-box" id="map-box"></div>
+            <p class="hint">扇区宽度 = 知识量（直接 + 后代）· hover 查看明细 · 点击扇区定位知识空间节点</p>
+          </section>
+
+          <aside class="metrics">
+            <div class="metric" onclick="toast('进入知识空间（原型示意）')">
+              <span class="label">目录节点</span>
+              <span class="value">23<span class="unit">个</span></span>
+              <span class="go">›</span>
+            </div>
+            <div class="metric" onclick="toast('进入知识空间（原型示意）')">
+              <span class="label">正式知识</span>
+              <span class="value">31<span class="unit">条</span></span>
+              <span class="go">›</span>
+            </div>
+            <div class="metric hot" onclick="toast('跳转确认台（原型示意）')">
+              <span class="label">待确认候选</span>
+              <span class="value">5<span class="unit">条</span></span>
+              <span class="go">›</span>
+            </div>
+            <div class="metric" onclick="toast('最近整理（原型示意）')">
+              <span class="label">最近整理</span>
+              <span class="value">3<span class="unit">天前</span></span>
+              <span class="go">›</span>
+            </div>
+          </aside>
+        </div>
+
+        <section class="card bottom-cards">
+          <div class="goal-line">
+            <span class="label" style="font-size:12px;color:var(--g-muted)">项目目标</span>
+            <span class="text">完成新家装修：先定总预算，再按空间规划、施工、家电三条主线整理知识……</span>
+            <span class="edit">编辑</span>
+          </div>
+          <div class="ai-summary" id="ai-summary">
+            <div class="head" onclick="document.getElementById('ai-summary').classList.toggle('open')">
+              <span class="chevron">›</span>AI 摘要
+            </div>
+            <div class="body">
+              项目围绕「完成新家装修」进行，目前知识集中在空间规划（18 条）与施工（16 条），
+              家电分支较薄；近期新增集中在施工验收与洗烘设备，下一步可补齐空调新风与厨房电器的整理。
+            </div>
+          </div>
+        </section>
+      </div>
+    </main>
+  </div>
+
+  <div id="tooltip"></div>
+  <div id="toast"></div>
+
+  <script>
+    'use strict'
+
+    /* ---------------- 示例数据（与知识全景原型同源） ---------------- */
+    const DATA = {
+      name: '房子装修',
+      direct: [
+        { title: '先定总预算，再按空间分项', type: '方法' },
+        { title: '工期预估按工种排队', type: '知识' },
+      ],
+      children: [
+        {
+          name: '空间规划',
+          direct: [{ title: '无主灯布局先确定使用场景', type: '方法' }],
+          children: [
+            { name: '客厅', direct: [
+              { title: '窗帘盒应预留电机检修空间', type: '参数' },
+              { title: '沙发与电视墙间距参考 3–3.5m', type: '参数' },
+            ], children: [] },
+            { name: '厨房', direct: [{ title: '台面动线按取-洗-切-炒排布', type: '方法' }], children: [] },
+            { name: '卧室', direct: [{ title: '衣柜深度建议 ≥600mm', type: '参数' }], children: [] },
+            { name: '动线', direct: [{ title: '家务动线避免穿过客厅核心区', type: '方法' }], children: [] },
+          ],
+        },
+        {
+          name: '施工',
+          direct: [],
+          children: [
+            { name: '防水', direct: [
+              { title: '闭水试验至少 24 小时', type: '提醒' },
+              { title: '防水层允许局部空鼓需复验', type: '知识' },
+            ], children: [] },
+            { name: '水电', direct: [{ title: '水电改造要在封槽前完成验收', type: '提醒' }], children: [] },
+            { name: '木工', direct: [], children: [] },
+            { name: '油漆', direct: [], children: [] },
+          ],
+        },
+        {
+          name: '家电',
+          direct: [],
+          children: [
+            { name: '洗烘设备', direct: [
+              { title: '晶蕾烘干使用时需要手动勾选', type: '提醒' },
+              { title: '洗烘叠放需核对总高度与散热空间', type: '参数' },
+            ], children: [] },
+            { name: '厨房电器', direct: [], children: [] },
+            { name: '空调新风', direct: [], children: [] },
+          ],
+        },
+      ],
+    }
+
+    let uid = 0
+    function prepare(node, ancestors, path) {
+      const id = ++uid
+      node.id = id
+      node.ancestors = ancestors
+      node.path = path
+      node.directCount = node.direct.length
+      node.children.forEach((child) =>
+        prepare(child, ancestors.concat(node), path.concat(node.name)),
+      )
+      node.subtreeCount =
+        node.directCount + node.children.reduce((sum, child) => sum + child.subtreeCount, 0)
+      return node
+    }
+    prepare(DATA, [], [])
+
+    function subtreeDepth(node) {
+      return node.children.reduce((max, child) => Math.max(max, subtreeDepth(child) + 1), 0)
+    }
+
+    /* ---------------- 旭日图渲染（零依赖手写几何） ---------------- */
+    const SIZE = 640
+    const CX = SIZE / 2
+    const CY = SIZE / 2
+    const PALETTE = ['#256b43', '#2f7d4f', '#4b9a6a', '#7fbf9b', '#9fd4b6', '#c3e4d1']
+    let RING = 96
+    let hoverPath = null
+
+    const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg')
+    svg.setAttribute('viewBox', `0 0 ${SIZE} ${SIZE}`)
+    svg.setAttribute('width', 480)
+    svg.setAttribute('height', 480)
+    document.getElementById('map-box').prepend(svg)
+
+    function polar(cx, cy, r, angle) {
+      return [cx + r * Math.cos(angle), cy + r * Math.sin(angle)]
+    }
+    function arcPath(r0, r1, a0, a1) {
+      const large = a1 - a0 > Math.PI ? 1 : 0
+      const [x0, y0] = polar(CX, CY, r0, a0)
+      const [x1, y1] = polar(CX, CY, r0, a1)
+      const [x2, y2] = polar(CX, CY, r1, a1)
+      const [x3, y3] = polar(CX, CY, r1, a0)
+      return [
+        `M ${x0} ${y0}`,
+        `A ${r0} ${r0} 0 ${large} 1 ${x1} ${y1}`,
+        `L ${x2} ${y2}`,
+        `A ${r1} ${r1} 0 ${large} 0 ${x3} ${y3}`,
+        'Z',
+      ].join(' ')
+    }
+    function fullCirclePath(r) {
+      const [x0, y0] = polar(CX, CY, r, 0)
+      const [x1, y1] = polar(CX, CY, r, Math.PI)
+      return `M ${x0} ${y0} A ${r} ${r} 0 1 1 ${x1} ${y1} A ${r} ${r} 0 1 1 ${x0} ${y0} Z`
+    }
+
+    function slice(node, start, span, depth) {
+      const total = Math.max(node.subtreeCount, 1)
+      const r0 = depth * RING
+      const r1 = (depth + 1) * RING
+      const color = PALETTE[Math.min(depth, PALETTE.length - 1)]
+      appendArc(node, r0, r1, start, start + span, color, depth)
+      const childSpan = span - (span * node.directCount) / total
+      if (childSpan > 0 && node.children.length > 0) {
+        const childTotal = Math.max(
+          node.children.reduce((sum, child) => sum + child.subtreeCount, 0),
+          1,
+        )
+        let childStart = start + (span - childSpan)
+        node.children.forEach((child) => {
+          const part = (childSpan * child.subtreeCount) / childTotal
+          slice(child, childStart, part, depth + 1)
+          childStart += part
+        })
+      }
+    }
+
+    function appendArc(node, r0, r1, a0, a1, color, depth) {
+      if (a1 - a0 < 0.002) return
+      const g = document.createElementNS('http://www.w3.org/2000/svg', 'g')
+      const path = document.createElementNS('http://www.w3.org/2000/svg', 'path')
+      const full = a1 - a0 >= Math.PI * 2 - 0.001
+      path.setAttribute(
+        'd',
+        full
+          ? r0 === 0
+            ? fullCirclePath(r1)
+            : `${fullCirclePath(r1)} ${fullCirclePath(r0)}`
+          : arcPath(r0, r1, a0, a1),
+      )
+      if (full) path.setAttribute('fill-rule', 'evenodd')
+      path.setAttribute('fill', color)
+      path.setAttribute('stroke', '#ffffff')
+      path.setAttribute('stroke-width', 1)
+      path.classList.add('arc')
+      path.dataset.nodeId = String(node.id)
+      path.addEventListener('mouseenter', () => {
+        hoverPath = node.ancestors.map((n) => n.id).concat(node.id)
+        refresh()
+        showTooltip(node)
+      })
+      path.addEventListener('mousemove', (event) => moveTooltip(event))
+      path.addEventListener('mouseleave', () => {
+        hoverPath = null
+        hideTooltip()
+        refresh()
+      })
+      path.addEventListener('click', () => toast(`定位「${node.name}」：跳转知识空间对应节点（原型示意）`))
+      g.appendChild(path)
+
+      const span = a1 - a0
+      const midR = (r0 + r1) / 2
+      const arcLength = midR * span
+      const isHovered = hoverPath && hoverPath.includes(node.id)
+      if (arcLength > 26 && span > (isHovered ? 0.04 : 0.1)) {
+        const [lx, ly] = polar(CX, CY, midR, (a0 + a1) / 2)
+        const maxChars = Math.max(2, Math.min(8, Math.floor(arcLength / 7)))
+        const text = document.createElementNS('http://www.w3.org/2000/svg', 'text')
+        text.setAttribute('x', lx)
+        text.setAttribute('y', ly + 3)
+        text.setAttribute('text-anchor', 'middle')
+        text.setAttribute('class', 'arc-label')
+        text.textContent = node.name.length > maxChars ? node.name.slice(0, maxChars) : node.name
+        text.style.fill = depth >= 4 ? '#1f5137' : '#f3faf6'
+        g.appendChild(text)
+      }
+      svg.appendChild(g)
+    }
+
+    function render() {
+      while (svg.firstChild) svg.removeChild(svg.firstChild)
+      RING = Math.max(24, Math.floor((SIZE / 2 - 12) / (subtreeDepth(DATA) + 1)))
+      slice(DATA, 0, Math.PI * 2, 0)
+    }
+
+    function refresh() {
+      const arcs = svg.querySelectorAll('path.arc')
+      arcs.forEach((path) => path.classList.remove('dim', 'hl'))
+      arcs.forEach((path) => {
+        const nodeId = Number(path.dataset.nodeId)
+        if (hoverPath && !hoverPath.includes(nodeId)) path.classList.add('dim')
+        else if (hoverPath) path.classList.add('hl')
+      })
+    }
+
+    function showTooltip(node) {
+      const tip = document.getElementById('tooltip')
+      tip.style.display = 'block'
+      tip.innerHTML = `
+        <strong>${node.name}</strong>
+        <div style="color:#bcd8c8">${node.path.concat(node.name).join(' / ')}</div>
+        <div>直接 ${node.directCount} · 后代 ${node.subtreeCount - node.directCount} · 合计 ${node.subtreeCount}</div>
+      `
+    }
+    function moveTooltip(event) {
+      const tip = document.getElementById('tooltip')
+      tip.style.left = `${event.clientX + 14}px`
+      tip.style.top = `${event.clientY + 14}px`
+    }
+    function hideTooltip() {
+      document.getElementById('tooltip').style.display = 'none'
+    }
+    function toast(message) {
+      const box = document.getElementById('toast')
+      box.textContent = message
+      box.style.display = 'block'
+      clearTimeout(toast.timer)
+      toast.timer = setTimeout(() => (box.style.display = 'none'), 1800)
+    }
+
+    render()
+  </script>
+</body>
+</html>
