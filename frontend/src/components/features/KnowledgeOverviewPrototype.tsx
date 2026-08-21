@@ -16,7 +16,7 @@ import {
 import { queryKeys } from '@/lib/queryKeys'
 
 const PROJECT_STATUSES: ProjectStatus[] = ['active', 'paused', 'completed', 'archived']
-const SIZE = 620
+const SIZE = 720
 const CX = SIZE / 2
 const CY = SIZE / 2
 const PALETTE = ['#256b43', '#2f7d4f', '#4b9a6a', '#7fbf9b', '#9fd4b6', '#c3e4d1']
@@ -214,22 +214,24 @@ export function KnowledgeOverviewPrototype() {
         {...handlers}
       />,
     )
-    // 直接知识：扇区起始处的深色楔形
+    // 直接知识：扇区起始处的深色圆点数字标记（不参与双色切分）
     if (node.directCount > 0) {
-      const directSpan = (span * node.directCount) / total
+      const markerR = Math.max(4, ringHeight * 0.16)
+      const markerAngle = start + Math.min(span * 0.15, 0.05)
+      const [mx, my] = polar(CX, CY, (r0 + r1) / 2, markerAngle)
       parts.push(
-        <path
-          key={`${node.id}-direct`}
-          d={arcPath(r0, r1, start, start + directSpan)}
-          fill={DIRECT_COLOR}
-          stroke="#ffffff"
-          strokeWidth={1}
-          className={baseClass}
-          aria-label={`${node.name} 直接知识 ${node.directCount} 条`}
-          {...handlers}
-        />,
+        <g key={`${node.id}-direct-marker`} className="pointer-events-none">
+          <circle cx={mx} cy={my} r={markerR} fill={DIRECT_COLOR} />
+          <text
+            x={mx}
+            y={my + 3}
+            textAnchor="middle"
+            className="select-none fill-white text-[8px] font-semibold"
+          >
+            {node.directCount}
+          </text>
+        </g>,
       )
-      cursor += directSpan
     }
 
     const childSpan = span - (span * node.directCount) / total
@@ -371,12 +373,11 @@ export function KnowledgeOverviewPrototype() {
       </header>
 
       <div className="grid min-h-0 flex-1 grid-cols-[minmax(0,1fr)_320px]">
-        <div className="relative min-w-0 overflow-hidden p-4">
+        <div className="relative flex min-h-0 min-w-0 items-center justify-center overflow-hidden p-2">
           <svg
-            className="mx-auto block"
-            width={SIZE}
-            height={SIZE}
+            className="block h-full w-full"
             viewBox={`0 0 ${SIZE} ${SIZE}`}
+            preserveAspectRatio="xMidYMid meet"
           >
             {slices}
           </svg>
@@ -395,7 +396,7 @@ export function KnowledgeOverviewPrototype() {
             </span>
             <span className="flex items-center gap-1">
               <i className="size-2 rounded-full bg-[#1f5137]" />
-              直接知识
+              直接知识条数
             </span>
             <span>扇区宽度 = 子树知识量</span>
           </div>
