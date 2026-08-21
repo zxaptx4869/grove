@@ -433,7 +433,7 @@ function SaveAnswerDialog({
             disabled={saving || !title.trim() || !content.trim()}
             onClick={() => onConfirm(title.trim(), content.trim())}
           >
-            {saving ? '保存中…' : '保存为候选'}
+            {saving ? '正在分析目录与重复…' : '保存为候选'}
           </Button>
         </DialogFooter>
       </DialogContent>
