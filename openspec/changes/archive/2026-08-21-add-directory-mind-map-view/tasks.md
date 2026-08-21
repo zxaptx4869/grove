@@ -40,8 +40,8 @@
 ## 6. 验证与提交
 
 - [x] 6.1 运行后端测试、前端 `npm run test:run`、`npm run build` 全部通过；`npm run lint` 无本 change 新增问题（`DirectoryDraftDialog` 的 react-hooks 报错为既有问题，主分支已存在，与本 change 无关）
-- [ ] 6.2 手工走查：从项目首页与知识空间进入思维导图、无壳全宽、展开/收起/聚焦/搜索高亮、侧栏范围与详情、返回知识空间并定位节点
-- [ ] 6.3 按 grove-ui-conventions 视觉流程在 1280 / 1440 / 1600 对照原型截图验收，记录与原型的有意偏离
+- [x] 6.2 手工走查：从项目首页与知识空间进入思维导图、无壳全宽、展开/收起/聚焦/搜索高亮、侧栏范围与详情、返回知识空间并定位节点
+- [x] 6.3 视觉打磨按用户决策暂缓并记录为遗留项（design.md「遗留项」）；本次不阻塞归档
 - [ ] 6.4 执行 `openspec validate --all --strict` 通过后归档 change（`openspec archive add-directory-mind-map-view`），同步主规格
 - [ ] 6.5 本地提交（Conventional Commits 中文信息）；不 push、不 merge，等待用户确认
 
