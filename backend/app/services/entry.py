@@ -310,9 +310,11 @@ async def list_entries_by_node(
     node_id: int,
     scope: str = "direct",
 ) -> list[Entry]:
-    """返回某项目某节点下的 Entry（直接或严格后代）。"""
+    """返回某项目某节点下的 Entry（仅本节点、严格后代或包含子树）。"""
     if scope == "descendants":
         node_ids = await _descendant_node_ids(db, project_id, node_id)
+    elif scope == "subtree":
+        node_ids = [node_id, *await _descendant_node_ids(db, project_id, node_id)]
     else:
         node_ids = [node_id]
     result = await db.execute(

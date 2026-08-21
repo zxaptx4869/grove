@@ -158,8 +158,8 @@ async def list_node_entries(
     workspace: CurrentWorkspace,
     scope: str = "direct",
 ) -> list[EntryOut]:
-    """返回某项目某节点下的 Entry。"""
-    if scope not in {"direct", "descendants"}:
+    """返回某项目某节点下的 Entry（仅本节点、严格后代或包含子树）。"""
+    if scope not in {"direct", "descendants", "subtree"}:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="无效的知识范围")
     project = await db.get(Project, project_id)
     if project is None or project.workspace_id != workspace.id:

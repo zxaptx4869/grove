@@ -1,9 +1,9 @@
 ## 1. 后端：Entry 读取新增 subtree 范围
 
-- [ ] 1.1 `backend/app/services/entry.py` 的 `list_entries_by_node` 支持 `scope="subtree"`：节点 id 集合为本节点加全部严格后代，复用 `_descendant_node_ids` 实现
-- [ ] 1.2 更新按节点读取 Entry 的接口校验与文档注释（`backend/app/api/projects.py` 的 `entries` 端点），`scope` 接受 `direct | descendants | subtree`
-- [ ] 1.3 新增或补充后端测试：`subtree` 返回本节点直接 Entry 与严格后代直接 Entry、不含无关节点，越权项目返回 404
-- [ ] 1.4 运行后端相关测试（`bash scripts/backend-test.sh` 或等价命令）确认通过
+- [x] 1.1 `backend/app/services/entry.py` 的 `list_entries_by_node` 支持 `scope="subtree"`：节点 id 集合为本节点加全部严格后代，复用 `_descendant_node_ids` 实现
+- [x] 1.2 更新按节点读取 Entry 的接口校验与文档注释（`backend/app/api/projects.py` 的 `entries` 端点），`scope` 接受 `direct | descendants | subtree`
+- [x] 1.3 新增或补充后端测试：`subtree` 返回本节点直接 Entry 与严格后代直接 Entry、不含无关节点，越权项目返回 404
+- [x] 1.4 运行后端相关测试（`bash scripts/backend-test.sh` 或等价命令）确认通过
 
 ## 2. 前端基础：视图、入口与无壳
 

@@ -172,7 +172,7 @@ async def test_edit_entry(client: httpx.AsyncClient) -> None:
 
 @pytest.mark.asyncio
 async def test_list_entries_by_scope(client: httpx.AsyncClient) -> None:
-    """按目录浏览应区分仅本节点与仅后代。"""
+    """按目录浏览应区分仅本节点、仅后代与包含子树。"""
     await _register(client)
     project = await _create_project(client)
     parent = await _create_node(client, project["id"], "施工")
@@ -198,16 +198,53 @@ async def test_list_entries_by_scope(client: httpx.AsyncClient) -> None:
             params={"scope": "descendants"},
         )
     ).json()
+    subtree = (
+        await client.get(
+            f"/api/projects/{project['id']}/nodes/{parent['id']}/entries",
+            params={"scope": "subtree"},
+        )
+    ).json()
     child_descendants = (
         await client.get(
             f"/api/projects/{project['id']}/nodes/{child['id']}/entries",
             params={"scope": "descendants"},
         )
     ).json()
+    child_subtree = (
+        await client.get(
+            f"/api/projects/{project['id']}/nodes/{child['id']}/entries",
+            params={"scope": "subtree"},
+        )
+    ).json()
+    invalid_scope = await client.get(
+        f"/api/projects/{project['id']}/nodes/{parent['id']}/entries",
+        params={"scope": "unknown"},
+    )
 
     assert [entry["node_id"] for entry in direct] == [parent["id"]]
     assert [entry["node_id"] for entry in descendants] == [child["id"]]
+    assert {entry["node_id"] for entry in subtree} == {parent["id"], child["id"]}
     assert child_descendants == []
+    assert [entry["node_id"] for entry in child_subtree] == [child["id"]]
+    assert invalid_scope.status_code == 400
+
+
+@pytest.mark.asyncio
+async def test_list_entries_subtree_foreign_project_404(client: httpx.AsyncClient) -> None:
+    """其他 Workspace 用户按 subtree 读取项目 Entry 应返回 404。"""
+    await _register(client)
+    project = await _create_project(client)
+    node = await _create_node(client, project["id"], "施工")
+
+    transport = httpx.ASGITransport(app=create_app())
+    async with httpx.AsyncClient(transport=transport, base_url="http://test") as other:
+        await _register(other)
+        response = await other.get(
+            f"/api/projects/{project['id']}/nodes/{node['id']}/entries",
+            params={"scope": "subtree"},
+        )
+
+    assert response.status_code == 404
 
 
 @pytest.mark.asyncio
