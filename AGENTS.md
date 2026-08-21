@@ -24,6 +24,7 @@
 - 技术栈（2026-08-12 锁定）：后端 FastAPI + Pydantic v2 + async SQLAlchemy 2 + Alembic；前端 React 19 + TypeScript + Vite + Tailwind 4 + shadcn/ui + TanStack Query；数据库开发 SQLite、生产 MySQL 8。
 - 后端 Python ≥3.12；依赖管理用 backend/pyproject.toml；格式与静态检查用 ruff。
 - 环境变量统一走 pydantic-settings，密钥类配置只放占位键，`backend/.env.example` 提供模板，不得提交 `.env`。
+- 开发环境后端以 `cd backend && .venv/bin/uvicorn app.main:app --reload` 启动（改代码自动重载）；改 `.env` 或安装依赖后仍需手动重启；新增或修改后端端点后先 `curl` 验证（预期 401/200，而非 404）再进入走查；生产环境不使用 `--reload`。
 - Grove Web 是桌面知识整理工作台，从 1024px 视口宽度开始支持完整业务流程；低于该宽度时只显示电脑访问提示，不实现手机 Web 业务界面。
 - 提交信息用中文、遵循 Conventional Commits 风格（feat/fix/docs/chore/refactor）。
 - 前端服务端状态查询默认即时（TanStack Query `staleTime: 0`，在 `main.tsx` 全局默认）；只有明确静态且昂贵的查询才在各自 `useQuery` 显式设置更长 `staleTime`，并注明缓存理由。后台 Worker 或跨页面变更的数据不得依赖长缓存。
