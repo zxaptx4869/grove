@@ -119,12 +119,16 @@
   }
 }
 
-/* 思维导图画布：低对比点阵背景，让节点与连线成为视觉主体。 */
+/* 思维导图画布：原型式线格背景，挂在滚动容器上保持固定、不随内容滚动。 */
 .mind-map-grid {
-  background-image: radial-gradient(
-    circle,
-    color-mix(in srgb, var(--muted-foreground) 45%, transparent) 1.5px,
-    transparent 1.5px
-  );
-  background-size: 26px 26px;
+  background-image: linear-gradient(
+      color-mix(in srgb, var(--muted-foreground) 26%, transparent) 1px,
+      transparent 1px
+    ),
+    linear-gradient(
+      90deg,
+      color-mix(in srgb, var(--muted-foreground) 26%, transparent) 1px,
+      transparent 1px
+    );
+  background-size: 28px 28px;
 }
