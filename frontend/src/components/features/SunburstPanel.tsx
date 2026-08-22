@@ -171,11 +171,6 @@ export function SunburstPanel({
   const fullDepth = projectRoot ? subtreeDepth(projectRoot) : 0
   const ringHeight = Math.max(18, Math.floor((SIZE / 2 - 14) / (fullDepth + 1)))
 
-  function fitViewBox(node: SunNode): ViewBox {
-    const radius = ringHeight * (subtreeDepth(node) + 1)
-    return { x: CX - radius, y: CY - radius, w: radius * 2, h: radius * 2 }
-  }
-
   const entries = useQuery({
     queryKey:
       selectedId === PROJECT_ROOT_ID
@@ -236,7 +231,7 @@ export function SunburstPanel({
   }
 
   function resetView() {
-    if (currentRoot) setView(fitViewBox(currentRoot))
+    setView({ x: 0, y: 0, w: SIZE, h: SIZE })
   }
 
   function drill(node: SunNode) {
@@ -246,7 +241,6 @@ export function SunburstPanel({
     }
     setRootId(next.id)
     setSelectedId(next.id)
-    setView(fitViewBox(next))
     setPinnedEntry(null)
     setPinnedPos(null)
   }

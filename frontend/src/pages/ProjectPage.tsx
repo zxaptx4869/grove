@@ -546,13 +546,12 @@ export function ProjectPage() {
           {isDirectoryView ? (
             <Button
               asChild
-              size="icon-sm"
+              size="sm"
               variant="outline"
-              title="知识全景"
-              aria-label="知识全景"
             >
               <Link to={`/projects/${id}?view=overview`}>
                 <ChartPie />
+                知识全景
               </Link>
             </Button>
           ) : null}
@@ -969,13 +968,12 @@ export function ProjectPage() {
                 <div className="flex items-center gap-1">
                   <Button
                     asChild
-                    size="icon-sm"
+                    size="sm"
                     variant="ghost"
-                    title="知识全景"
-                    aria-label="知识全景"
                   >
                     <Link to={`/projects/${id}?view=overview`}>
                       <ChartPie />
+                      知识全景
                     </Link>
                   </Button>
                   <Button asChild size="sm" variant="ghost">

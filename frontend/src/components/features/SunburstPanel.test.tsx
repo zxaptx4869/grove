@@ -140,8 +140,7 @@ describe('SunburstPanel', () => {
     fireEvent.click(screen.getByRole('button', { name: '放大' }))
     expect(svg?.getAttribute('viewBox')).not.toBe('0 0 720 720')
     fireEvent.click(screen.getByRole('button', { name: '适应窗口' }))
-    // 适应窗口回到项目根的圆适配 viewBox（环厚恒定）
-    expect(svg?.getAttribute('viewBox')).toBe('16 16 688 688')
+    expect(svg?.getAttribute('viewBox')).toBe('0 0 720 720')
   })
 
   it('空目录显示真实空态', async () => {
