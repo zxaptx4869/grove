@@ -285,7 +285,7 @@ export function SunburstPanel({
     const r1 = (depth + 1) * ringHeight
     const color = PALETTE[Math.min(depth, PALETTE.length - 1)]
     const dimmed = hoverIds != null && !hoverIds.includes(node.id)
-    const baseClass = `cursor-pointer transition-opacity duration-100 ${
+    const baseClass = `cursor-pointer outline-none transition-opacity duration-100 focus-visible:[stroke-width:2px] ${
       dimmed ? 'opacity-25' : 'opacity-100'
     }`
     const handlers = {
