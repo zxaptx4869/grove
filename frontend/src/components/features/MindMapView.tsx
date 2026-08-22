@@ -464,6 +464,7 @@ export function MindMapView({
 
   return (
     <div className="flex h-full min-h-0 flex-col">
+      {/* 独立模式保留用于兼容历史直链；正式入口已并入知识全景（view=overview&mode=mindmap） */}
       {!embedded ? (
         <header className="flex h-[52px] shrink-0 items-center justify-between gap-3 border-b px-4">
           <div className="flex min-w-0 items-center gap-2">

@@ -1,4 +1,13 @@
-import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
+import {
+  isValidElement,
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type ReactElement,
+  type ReactNode,
+} from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { Link } from 'react-router-dom'
 import { BookOpen, FolderInput, FolderTree, Network } from 'lucide-react'
@@ -234,16 +243,21 @@ export function SunburstPanel({
     setView({ x: 0, y: 0, w: SIZE, h: SIZE })
   }
 
-  function drill(node: SunNode) {
-    let next: SunNode = node
-    if (node.id === rootId) {
-      next = node.ancestors.at(-1) ?? projectRoot!
-    }
-    setRootId(next.id)
-    setSelectedId(next.id)
-    setPinnedEntry(null)
-    setPinnedPos(null)
-  }
+  const drill = useCallback(
+    (node: SunNode) => {
+      let next: SunNode = node
+      if (node.id === rootId) {
+        next = node.ancestors.at(-1) ?? projectRoot!
+      }
+      setRootId(next.id)
+      setSelectedId(next.id)
+      // 钻取后重置视图到完整画布，避免缩放/平移状态下钻到视口外
+      setView({ x: 0, y: 0, w: SIZE, h: SIZE })
+      setPinnedEntry(null)
+      setPinnedPos(null)
+    },
+    [rootId, projectRoot],
+  )
 
   function pinEntry(entry: EntryPayload, event: React.MouseEvent<HTMLElement>) {
     setSelectedId(entry.node_id)
@@ -258,7 +272,13 @@ export function SunburstPanel({
     setPreviewPos({ x: rect.left, y: rect.top })
   }
 
-  function renderSlices(node: SunNode, start: number, span: number, depth: number): ReactNode[] {
+  const renderSlices = useCallback(
+    function renderSlices(
+      node: SunNode,
+      start: number,
+      span: number,
+      depth: number,
+    ): ReactNode[] {
     const parts: ReactNode[] = []
     const total = Math.max(node.subtreeCount, 1)
     const r0 = depth * ringHeight
@@ -297,6 +317,15 @@ export function SunburstPanel({
         stroke="#ffffff"
         strokeWidth={1}
         className={baseClass}
+        tabIndex={0}
+        role="button"
+        aria-label={`${node.name}（直接 ${node.directCount} 条，合计 ${node.subtreeCount} 条）`}
+        onKeyDown={(event) => {
+          if (event.key === 'Enter' || event.key === ' ') {
+            event.preventDefault()
+            drill(node)
+          }
+        }}
         {...handlers}
       />,
     )
@@ -337,8 +366,17 @@ export function SunburstPanel({
         </text>,
       )
     }
-    return parts
-  }
+      return parts
+    },
+    [hoverIds, ringHeight, drill],
+  )
+
+  // 扇区只在根节点或 hover 高亮变化时重建，避免每次 mousemove 全量重算
+  const activeRoot = currentRoot ?? projectRoot
+  const slices = useMemo(
+    () => (activeRoot ? renderSlices(activeRoot, 0, Math.PI * 2, 0) : []),
+    [activeRoot, renderSlices],
+  )
 
   if (tree.isLoading) {
     return (
@@ -374,9 +412,10 @@ export function SunburstPanel({
     )
   }
 
-  const activeRoot = currentRoot ?? projectRoot
-  const slices = renderSlices(activeRoot, 0, Math.PI * 2, 0)
-  const totalSlices = slices.length
+  const displayRoot = currentRoot ?? projectRoot
+  const totalSlices = slices.filter(
+    (item): item is ReactElement => isValidElement(item) && item.type === 'path',
+  ).length
   const overCap = totalSlices > MAX_SLICES
 
   return (
@@ -392,7 +431,7 @@ export function SunburstPanel({
           <Button size="sm" variant="outline" onClick={resetView}>
             适应窗口
           </Button>
-          {activeRoot !== projectRoot ? (
+          {displayRoot !== projectRoot ? (
             <div className="flex min-w-0 items-center gap-1 text-caption text-muted-foreground">
               <button
                 type="button"
@@ -401,7 +440,7 @@ export function SunburstPanel({
               >
                 项目根
               </button>
-              {activeRoot.ancestors.map((ancestor) => (
+              {displayRoot.ancestors.map((ancestor) => (
                 <span key={ancestor.id} className="flex min-w-0 items-center gap-1">
                   <span className="shrink-0">/</span>
                   <button
@@ -414,7 +453,7 @@ export function SunburstPanel({
                 </span>
               ))}
               <span className="shrink-0">/</span>
-              <span className="truncate text-foreground">{activeRoot.name}</span>
+              <span className="truncate text-foreground">{displayRoot.name}</span>
             </div>
           ) : null}
           {overCap ? (
@@ -462,7 +501,7 @@ export function SunburstPanel({
         >
           <p className="text-caption text-muted-foreground">目录大纲</p>
           <div className="mt-1 max-h-[34%] min-h-0 overflow-y-auto rounded-md border p-1.5">
-            {activeRoot !== projectRoot ? (
+            {displayRoot !== projectRoot ? (
               <button
                 type="button"
                 className="flex w-full items-center gap-1 rounded-md px-2 py-1 text-left text-body-sm text-muted-foreground hover:bg-muted"
@@ -471,11 +510,11 @@ export function SunburstPanel({
                 ← 项目根
               </button>
             ) : null}
-            {activeRoot.children.map((child) => (
+            {displayRoot.children.map((child) => (
               <OutlineRow
                 key={child.id}
                 node={child}
-                depth={activeRoot === projectRoot ? 0 : 1}
+                depth={displayRoot === projectRoot ? 0 : 1}
                 selectedId={selectedId}
                 onSelect={drill}
               />
