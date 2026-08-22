@@ -122,8 +122,10 @@ describe('SunburstPanel', () => {
     const aside = within(await screen.findByRole('complementary', { name: '全景侧栏' }))
     fireEvent.click(aside.getByRole('button', { name: /空间规划/ }))
 
-    expect(await screen.findByText('在思维导图中查看')).toBeInTheDocument()
-    const bridge = screen.getByRole('button', { name: /在思维导图中查看/ })
+    expect(
+      await screen.findByRole('button', { name: '在思维导图中查看' }),
+    ).toBeInTheDocument()
+    const bridge = screen.getByRole('button', { name: '在思维导图中查看' })
     fireEvent.click(bridge)
     expect(onOpenInMindMap).toHaveBeenCalledWith(2)
   })
@@ -138,7 +140,8 @@ describe('SunburstPanel', () => {
     fireEvent.click(screen.getByRole('button', { name: '放大' }))
     expect(svg?.getAttribute('viewBox')).not.toBe('0 0 720 720')
     fireEvent.click(screen.getByRole('button', { name: '适应窗口' }))
-    expect(svg?.getAttribute('viewBox')).toBe('0 0 720 720')
+    // 适应窗口回到项目根的圆适配 viewBox（环厚恒定）
+    expect(svg?.getAttribute('viewBox')).toBe('16 16 688 688')
   })
 
   it('空目录显示真实空态', async () => {

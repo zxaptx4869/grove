@@ -712,13 +712,14 @@ export function MindMapView({
                 <>
                   <Button
                     asChild
-                    size="sm"
+                    size="icon-sm"
                     variant="ghost"
-                    className="mt-2 w-full justify-start px-2"
+                    className="mt-2"
+                    title="在知识空间中打开"
+                    aria-label="在知识空间中打开"
                   >
                     <Link to={`/projects/${projectId}?view=directory&node=${selectedNode.id}`}>
                       <FolderInput />
-                      在知识空间中打开
                     </Link>
                   </Button>
                   <label className="mt-4 flex cursor-pointer items-center justify-between rounded-md border px-3 py-2.5">

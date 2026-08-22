@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { Link } from 'react-router-dom'
-import { BookOpen, FolderInput, FolderTree } from 'lucide-react'
+import { BookOpen, FolderInput, FolderTree, Network } from 'lucide-react'
 
 import { EntryPopover } from '@/components/features/EntryPopover'
 import { Button } from '@/components/ui/button'
@@ -167,10 +167,14 @@ export function SunburstPanel({
     if (selectedId === PROJECT_ROOT_ID) return projectRoot
     return findSunNode(sunRoots, selectedId)
   }, [selectedId, projectRoot, sunRoots])
-  const ringHeight = Math.max(
-    24,
-    Math.floor((SIZE / 2 - 14) / (currentRoot ? subtreeDepth(currentRoot) + 1 : 1)),
-  )
+  // 环厚按项目完整深度固定，钻取后环厚不变、圆自动适配，避免图忽大忽小
+  const fullDepth = projectRoot ? subtreeDepth(projectRoot) : 0
+  const ringHeight = Math.max(18, Math.floor((SIZE / 2 - 14) / (fullDepth + 1)))
+
+  function fitViewBox(node: SunNode): ViewBox {
+    const radius = ringHeight * (subtreeDepth(node) + 1)
+    return { x: CX - radius, y: CY - radius, w: radius * 2, h: radius * 2 }
+  }
 
   const entries = useQuery({
     queryKey:
@@ -232,7 +236,7 @@ export function SunburstPanel({
   }
 
   function resetView() {
-    setView({ x: 0, y: 0, w: SIZE, h: SIZE })
+    if (currentRoot) setView(fitViewBox(currentRoot))
   }
 
   function drill(node: SunNode) {
@@ -242,6 +246,7 @@ export function SunburstPanel({
     }
     setRootId(next.id)
     setSelectedId(next.id)
+    setView(fitViewBox(next))
     setPinnedEntry(null)
     setPinnedPos(null)
   }
@@ -483,22 +488,28 @@ export function SunburstPanel({
             ))}
           </div>
           {selectedNode && selectedNode.id !== PROJECT_ROOT_ID ? (
-            <>
+            <div className="mt-2 flex items-center gap-1">
               <Button
-                size="sm"
+                size="icon-sm"
                 variant="ghost"
-                className="mt-2 w-full justify-start px-2"
                 onClick={() => onOpenInMindMap(selectedNode.id)}
+                title="在思维导图中查看"
+                aria-label="在思维导图中查看"
               >
-                在思维导图中查看
+                <Network className="size-4" />
               </Button>
-              <Button asChild size="sm" variant="ghost" className="w-full justify-start px-2">
+              <Button
+                asChild
+                size="icon-sm"
+                variant="ghost"
+                title="在知识空间中打开"
+                aria-label="在知识空间中打开"
+              >
                 <Link to={`/projects/${projectId}?view=directory&node=${selectedNode.id}`}>
                   <FolderInput />
-                  在知识空间中打开
                 </Link>
               </Button>
-            </>
+            </div>
           ) : null}
           {selectedNode && selectedNode.id !== PROJECT_ROOT_ID ? (
             <label className="mt-4 flex cursor-pointer items-center justify-between rounded-md border px-3 py-2.5">
