@@ -135,7 +135,7 @@ describe('SunburstPanel', () => {
     await screen.findByRole('button', { name: '放大' })
     const svg = document.querySelector('svg')
     expect(svg?.getAttribute('viewBox')).toBe('0 0 720 720')
-    fireEvent.click(screen.getByRole('button', { name: '缩小' }))
+    fireEvent.click(screen.getByRole('button', { name: '放大' }))
     expect(svg?.getAttribute('viewBox')).not.toBe('0 0 720 720')
     fireEvent.click(screen.getByRole('button', { name: '适应窗口' }))
     expect(svg?.getAttribute('viewBox')).toBe('0 0 720 720')

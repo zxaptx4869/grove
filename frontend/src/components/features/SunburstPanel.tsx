@@ -135,6 +135,7 @@ export function SunburstPanel({
   const [previewPos, setPreviewPos] = useState<{ x: number; y: number } | null>(null)
   const [hoverIds, setHoverIds] = useState<number[] | null>(null)
   const [tooltip, setTooltip] = useState<TooltipState | null>(null)
+  const [includeSubtree, setIncludeSubtree] = useState(true)
   const [view, setView] = useState<ViewBox>({ x: 0, y: 0, w: SIZE, h: SIZE })
   const svgRef = useRef<SVGSVGElement | null>(null)
   const dragRef = useRef<{ x: number; y: number } | null>(null)
@@ -175,11 +176,19 @@ export function SunburstPanel({
     queryKey:
       selectedId === PROJECT_ROOT_ID
         ? queryKeys.projectEntries(projectId)
-        : queryKeys.nodeEntries(projectId, selectedId, 'direct'),
+        : queryKeys.nodeEntries(
+            projectId,
+            selectedId,
+            includeSubtree ? 'subtree' : 'direct',
+          ),
     queryFn: () =>
       selectedId === PROJECT_ROOT_ID
         ? fetchProjectEntries(projectId)
-        : fetchNodeEntries(projectId, selectedId, 'direct'),
+        : fetchNodeEntries(
+            projectId,
+            selectedId,
+            includeSubtree ? 'subtree' : 'direct',
+          ),
     enabled: Number.isFinite(projectId) && selectedNode != null,
   })
 
@@ -375,10 +384,10 @@ export function SunburstPanel({
     <div className="flex h-full min-h-0 flex-1">
       <div className="flex min-w-0 flex-1 flex-col">
         <div className="flex flex-wrap items-center gap-2 border-b px-4 py-2">
-          <Button size="sm" variant="outline" onClick={() => zoomAroundCenter(1.25)}>
+          <Button size="sm" variant="outline" onClick={() => zoomAroundCenter(0.8)}>
             放大
           </Button>
-          <Button size="sm" variant="outline" onClick={() => zoomAroundCenter(0.8)}>
+          <Button size="sm" variant="outline" onClick={() => zoomAroundCenter(1.25)}>
             缩小
           </Button>
           <Button size="sm" variant="outline" onClick={resetView}>
@@ -473,13 +482,6 @@ export function SunburstPanel({
               />
             ))}
           </div>
-          <div className="min-w-0">
-            <p className="text-caption text-muted-foreground">当前节点</p>
-            <h2 className="mt-0.5 truncate text-body font-[650]">{selectedNode?.name ?? ''}</h2>
-            <p className="mt-0.5 truncate text-caption text-muted-foreground">
-              {selectedNode?.path ?? ''}
-            </p>
-          </div>
           {selectedNode && selectedNode.id !== PROJECT_ROOT_ID ? (
             <>
               <Button
@@ -498,11 +500,32 @@ export function SunburstPanel({
               </Button>
             </>
           ) : null}
-          <p className="mt-4 text-caption text-muted-foreground">
-            {selectedId === PROJECT_ROOT_ID
-              ? '项目全部知识'
-              : `${selectedNode?.name ?? ''} · 直接知识 ${selectedNode?.directCount ?? 0} 条`}
-          </p>
+          {selectedNode && selectedNode.id !== PROJECT_ROOT_ID ? (
+            <label className="mt-4 flex cursor-pointer items-center justify-between rounded-md border px-3 py-2.5">
+              <span className="flex items-center gap-2">
+                <input
+                  type="checkbox"
+                  checked={includeSubtree}
+                  onChange={(event) => setIncludeSubtree(event.target.checked)}
+                  className="size-4"
+                />
+                <span>
+                  <span className="block text-body-sm font-medium">包含子树</span>
+                  <span className="block text-caption text-muted-foreground">
+                    共{' '}
+                    {includeSubtree
+                      ? selectedNode.subtreeCount
+                      : selectedNode.directCount}{' '}
+                    条正式知识
+                  </span>
+                </span>
+              </span>
+            </label>
+          ) : selectedNode ? (
+            <p className="mt-4 rounded-md border bg-muted/40 px-3 py-2.5 text-body-sm">
+              项目全部知识 · 共 {selectedNode.subtreeCount} 条
+            </p>
+          ) : null}
           <div className="mt-2 min-h-0 flex-1">
             {entries.isLoading ? (
               <p className="py-6 text-center text-caption text-muted-foreground">加载知识…</p>
