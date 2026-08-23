@@ -57,6 +57,7 @@ function GlobalNavItems() {
     <nav className="px-2 py-3" aria-label="全局导航">
       <NavLink
         to="/projects"
+        end
         className={({ isActive }) => `flex min-h-[38px] items-center gap-[9px] rounded-md px-2.5 text-body ${isActive ? 'bg-brand-soft font-semibold text-brand' : 'text-muted-foreground hover:bg-muted hover:text-foreground'}`}
       >
         <FolderKanban className="size-4" />项目
