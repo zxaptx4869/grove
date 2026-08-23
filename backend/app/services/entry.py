@@ -1,6 +1,7 @@
 """Entry 归档、编辑与证据服务。"""
 
 import json
+import logging
 
 from fastapi import HTTPException, status
 from sqlalchemy import delete, func, select
@@ -30,6 +31,8 @@ from app.schemas.entry import (
     RevisionSuggestionRequest,
 )
 from app.services.project_context import schedule_refresh
+
+logger = logging.getLogger(__name__)
 
 MAX_ENTRY_VERSIONS = 10
 _REQUIRED_FIELDS = ("title", "content", "main_type")
@@ -531,10 +534,12 @@ def _revision_suggestion_out(
     error: str | None,
 ) -> RevisionSuggestionOut:
     """把 Agent 回复组装为响应。"""
+    reply = _normalize_revision_reply(reply)
     draft = None
     if reply.draft is not None:
         draft = RevisionDraftPayload(**reply.draft.model_dump())
     return RevisionSuggestionOut(
+        intent=reply.intent,
         reply_text=reply.reply_text,
         draft=draft,
         provider=provider,
@@ -542,6 +547,18 @@ def _revision_suggestion_out(
         is_fallback=is_fallback,
         error=error,
     )
+
+
+def _normalize_revision_reply(reply: RevisionReplyDraft) -> RevisionReplyDraft:
+    """按显式意图归一化：discuss 忽略草稿；propose 缺草稿降级为 discuss。"""
+    if reply.intent == "discuss":
+        if reply.draft is not None:
+            logger.warning("修订建议意图为 discuss 却携带草稿，丢弃草稿")
+            reply.draft = None
+    elif reply.draft is None:
+        logger.warning("修订建议意图为 propose 却缺少草稿，降级为 discuss")
+        reply.intent = "discuss"
+    return reply
 
 
 async def generate_revision_suggestion(

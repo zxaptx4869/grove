@@ -152,6 +152,7 @@ class ApplyRevisionSuggestionRequest(BaseModel):
 class RevisionSuggestionOut(BaseModel):
     """AI 修订建议生成/调整结果。"""
 
+    intent: Literal["discuss", "propose"]
     reply_text: str
     draft: RevisionDraftPayload | None = None
     provider: str | None

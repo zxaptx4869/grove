@@ -676,6 +676,7 @@ export interface RevisionDraftPayload {
 }
 
 export interface RevisionSuggestionPayload {
+  intent: 'discuss' | 'propose'
   reply_text: string
   draft: RevisionDraftPayload | null
   provider: string | null

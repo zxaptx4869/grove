@@ -126,7 +126,7 @@ export function RevisionSuggestionDialog({
         { role: 'assistant' as const, content: result.reply_text },
       ]
       setMessages(nextMessages)
-      if (result.draft) {
+      if (result.intent === 'propose' && result.draft) {
         setDraft(result.draft)
         setForm(formFromDraft(result.draft, entry))
       }
@@ -159,7 +159,7 @@ export function RevisionSuggestionDialog({
         { role: 'user', content: text },
         { role: 'assistant', content: result.reply_text },
       ])
-      if (result.draft) {
+      if (result.intent === 'propose' && result.draft) {
         setDraft(result.draft)
         setForm(formFromDraft(result.draft, entry))
       }

@@ -173,6 +173,7 @@ describe('RevisionSuggestionDialog', () => {
         })
         if (url.pathname.endsWith('/revision-suggestion')) {
           return jsonResponse({
+            intent: 'propose',
             reply_text: '我建议补充验收标准。',
             draft,
             provider: 'llm',
@@ -182,7 +183,24 @@ describe('RevisionSuggestionDialog', () => {
           })
         }
         if (url.pathname.endsWith('/revision-suggestion/refine')) {
+          const body = init?.body ? JSON.parse(String(init.body)) : null
+          if (body?.instruction === '补充下沉式卫生间差异') {
+            return jsonResponse({
+              intent: 'propose',
+              reply_text: '已补上下沉式卫生间差异。',
+              draft: {
+                ...draft,
+                content: '闭水试验至少持续 24 小时，下沉式卫生间以没过防水层为准',
+                change_summary: '补充验收标准与下沉式差异',
+              },
+              provider: 'llm',
+              model: 'test',
+              is_fallback: false,
+              error: null,
+            })
+          }
           return jsonResponse({
+            intent: 'discuss',
             reply_text: '这个更多是营销噱头，建议保持现状。',
             draft: null,
             provider: 'llm',
@@ -223,6 +241,14 @@ describe('RevisionSuggestionDialog', () => {
       screen.getByDisplayValue('闭水试验至少持续 24 小时，蓄水深度不低于 20mm'),
     ).toBeInTheDocument()
 
+    await user.type(screen.getByLabelText('修订指令'), '补充下沉式卫生间差异')
+    await user.click(screen.getByRole('button', { name: /发送/ }))
+
+    await screen.findByText('已补上下沉式卫生间差异。')
+    expect(
+      screen.getByDisplayValue('闭水试验至少持续 24 小时，下沉式卫生间以没过防水层为准'),
+    ).toBeInTheDocument()
+
     await user.click(screen.getByRole('button', { name: '应用' }))
 
     await waitFor(() => expect(onApplied).toHaveBeenCalled())
@@ -230,6 +256,6 @@ describe('RevisionSuggestionDialog', () => {
       (call) => call.method === 'POST' && call.path.endsWith('/revision-suggestion/apply'),
     )
     expect(applyCall).toBeDefined()
-    expect(JSON.parse(applyCall!.body!).change_summary).toBe('补充验收标准')
+    expect(JSON.parse(applyCall!.body!).change_summary).toBe('补充验收标准与下沉式差异')
   })
 })

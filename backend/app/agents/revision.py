@@ -30,6 +30,7 @@ class RevisionDraft(BaseModel):
 class RevisionReplyDraft(BaseModel):
     """一轮修订建议的结构化结果。"""
 
+    intent: Literal["discuss", "propose"] = "discuss"
     reply_text: str = ""
     draft: RevisionDraft | None = None
 
@@ -42,14 +43,15 @@ REVISION_SYSTEM_PROMPT = """你是 Grove 的修订建议 Agent，为单条已确
 2. 输出始终是候选草稿（draft），不得声称已修改正式 Entry；正式修改由用户确认后执行。
 3. draft 给出建议的最终字段值；未建议修改的字段留空（表示保持现状）；
    change_summary 用一句话说明改了什么；reason 说明为什么建议这样改。
-4. 如果没有实质改进空间，draft 返回 null，reply_text 直接说明无需修改。
-5. 对话调整时：reply_text 是对用户的自然回复，说明理解与处理结果，
-   不得提及内部字段或输出格式（如 draft、JSON、null、结构等）。
-6. 用户提问、求证、讨论、质疑或分析时，只返回 reply_text，draft 必须为 null，
-   不得为了给出内容而强行生成修订草稿。
-7. 只有用户明确要求修改（补充、精简、改写法、加条件、修正内容等）时，
-   才返回更新后的完整草稿；未涉及部分保持原值。
-8. 首次对话同样适用以上规则：首条指令是讨论或提问时不返回草稿。"""
+4. 每次回复必须显式二选一：
+   - intent=discuss：用户提问、求证、讨论、质疑或分析时使用，只返回 reply_text，
+     draft 必须为 null，不得强行生成草稿；
+   - intent=propose：用户明确要求修改（补充、精简、改写法、加条件、修正内容等）时使用，
+     返回更新后的完整草稿；未涉及部分保持原值。
+5. 如果用户要求修改但没有实质改进空间，intent=discuss，reply_text 直接说明无需修改。
+6. 首次对话同样适用以上规则：首条指令是讨论或提问时 intent=discuss。
+7. reply_text 是对用户的自然回复，说明理解与处理结果，不得提及内部字段或输出格式
+   （如 intent、draft、JSON、null、结构等）。"""
 
 
 def _format_entry_context(entry: Entry) -> str:

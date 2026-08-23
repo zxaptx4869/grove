@@ -5,8 +5,10 @@ import uuid
 import httpx
 import pytest
 
+from app.agents.revision import RevisionDraft, RevisionReplyDraft
 from app.main import create_app
 from app.processing import worker
+from app.services.entry import _normalize_revision_reply
 
 
 @pytest.fixture
@@ -292,6 +294,7 @@ async def test_revision_suggestion_offline_fallback(
 
     assert response.status_code == 200
     data = response.json()
+    assert data["intent"] == "discuss"
     assert data["is_fallback"] is True
     assert data["draft"] is None
     assert data["error"]
@@ -304,7 +307,35 @@ async def test_revision_suggestion_offline_fallback(
         },
     )
     assert refine.status_code == 200
+    assert refine.json()["intent"] == "discuss"
     assert refine.json()["is_fallback"] is True
+
+
+def test_normalize_revision_reply_discuss_drops_draft() -> None:
+    """意图为 discuss 却携带草稿时应丢弃草稿。"""
+    reply = RevisionReplyDraft(
+        intent="discuss",
+        reply_text="讨论回复",
+        draft=RevisionDraft(title="建议标题"),
+    )
+
+    normalized = _normalize_revision_reply(reply)
+
+    assert normalized.intent == "discuss"
+    assert normalized.draft is None
+
+
+def test_normalize_revision_reply_propose_without_draft_downgrades() -> None:
+    """意图为 propose 却缺少草稿时应降级为 discuss。"""
+    reply = RevisionReplyDraft(
+        intent="propose",
+        reply_text="回复",
+        draft=None,
+    )
+
+    normalized = _normalize_revision_reply(reply)
+
+    assert normalized.intent == "discuss"
 
 
 @pytest.mark.asyncio
