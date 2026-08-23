@@ -1,7 +1,7 @@
 # workspace-isolation Specification
 
 ## Purpose
-TBD - created by archiving change add-user-auth. Update Purpose after archive.
+强制用户数据按 Workspace 隔离，提供当前 Workspace 依赖注入；任何跨 Workspace 的读写都视为缺陷。
 ## Requirements
 ### Requirement: Workspace 模型与注册自动创建
 系统 MUST 提供 `Workspace` 模型；用户注册成功时 MUST 自动创建其默认 Workspace，并将用户登记为该 Workspace 的 owner。`workspace_members` 关系 MUST 使用多对多建模，为未来推广预留（v1 每个用户仅有一个空间，无切换/邀请功能）。
@@ -23,4 +23,3 @@ TBD - created by archiving change add-user-auth. Update Purpose after archive.
 #### Scenario: 用户只能看到自己空间的数据
 - **WHEN** 用户 A 与用户 B 各自注册（各自拥有独立 Workspace）并查询业务数据
 - **THEN** A 的结果不包含 B 空间的数据，B 亦然；A 无法通过构造参数访问 B 的空间数据
-

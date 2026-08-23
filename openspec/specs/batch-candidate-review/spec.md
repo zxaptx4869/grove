@@ -1,7 +1,7 @@
 # batch-candidate-review Specification
 
 ## Purpose
-TBD - created by archiving change add-batch-candidate-review. Update Purpose after archive.
+支持跨 Source 的候选批量审阅，按推荐目录分组批量确认、改目录或拒绝；高风险与关系建议候选自动进入精审。
 ## Requirements
 ### Requirement: 项目批量候选列表
 

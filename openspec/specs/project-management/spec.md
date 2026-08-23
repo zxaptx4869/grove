@@ -1,7 +1,7 @@
 # project-management Specification
 
 ## Purpose
-TBD - created by archiving change add-projects. Update Purpose after archive.
+定义项目生命周期（进行中/暂停/已完成/已归档）、创建、编辑、删除与恢复，以及默认空目录的项目起点。
 ## Requirements
 ### Requirement: 多项目归属与列表
 系统 MUST 提供 `Project` 模型并归属到 Workspace；已登录用户 MUST 只能看到自己 Workspace 内的项目；跨 Workspace 的项目 MUST 不可见。项目列表 MUST 支持按进行中、暂停、已完成、已归档筛选，已归档项目默认不出现在非归档列表中。

@@ -1,7 +1,7 @@
 # processing-task Specification
 
 ## Purpose
-TBD - created by archiving change add-processing-task-pipeline. Update Purpose after archive.
+定义 Source 处理任务的状态机、异步执行、失败重试与幂等，支撑从采集到候选的自动化处理流水线。
 ## Requirements
 ### Requirement: ProcessingTask 与 Source 关联
 系统 MUST 提供 `ProcessingTask` 模型并归属一个 Source；一个 Source 在同一时间至多有一个处理任务；任务 MUST 记录状态、步骤、错误与重试次数。
@@ -61,4 +61,3 @@ TBD - created by archiving change add-processing-task-pipeline. Update Purpose a
 #### Scenario: 处理中不可重复触发
 - **WHEN** 任务处于处理中
 - **THEN** 再次触发不创建重复执行
-

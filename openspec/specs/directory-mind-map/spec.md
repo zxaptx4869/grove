@@ -1,7 +1,7 @@
 # directory-mind-map Specification
 
 ## Purpose
-TBD - created by archiving change add-directory-mind-map-view. Update Purpose after archive.
+提供思维导图模式的目录浏览与空间回忆，支持节点展开收起、聚焦子树、搜索高亮与节点知识侧栏，帮助用户按空间位置回顾知识。
 ## Requirements
 ### Requirement: 思维导图项目级入口
 系统 SHALL 将思维导图作为知识全景视图（`view=overview`）内的模式提供（`mode=mindmap`），不再提供独立 `view=mindmap` 入口；模式切换 SHALL 位于知识全景顶部「旭日图 | 思维导图」；处于思维导图模式时 SHALL 隐藏应用壳左侧栏，画布占满窗口宽度，顶部极简阅读栏 SHALL 提供返回知识空间、项目名、阅读侧栏开关与模式切换；思维导图模式 SHALL 提供「查看全景」返回旭日图模式并保持当前节点。
@@ -144,4 +144,3 @@ TBD - created by archiving change add-directory-mind-map-view. Update Purpose af
 #### Scenario: 节点无知识
 - **WHEN** 选中节点的范围内没有正式知识
 - **THEN** 侧栏显示真实空态，不展示其他节点的知识
-

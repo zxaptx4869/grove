@@ -1,7 +1,7 @@
 # product-shell Specification
 
 ## Purpose
-TBD - created by archiving change rebuild-product-foundation-experience. Update Purpose after archive.
+定义认证工作流、全局应用壳与导航、桌面端小屏阻断边界，以及页面信息架构的入口与沉浸视图约定，确保桌面工作台 1024px 以上完整可用。
 ## Requirements
 ### Requirement: 认证工作流与全局应用壳
 前端 SHALL 提供安静、非营销式的登录与注册页面，表单使用一致的 52px 品牌栏、360px 桌面宽度、稳定顶部间距、22px/650 标题、36px 输入与按钮、字段间距和焦点状态；认证成功后进入统一的桌面应用壳。应用壳 SHALL 按原型的信息层级提供 216px 全局侧栏、52px 品牌栏与主顶栏、项目/收集箱/搜索全局导航、最近项目、账户入口和铺满剩余宽度的主内容区；从 1024px 到 1119px 时侧栏 SHALL 收窄为 184px。项目上下文 SHALL 提供可导航的项目首页和知识空间入口，并根据真实 URL 显示当前激活状态。未实现入口必须呈现不可用状态或不提供业务路由，不得以静态假数据冒充功能。

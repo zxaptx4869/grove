@@ -1,7 +1,7 @@
 # project-workflow Specification
 
 ## Purpose
-TBD - created by archiving change setup-project-foundation. Update Purpose after archive.
+定义仓库的代理工作守则、OpenSpec 工作流骨架、分支与提交约定，是代理协作与变更管理的工程基础。
 ## Requirements
 ### Requirement: 仓库提供代理工作守则
 仓库根目录 MUST 包含 `AGENTS.md`，其中 SHALL 写明三条产品铁律：AI 输出永远是候选、正式记录必须可溯源、数据按 Workspace 隔离；并 SHALL 说明 OpenSpec 工作流顺序（提案 → 规格 → 设计 → 任务 → 实施 → validate → sync specs → archive → commit）。

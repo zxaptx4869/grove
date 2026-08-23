@@ -1,7 +1,7 @@
 # source-management Specification
 
 ## Purpose
-TBD - created by archiving change add-source-and-attachment-foundation. Update Purpose after archive.
+定义 Source 与 Attachment 的采集、归属、展示与删除，以及未归属来源的管理与 Workspace 隔离。
 ## Requirements
 ### Requirement: Source 归属与 Workspace 隔离
 系统 MUST 提供 `Source` 模型并归属到 Workspace；Source MUST 可未归属 Project，或最多归属同一 Workspace 内的一个 Project；跨 Workspace 的 Source MUST 不可见。
@@ -154,4 +154,3 @@ Source MUST 有处理状态（等待处理 / 处理中 / 已完成 / 失败）�
 #### Scenario: 全部处理完成
 - **WHEN** Source 的全部候选都已是已采纳或已拒绝
 - **THEN** 该来源视为已处理，不再出现在待处理来源列表
-

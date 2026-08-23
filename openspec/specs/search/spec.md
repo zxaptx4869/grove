@@ -1,7 +1,7 @@
 # search Specification
 
 ## Purpose
-TBD - created by archiving change add-knowledge-browse-and-search. Update Purpose after archive.
+提供项目内与全局的关键词搜索，覆盖标题、内容、目录与来源摘要，并按相关度返回可追溯的正式 Entry 结果。
 ## Requirements
 ### Requirement: 关键词搜索字段与匹配
 系统 MUST 提供关键词搜索，命中 `Entry.title`、`Entry.content`、目录节点名称与说明，以及来源标题（`Source.title`）；匹配 MUST 使用大小写不敏感的子串匹配，并对用户输入中的 `%` 与 `_` 做转义，按字面匹配。
@@ -47,4 +47,3 @@ TBD - created by archiving change add-knowledge-browse-and-search. Update Purpos
 #### Scenario: 跳转项目知识空间
 - **WHEN** 用户点击一条全局搜索结果
 - **THEN** 页面跳转到该 Entry 所属项目的知识空间
-

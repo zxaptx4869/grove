@@ -1,7 +1,7 @@
 # directory-drafting Specification
 
 ## Purpose
-TBD - created by archiving change add-directory-agent-drafting. Update Purpose after archive.
+支撑与 AI 共创目录：问卷式澄清、候选树生成、对话调整、结构差异展示与确认应用，正式变更始终由用户确认。
 ## Requirements
 ### Requirement: Directory Draft 归属与活跃草稿
 系统 MUST 提供 `DirectoryDraft` 模型并归属一个 Project，每个 Project 至多有一份活跃草稿；草稿与草稿节点 MUST 按 Workspace/Project 隔离，跨 Workspace 读取 MUST 失败；草稿 MUST 包含 `kind`（`draft` 从零起草 / `expand` 节点拓展）与可选 `target_node_id`（仅 `expand` 使用，指向正式节点）；草稿 MUST 包含状态机（`drafting` / `awaiting_input` / `pending_confirm` / `confirmed` / `discarded`）与下一步动作（`clarify` / `generate`）。
@@ -133,4 +133,3 @@ TBD - created by archiving change add-directory-agent-drafting. Update Purpose a
 #### Scenario: 双栏布局
 - **WHEN** 用户打开候选树与对话
 - **THEN** 左侧展示候选树（可内联编辑），右侧展示对话消息与输入框
-

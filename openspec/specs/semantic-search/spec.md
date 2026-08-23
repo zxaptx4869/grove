@@ -1,7 +1,7 @@
 # semantic-search Specification
 
 ## Purpose
-TBD - created by archiving change add-semantic-retrieval. Update Purpose after archive.
+提供语义检索：确定性候选召回与文本模型语义重排，未配置密钥时明确降级并附带相关理由返回结果，供问答与相似推荐复用。
 ## Requirements
 ### Requirement: 语义检索对象与范围
 系统 MUST 只检索当前 Workspace 内的已确认 Entry；检索范围 MUST 支持指定项目内或当前 Workspace 全局；语义检索 MUST NOT 改变任何 Entry 的项目归属。
@@ -60,4 +60,3 @@ TBD - created by archiving change add-semantic-retrieval. Update Purpose after a
 #### Scenario: 越权项目 404
 - **WHEN** 用户请求语义搜索不属于当前 Workspace 的项目
 - **THEN** 请求失败（404），不返回任何数据
-

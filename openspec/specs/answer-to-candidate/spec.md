@@ -1,7 +1,7 @@
 # answer-to-candidate Specification
 
 ## Purpose
-TBD - created by archiving change add-reader-agent-with-citations. Update Purpose after archive.
+把 AI 阅读回答在确认前先编辑，保存为记录问题与回答原文的虚拟 Source 和待确认 Candidate，再进入既有确认流程。
 ## Requirements
 ### Requirement: 保存前可编辑
 系统 MUST 在用户保存回答时先展示编辑框，允许修改标题与内容后再确认；用户未确认前 MUST NOT 创建任何 Source 或 Candidate。

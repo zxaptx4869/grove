@@ -1,7 +1,7 @@
 # directory-node-expansion Specification
 
 ## Purpose
-TBD - created by archiving change add-directory-agent-node-expansion. Update Purpose after archive.
+支持对现有目录节点进行 AI 拓展，基于节点、子树与项目上下文生成完整目标子树草稿，展示新增/保留差异供用户确认后应用。
 ## Requirements
 ### Requirement: 节点拓展入口
 系统 MUST 在知识空间目录树节点的更多操作菜单与内容区（选中节点时）提供「AI 拓展」入口，MUST 由用户手动触发，MUST NOT 自动执行；发起时 MUST 校验目标节点属于当前 Workspace 的项目。项目已存在活跃草稿时，发起其他节点的拓展 MUST 先提示“将覆盖当前未应用的草稿”，用户确认后重开，未确认 MUST 保持原草稿不变。
@@ -89,4 +89,3 @@ TBD - created by archiving change add-directory-agent-node-expansion. Update Pur
 #### Scenario: 会话轮数上限
 - **WHEN** 拓展草稿会话轮数达到 30
 - **THEN** 后续消息被拒绝并提示重新发起
-

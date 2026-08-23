@@ -1,7 +1,7 @@
 # knowledge-overview Specification
 
 ## Purpose
-TBD - created by archiving change add-knowledge-overview. Update Purpose after archive.
+提供知识全景视图：旭日图全局结构浏览、钻取缩放、标签缩写策略，以及与思维导图模式的切换与跨模式联动。
 ## Requirements
 ### Requirement: 知识全景入口与模式切换
 系统 SHALL 提供项目级知识全景阅读视图（`view=overview`，无壳沉浸），默认展示旭日图模式；顶部 SHALL 提供「旭日图 | 思维导图」切换，思维导图模式由原独立 `view=mindmap` 并入，以 URL 参数 `mode=sunburst|mindmap` 表达；知识空间页头与项目首页 SHALL 提供「知识全景」入口，替代原「思维导图」入口，不保留双入口。
@@ -81,4 +81,3 @@ TBD - created by archiving change add-knowledge-overview. Update Purpose after a
 #### Scenario: 悬浮详情
 - **WHEN** 用户 hover 或点击知识条目
 - **THEN** 悬浮小窗预览或固定显示该条知识详情，可关闭
-

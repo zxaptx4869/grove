@@ -1,7 +1,7 @@
 # reader-qa Specification
 
 ## Purpose
-TBD - created by archiving change add-reader-agent-with-citations. Update Purpose after archive.
+基于已确认 Entry 提供节点与项目范围的带引用问答，冲突与知识不足可见，引用经应用层校验后返回。
 ## Requirements
 ### Requirement: 问答范围与 Workspace 隔离
 系统 MUST 支持节点阅读（当前节点及其子树）与项目阅读（整个项目）两种问答范围；问答 MUST 只读取当前 Workspace 内已确认的正式 Entry；越权项目或节点 MUST 失败（404），不暴露其他 Workspace 数据。

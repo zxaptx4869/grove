@@ -1,7 +1,7 @@
 # directory-selector Specification
 
 ## Purpose
-TBD - created by archiving change add-hierarchical-directory-selector. Update Purpose after archive.
+提供层级目录选择器，支持目录搜索、路径展示、节点过滤与单选，用于候选归档和 Entry 主目录归属选择。
 ## Requirements
 ### Requirement: 层级目录选择器
 
@@ -71,4 +71,3 @@ TBD - created by archiving change add-hierarchical-directory-selector. Update Pu
 
 - **WHEN** 用户在移动节点弹层中选择新父节点
 - **THEN** 候选树不包含被移动节点及其后代，并允许选择根目录
-

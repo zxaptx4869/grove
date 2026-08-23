@@ -1,7 +1,7 @@
 # node-tree Specification
 
 ## Purpose
-TBD - created by archiving change add-projects. Update Purpose after archive.
+定义项目目录树的结构、读取、创建、编辑、移动、排序与 Entry 计数，是知识空间浏览与归类的组织骨架。
 ## Requirements
 ### Requirement: 目录树读取
 系统 MUST 提供项目目录树的读取接口，返回按 `position` 顺序嵌套的多级节点树，并且每次读取都校验项目属于当前 Workspace。
@@ -123,4 +123,3 @@ TBD - created by archiving change add-projects. Update Purpose after archive.
 #### Scenario: 活跃草稿覆盖确认
 - **WHEN** 项目已有活跃草稿且用户发起其他节点的拓展
 - **THEN** 提示覆盖确认，确认前不改变现有草稿
-

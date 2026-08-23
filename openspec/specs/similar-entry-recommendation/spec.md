@@ -1,7 +1,7 @@
 # similar-entry-recommendation Specification
 
 ## Purpose
-TBD - created by archiving change add-semantic-retrieval. Update Purpose after archive.
+推荐同一项目内语义相关的其他正式 Entry 并排除自身，未配置密钥时降级返回确定性召回结果并附理由。
 ## Requirements
 ### Requirement: 同一项目内相似 Entry 推荐
 系统 MUST 为指定 Entry 推荐其所属项目内语义相关的其他正式 Entry；推荐结果 MUST 排除该 Entry 自身；范围 MUST 限定该 Entry 所属项目与当前 Workspace。
@@ -35,4 +35,3 @@ TBD - created by archiving change add-semantic-retrieval. Update Purpose after a
 #### Scenario: 越权 Entry 404
 - **WHEN** 用户请求的 Entry 不属于当前 Workspace
 - **THEN** 请求失败（404），不返回任何数据
-

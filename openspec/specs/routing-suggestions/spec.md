@@ -1,7 +1,7 @@
 # routing-suggestions Specification
 
 ## Purpose
-TBD - created by archiving change add-project-and-node-routing-suggestions. Update Purpose after archive.
+为 Source 推荐项目、为 Candidate 推荐真实目录节点与备选，并落库路由状态供确认台使用。
 ## Requirements
 ### Requirement: Source 项目推荐
 系统 MUST 在全局收集箱来源处理时为未归属来源生成推荐项目与推荐理由；推荐明确时 MUST 自动归属该项目；推荐不明确时 MUST 保持未归属；已归属项目的来源 MUST 直接使用当前项目，不调用 AI 猜测项目。

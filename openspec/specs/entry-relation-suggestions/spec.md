@@ -1,7 +1,7 @@
 # entry-relation-suggestions Specification
 
 ## Purpose
-TBD - created by archiving change add-entry-relation-suggestions. Update Purpose after archive.
+为候选判断与已有 Entry 的关系（新建/重复/补充/冲突），支持补充来源证据与应用修订草稿，冲突候选进入精审。
 ## Requirements
 ### Requirement: 项目内相似 Entry 检索
 

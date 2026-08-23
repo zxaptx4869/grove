@@ -1,7 +1,7 @@
 # candidate-review Specification
 
 ## Purpose
-TBD - created by archiving change add-source-review-workbench. Update Purpose after archive.
+提供按 Source 审阅的确认台，支持候选编辑后采纳、拒绝、跳过、新增节点归档，并与批量处理模式共享同一候选池。
 ## Requirements
 ### Requirement: Candidate 决策状态
 系统 MUST 支持 Candidate 状态为待采纳、已采纳、已拒绝；用户 MUST 能对候选执行采纳或拒绝；采纳 MUST 选择项目内目录节点并创建 Entry；已归档候选 MUST 锁定；已拒绝候选 SHALL 可重新打开为待采纳。

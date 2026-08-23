@@ -1,7 +1,7 @@
 # ai-provider Specification
 
 ## Purpose
-TBD - created by archiving change setup-project-foundation. Update Purpose after archive.
+管理每个 Workspace 的 AI Provider 配置与密钥，提供文本/视觉模型获取与连接测试，未配置密钥时回退离线确定性模型。
 ## Requirements
 ### Requirement: AI Provider 抽象接口
 后端 MUST 使用 PydanticAI 的 provider/client 体系提供模型访问能力；文本模型与视觉模型 MUST 通过统一服务层获取，业务代码 MUST NOT 直接持有第三方客户端；结构化输出 MUST 使用 Pydantic 模型定义。
@@ -92,4 +92,3 @@ AI 生成的任何抽取、候选或理解 MUST 标记为候选，不得直接�
 #### Scenario: 测试失败不覆盖配置
 - **WHEN** 测试连接失败
 - **THEN** 返回明确错误，保留已有配置与密钥，不静默清空
-

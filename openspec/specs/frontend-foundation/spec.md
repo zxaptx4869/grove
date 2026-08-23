@@ -1,7 +1,7 @@
 # frontend-foundation Specification
 
 ## Purpose
-TBD - created by archiving change setup-project-foundation. Update Purpose after archive.
+定义前端工程基线：构建链、样式令牌、基础组件、桌面工作台布局、小屏阻断边界与测试规范，支撑业务页面的一致实现。
 ## Requirements
 ### Requirement: 前端构建链
 前端 MUST 使用 Vite + React 19 + TypeScript；MUST 提供 `npm run dev` 与 `npm run build`，构建 MUST 成功产出静态产物。

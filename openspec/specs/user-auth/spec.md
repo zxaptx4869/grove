@@ -1,7 +1,7 @@
 # user-auth Specification
 
 ## Purpose
-TBD - created by archiving change add-user-auth. Update Purpose after archive.
+定义用户注册、登录、登出与会话管理，以及注册后默认 Workspace 的建立与当前用户依赖注入，保证请求可识别用户与隔离边界。
 ## Requirements
 ### Requirement: 用户注册
 系统 MUST 提供注册接口：用户提交账号（username）与密码后创建用户，账号 MUST 全局唯一；密码 MUST 使用 argon2id 哈希存储，不得明文保存；注册成功 MUST 自动创建会话（注册即登录）。
@@ -46,4 +46,3 @@ TBD - created by archiving change add-user-auth. Update Purpose after archive.
 #### Scenario: 已登录访问业务接口
 - **WHEN** 携带有效会话 Cookie 访问受保护接口
 - **THEN** 返回成功，且业务代码可获得当前用户
-

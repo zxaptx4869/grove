@@ -1,7 +1,7 @@
 # project-context Specification
 
 ## Purpose
-TBD - created by archiving change add-project-context-snapshot. Update Purpose after archive.
+生成并维护项目上下文快照，纳入项目说明、正式目录与已确认 Entry，支撑 Agent 理解与用户纠正。
 ## Requirements
 ### Requirement: Project Context 归属与 Workspace 隔离
 系统 MUST 提供 `ProjectContext` 模型并归属一个 Project；每个 Project 至多有一份上下文快照；读取、纠正与重新生成 MUST 校验 Project 属于当前 Workspace，跨 Workspace 的上下文 MUST 不可见。

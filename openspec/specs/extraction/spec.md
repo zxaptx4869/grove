@@ -1,7 +1,7 @@
 # extraction Specification
 
 ## Purpose
-TBD - created by archiving change add-organizing-agent-extraction. Update Purpose after archive.
+定义版本化 Extraction 与 Candidate 的结构、保存、读取、决策与证据引用，支撑整理闭环的运行与审计。
 ## Requirements
 ### Requirement: Extraction 归属与版本化
 系统 MUST 提供 `Extraction` 模型并归属一个 Source；一次处理尝试 MUST 生成一条 Extraction，记录模型、提示版本、结构化输出、错误与状态；历史 Extraction MUST 保留，不得被静默覆盖。
@@ -71,4 +71,3 @@ Candidate MUST 至少包含标题、核心内容、主类型、信息性质、�
 #### Scenario: 重试失败保留上一份
 - **WHEN** 对已有成功候选的 Source 重试但失败
 - **THEN** 上一份 active Extraction 及其 Candidate 保持不变
-

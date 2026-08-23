@@ -1,7 +1,7 @@
 # backend-foundation Specification
 
 ## Purpose
-TBD - created by archiving change setup-project-foundation. Update Purpose after archive.
+定义后端工程基础：应用工厂与配置、健康检查接口、数据库会话与迁移基线，为后续业务能力提供可验证的运行骨架。
 ## Requirements
 ### Requirement: 后端应用工厂与配置
 后端 MUST 提供 FastAPI 应用工厂 `create_app`；配置 MUST 使用 pydantic-settings，支持从环境变量与 `.env` 读取；`DATABASE_URL` 默认值 MUST 为 `sqlite+aiosqlite:///./grove.db`，生产环境 MUST 可切换为 MySQL 8 连接串。`.env.example` MUST 提供完整键位模板，`.env` 不得提交。
@@ -52,4 +52,3 @@ TBD - created by archiving change setup-project-foundation. Update Purpose after
 #### Scenario: 测试与 lint 全绿
 - **WHEN** 在 `backend/` 下执行 `pytest -q` 与 `ruff check .`
 - **THEN** 两条命令均成功退出且无失败项
-

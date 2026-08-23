@@ -333,6 +333,16 @@ export function DirectoryDraftDialog({
   const [thinking, setThinking] = useState(false)
   const [error, setError] = useState('')
   const [waitSeconds, setWaitSeconds] = useState(0)
+  // 打开/切换目标时重置加载态（渲染期派生状态模式，避免 effect 内同步 setState）
+  const openKey = `${open}:${projectId}:${mode}:${targetNode?.id ?? ''}`
+  const [previousOpenKey, setPreviousOpenKey] = useState<string | null>(null)
+  if (previousOpenKey !== openKey) {
+    setPreviousOpenKey(openKey)
+    if (open) {
+      setError('')
+      setLoading(true)
+    }
+  }
   const [removedIds, setRemovedIds] = useState<ReadonlySet<number>>(new Set())
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null)
   const lastDiffRef = useRef('')
@@ -383,8 +393,6 @@ export function DirectoryDraftDialog({
       stopPolling()
       return
     }
-    setError('')
-    setLoading(true)
     let cancelled = false
     async function openDraft() {
       let existing: DirectoryDraftPayload | null = null
@@ -610,13 +618,14 @@ export function DirectoryDraftDialog({
 
   const generating =
     loading || draft?.status === 'drafting'
+  const [previousGenerating, setPreviousGenerating] = useState(false)
+  if (generating !== previousGenerating) {
+    setPreviousGenerating(generating)
+    if (generating) setWaitSeconds(0)
+  }
 
   useEffect(() => {
-    if (!generating) {
-      setWaitSeconds(0)
-      return
-    }
-    setWaitSeconds(0)
+    if (!generating) return
     const timer = setInterval(() => setWaitSeconds((value) => value + 1), 1000)
     return () => clearInterval(timer)
   }, [generating])

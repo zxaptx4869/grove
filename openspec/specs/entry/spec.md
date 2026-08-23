@@ -1,7 +1,7 @@
 # entry Specification
 
 ## Purpose
-TBD - created by archiving change add-entry-and-provenance. Update Purpose after archive.
+定义正式知识 Entry：项目与目录归属、结构化字段、来源证据、采纳归档、编辑移动、版本历史与 AI 修订建议。
 ## Requirements
 ### Requirement: Entry 归属与主目录
 系统 MUST 提供 `Entry` 模型并归属一个 Project；Entry MUST 有一个主目录节点，且该节点 MUST 属于同一 Project；跨 Workspace 的 Entry MUST 不可见。
