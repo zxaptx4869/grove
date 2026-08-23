@@ -35,6 +35,7 @@ from app.schemas.entry import (
     EntryUpdate,
     EntryVersionOut,
     NewNodeArchiveRequest,
+    RevisionChatMessage,
     RevisionDraftPayload,
     RevisionRefineRequest,
     RevisionSuggestionOut,
@@ -45,6 +46,8 @@ from app.services.project_context import schedule_refresh
 logger = logging.getLogger(__name__)
 
 MAX_ENTRY_VERSIONS = 10
+MAX_REVISION_MESSAGES = 20
+MAX_REVISION_MESSAGE_CHARS = 2000
 _REQUIRED_FIELDS = ("title", "content", "main_type")
 _NULLABLE_FIELDS = ("info_nature", "applicable_condition", "note")
 
@@ -596,13 +599,18 @@ async def refine_revision_suggestion(
     request: RevisionRefineRequest,
 ) -> RevisionSuggestionOut:
     """基于完整对话历史与当前草稿继续调整修订建议。"""
+    messages = request.messages[-MAX_REVISION_MESSAGES:]
+    messages = [
+        RevisionChatMessage(role=message.role, content=message.content[:MAX_REVISION_MESSAGE_CHARS])
+        for message in messages
+    ]
     current = request.draft.model_dump(exclude_none=True) if request.draft else None
     reply, provider, model, is_fallback, error = await run_revision_agent(
         db,
         workspace_id,
         entry,
         request.instruction,
-        request.messages,
+        messages,
         current,
     )
     return _revision_suggestion_out(reply, provider, model, is_fallback, error)
@@ -632,12 +640,13 @@ async def _create_revision_source(
     project = await db.get(Project, entry.project_id)
     if project is None:
         return
-    title = f"AI 修订建议：{(entry.title or '').strip()[:80]}" or "AI 修订建议"
+    title_part = (entry.title or "").strip()[:80] or "未命名知识"
     source = Source(
         workspace_id=project.workspace_id,
         project_id=entry.project_id,
-        title=title[:255],
+        title=f"AI 修订建议：{title_part}"[:255],
         note=payload.instruction,
+        status="done",
     )
     db.add(source)
     await db.flush()

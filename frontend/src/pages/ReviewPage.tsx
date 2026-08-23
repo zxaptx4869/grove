@@ -823,6 +823,7 @@ export function ReviewPage() {
                         (draft.info_nature as ApplyRevisionPayload['info_nature']) ?? undefined,
                       applicable_condition: draft.applicable_condition ?? undefined,
                       note: draft.note ?? undefined,
+                      change_summary: draft.change_summary ?? undefined,
                     },
                   })
                 }}

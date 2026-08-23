@@ -296,6 +296,7 @@ export function ProjectPage() {
     queryClient.invalidateQueries({ queryKey: queryKeys.projectTree(id) })
     queryClient.invalidateQueries({ queryKey: ['search'] })
     queryClient.invalidateQueries({ queryKey: queryKeys.similarEntries(entryId) })
+    queryClient.invalidateQueries({ queryKey: queryKeys.entryVersions(entryId) })
   }
 
   const create = useGroveMutation({

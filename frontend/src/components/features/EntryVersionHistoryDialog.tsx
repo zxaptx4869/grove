@@ -114,6 +114,7 @@ export function EntryVersionHistoryDialog({
                       setSelectedId(version.id)
                       setConfirmRestoreId(null)
                     }}
+                    aria-pressed={selectedId === version.id}
                     className={`w-full rounded-md border px-3 py-2 text-left transition-colors ${
                       selectedId === version.id ? 'bg-brand-soft' : 'hover:bg-muted/40'
                     }`}

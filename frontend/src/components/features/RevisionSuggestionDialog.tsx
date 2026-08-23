@@ -355,7 +355,11 @@ export function RevisionSuggestionDialog({
           </div>
 
           <div className="flex min-h-0 flex-col">
-            <div className="min-h-0 flex-1 space-y-2 overflow-y-auto rounded-md border p-3">
+            <div
+              role="log"
+              aria-live="polite"
+              className="min-h-0 flex-1 space-y-2 overflow-y-auto rounded-md border p-3"
+            >
               {messages.length === 0 ? (
                 <p className="text-body-sm text-muted-foreground">
                   跟 AI 讨论这条知识，或直接说想怎么改；AI 只在提出修订时生成草稿。
