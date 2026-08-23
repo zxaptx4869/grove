@@ -6,14 +6,12 @@ import { toast } from 'sonner'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from '@/components/ui/dialog'
-import { Input } from '@/components/ui/input'
+  Sheet,
+  SheetContent,
+  SheetDescription,
+  SheetHeader,
+  SheetTitle,
+} from '@/components/ui/sheet'
 import { Textarea } from '@/components/ui/textarea'
 import {
   applyRevisionSuggestion,
@@ -56,7 +54,7 @@ function formFromDraft(
   }
 }
 
-/** AI 修订建议面板：一次性对话调整草稿，应用后结论沉淀为 Entry 版本。 */
+/** AI 修订建议右抽屉：左侧候选草稿、右侧一次性对话，应用后结论沉淀为 Entry 版本。 */
 export function RevisionSuggestionDialog({
   open,
   entry,
@@ -95,15 +93,15 @@ export function RevisionSuggestionDialog({
 
   const apply = useMutation({
     mutationFn: () => {
-      const current = form!
+      const currentForm = form!
       return applyRevisionSuggestion(entry!.id, {
-        title: current.title.trim(),
-        content: current.content.trim(),
-        main_type: current.main_type,
-        info_nature: current.info_nature.trim() || null,
-        applicable_condition: current.applicable_condition.trim() || null,
-        note: current.note.trim() || null,
-        change_summary: current.change_summary.trim() || null,
+        title: currentForm.title.trim(),
+        content: currentForm.content.trim(),
+        main_type: currentForm.main_type,
+        info_nature: currentForm.info_nature.trim() || null,
+        applicable_condition: currentForm.applicable_condition.trim() || null,
+        note: currentForm.note.trim() || null,
+        change_summary: currentForm.change_summary.trim() || null,
       })
     },
     onSuccess: (updated) => {
@@ -188,174 +186,219 @@ export function RevisionSuggestionDialog({
   )
 
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="sm:max-w-2xl">
-        <DialogHeader>
-          <DialogTitle>AI 修订建议</DialogTitle>
-          <DialogDescription>
-            {entry ? `针对「${entry.title}」· 对话关闭后不保存` : ''}
-          </DialogDescription>
-        </DialogHeader>
-        <div className="min-h-[260px] space-y-3 overflow-y-auto rounded-md border p-3">
-          {messages.length === 0 ? (
-            <p className="text-body-sm text-muted-foreground">
-              告诉 AI 想怎么调整，或直接生成草稿；之后可以继续对话打磨。
-            </p>
-          ) : (
-            messages.map((message, index) => (
-              <div
-                key={index}
-                className={`max-w-[85%] rounded-md px-3 py-2 text-body-sm ${
-                  message.role === 'user'
-                    ? 'ml-auto bg-brand-soft text-brand'
-                    : 'bg-muted/60 text-foreground'
-                }`}
-              >
-                {message.content}
+    <Sheet open={open} onOpenChange={onOpenChange}>
+      <SheetContent className="flex w-[min(960px,100vw)] max-w-none flex-col gap-0 p-0">
+        <SheetHeader className="border-b px-6 py-4">
+          <SheetTitle>AI 修订建议</SheetTitle>
+          <SheetDescription>
+            {entry
+              ? `针对「${entry.title}」· AI 只生成候选草稿，对话关闭后不保存`
+              : ''}
+          </SheetDescription>
+        </SheetHeader>
+
+        <div className="grid min-h-0 flex-1 grid-cols-2 gap-4 overflow-hidden px-6 py-4">
+          <div className="min-h-0 overflow-y-auto pr-1">
+            {entry ? (
+              <div className="rounded-md border bg-muted/30 p-3">
+                <p className="text-caption font-medium text-muted-foreground">
+                  当前内容（参考）
+                </p>
+                <h4 className="mt-1 text-body font-[650]">{entry.title}</h4>
+                <p className="mt-1 whitespace-pre-wrap text-body-sm leading-6">
+                  {entry.content}
+                </p>
               </div>
-            ))
-          )}
-          {busy ? (
-            <div className="max-w-[85%] rounded-md bg-muted/60 px-3 py-2 text-body-sm text-muted-foreground">
-              AI 思考中…
-            </div>
-          ) : null}
-        </div>
-        {error ? (
-          <div className="flex items-start gap-2 rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-body-sm text-amber-700">
-            <AlertTriangle className="mt-0.5 size-4 shrink-0" />
-            <span>{error}</span>
+            ) : null}
+            {form ? (
+              <div className="mt-3 space-y-3 rounded-md border border-brand/30 p-3">
+                <div className="flex items-center gap-2">
+                  <Badge className="bg-ai-candidate-soft text-ai-candidate">
+                    <Sparkles className="mr-1 size-3.5" />
+                    AI 候选草稿
+                  </Badge>
+                  {draft?.reason ? (
+                    <span className="text-caption text-muted-foreground">
+                      修订原因：{draft.reason}
+                    </span>
+                  ) : null}
+                </div>
+                <div className="space-y-1.5">
+                  <label htmlFor="revision-title" className="text-body-sm font-medium">
+                    标题
+                  </label>
+                  <Textarea
+                    id="revision-title"
+                    value={form.title}
+                    onChange={(event) => setForm({ ...form, title: event.target.value })}
+                    rows={1}
+                  />
+                </div>
+                <div className="space-y-1.5">
+                  <label htmlFor="revision-content" className="text-body-sm font-medium">
+                    核心内容
+                  </label>
+                  <Textarea
+                    id="revision-content"
+                    value={form.content}
+                    onChange={(event) => setForm({ ...form, content: event.target.value })}
+                    rows={8}
+                  />
+                </div>
+                <div className="grid grid-cols-2 gap-3">
+                  <div className="space-y-1.5">
+                    <label htmlFor="revision-type" className="text-body-sm font-medium">
+                      主类型
+                    </label>
+                    <select
+                      id="revision-type"
+                      className="h-9 w-full rounded-md border px-2 text-body-sm"
+                      value={form.main_type}
+                      onChange={(event) =>
+                        setForm({
+                          ...form,
+                          main_type: event.target.value as EntryPayload['main_type'],
+                        })
+                      }
+                    >
+                      {MAIN_TYPE_LABELS.map((item) => (
+                        <option key={item.value} value={item.value}>
+                          {item.label}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                  <div className="space-y-1.5">
+                    <label htmlFor="revision-nature" className="text-body-sm font-medium">
+                      信息性质
+                    </label>
+                    <Textarea
+                      id="revision-nature"
+                      value={form.info_nature}
+                      onChange={(event) =>
+                        setForm({ ...form, info_nature: event.target.value })
+                      }
+                      rows={1}
+                    />
+                  </div>
+                </div>
+                <div className="space-y-1.5">
+                  <label htmlFor="revision-condition" className="text-body-sm font-medium">
+                    适用条件
+                  </label>
+                  <Textarea
+                    id="revision-condition"
+                    value={form.applicable_condition}
+                    onChange={(event) =>
+                      setForm({ ...form, applicable_condition: event.target.value })
+                    }
+                    rows={2}
+                  />
+                </div>
+                <div className="space-y-1.5">
+                  <label htmlFor="revision-note" className="text-body-sm font-medium">
+                    补充说明
+                  </label>
+                  <Textarea
+                    id="revision-note"
+                    value={form.note}
+                    onChange={(event) => setForm({ ...form, note: event.target.value })}
+                    rows={2}
+                  />
+                </div>
+                <div className="space-y-1.5">
+                  <label htmlFor="revision-summary" className="text-body-sm font-medium">
+                    变更说明
+                  </label>
+                  <Textarea
+                    id="revision-summary"
+                    value={form.change_summary}
+                    onChange={(event) =>
+                      setForm({ ...form, change_summary: event.target.value })
+                    }
+                    rows={1}
+                  />
+                </div>
+              </div>
+            ) : busy ? (
+              <p className="mt-3 text-body-sm text-muted-foreground">AI 思考中…</p>
+            ) : (
+              <p className="mt-3 rounded-md border border-dashed p-3 text-body-sm text-muted-foreground">
+                生成后这里会出现候选草稿，可编辑后再应用。
+              </p>
+            )}
           </div>
-        ) : null}
-        <div className="flex gap-2">
-          <Input
-            value={instruction}
-            onChange={(event) => setInstruction(event.target.value)}
-            onKeyDown={(event) => {
-              if (event.key === 'Enter' && instruction.trim() && !busy) sendMessage()
-            }}
-            placeholder={
-              messages.length === 0 ? '想怎么修订这条知识？（可留空直接生成）' : '继续告诉 AI 怎么调整…'
-            }
-            disabled={busy}
-            aria-label="修订指令"
-          />
-          <Button onClick={sendMessage} disabled={busy || (messages.length > 0 && !instruction.trim())}>
-            <Send />
-            {messages.length === 0 ? '生成' : '继续调整'}
-          </Button>
-        </div>
-        {form ? (
-          <div className="space-y-3 rounded-md border border-brand/30 p-3">
-            <div className="flex items-center gap-2">
-              <Badge className="bg-ai-candidate-soft text-ai-candidate">
-                <Sparkles className="mr-1 size-3.5" />
-                AI 候选草稿
-              </Badge>
-              {draft?.reason ? (
-                <span className="text-caption text-muted-foreground">修订原因：{draft.reason}</span>
+
+          <div className="flex min-h-0 flex-col">
+            <div className="min-h-0 flex-1 space-y-2 overflow-y-auto rounded-md border p-3">
+              {messages.length === 0 ? (
+                <p className="text-body-sm text-muted-foreground">
+                  告诉 AI 想怎么调整，或直接生成草稿；之后可以继续对话打磨。
+                </p>
+              ) : (
+                messages.map((message, index) => (
+                  <div
+                    key={index}
+                    className={`max-w-[85%] rounded-md px-3 py-2 text-body-sm ${
+                      message.role === 'user'
+                        ? 'ml-auto bg-brand-soft text-brand'
+                        : 'bg-muted/60 text-foreground'
+                    }`}
+                  >
+                    {message.content}
+                  </div>
+                ))
+              )}
+              {busy ? (
+                <div className="max-w-[85%] rounded-md bg-muted/60 px-3 py-2 text-body-sm text-muted-foreground">
+                  AI 思考中…
+                </div>
               ) : null}
             </div>
-            <div className="space-y-1.5">
-              <label htmlFor="revision-title" className="text-body-sm font-medium">
-                标题
-              </label>
-              <Input
-                id="revision-title"
-                value={form.title}
-                onChange={(event) => setForm({ ...form, title: event.target.value })}
-              />
-            </div>
-            <div className="space-y-1.5">
-              <label htmlFor="revision-content" className="text-body-sm font-medium">
-                核心内容
-              </label>
-              <Textarea
-                id="revision-content"
-                value={form.content}
-                onChange={(event) => setForm({ ...form, content: event.target.value })}
-                rows={5}
-              />
-            </div>
-            <div className="grid grid-cols-2 gap-3">
-              <div className="space-y-1.5">
-                <label htmlFor="revision-type" className="text-body-sm font-medium">
-                  主类型
-                </label>
-                <select
-                  id="revision-type"
-                  className="h-9 w-full rounded-md border px-2 text-body-sm"
-                  value={form.main_type}
-                  onChange={(event) =>
-                    setForm({
-                      ...form,
-                      main_type: event.target.value as EntryPayload['main_type'],
-                    })
-                  }
-                >
-                  {MAIN_TYPE_LABELS.map((item) => (
-                    <option key={item.value} value={item.value}>
-                      {item.label}
-                    </option>
-                  ))}
-                </select>
+            {error ? (
+              <div className="mt-2 flex items-start gap-2 rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-body-sm text-amber-700">
+                <AlertTriangle className="mt-0.5 size-4 shrink-0" />
+                <span>{error}</span>
               </div>
-              <div className="space-y-1.5">
-                <label htmlFor="revision-nature" className="text-body-sm font-medium">
-                  信息性质
-                </label>
-                <Input
-                  id="revision-nature"
-                  value={form.info_nature}
-                  onChange={(event) => setForm({ ...form, info_nature: event.target.value })}
-                />
-              </div>
-            </div>
-            <div className="space-y-1.5">
-              <label htmlFor="revision-condition" className="text-body-sm font-medium">
-                适用条件
-              </label>
+            ) : null}
+            <div className="mt-2 flex items-end gap-2">
               <Textarea
-                id="revision-condition"
-                value={form.applicable_condition}
-                onChange={(event) =>
-                  setForm({ ...form, applicable_condition: event.target.value })
+                aria-label="修订指令"
+                className="min-h-0 flex-1"
+                rows={3}
+                value={instruction}
+                placeholder={
+                  messages.length === 0
+                    ? '想怎么修订这条知识？（可留空直接生成）'
+                    : '继续告诉 AI 怎么调整…'
                 }
-                rows={2}
+                onChange={(event) => setInstruction(event.target.value)}
+                disabled={busy}
               />
-            </div>
-            <div className="space-y-1.5">
-              <label htmlFor="revision-note" className="text-body-sm font-medium">
-                补充说明
-              </label>
-              <Textarea
-                id="revision-note"
-                value={form.note}
-                onChange={(event) => setForm({ ...form, note: event.target.value })}
-                rows={2}
-              />
-            </div>
-            <div className="space-y-1.5">
-              <label htmlFor="revision-summary" className="text-body-sm font-medium">
-                变更说明
-              </label>
-              <Input
-                id="revision-summary"
-                value={form.change_summary}
-                onChange={(event) => setForm({ ...form, change_summary: event.target.value })}
-              />
+              <Button
+                disabled={busy || (messages.length > 0 && !instruction.trim())}
+                onClick={sendMessage}
+              >
+                <Send />
+                {messages.length === 0 ? '生成' : '继续调整'}
+              </Button>
             </div>
           </div>
-        ) : null}
-        <DialogFooter>
-          <Button variant="outline" onClick={() => onOpenChange(false)} disabled={busy || apply.isPending}>
+        </div>
+
+        <div className="flex items-center justify-end gap-2 border-t px-6 py-3">
+          <Button
+            variant="outline"
+            onClick={() => onOpenChange(false)}
+            disabled={busy || apply.isPending}
+          >
             放弃
           </Button>
           <Button onClick={() => apply.mutate()} disabled={!canApply}>
             应用
           </Button>
-        </DialogFooter>
-      </DialogContent>
-    </Dialog>
+        </div>
+      </SheetContent>
+    </Sheet>
   )
 }

@@ -5,13 +5,12 @@ import { toast } from 'sonner'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from '@/components/ui/dialog'
+  Sheet,
+  SheetContent,
+  SheetDescription,
+  SheetHeader,
+  SheetTitle,
+} from '@/components/ui/sheet'
 import {
   fetchEntryVersions,
   restoreEntryVersion,
@@ -45,7 +44,7 @@ function formatDate(value: string): string {
   })
 }
 
-/** 版本历史面板：列出保留版本，查看快照并可恢复。 */
+/** 版本历史右抽屉：左侧版本列表、右侧快照，可恢复到所选版本。 */
 export function EntryVersionHistoryDialog({
   open,
   entry,
@@ -90,15 +89,16 @@ export function EntryVersionHistoryDialog({
   })
 
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="sm:max-w-2xl">
-        <DialogHeader>
-          <DialogTitle>版本历史</DialogTitle>
-          <DialogDescription>
+    <Sheet open={open} onOpenChange={onOpenChange}>
+      <SheetContent className="flex w-[min(960px,100vw)] max-w-none flex-col gap-0 p-0">
+        <SheetHeader className="border-b px-6 py-4">
+          <SheetTitle>版本历史</SheetTitle>
+          <SheetDescription>
             {entry ? `${entry.title} · 只保留最近 10 条版本` : ''}
-          </DialogDescription>
-        </DialogHeader>
-        <div className="grid min-h-[320px] grid-cols-[minmax(0,1fr)_minmax(0,1.2fr)] gap-4">
+          </SheetDescription>
+        </SheetHeader>
+
+        <div className="grid min-h-0 flex-1 grid-cols-[minmax(0,1fr)_minmax(0,1.2fr)] gap-4 overflow-hidden px-6 py-4">
           <div className="min-h-0 overflow-y-auto border-r pr-3">
             {versions.isLoading ? (
               <p className="text-body-sm text-muted-foreground">加载中…</p>
@@ -145,7 +145,8 @@ export function EntryVersionHistoryDialog({
             )}
           </div>
         </div>
-        <DialogFooter>
+
+        <div className="flex items-center justify-end gap-2 border-t px-6 py-3">
           <Button variant="outline" onClick={() => onOpenChange(false)}>
             关闭
           </Button>
@@ -163,9 +164,9 @@ export function EntryVersionHistoryDialog({
               {confirmRestoreId === selected.id ? '确认恢复？' : '恢复此版本'}
             </Button>
           ) : null}
-        </DialogFooter>
-      </DialogContent>
-    </Dialog>
+        </div>
+      </SheetContent>
+    </Sheet>
   )
 }
 
