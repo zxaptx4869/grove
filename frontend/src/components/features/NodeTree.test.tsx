@@ -43,6 +43,28 @@ describe('NodeTree', () => {
     expect(callbacks.onExpand).toHaveBeenCalledWith(NODES[0])
   })
 
+  it('点击行内热区（整行）选中节点', async () => {
+    const onSelect = vi.fn()
+    render(
+      <NodeTree
+        nodes={NODES}
+        callbacks={{
+          onAddChild: vi.fn(),
+          onRename: vi.fn(),
+          onMove: vi.fn(),
+          onDelete: vi.fn(),
+          onExpand: vi.fn(),
+          onReorder: vi.fn(),
+        }}
+        onSelect={onSelect}
+      />,
+    )
+
+    await userEvent.click(screen.getByRole('button', { name: '节点2' }))
+
+    expect(onSelect).toHaveBeenCalledWith(NODES[1])
+  })
+
   it('空目录不渲染伪节点', () => {
     render(
       <NodeTree

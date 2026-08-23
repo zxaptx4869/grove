@@ -93,36 +93,43 @@ export function NodeTree({ nodes, callbacks, selectedId = null, onSelect }: Node
           onDrop={() => handleDrop(node.id, parentId, items)}
         >
           <div
-            className={`group flex h-9 items-center rounded-md pr-1 ${isSelected ? 'bg-brand-soft text-foreground' : 'hover:bg-muted/80'}`}
+            className={`group relative flex h-9 items-center rounded-md pr-1 ${isSelected ? 'bg-brand-soft text-foreground' : 'hover:bg-muted/80'}`}
             style={{ paddingLeft: depth * 16 + 4 }}
           >
+            {/* 整行点击热区：点击行内任意位置（含缩进/图标旁/文字与计数之间）都选中节点 */}
             <button
               type="button"
-              className="flex size-7 shrink-0 items-center justify-center rounded text-muted-foreground hover:bg-black/5 disabled:opacity-30"
+              className="absolute inset-0 rounded-md"
+              onClick={() => onSelect?.(node)}
+              aria-selected={isSelected}
+              aria-label={node.name}
+              title={node.description || node.name}
+            />
+            <button
+              type="button"
+              className="relative z-10 flex size-7 shrink-0 items-center justify-center rounded text-muted-foreground hover:bg-black/5 disabled:opacity-30"
               onClick={() => toggle(node.id)}
               disabled={!hasChildren}
               aria-label={isCollapsed ? `展开 ${node.name}` : `折叠 ${node.name}`}
             >
               {hasChildren ? (isCollapsed ? <ChevronRight className="size-3.5" /> : <ChevronDown className="size-3.5" />) : <span className="size-3.5" />}
             </button>
-            {isCollapsed || !hasChildren ? <Folder className="mr-2 size-4 shrink-0 text-muted-foreground" /> : <FolderOpen className="mr-2 size-4 shrink-0 text-brand" />}
-            <button
-              type="button"
-              className="min-w-0 flex-1 truncate text-left text-body-sm"
-              onClick={() => onSelect?.(node)}
-              aria-selected={isSelected}
-              title={node.description || node.name}
-            >
+            {isCollapsed || !hasChildren ? (
+              <Folder className="pointer-events-none relative z-10 mr-2 size-4 shrink-0 text-muted-foreground" />
+            ) : (
+              <FolderOpen className="pointer-events-none relative z-10 mr-2 size-4 shrink-0 text-brand" />
+            )}
+            <span className="pointer-events-none relative z-10 min-w-0 flex-1 truncate text-left text-body-sm">
               {node.name}
-            </button>
+            </span>
             {node.entry_count > 0 ? (
-              <span className="ml-1 shrink-0 rounded-full bg-muted px-1.5 text-[11px] text-muted-foreground">
+              <span className="pointer-events-none relative z-10 ml-1 shrink-0 rounded-full bg-muted px-1.5 text-[11px] text-muted-foreground">
                 {node.entry_count}
               </span>
             ) : null}
             <DropdownMenu>
               <DropdownMenuTrigger asChild>
-                <Button size="icon-xs" variant="ghost" className="opacity-0 group-focus-within:opacity-100 group-hover:opacity-100 data-[state=open]:opacity-100" aria-label={`${node.name} 更多操作`}><MoreHorizontal /></Button>
+                <Button size="icon-xs" variant="ghost" className="relative z-20 opacity-0 group-focus-within:opacity-100 group-hover:opacity-100 data-[state=open]:opacity-100" aria-label={`${node.name} 更多操作`}><MoreHorizontal /></Button>
               </DropdownMenuTrigger>
               <DropdownMenuContent align="start" className="w-40">
                 <DropdownMenuItem onSelect={() => callbacks.onAddChild(node)}><Plus />添加子节点</DropdownMenuItem>
