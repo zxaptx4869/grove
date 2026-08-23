@@ -391,6 +391,7 @@ async def test_apply_revision_suggestion_updates_entry_and_version(
             "reason": "现有内容缺少验收细节",
             "provider": "llm",
             "model": "test-model",
+            "external_supplemented": True,
         },
     )
     assert response.status_code == 200
@@ -405,3 +406,37 @@ async def test_apply_revision_suggestion_updates_entry_and_version(
     assert versions[0]["change_type"] == "ai_revision"
     assert versions[0]["change_summary"] == "补充验收标准"
     assert versions[0]["content"] == "闭水试验至少持续 24 小时，蓄水深度不低于 20mm"
+
+
+@pytest.mark.asyncio
+async def test_apply_formatting_only_revision_keeps_version_without_source(
+    client: httpx.AsyncClient,
+) -> None:
+    """纯格式调整应用后应记版本但不新增来源证据。"""
+    await _register(client)
+    project = await _create_project(client)
+    node = await _create_node(client, project["id"], "施工")
+    entry = await _archive_first(client, project["id"], node["id"])
+    evidence_before = entry["evidences"]
+
+    response = await client.post(
+        f"/api/entries/{entry['id']}/revision-suggestion/apply",
+        json={
+            "title": entry["title"],
+            "content": "闭水试验至少持续 24 小时，观察渗漏。",
+            "main_type": "knowledge",
+            "info_nature": "fact",
+            "applicable_condition": "",
+            "note": "",
+            "change_summary": "调整表述更通顺",
+            "external_supplemented": False,
+        },
+    )
+    assert response.status_code == 200
+    data = response.json()
+    assert data["content"] == "闭水试验至少持续 24 小时，观察渗漏。"
+    assert data["evidences"] == evidence_before
+
+    versions = await _versions(client, entry["id"])
+    assert versions[0]["change_type"] == "ai_revision"
+    assert versions[0]["change_summary"] == "调整表述更通顺"

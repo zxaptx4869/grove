@@ -264,5 +264,6 @@ describe('RevisionSuggestionDialog', () => {
     expect(applyBody.ai_reply).toBe('已补上下沉式卫生间差异。')
     expect(applyBody.provider).toBe('llm')
     expect(applyBody.model).toBe('test')
+    expect(applyBody.external_supplemented).toBe(true)
   })
 })

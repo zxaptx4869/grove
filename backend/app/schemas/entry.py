@@ -153,6 +153,7 @@ class ApplyRevisionSuggestionRequest(BaseModel):
     reason: str | None = Field(default=None, max_length=2000)
     provider: str | None = Field(default=None, max_length=32)
     model: str | None = Field(default=None, max_length=128)
+    external_supplemented: bool = False
 
 
 class RevisionSuggestionOut(BaseModel):

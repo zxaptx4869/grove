@@ -115,6 +115,7 @@ export function RevisionSuggestionDialog({
         reason: aiMeta.reason || null,
         provider: aiMeta.provider,
         model: aiMeta.model,
+        external_supplemented: draft?.external_supplemented ?? false,
       })
     },
     onSuccess: (updated) => {

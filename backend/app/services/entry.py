@@ -627,7 +627,8 @@ async def apply_ai_revision_to_entry(
     if changed:
         await _snapshot_entry_version(db, entry, VERSION_AI_REVISION, payload.change_summary)
         await schedule_refresh(db, entry.project_id, "entry_edited")
-        await _create_revision_source(db, entry, payload)
+        if payload.external_supplemented:
+            await _create_revision_source(db, entry, payload)
     return entry
 
 

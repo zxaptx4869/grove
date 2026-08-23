@@ -729,6 +729,7 @@ export interface ApplyRevisionSuggestionPayload {
   reason?: string | null
   provider?: string | null
   model?: string | null
+  external_supplemented?: boolean
 }
 
 export const applyRevisionSuggestion = (
