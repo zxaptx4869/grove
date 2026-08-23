@@ -249,12 +249,12 @@ export function RevisionSuggestionDialog({
                       含 AI 外部补充
                     </Badge>
                   ) : null}
-                  {draft?.reason ? (
-                    <span className="text-caption text-muted-foreground">
-                      修订原因：{draft.reason}
-                    </span>
-                  ) : null}
                 </div>
+                {draft?.reason ? (
+                  <p className="text-caption text-muted-foreground">
+                    修订原因：{draft.reason}
+                  </p>
+                ) : null}
                 <div className="space-y-1.5">
                   <label htmlFor="revision-title" className="text-body-sm font-medium">
                     标题

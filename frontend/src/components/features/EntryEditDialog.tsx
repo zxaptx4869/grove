@@ -102,13 +102,13 @@ export function EntryEditDialog({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="sm:max-w-xl">
+      <DialogContent className="flex max-h-[85vh] flex-col sm:max-w-xl">
         <DialogHeader>
           <DialogTitle>编辑 Entry</DialogTitle>
           <DialogDescription>{entry ? `${entry.node_name} · 已确认` : ''}</DialogDescription>
         </DialogHeader>
         {form && entry ? (
-          <div className="space-y-3">
+          <div className="min-h-0 flex-1 space-y-3 overflow-y-auto pr-1">
             <div className="space-y-1.5">
               <label htmlFor="entry-edit-title" className="text-body-sm font-medium">
                 标题
