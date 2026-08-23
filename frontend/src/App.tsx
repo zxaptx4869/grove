@@ -84,7 +84,7 @@ export default function App() {
         <Route path="*" element={<Navigate to="/projects" replace />} />
       </Routes>
       {/* Sonner 全局提示：主题跟随设计令牌（richColors 使用语义色） */}
-      <Toaster position="bottom-right" richColors />
+      <Toaster position="top-center" richColors />
     </TooltipProvider></DesktopBoundary>
   )
 }
