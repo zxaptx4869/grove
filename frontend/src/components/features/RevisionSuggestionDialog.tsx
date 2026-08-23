@@ -306,25 +306,18 @@ export function RevisionSuggestionDialog({
                     rows={2}
                   />
                 </div>
-                <div className="space-y-1.5">
-                  <label htmlFor="revision-summary" className="text-body-sm font-medium">
-                    变更说明
-                  </label>
-                  <Textarea
-                    id="revision-summary"
-                    value={form.change_summary}
-                    onChange={(event) =>
-                      setForm({ ...form, change_summary: event.target.value })
-                    }
-                    rows={1}
-                  />
+                <div>
+                  <p className="text-body-sm font-medium">变更说明（只读）</p>
+                  <p className="mt-1 whitespace-pre-wrap text-body-sm leading-6 text-muted-foreground">
+                    {form.change_summary || '（无）'}
+                  </p>
                 </div>
               </div>
             ) : busy ? (
               <p className="mt-3 text-body-sm text-muted-foreground">AI 思考中…</p>
             ) : (
               <p className="mt-3 rounded-md border border-dashed p-3 text-body-sm text-muted-foreground">
-                生成后这里会出现候选草稿，可编辑后再应用。
+                AI 提出修订建议时，候选草稿会出现在这里；提问、讨论只会得到回复。
               </p>
             )}
           </div>
@@ -333,7 +326,7 @@ export function RevisionSuggestionDialog({
             <div className="min-h-0 flex-1 space-y-2 overflow-y-auto rounded-md border p-3">
               {messages.length === 0 ? (
                 <p className="text-body-sm text-muted-foreground">
-                  告诉 AI 想怎么调整，或直接生成草稿；之后可以继续对话打磨。
+                  跟 AI 讨论这条知识，或直接说想怎么改；AI 只在提出修订时生成草稿。
                 </p>
               ) : (
                 messages.map((message, index) => (
@@ -369,18 +362,18 @@ export function RevisionSuggestionDialog({
                 value={instruction}
                 placeholder={
                   messages.length === 0
-                    ? '想怎么修订这条知识？（可留空直接生成）'
-                    : '继续告诉 AI 怎么调整…'
+                    ? '跟 AI 讨论这条知识，或直接说想怎么改…'
+                    : '继续讨论或调整…'
                 }
                 onChange={(event) => setInstruction(event.target.value)}
                 disabled={busy}
               />
               <Button
-                disabled={busy || (messages.length > 0 && !instruction.trim())}
+                disabled={busy || !instruction.trim()}
                 onClick={sendMessage}
               >
                 <Send />
-                {messages.length === 0 ? '生成' : '继续调整'}
+                发送
               </Button>
             </div>
           </div>

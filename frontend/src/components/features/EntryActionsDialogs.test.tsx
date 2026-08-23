@@ -181,6 +181,19 @@ describe('RevisionSuggestionDialog', () => {
             error: null,
           })
         }
+        if (url.pathname.endsWith('/revision-suggestion/refine')) {
+          return jsonResponse({
+            reply_text: '这个更多是营销噱头，建议保持现状。',
+            draft: null,
+            provider: 'llm',
+            model: 'test',
+            is_fallback: false,
+            error: null,
+          })
+        }
+        if (url.pathname.endsWith('/revision-suggestion/apply')) {
+          return jsonResponse(ENTRY)
+        }
         return jsonResponse(ENTRY)
       }),
     )
@@ -195,12 +208,20 @@ describe('RevisionSuggestionDialog', () => {
     )
 
     await user.type(screen.getByLabelText('修订指令'), '补充验收标准')
-    await user.click(screen.getByRole('button', { name: /生成/ }))
+    await user.click(screen.getByRole('button', { name: /发送/ }))
 
     await screen.findByText('我建议补充验收标准。')
     await waitFor(() =>
       expect(screen.getByDisplayValue('闭水试验至少持续 24 小时，蓄水深度不低于 20mm')).toBeInTheDocument(),
     )
+
+    await user.type(screen.getByLabelText('修订指令'), '缝隙消失术真的是噱头吗')
+    await user.click(screen.getByRole('button', { name: /发送/ }))
+
+    await screen.findByText('这个更多是营销噱头，建议保持现状。')
+    expect(
+      screen.getByDisplayValue('闭水试验至少持续 24 小时，蓄水深度不低于 20mm'),
+    ).toBeInTheDocument()
 
     await user.click(screen.getByRole('button', { name: '应用' }))
 
