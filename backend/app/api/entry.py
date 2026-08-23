@@ -10,21 +10,33 @@ from app.models import Candidate, Entry, Node, Project, Source, Workspace
 from app.schemas.entry import (
     AddEvidenceRequest,
     ApplyRevisionRequest,
+    ApplyRevisionSuggestionRequest,
     ArchiveCandidateRequest,
     EntryOut,
     EntryUpdate,
+    EntryVersionOut,
     NewNodeArchiveRequest,
+    RestoreRequest,
+    RevisionRefineRequest,
+    RevisionSuggestionOut,
+    RevisionSuggestionRequest,
 )
 from app.services.entry import (
     add_evidence_to_entry,
+    apply_ai_revision_to_entry,
     apply_revision_to_entry,
     archive_candidate,
     archive_candidate_with_new_node,
     edit_entry,
     entry_eager_options,
     entry_out,
+    entry_version_out_list,
+    generate_revision_suggestion,
     list_entries_by_node,
+    list_entry_versions,
     list_project_entries,
+    refine_revision_suggestion,
+    restore_entry_version,
 )
 
 router = APIRouter(prefix="/api", tags=["entry"])
@@ -146,6 +158,85 @@ async def update_entry(
     """编辑 Entry 或移动目录。"""
     entry = await _get_owned_entry(db, workspace.id, entry_id)
     await edit_entry(db, entry, payload)
+    await db.commit()
+    entry = await _get_owned_entry(db, workspace.id, entry_id)
+    return entry_out(entry)
+
+
+@router.get("/entries/{entry_id}/versions", response_model=list[EntryVersionOut])
+async def list_entry_versions_endpoint(
+    entry_id: int,
+    db: DbSession,
+    workspace: CurrentWorkspace,
+) -> list[EntryVersionOut]:
+    """返回 Entry 的保留版本快照列表（按版本号倒序）。"""
+    entry = await _get_owned_entry(db, workspace.id, entry_id)
+    versions = await list_entry_versions(db, entry.id)
+    return await entry_version_out_list(db, versions)
+
+
+@router.post("/entries/{entry_id}/restore", response_model=EntryOut)
+async def restore_entry_endpoint(
+    entry_id: int,
+    payload: RestoreRequest,
+    db: DbSession,
+    workspace: CurrentWorkspace,
+) -> EntryOut:
+    """把 Entry 恢复到指定版本，并追加恢复版本。"""
+    entry = await _get_owned_entry(db, workspace.id, entry_id)
+    await restore_entry_version(db, entry, payload.version_id)
+    await db.commit()
+    entry = await _get_owned_entry(db, workspace.id, entry_id)
+    return entry_out(entry)
+
+
+@router.post(
+    "/entries/{entry_id}/revision-suggestion",
+    response_model=RevisionSuggestionOut,
+)
+async def revision_suggestion_endpoint(
+    entry_id: int,
+    payload: RevisionSuggestionRequest,
+    db: DbSession,
+    workspace: CurrentWorkspace,
+) -> RevisionSuggestionOut:
+    """对单条 Entry 生成 AI 修订建议草稿。"""
+    entry = await _get_owned_entry(db, workspace.id, entry_id)
+    result = await generate_revision_suggestion(db, workspace.id, entry, payload)
+    await db.commit()
+    return result
+
+
+@router.post(
+    "/entries/{entry_id}/revision-suggestion/refine",
+    response_model=RevisionSuggestionOut,
+)
+async def revision_suggestion_refine_endpoint(
+    entry_id: int,
+    payload: RevisionRefineRequest,
+    db: DbSession,
+    workspace: CurrentWorkspace,
+) -> RevisionSuggestionOut:
+    """基于完整对话历史与当前草稿继续调整修订建议。"""
+    entry = await _get_owned_entry(db, workspace.id, entry_id)
+    result = await refine_revision_suggestion(db, workspace.id, entry, payload)
+    await db.commit()
+    return result
+
+
+@router.post(
+    "/entries/{entry_id}/revision-suggestion/apply",
+    response_model=EntryOut,
+)
+async def revision_suggestion_apply_endpoint(
+    entry_id: int,
+    payload: ApplyRevisionSuggestionRequest,
+    db: DbSession,
+    workspace: CurrentWorkspace,
+) -> EntryOut:
+    """应用确认后的 AI 修订草稿并追加版本。"""
+    entry = await _get_owned_entry(db, workspace.id, entry_id)
+    await apply_ai_revision_to_entry(db, entry, payload)
     await db.commit()
     entry = await _get_owned_entry(db, workspace.id, entry_id)
     return entry_out(entry)

@@ -6,7 +6,7 @@ from app.models.directory_draft import (
     DirectoryDraftMessage,
     DirectoryDraftNode,
 )
-from app.models.entry import Entry, EntrySourceEvidence
+from app.models.entry import Entry, EntrySourceEvidence, EntryVersion
 from app.models.extraction import Candidate, Extraction
 from app.models.processing import ProcessingTask
 from app.models.project import Node, Project
@@ -25,6 +25,7 @@ __all__ = [
     "DirectoryDraftNode",
     "Entry",
     "EntrySourceEvidence",
+    "EntryVersion",
     "Extraction",
     "Node",
     "ProcessingTask",

@@ -3,20 +3,37 @@
 import json
 
 from fastapi import HTTPException, status
-from sqlalchemy import func, select
+from sqlalchemy import delete, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
-from app.models import Candidate, Entry, EntrySourceEvidence, Node, Source
+from app.agents.revision import RevisionReplyDraft, run_revision_agent
+from app.models import Candidate, Entry, EntrySourceEvidence, EntryVersion, Node, Source
+from app.models.entry import (
+    VERSION_AI_REVISION,
+    VERSION_CREATED,
+    VERSION_EDITED,
+    VERSION_RESTORED,
+)
 from app.models.extraction import CANDIDATE_CONFIRMED, CANDIDATE_PENDING
 from app.schemas.entry import (
     ApplyRevisionRequest,
+    ApplyRevisionSuggestionRequest,
     EntryEvidenceOut,
     EntryOut,
     EntryUpdate,
+    EntryVersionOut,
     NewNodeArchiveRequest,
+    RevisionDraftPayload,
+    RevisionRefineRequest,
+    RevisionSuggestionOut,
+    RevisionSuggestionRequest,
 )
 from app.services.project_context import schedule_refresh
+
+MAX_ENTRY_VERSIONS = 10
+_REQUIRED_FIELDS = ("title", "content", "main_type")
+_NULLABLE_FIELDS = ("info_nature", "applicable_condition", "note")
 
 
 def entry_eager_options():
@@ -78,6 +95,69 @@ def entry_out(entry: Entry) -> EntryOut:
     )
 
 
+async def _snapshot_entry_version(
+    db: AsyncSession,
+    entry: Entry,
+    change_type: str,
+    change_summary: str | None = None,
+) -> None:
+    """为 Entry 追加快照版本，并滚动丢弃超过保留上限的最旧版本。"""
+    max_number = (
+        await db.execute(
+            select(func.max(EntryVersion.version_number)).where(
+                EntryVersion.entry_id == entry.id
+            )
+        )
+    ).scalar_one()
+    next_number = (max_number or 0) + 1
+    db.add(
+        EntryVersion(
+            entry_id=entry.id,
+            version_number=next_number,
+            title=entry.title,
+            content=entry.content,
+            main_type=entry.main_type,
+            info_nature=entry.info_nature,
+            applicable_condition=entry.applicable_condition,
+            note=entry.note,
+            node_id=entry.node_id,
+            change_type=change_type,
+            change_summary=change_summary,
+        )
+    )
+    await db.flush()
+    if next_number > MAX_ENTRY_VERSIONS:
+        await db.execute(
+            delete(EntryVersion).where(
+                EntryVersion.entry_id == entry.id,
+                EntryVersion.version_number <= next_number - MAX_ENTRY_VERSIONS,
+            )
+        )
+
+
+def _apply_revision_fields(entry: Entry, values: dict) -> bool:
+    """按字段值字典更新 Entry，返回是否有实际变化。
+
+    title/content/main_type 传 None 表示不修改；可空字段传 None 或空串表示清空。
+    """
+    changed = False
+    for field in _REQUIRED_FIELDS:
+        if field not in values or values[field] is None:
+            continue
+        value = values[field]
+        if getattr(entry, field) != value:
+            setattr(entry, field, value)
+            changed = True
+    for field in _NULLABLE_FIELDS:
+        if field not in values:
+            continue
+        value = None if values[field] == "" else values[field]
+        if getattr(entry, field) != value:
+            setattr(entry, field, value)
+            changed = True
+    return changed
+
+
 async def archive_candidate(
     db: AsyncSession,
     candidate: Candidate,
@@ -108,6 +188,7 @@ async def archive_candidate(
     )
     db.add(entry)
     await db.flush()
+    await _snapshot_entry_version(db, entry, VERSION_CREATED)
 
     _add_candidate_evidence_to_entry(db, candidate, entry)
 
@@ -169,24 +250,15 @@ async def apply_revision_to_entry(
             status_code=status.HTTP_400_BAD_REQUEST, detail="目标 Entry 不属于当前项目"
         )
 
-    fields = payload.model_fields_set
-    if "title" in fields and payload.title is not None:
-        entry.title = payload.title
-    if "content" in fields and payload.content is not None:
-        entry.content = payload.content
-    if "main_type" in fields and payload.main_type is not None:
-        entry.main_type = payload.main_type
-    if "info_nature" in fields:
-        entry.info_nature = payload.info_nature
-    if "applicable_condition" in fields:
-        entry.applicable_condition = payload.applicable_condition
-    if "note" in fields:
-        entry.note = payload.note
+    values = {field: getattr(payload, field) for field in payload.model_fields_set}
+    changed = _apply_revision_fields(entry, values)
 
     _add_candidate_evidence_to_entry(db, candidate, entry)
     candidate.status = CANDIDATE_CONFIRMED
     candidate.entry_id = entry.id
     await db.flush()
+    if changed:
+        await _snapshot_entry_version(db, entry, VERSION_AI_REVISION, payload.change_summary)
     await schedule_refresh(db, source.project_id, "entry_edited")
     return (
         await db.execute(
@@ -278,6 +350,18 @@ async def edit_entry(
     payload: EntryUpdate,
 ) -> Entry:
     """编辑 Entry 字段与主目录节点。"""
+    before = {
+        field: getattr(entry, field)
+        for field in (
+            "title",
+            "content",
+            "main_type",
+            "info_nature",
+            "applicable_condition",
+            "note",
+            "node_id",
+        )
+    }
     fields = payload.model_fields_set
     if "title" in fields and payload.title is not None:
         entry.title = payload.title
@@ -299,7 +383,9 @@ async def edit_entry(
             )
         entry.node_id = payload.node_id
         entry.node = node
-    if payload.model_fields_set:
+    changed = any(getattr(entry, field) != before[field] for field in before)
+    if changed:
+        await _snapshot_entry_version(db, entry, VERSION_EDITED)
         await schedule_refresh(db, entry.project_id, "entry_edited")
     return entry
 
@@ -356,3 +442,154 @@ async def _descendant_node_ids(
         result.append(current)
         stack.extend(children_by_parent.get(current, []))
     return result
+
+
+async def list_entry_versions(db: AsyncSession, entry_id: int) -> list[EntryVersion]:
+    """返回 Entry 的保留版本，按版本号从新到旧排序。"""
+    result = await db.execute(
+        select(EntryVersion)
+        .where(EntryVersion.entry_id == entry_id)
+        .order_by(EntryVersion.version_number.desc())
+    )
+    return list(result.scalars().all())
+
+
+async def entry_version_out_list(
+    db: AsyncSession,
+    versions: list[EntryVersion],
+) -> list[EntryVersionOut]:
+    """组装版本响应，批量解析目录名避免 N+1。"""
+    node_ids = {version.node_id for version in versions}
+    node_names: dict[int, str] = {}
+    if node_ids:
+        rows = await db.execute(select(Node.id, Node.name).where(Node.id.in_(node_ids)))
+        node_names = {node_id: name for node_id, name in rows}
+    return [
+        EntryVersionOut(
+            id=version.id,
+            version_number=version.version_number,
+            title=version.title,
+            content=version.content,
+            main_type=version.main_type,
+            info_nature=version.info_nature,
+            applicable_condition=version.applicable_condition,
+            note=version.note,
+            node_id=version.node_id,
+            node_name=node_names.get(version.node_id, "已删除节点"),
+            change_type=version.change_type,
+            change_summary=version.change_summary,
+            created_at=version.created_at,
+        )
+        for version in versions
+    ]
+
+
+async def restore_entry_version(
+    db: AsyncSession,
+    entry: Entry,
+    version_id: int,
+) -> Entry:
+    """把 Entry 恢复到指定版本快照，追加恢复版本，不删除后续历史。"""
+    version = await db.get(EntryVersion, version_id)
+    if version is None or version.entry_id != entry.id:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="版本不存在")
+
+    values = {
+        "title": version.title,
+        "content": version.content,
+        "main_type": version.main_type,
+        "info_nature": version.info_nature,
+        "applicable_condition": version.applicable_condition,
+        "note": version.note,
+    }
+    changed = _apply_revision_fields(entry, values)
+    if version.node_id != entry.node_id:
+        node = await db.get(Node, version.node_id)
+        if node is None or node.project_id != entry.project_id:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST, detail="版本目录节点无效"
+            )
+        entry.node_id = version.node_id
+        entry.node = node
+        changed = True
+    if changed:
+        await _snapshot_entry_version(
+            db,
+            entry,
+            VERSION_RESTORED,
+            f"恢复到版本 {version.version_number}",
+        )
+        await schedule_refresh(db, entry.project_id, "entry_restored")
+    return entry
+
+
+def _revision_suggestion_out(
+    reply: RevisionReplyDraft,
+    provider: str,
+    model: str | None,
+    is_fallback: bool,
+    error: str | None,
+) -> RevisionSuggestionOut:
+    """把 Agent 回复组装为响应。"""
+    draft = None
+    if reply.draft is not None:
+        draft = RevisionDraftPayload(**reply.draft.model_dump())
+    return RevisionSuggestionOut(
+        reply_text=reply.reply_text,
+        draft=draft,
+        provider=provider,
+        model=model,
+        is_fallback=is_fallback,
+        error=error,
+    )
+
+
+async def generate_revision_suggestion(
+    db: AsyncSession,
+    workspace_id: int,
+    entry: Entry,
+    request: RevisionSuggestionRequest,
+) -> RevisionSuggestionOut:
+    """生成 AI 修订建议草稿。"""
+    reply, provider, model, is_fallback, error = await run_revision_agent(
+        db,
+        workspace_id,
+        entry,
+        request.instruction,
+        [],
+        None,
+    )
+    return _revision_suggestion_out(reply, provider, model, is_fallback, error)
+
+
+async def refine_revision_suggestion(
+    db: AsyncSession,
+    workspace_id: int,
+    entry: Entry,
+    request: RevisionRefineRequest,
+) -> RevisionSuggestionOut:
+    """基于完整对话历史与当前草稿继续调整修订建议。"""
+    current = request.draft.model_dump(exclude_none=True) if request.draft else None
+    reply, provider, model, is_fallback, error = await run_revision_agent(
+        db,
+        workspace_id,
+        entry,
+        request.instruction,
+        request.messages,
+        current,
+    )
+    return _revision_suggestion_out(reply, provider, model, is_fallback, error)
+
+
+async def apply_ai_revision_to_entry(
+    db: AsyncSession,
+    entry: Entry,
+    payload: ApplyRevisionSuggestionRequest,
+) -> Entry:
+    """应用确认后的 AI 修订草稿，并追加 ai_revision 版本。"""
+    values = {field: getattr(payload, field) for field in payload.model_fields_set}
+    changed = _apply_revision_fields(entry, values)
+    if changed:
+        await _snapshot_entry_version(db, entry, VERSION_AI_REVISION, payload.change_summary)
+        await schedule_refresh(db, entry.project_id, "entry_edited")
+    return entry

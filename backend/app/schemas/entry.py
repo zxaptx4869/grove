@@ -46,6 +46,30 @@ class EntryUpdate(BaseModel):
     node_id: int | None = None
 
 
+class EntryVersionOut(BaseModel):
+    """Entry 版本快照。"""
+
+    id: int
+    version_number: int
+    title: str
+    content: str
+    main_type: str
+    info_nature: str | None
+    applicable_condition: str | None
+    note: str | None
+    node_id: int
+    node_name: str
+    change_type: str
+    change_summary: str | None
+    created_at: datetime
+
+
+class RestoreRequest(BaseModel):
+    """恢复到指定 Entry 版本。"""
+
+    version_id: int
+
+
 class ArchiveCandidateRequest(BaseModel):
     """采纳并归档候选。"""
 
@@ -76,3 +100,61 @@ class ApplyRevisionRequest(BaseModel):
     info_nature: Literal["fact", "experience", "advice", "speculation", "other"] | None = None
     applicable_condition: str | None = Field(default=None, max_length=4000)
     note: str | None = Field(default=None, max_length=4000)
+    change_summary: str | None = Field(default=None, max_length=2000)
+
+
+class RevisionSuggestionRequest(BaseModel):
+    """发起 AI 修订建议。"""
+
+    instruction: str | None = Field(default=None, max_length=2000)
+
+
+class RevisionChatMessage(BaseModel):
+    """一次修订对话的单条消息。"""
+
+    role: Literal["user", "assistant"]
+    content: str
+
+
+class RevisionDraftPayload(BaseModel):
+    """AI 修订建议的候选草稿。"""
+
+    title: str | None = Field(default=None, max_length=255)
+    content: str | None = Field(default=None, max_length=8000)
+    main_type: Literal["knowledge", "method", "parameter", "reminder"] | None = None
+    info_nature: Literal["fact", "experience", "advice", "speculation", "other"] | None = None
+    applicable_condition: str | None = Field(default=None, max_length=4000)
+    note: str | None = Field(default=None, max_length=4000)
+    change_summary: str = ""
+    reason: str = ""
+
+
+class RevisionRefineRequest(BaseModel):
+    """继续对话调整修订草稿。"""
+
+    instruction: str = Field(min_length=1, max_length=2000)
+    messages: list[RevisionChatMessage] = []
+    draft: RevisionDraftPayload | None = None
+
+
+class ApplyRevisionSuggestionRequest(BaseModel):
+    """应用确认后的 AI 修订草稿。"""
+
+    title: str | None = Field(default=None, min_length=1, max_length=255)
+    content: str | None = Field(default=None, min_length=1, max_length=8000)
+    main_type: Literal["knowledge", "method", "parameter", "reminder"] | None = None
+    info_nature: Literal["fact", "experience", "advice", "speculation", "other"] | None = None
+    applicable_condition: str | None = Field(default=None, max_length=4000)
+    note: str | None = Field(default=None, max_length=4000)
+    change_summary: str | None = Field(default=None, max_length=2000)
+
+
+class RevisionSuggestionOut(BaseModel):
+    """AI 修订建议生成/调整结果。"""
+
+    reply_text: str
+    draft: RevisionDraftPayload | None = None
+    provider: str | None
+    model: str | None
+    is_fallback: bool
+    error: str | None
