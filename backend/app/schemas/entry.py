@@ -127,6 +127,7 @@ class RevisionDraftPayload(BaseModel):
     note: str | None = Field(default=None, max_length=4000)
     change_summary: str = ""
     reason: str = ""
+    external_supplemented: bool = False
 
 
 class RevisionRefineRequest(BaseModel):
@@ -147,6 +148,11 @@ class ApplyRevisionSuggestionRequest(BaseModel):
     applicable_condition: str | None = Field(default=None, max_length=4000)
     note: str | None = Field(default=None, max_length=4000)
     change_summary: str | None = Field(default=None, max_length=2000)
+    instruction: str | None = Field(default=None, max_length=2000)
+    ai_reply: str | None = Field(default=None, max_length=8000)
+    reason: str | None = Field(default=None, max_length=2000)
+    provider: str | None = Field(default=None, max_length=32)
+    model: str | None = Field(default=None, max_length=128)
 
 
 class RevisionSuggestionOut(BaseModel):

@@ -9,14 +9,24 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app.agents.revision import RevisionReplyDraft, run_revision_agent
-from app.models import Candidate, Entry, EntrySourceEvidence, EntryVersion, Node, Source
+from app.models import (
+    Attachment,
+    Candidate,
+    Entry,
+    EntrySourceEvidence,
+    EntryVersion,
+    Extraction,
+    Node,
+    Project,
+    Source,
+)
 from app.models.entry import (
     VERSION_AI_REVISION,
     VERSION_CREATED,
     VERSION_EDITED,
     VERSION_RESTORED,
 )
-from app.models.extraction import CANDIDATE_CONFIRMED, CANDIDATE_PENDING
+from app.models.extraction import CANDIDATE_CONFIRMED, CANDIDATE_PENDING, EXTRACTION_ACTIVE
 from app.schemas.entry import (
     ApplyRevisionRequest,
     ApplyRevisionSuggestionRequest,
@@ -609,4 +619,52 @@ async def apply_ai_revision_to_entry(
     if changed:
         await _snapshot_entry_version(db, entry, VERSION_AI_REVISION, payload.change_summary)
         await schedule_refresh(db, entry.project_id, "entry_edited")
+        await _create_revision_source(db, entry, payload)
     return entry
+
+
+async def _create_revision_source(
+    db: AsyncSession,
+    entry: Entry,
+    payload: ApplyRevisionSuggestionRequest,
+) -> None:
+    """把确认后的 AI 修订建议沉淀为虚拟 Source，并加入 Entry 来源证据。"""
+    project = await db.get(Project, entry.project_id)
+    if project is None:
+        return
+    title = f"AI 修订建议：{(entry.title or '').strip()[:80]}" or "AI 修订建议"
+    source = Source(
+        workspace_id=project.workspace_id,
+        project_id=entry.project_id,
+        title=title[:255],
+        note=payload.instruction,
+    )
+    db.add(source)
+    await db.flush()
+    reply_text = payload.ai_reply or payload.change_summary or ""
+    attachment = Attachment(
+        source_id=source.id,
+        kind="text",
+        position=0,
+        text_content=reply_text,
+    )
+    db.add(attachment)
+    await db.flush()
+    extraction = Extraction(
+        source_id=source.id,
+        provider=payload.provider or "revision",
+        model=payload.model or "unknown",
+        prompt_version="v1",
+        status=EXTRACTION_ACTIVE,
+        discarded_count=0,
+    )
+    db.add(extraction)
+    await db.flush()
+    db.add(
+        EntrySourceEvidence(
+            entry_id=entry.id,
+            source_id=source.id,
+            attachment_id=attachment.id,
+            quote=payload.change_summary or payload.reason,
+        )
+    )

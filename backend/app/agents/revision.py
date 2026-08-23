@@ -25,6 +25,7 @@ class RevisionDraft(BaseModel):
     note: str | None = None
     change_summary: str = ""
     reason: str = ""
+    external_supplemented: bool = False
 
 
 class RevisionReplyDraft(BaseModel):
@@ -38,8 +39,9 @@ class RevisionReplyDraft(BaseModel):
 REVISION_SYSTEM_PROMPT = """你是 Grove 的修订建议 Agent，为单条已确认 Entry 提出修订建议。
 
 要求：
-1. 只能基于给定 Entry 的内容与其来源证据，以及用户提供的指令和对话历史；
-   不得引入外部知识，也不得编造来源证据。
+1. 结合给定 Entry 的内容与其来源证据，并可使用 AI 自身知识（外部知识）进行求证与补充；
+   回复中必须区分「材料/知识库内容」与「AI 知识补充」（如标注「这部分是 AI 知识，建议核实」）；
+   草稿使用外部知识时 external_supplemented 必须为 true；不得编造来源证据，引用必须真实存在。
 2. 输出始终是候选草稿（draft），不得声称已修改正式 Entry；正式修改由用户确认后执行。
 3. draft 给出建议的最终字段值；未建议修改的字段留空（表示保持现状）；
    change_summary 用一句话说明改了什么；reason 说明为什么建议这样改。

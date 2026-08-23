@@ -161,6 +161,7 @@ describe('RevisionSuggestionDialog', () => {
       note: null,
       change_summary: '补充验收标准',
       reason: '现有内容缺少验收细节',
+      external_supplemented: true,
     }
     vi.stubGlobal(
       'fetch',
@@ -232,6 +233,7 @@ describe('RevisionSuggestionDialog', () => {
     await waitFor(() =>
       expect(screen.getByDisplayValue('闭水试验至少持续 24 小时，蓄水深度不低于 20mm')).toBeInTheDocument(),
     )
+    expect(screen.getByText('含 AI 外部补充')).toBeInTheDocument()
 
     await user.type(screen.getByLabelText('修订指令'), '缝隙消失术真的是噱头吗')
     await user.click(screen.getByRole('button', { name: /发送/ }))
@@ -256,6 +258,11 @@ describe('RevisionSuggestionDialog', () => {
       (call) => call.method === 'POST' && call.path.endsWith('/revision-suggestion/apply'),
     )
     expect(applyCall).toBeDefined()
-    expect(JSON.parse(applyCall!.body!).change_summary).toBe('补充验收标准与下沉式差异')
+    const applyBody = JSON.parse(applyCall!.body!)
+    expect(applyBody.change_summary).toBe('补充验收标准与下沉式差异')
+    expect(applyBody.instruction).toBe('补充下沉式卫生间差异')
+    expect(applyBody.ai_reply).toBe('已补上下沉式卫生间差异。')
+    expect(applyBody.provider).toBe('llm')
+    expect(applyBody.model).toBe('test')
   })
 })

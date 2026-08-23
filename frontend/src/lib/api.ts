@@ -673,6 +673,7 @@ export interface RevisionDraftPayload {
   note: string | null
   change_summary: string
   reason: string
+  external_supplemented: boolean
 }
 
 export interface RevisionSuggestionPayload {
@@ -723,6 +724,11 @@ export interface ApplyRevisionSuggestionPayload {
   applicable_condition?: string | null
   note?: string | null
   change_summary?: string | null
+  instruction?: string | null
+  ai_reply?: string | null
+  reason?: string | null
+  provider?: string | null
+  model?: string | null
 }
 
 export const applyRevisionSuggestion = (

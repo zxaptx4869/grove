@@ -72,6 +72,13 @@ export function RevisionSuggestionDialog({
   const [instruction, setInstruction] = useState('')
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
+  const [aiMeta, setAiMeta] = useState<{
+    instruction: string
+    ai_reply: string
+    reason: string
+    provider: string | null
+    model: string | null
+  }>({ instruction: '', ai_reply: '', reason: '', provider: null, model: null })
 
   // 打开面板或切换 Entry 时重置一次性对话（React 渲染期派生状态模式）
   const [previous, setPrevious] = useState<{
@@ -88,6 +95,7 @@ export function RevisionSuggestionDialog({
       setInstruction('')
       setBusy(false)
       setError('')
+      setAiMeta({ instruction: '', ai_reply: '', reason: '', provider: null, model: null })
     }
   }
 
@@ -102,6 +110,11 @@ export function RevisionSuggestionDialog({
         applicable_condition: currentForm.applicable_condition.trim() || null,
         note: currentForm.note.trim() || null,
         change_summary: currentForm.change_summary.trim() || null,
+        instruction: aiMeta.instruction || null,
+        ai_reply: aiMeta.ai_reply || null,
+        reason: aiMeta.reason || null,
+        provider: aiMeta.provider,
+        model: aiMeta.model,
       })
     },
     onSuccess: (updated) => {
@@ -126,6 +139,13 @@ export function RevisionSuggestionDialog({
         { role: 'assistant' as const, content: result.reply_text },
       ]
       setMessages(nextMessages)
+      setAiMeta({
+        instruction: text || '',
+        ai_reply: result.reply_text,
+        reason: result.draft?.reason ?? '',
+        provider: result.provider,
+        model: result.model,
+      })
       if (result.intent === 'propose' && result.draft) {
         setDraft(result.draft)
         setForm(formFromDraft(result.draft, entry))
@@ -159,6 +179,13 @@ export function RevisionSuggestionDialog({
         { role: 'user', content: text },
         { role: 'assistant', content: result.reply_text },
       ])
+      setAiMeta({
+        instruction: text,
+        ai_reply: result.reply_text,
+        reason: result.draft?.reason ?? aiMeta.reason,
+        provider: result.provider,
+        model: result.model,
+      })
       if (result.intent === 'propose' && result.draft) {
         setDraft(result.draft)
         setForm(formFromDraft(result.draft, entry))
@@ -217,6 +244,11 @@ export function RevisionSuggestionDialog({
                     <Sparkles className="mr-1 size-3.5" />
                     AI 候选草稿
                   </Badge>
+                  {draft?.external_supplemented ? (
+                    <Badge variant="outline" className="bg-amber-100 text-amber-700">
+                      含 AI 外部补充
+                    </Badge>
+                  ) : null}
                   {draft?.reason ? (
                     <span className="text-caption text-muted-foreground">
                       修订原因：{draft.reason}

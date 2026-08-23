@@ -60,7 +60,10 @@ async def _get_owned_candidate(
 async def _get_owned_entry(db: DbSession, workspace_id: int, entry_id: int) -> Entry:
     entry = (
         await db.execute(
-            select(Entry).options(*entry_eager_options()).where(Entry.id == entry_id)
+            select(Entry)
+            .options(*entry_eager_options())
+            .where(Entry.id == entry_id)
+            .execution_options(populate_existing=True)
         )
     ).scalar_one_or_none()
     if entry is None:

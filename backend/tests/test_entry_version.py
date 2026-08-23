@@ -386,12 +386,20 @@ async def test_apply_revision_suggestion_updates_entry_and_version(
             "applicable_condition": "",
             "note": "",
             "change_summary": "补充验收标准",
+            "instruction": "补充验收标准",
+            "ai_reply": "我建议补充验收标准。",
+            "reason": "现有内容缺少验收细节",
+            "provider": "llm",
+            "model": "test-model",
         },
     )
     assert response.status_code == 200
     data = response.json()
     assert data["content"] == "闭水试验至少持续 24 小时，蓄水深度不低于 20mm"
-    assert data["evidences"] == evidence_before
+    assert data["evidences"][0] == evidence_before[0]
+    assert len(data["evidences"]) == len(evidence_before) + 1
+    assert "AI 修订建议" in data["evidences"][-1]["source_title"]
+    assert data["evidences"][-1]["quote"] == "补充验收标准"
 
     versions = await _versions(client, entry["id"])
     assert versions[0]["change_type"] == "ai_revision"
