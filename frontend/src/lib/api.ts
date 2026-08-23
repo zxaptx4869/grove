@@ -620,6 +620,7 @@ export interface ApplyRevisionPayload {
   info_nature?: 'fact' | 'experience' | 'advice' | 'speculation' | 'other' | null
   applicable_condition?: string | null
   note?: string | null
+  change_summary?: string | null
 }
 
 export const applyRevision = (candidateId: number, payload: ApplyRevisionPayload) =>
@@ -633,6 +634,102 @@ export const fetchEntry = (entryId: number) => request<EntryPayload>(`/api/entri
 export const updateEntry = (entryId: number, payload: EntryUpdatePayload) =>
   request<EntryPayload>(`/api/entries/${entryId}`, {
     method: 'PATCH',
+    body: JSON.stringify(payload),
+  })
+
+export type EntryChangeType = 'created' | 'edited' | 'ai_revision' | 'restored'
+
+export interface EntryVersionPayload {
+  id: number
+  version_number: number
+  title: string
+  content: string
+  main_type: 'knowledge' | 'method' | 'parameter' | 'reminder'
+  info_nature: string | null
+  applicable_condition: string | null
+  note: string | null
+  node_id: number
+  node_name: string
+  change_type: EntryChangeType
+  change_summary: string | null
+  created_at: string
+}
+
+export const fetchEntryVersions = (entryId: number) =>
+  request<EntryVersionPayload[]>(`/api/entries/${entryId}/versions`)
+
+export const restoreEntryVersion = (entryId: number, versionId: number) =>
+  request<EntryPayload>(`/api/entries/${entryId}/restore`, {
+    method: 'POST',
+    body: JSON.stringify({ version_id: versionId }),
+  })
+
+export interface RevisionDraftPayload {
+  title: string | null
+  content: string | null
+  main_type: 'knowledge' | 'method' | 'parameter' | 'reminder' | null
+  info_nature: string | null
+  applicable_condition: string | null
+  note: string | null
+  change_summary: string
+  reason: string
+}
+
+export interface RevisionSuggestionPayload {
+  reply_text: string
+  draft: RevisionDraftPayload | null
+  provider: string | null
+  model: string | null
+  is_fallback: boolean
+  error: string | null
+}
+
+export interface RevisionChatMessagePayload {
+  role: 'user' | 'assistant'
+  content: string
+}
+
+export const requestRevisionSuggestion = (
+  entryId: number,
+  instruction: string | null,
+) =>
+  request<RevisionSuggestionPayload>(`/api/entries/${entryId}/revision-suggestion`, {
+    method: 'POST',
+    body: JSON.stringify({ instruction: instruction?.trim() || null }),
+  })
+
+export const refineRevisionSuggestion = (
+  entryId: number,
+  payload: {
+    instruction: string
+    messages: RevisionChatMessagePayload[]
+    draft: RevisionDraftPayload | null
+  },
+) =>
+  request<RevisionSuggestionPayload>(
+    `/api/entries/${entryId}/revision-suggestion/refine`,
+    {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    },
+  )
+
+export interface ApplyRevisionSuggestionPayload {
+  title?: string
+  content?: string
+  main_type?: 'knowledge' | 'method' | 'parameter' | 'reminder' | null
+  info_nature?: string | null
+  applicable_condition?: string | null
+  note?: string | null
+  change_summary?: string | null
+}
+
+export const applyRevisionSuggestion = (
+  entryId: number,
+  payload: ApplyRevisionSuggestionPayload,
+) =>
+  request<EntryPayload>(`/api/entries/${entryId}/revision-suggestion/apply`, {
+    method: 'POST',
     body: JSON.stringify(payload),
   })
 

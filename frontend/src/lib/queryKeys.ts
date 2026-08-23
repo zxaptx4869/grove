@@ -29,4 +29,5 @@ export const queryKeys = {
   ],
   similarEntries: (entryId: number) => ['similar-entries', entryId],
   readerPreview: (entryId: number) => ['reader-preview', entryId],
+  entryVersions: (entryId: number) => ['entry-versions', entryId],
 } as const

@@ -22,7 +22,12 @@ def upgrade() -> None:
     """创建 Entry 版本快照表，并为既有 Entry 回填版本 1。"""
     op.create_table(
         "entry_versions",
-        sa.Column("id", sa.BigInteger(), autoincrement=True, nullable=False),
+        sa.Column(
+            "id",
+            sa.BigInteger().with_variant(sa.Integer(), "sqlite"),
+            autoincrement=True,
+            nullable=False,
+        ),
         sa.Column("entry_id", sa.BigInteger(), nullable=False),
         sa.Column("version_number", sa.Integer(), nullable=False),
         sa.Column("title", sa.String(length=255), nullable=False),

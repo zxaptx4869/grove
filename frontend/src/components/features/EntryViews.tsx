@@ -1,4 +1,4 @@
-import { Sparkles } from 'lucide-react'
+import { History, Pencil, Sparkles, Wand2 } from 'lucide-react'
 
 import { Badge } from '@/components/ui/badge'
 import {
@@ -86,6 +86,9 @@ export function EntryCard({
   error,
   onSelect,
   onShowSimilar,
+  onEdit,
+  onAiRevise,
+  onVersionHistory,
 }: {
   entry: EntryViewPayload
   showProject?: boolean
@@ -95,6 +98,9 @@ export function EntryCard({
   error?: string
   onSelect?: (entry: EntryViewPayload) => void
   onShowSimilar?: (entry: EntryViewPayload) => void
+  onEdit?: (entry: EntryViewPayload) => void
+  onAiRevise?: (entry: EntryViewPayload) => void
+  onVersionHistory?: (entry: EntryViewPayload) => void
 }) {
   const clickable = Boolean(onSelect)
   return (
@@ -156,19 +162,63 @@ export function EntryCard({
           {error ? '模型调用失败 · 已降级' : '已降级'}
         </Badge>
       ) : null}
-      {onShowSimilar ? (
-        <div className="mt-3 border-t pt-2">
-          <button
-            type="button"
-            onClick={(event) => {
-              event.stopPropagation()
-              onShowSimilar(entry)
-            }}
-            className="inline-flex items-center gap-1.5 rounded-md px-2 py-1 text-body-sm text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
-          >
-            <Sparkles className="size-4" />
-            相关知识
-          </button>
+      {onEdit || onAiRevise || onVersionHistory || onShowSimilar ? (
+        <div className="mt-3 flex flex-wrap gap-1 border-t pt-2">
+          {onEdit ? (
+            <button
+              type="button"
+              onClick={(event) => {
+                event.stopPropagation()
+                onEdit(entry)
+              }}
+              aria-label={`编辑「${entry.title}」`}
+              className="inline-flex items-center gap-1.5 rounded-md px-2 py-1 text-body-sm text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+            >
+              <Pencil className="size-4" />
+              编辑
+            </button>
+          ) : null}
+          {onAiRevise ? (
+            <button
+              type="button"
+              onClick={(event) => {
+                event.stopPropagation()
+                onAiRevise(entry)
+              }}
+              aria-label={`为「${entry.title}」生成 AI 修订建议`}
+              className="inline-flex items-center gap-1.5 rounded-md px-2 py-1 text-body-sm text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+            >
+              <Wand2 className="size-4" />
+              AI 修订建议
+            </button>
+          ) : null}
+          {onVersionHistory ? (
+            <button
+              type="button"
+              onClick={(event) => {
+                event.stopPropagation()
+                onVersionHistory(entry)
+              }}
+              aria-label={`查看「${entry.title}」的版本历史`}
+              className="inline-flex items-center gap-1.5 rounded-md px-2 py-1 text-body-sm text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+            >
+              <History className="size-4" />
+              版本历史
+            </button>
+          ) : null}
+          {onShowSimilar ? (
+            <button
+              type="button"
+              onClick={(event) => {
+                event.stopPropagation()
+                onShowSimilar(entry)
+              }}
+              className="inline-flex items-center gap-1.5 rounded-md px-2 py-1 text-body-sm text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+            >
+              <Sparkles className="size-4" />
+              相关知识
+            </button>
+          ) : null}
         </div>
       ) : null}
       {entry.evidences.length > 0 ? (
@@ -195,12 +245,18 @@ export function EntryList({
   highlightQuery,
   onSelect,
   onShowSimilar,
+  onEdit,
+  onAiRevise,
+  onVersionHistory,
 }: {
   entries: EntryViewPayload[]
   showProject?: boolean
   highlightQuery?: string
   onSelect?: (entry: EntryViewPayload) => void
   onShowSimilar?: (entry: EntryViewPayload) => void
+  onEdit?: (entry: EntryViewPayload) => void
+  onAiRevise?: (entry: EntryViewPayload) => void
+  onVersionHistory?: (entry: EntryViewPayload) => void
 }) {
   return (
     <Table className="table-fixed">
@@ -212,7 +268,9 @@ export function EntryList({
           <TableHead className={showProject ? 'w-[9%]' : 'w-[12%]'}>类型</TableHead>
           <TableHead className={showProject ? 'w-[21%]' : 'w-[22%]'}>来源</TableHead>
           <TableHead className="w-[10%]">更新时间</TableHead>
-          {onShowSimilar ? <TableHead className="w-[10%]">操作</TableHead> : null}
+          {onEdit || onAiRevise || onVersionHistory || onShowSimilar ? (
+            <TableHead className="w-[16%]">操作</TableHead>
+          ) : null}
         </TableRow>
       </TableHeader>
       <TableBody>
@@ -248,21 +306,66 @@ export function EntryList({
             <TableCell className="text-caption text-muted-foreground">
               {formatDate(entry.updated_at)}
             </TableCell>
-            {onShowSimilar ? (
+            {onEdit || onAiRevise || onVersionHistory || onShowSimilar ? (
               <TableCell>
-                <button
-                  type="button"
-                  onClick={(event) => {
-                    event.stopPropagation()
-                    onShowSimilar(entry)
-                  }}
-                  aria-label={`查看「${entry.title}」的相关知识`}
-                  title="相关知识"
-                  className="inline-flex items-center gap-1 rounded-md px-2 py-1 text-body-sm text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
-                >
-                  <Sparkles className="size-4" />
-                  相关知识
-                </button>
+                <div className="flex items-center gap-1">
+                  {onEdit ? (
+                    <button
+                      type="button"
+                      onClick={(event) => {
+                        event.stopPropagation()
+                        onEdit(entry)
+                      }}
+                      aria-label={`编辑「${entry.title}」`}
+                      title="编辑"
+                      className="inline-flex items-center justify-center rounded-md p-1.5 text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+                    >
+                      <Pencil className="size-4" />
+                    </button>
+                  ) : null}
+                  {onAiRevise ? (
+                    <button
+                      type="button"
+                      onClick={(event) => {
+                        event.stopPropagation()
+                        onAiRevise(entry)
+                      }}
+                      aria-label={`为「${entry.title}」生成 AI 修订建议`}
+                      title="AI 修订建议"
+                      className="inline-flex items-center justify-center rounded-md p-1.5 text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+                    >
+                      <Wand2 className="size-4" />
+                    </button>
+                  ) : null}
+                  {onVersionHistory ? (
+                    <button
+                      type="button"
+                      onClick={(event) => {
+                        event.stopPropagation()
+                        onVersionHistory(entry)
+                      }}
+                      aria-label={`查看「${entry.title}」的版本历史`}
+                      title="版本历史"
+                      className="inline-flex items-center justify-center rounded-md p-1.5 text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+                    >
+                      <History className="size-4" />
+                    </button>
+                  ) : null}
+                  {onShowSimilar ? (
+                    <button
+                      type="button"
+                      onClick={(event) => {
+                        event.stopPropagation()
+                        onShowSimilar(entry)
+                      }}
+                      aria-label={`查看「${entry.title}」的相关知识`}
+                      title="相关知识"
+                      className="inline-flex items-center justify-center rounded-md p-1.5 text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+                    >
+                      <Sparkles className="size-4" />
+                    </button>
+                  ) : null}
+                </div>
               </TableCell>
             ) : null}
           </TableRow>

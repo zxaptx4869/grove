@@ -22,6 +22,9 @@ import { toast } from 'sonner'
 import { NodeTree } from '@/components/features/NodeTree'
 import { DirectoryTreeSelect } from '@/components/features/DirectoryTreeSelect'
 import { EntryCard, EntryList } from '@/components/features/EntryViews'
+import { EntryEditDialog } from '@/components/features/EntryEditDialog'
+import { EntryVersionHistoryDialog } from '@/components/features/EntryVersionHistoryDialog'
+import { RevisionSuggestionDialog } from '@/components/features/RevisionSuggestionDialog'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import {
@@ -271,9 +274,28 @@ export function ProjectPage() {
   const [searchInput, setSearchInput] = useState('')
   const [submittedSearch, setSubmittedSearch] = useState('')
   const [similarEntry, setSimilarEntry] = useState<EntryPayload | null>(null)
+  const [entryAction, setEntryAction] = useState<{
+    entry: EntryPayload
+    panel: 'edit' | 'versions' | 'revise'
+  } | null>(null)
 
   function submitSearch() {
     setSubmittedSearch(searchInput.trim())
+  }
+
+  function openEntryAction(
+    entry: EntryPayload,
+    panel: 'edit' | 'versions' | 'revise',
+  ) {
+    setEntryAction({ entry, panel })
+  }
+
+  function invalidateEntryData(entryId: number) {
+    queryClient.invalidateQueries({ queryKey: ['node-entries', id] })
+    queryClient.invalidateQueries({ queryKey: queryKeys.projectEntries(id) })
+    queryClient.invalidateQueries({ queryKey: queryKeys.projectTree(id) })
+    queryClient.invalidateQueries({ queryKey: ['search'] })
+    queryClient.invalidateQueries({ queryKey: queryKeys.similarEntries(entryId) })
   }
 
   const create = useGroveMutation({
@@ -886,6 +908,9 @@ export function ProjectPage() {
                             key={entry.id}
                             entry={entry}
                             highlightQuery={submittedSearch}
+                            onEdit={(selected) => openEntryAction(selected, 'edit')}
+                            onAiRevise={(selected) => openEntryAction(selected, 'revise')}
+                            onVersionHistory={(selected) => openEntryAction(selected, 'versions')}
                             onShowSimilar={(selected) => setSimilarEntry(selected)}
                           />
                         ))}
@@ -895,6 +920,9 @@ export function ProjectPage() {
                         <EntryList
                           entries={searchResults.data ?? []}
                           highlightQuery={submittedSearch}
+                          onEdit={(selected) => openEntryAction(selected, 'edit')}
+                          onAiRevise={(selected) => openEntryAction(selected, 'revise')}
+                          onVersionHistory={(selected) => openEntryAction(selected, 'versions')}
                           onShowSimilar={(selected) => setSimilarEntry(selected)}
                         />
                       </div>
@@ -924,6 +952,9 @@ export function ProjectPage() {
                           <EntryCard
                             key={entry.id}
                             entry={entry}
+                            onEdit={(selected) => openEntryAction(selected, 'edit')}
+                            onAiRevise={(selected) => openEntryAction(selected, 'revise')}
+                            onVersionHistory={(selected) => openEntryAction(selected, 'versions')}
                             onShowSimilar={(selected) => setSimilarEntry(selected)}
                           />
                         ))}
@@ -932,6 +963,9 @@ export function ProjectPage() {
                       <div className="pt-4">
                         <EntryList
                           entries={entries.data ?? []}
+                          onEdit={(selected) => openEntryAction(selected, 'edit')}
+                          onAiRevise={(selected) => openEntryAction(selected, 'revise')}
+                          onVersionHistory={(selected) => openEntryAction(selected, 'versions')}
                           onShowSimilar={(selected) => setSimilarEntry(selected)}
                         />
                       </div>
@@ -1298,6 +1332,40 @@ export function ProjectPage() {
         open={similarEntry != null}
         onOpenChange={(open) => {
           if (!open) setSimilarEntry(null)
+        }}
+      />
+      <EntryEditDialog
+        open={entryAction?.panel === 'edit'}
+        entry={entryAction?.entry ?? null}
+        nodes={nodes}
+        onOpenChange={(open) => {
+          if (!open) setEntryAction(null)
+        }}
+        onSaved={(updated) => {
+          invalidateEntryData(updated.id)
+          setEntryAction(null)
+        }}
+      />
+      <EntryVersionHistoryDialog
+        open={entryAction?.panel === 'versions'}
+        entry={entryAction?.entry ?? null}
+        onOpenChange={(open) => {
+          if (!open) setEntryAction(null)
+        }}
+        onRestored={(updated) => {
+          invalidateEntryData(updated.id)
+          setEntryAction(null)
+        }}
+      />
+      <RevisionSuggestionDialog
+        open={entryAction?.panel === 'revise'}
+        entry={entryAction?.entry ?? null}
+        onOpenChange={(open) => {
+          if (!open) setEntryAction(null)
+        }}
+        onApplied={(updated) => {
+          invalidateEntryData(updated.id)
+          setEntryAction(null)
         }}
       />
     </section>
