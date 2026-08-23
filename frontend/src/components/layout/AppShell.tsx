@@ -1,7 +1,6 @@
 import { useMemo, useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import {
-  ArrowLeft,
   BookOpen,
   ChevronDown,
   FolderKanban,
@@ -52,46 +51,50 @@ function useAllProjects() {
   })
 }
 
-function GlobalNavigation({ projects }: { projects: ProjectPayload[] }) {
+/** 全局一级菜单：固定位于侧栏顶部，进入项目后保持不变。 */
+function GlobalNavItems() {
+  return (
+    <nav className="px-2 py-3" aria-label="全局导航">
+      <NavLink
+        to="/projects"
+        className={({ isActive }) => `flex min-h-[38px] items-center gap-[9px] rounded-md px-2.5 text-body ${isActive ? 'bg-brand-soft font-semibold text-brand' : 'text-muted-foreground hover:bg-muted hover:text-foreground'}`}
+      >
+        <FolderKanban className="size-4" />项目
+      </NavLink>
+      <NavLink
+        to="/inbox"
+        className={({ isActive }) => `flex min-h-[38px] items-center gap-[9px] rounded-md px-2.5 text-body ${isActive ? 'bg-brand-soft font-semibold text-brand' : 'text-muted-foreground hover:bg-muted hover:text-foreground'}`}
+      >
+        <Inbox className="size-4" />收集箱
+      </NavLink>
+      <NavLink
+        to="/search"
+        className={({ isActive }) => `flex min-h-[38px] items-center gap-[9px] rounded-md px-2.5 text-body ${isActive ? 'bg-brand-soft font-semibold text-brand' : 'text-muted-foreground hover:bg-muted hover:text-foreground'}`}
+      >
+        <Search className="size-4" />搜索
+      </NavLink>
+    </nav>
+  )
+}
+
+function RecentProjects({ projects }: { projects: ProjectPayload[] }) {
   const recentProjects = useMemo(
     () => projects.filter((project) => project.status !== 'archived').slice(0, 5),
     [projects],
   )
 
   return (
-    <>
-      <nav className="px-2 py-3" aria-label="全局导航">
-        <NavLink
-          to="/projects"
-          className={({ isActive }) => `flex min-h-[38px] items-center gap-[9px] rounded-md px-2.5 text-body ${isActive ? 'bg-brand-soft font-semibold text-brand' : 'text-muted-foreground hover:bg-muted hover:text-foreground'}`}
-        >
-          <FolderKanban className="size-4" />项目
-        </NavLink>
-        <NavLink
-          to="/inbox"
-          className={({ isActive }) => `flex min-h-[38px] items-center gap-[9px] rounded-md px-2.5 text-body ${isActive ? 'bg-brand-soft font-semibold text-brand' : 'text-muted-foreground hover:bg-muted hover:text-foreground'}`}
-        >
-          <Inbox className="size-4" />收集箱
-        </NavLink>
-        <NavLink
-          to="/search"
-          className={({ isActive }) => `flex min-h-[38px] items-center gap-[9px] rounded-md px-2.5 text-body ${isActive ? 'bg-brand-soft font-semibold text-brand' : 'text-muted-foreground hover:bg-muted hover:text-foreground'}`}
-        >
-          <Search className="size-4" />搜索
-        </NavLink>
-      </nav>
-      <div className="min-h-0 flex-1 px-2 pb-3">
-        <p className="px-2.5 pb-1.5 pt-[18px] text-[11px] text-muted-foreground">最近项目</p>
-        {recentProjects.length > 0 ? recentProjects.map((project) => (
-          <Link key={project.id} to={`/projects/${project.id}`} className="flex min-h-[38px] items-center gap-[9px] rounded-md px-2.5 text-body text-muted-foreground hover:bg-muted hover:text-foreground">
-            <FolderTree className="size-4" />
-            <span className="truncate">{project.name}</span>
-          </Link>
-        )) : (
-          <p className="px-2 py-2 text-caption text-muted-foreground/70">还没有项目</p>
-        )}
-      </div>
-    </>
+    <div className="min-h-0 flex-1 px-2 pb-3">
+      <p className="px-2.5 pb-1.5 pt-[18px] text-[11px] text-muted-foreground">最近项目</p>
+      {recentProjects.length > 0 ? recentProjects.map((project) => (
+        <Link key={project.id} to={`/projects/${project.id}`} className="flex min-h-[38px] items-center gap-[9px] rounded-md px-2.5 text-body text-muted-foreground hover:bg-muted hover:text-foreground">
+          <FolderTree className="size-4" />
+          <span className="truncate">{project.name}</span>
+        </Link>
+      )) : (
+        <p className="px-2 py-2 text-caption text-muted-foreground/70">还没有项目</p>
+      )}
+    </div>
   )
 }
 
@@ -112,9 +115,6 @@ function ProjectNavigation({ project }: { project?: ProjectPayload }) {
 
   return (
     <div className="flex min-h-0 flex-1 flex-col px-2 pb-3 pt-2">
-      <Link to="/projects" className="mb-2 flex min-h-[34px] items-center gap-2 rounded-md px-2.5 text-caption text-muted-foreground hover:bg-muted hover:text-foreground">
-        <ArrowLeft className="size-3.5" />返回全部项目
-      </Link>
       <div className="mb-3 px-2.5 pb-1">
         <p className="truncate text-[15px] font-[650] leading-6">{project?.name ?? '项目工作台'}</p>
         <p className="mt-0.5 text-caption text-muted-foreground">{project ? statusLabel[project.status] : '加载中'}</p>
@@ -155,21 +155,6 @@ function ProjectNavigation({ project }: { project?: ProjectPayload }) {
         >
           <Images className="size-4" />采集与来源
         </Link>
-      </nav>
-      <div className="my-2 border-t" aria-hidden="true" />
-      <nav aria-label="全局导航">
-        <NavLink
-          to="/inbox"
-          className={({ isActive }) => `flex min-h-[38px] items-center gap-[9px] rounded-md px-2.5 text-body ${isActive ? 'bg-brand-soft font-semibold text-brand' : 'text-muted-foreground hover:bg-muted hover:text-foreground'}`}
-        >
-          <Inbox className="size-4" />收集箱
-        </NavLink>
-        <NavLink
-          to="/search"
-          className={({ isActive }) => `flex min-h-[38px] items-center gap-[9px] rounded-md px-2.5 text-body ${isActive ? 'bg-brand-soft font-semibold text-brand' : 'text-muted-foreground hover:bg-muted hover:text-foreground'}`}
-        >
-          <Search className="size-4" />搜索
-        </NavLink>
       </nav>
     </div>
   )
@@ -215,7 +200,12 @@ export function AppShell() {
             </Link>
 
             <div className="min-h-0 flex-1 overflow-y-auto">
-              {projectId ? <ProjectNavigation project={currentProject} /> : <GlobalNavigation projects={projects.data ?? []} />}
+              <GlobalNavItems />
+              {projectId ? (
+                <ProjectNavigation project={currentProject} />
+              ) : (
+                <RecentProjects projects={projects.data ?? []} />
+              )}
             </div>
 
             <div className="shrink-0 border-t px-2 pb-2 pt-1.5">
