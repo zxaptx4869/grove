@@ -338,6 +338,11 @@ async def update_source(
                 status_code=status.HTTP_409_CONFLICT,
                 detail="该来源已被正式知识引用，如需移动请先处理关联 Entry",
             )
+        if source.status == DONE:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="来源已处理完成，不能修改归属",
+            )
         source.project_id = payload.project_id
         await clear_candidate_routing(db, source.id)
         await clear_candidate_relations(db, source.id)
@@ -420,6 +425,11 @@ async def delete_source(
                 status_code=status.HTTP_409_CONFLICT,
                 detail="该来源是某条正式知识的唯一来源证据，不能删除；请先处理关联 Entry",
             )
+    if source.status == DONE:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="来源已处理完成，不能删除",
+        )
 
     attachments = (
         await db.execute(select(Attachment).where(Attachment.source_id == source.id))

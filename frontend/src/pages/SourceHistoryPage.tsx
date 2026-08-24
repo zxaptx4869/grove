@@ -1,6 +1,6 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
-import { Search } from 'lucide-react'
+import { Search, X } from 'lucide-react'
 import { useSearchParams } from 'react-router-dom'
 import { toast } from 'sonner'
 
@@ -42,6 +42,15 @@ export function SourceHistoryPage() {
   const [queryInput, setQueryInput] = useState('')
   const [submittedQuery, setSubmittedQuery] = useState('')
   const [page, setPage] = useState(1)
+
+  // 输入防抖自动查询：清空输入后自动回到全部数据
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      setSubmittedQuery(queryInput.trim())
+      setPage(1)
+    }, 300)
+    return () => clearTimeout(timer)
+  }, [queryInput])
 
   const projects = useQuery({
     queryKey: [...queryKeys.projects, 'all-statuses'],
@@ -180,6 +189,16 @@ export function SourceHistoryPage() {
             placeholder="搜索标题或备注…"
             aria-label="搜索来源"
           />
+          {queryInput ? (
+            <button
+              type="button"
+              aria-label="清空搜索"
+              onClick={() => setQueryInput('')}
+              className="flex size-8 shrink-0 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+            >
+              <X className="size-4" />
+            </button>
+          ) : null}
           <Button size="sm" variant="outline" onClick={search}>
             <Search />
             搜索

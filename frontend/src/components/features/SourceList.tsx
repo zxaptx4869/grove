@@ -3,14 +3,6 @@ import { FileText, ImageIcon, RotateCw, Trash2 } from 'lucide-react'
 
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from '@/components/ui/dialog'
 import type { SourcePayload, SourceStatus } from '@/lib/api'
 import { SourceCandidatesDialog } from '@/components/features/SourceCandidatesDialog'
 
@@ -58,7 +50,6 @@ export function SourceList({
   onDelete,
 }: SourceListProps) {
   const [candidateSourceId, setCandidateSourceId] = useState<number | null>(null)
-  const [deleteTarget, setDeleteTarget] = useState<SourcePayload | null>(null)
 
   if (sources.length === 0) {
     return <p className="px-1 py-6 text-center text-body-sm text-muted-foreground">还没有来源</p>
@@ -85,27 +76,29 @@ export function SourceList({
                 {attachmentSummary(source)}
               </p>
             </div>
-            <select
-              aria-label={`${source.title} 所属项目`}
-              value={source.project_id != null ? String(source.project_id) : ''}
-              disabled={source.project_locked}
-              title={
-                source.project_locked
-                  ? '该来源已被正式知识引用，不能修改归属'
-                  : undefined
-              }
-              onChange={(event) =>
-                onAssign(source.id, event.target.value ? Number(event.target.value) : null)
-              }
-              className="h-8 w-40 shrink-0 rounded-md border border-input bg-white px-2 text-caption"
-            >
-              <option value="">未归属</option>
-              {projects.map((project) => (
-                <option key={project.id} value={String(project.id)}>
-                  {project.name}
-                </option>
-              ))}
-            </select>
+            {source.status !== 'done' ? (
+              <select
+                aria-label={`${source.title} 所属项目`}
+                value={source.project_id != null ? String(source.project_id) : ''}
+                disabled={source.project_locked}
+                title={
+                  source.project_locked
+                    ? '该来源已被正式知识引用，不能修改归属'
+                    : undefined
+                }
+                onChange={(event) =>
+                  onAssign(source.id, event.target.value ? Number(event.target.value) : null)
+                }
+                className="h-8 w-40 shrink-0 rounded-md border border-input bg-white px-2 text-caption"
+              >
+                <option value="">未归属</option>
+                {projects.map((project) => (
+                  <option key={project.id} value={String(project.id)}>
+                    {project.name}
+                  </option>
+                ))}
+              </select>
+            ) : null}
             <Badge
               className={`min-h-[22px] shrink-0 rounded px-[7px] py-0.5 text-[11px] font-semibold ${statusClass(source.status)}`}
             >
@@ -131,20 +124,16 @@ export function SourceList({
                 重试
               </Button>
             ) : null}
-            <Button
-              size="icon-sm"
-              variant="ghost"
-              aria-label={`删除 ${source.title}`}
-              onClick={() => {
-                if (source.evidence_entry_count > 0) {
-                  setDeleteTarget(source)
-                } else {
-                  onDelete(source.id)
-                }
-              }}
-            >
-              <Trash2 className="size-4" />
-            </Button>
+            {source.status !== 'done' ? (
+              <Button
+                size="icon-sm"
+                variant="ghost"
+                aria-label={`删除 ${source.title}`}
+                onClick={() => onDelete(source.id)}
+              >
+                <Trash2 className="size-4" />
+              </Button>
+            ) : null}
           </li>
         )
         })}
@@ -156,37 +145,6 @@ export function SourceList({
           if (!open) setCandidateSourceId(null)
         }}
       />
-      <Dialog
-        open={deleteTarget != null}
-        onOpenChange={(open) => {
-          if (!open) setDeleteTarget(null)
-        }}
-      >
-        <DialogContent className="sm:max-w-md">
-          <DialogHeader>
-            <DialogTitle>删除来源？</DialogTitle>
-            <DialogDescription>
-              {deleteTarget
-                ? `「${deleteTarget.title}」被 ${deleteTarget.evidence_entry_count} 条正式知识引用（非唯一证据）。删除后这些引用将被移除，但正式知识仍保留其他来源。`
-                : ''}
-            </DialogDescription>
-          </DialogHeader>
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setDeleteTarget(null)}>
-              取消
-            </Button>
-            <Button
-              variant="destructive"
-              onClick={() => {
-                if (deleteTarget) onDelete(deleteTarget.id)
-                setDeleteTarget(null)
-              }}
-            >
-              确认删除
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
     </>
   )
 }

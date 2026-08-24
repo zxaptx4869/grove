@@ -97,6 +97,24 @@ async def test_update_source_blocked_after_archive(client: httpx.AsyncClient) ->
 
 
 @pytest.mark.asyncio
+async def test_update_source_blocked_when_done(client: httpx.AsyncClient) -> None:
+    """已处理完成（未归档）的来源禁止改归属。"""
+    await _register(client)
+    project = await _create_project(client)
+    other = await _create_project(client)
+    source = await _create_source(client, project["id"])
+    await _process(client, source["id"])
+
+    response = await client.patch(
+        f"/api/sources/{source['id']}",
+        json={"project_id": other["id"]},
+    )
+
+    assert response.status_code == 409
+    assert "已处理完成" in response.json()["detail"]
+
+
+@pytest.mark.asyncio
 async def test_delete_source_blocked_unique_evidence(
     client: httpx.AsyncClient,
 ) -> None:
@@ -120,10 +138,24 @@ async def test_delete_source_blocked_unique_evidence(
 
 
 @pytest.mark.asyncio
-async def test_delete_source_allowed_with_other_evidence(
+async def test_delete_source_blocked_when_done(client: httpx.AsyncClient) -> None:
+    """已处理完成（未归档）的来源禁止删除。"""
+    await _register(client)
+    project = await _create_project(client)
+    source = await _create_source(client, project["id"])
+    await _process(client, source["id"])
+
+    response = await client.delete(f"/api/sources/{source['id']}")
+
+    assert response.status_code == 409
+    assert "已处理完成" in response.json()["detail"]
+
+
+@pytest.mark.asyncio
+async def test_delete_done_source_blocked_even_with_other_evidence(
     client: httpx.AsyncClient,
 ) -> None:
-    """Entry 还有其他证据时删除来源允许，证据级联清理后仍可溯源。"""
+    """已处理完成来源即使有其他证据也禁止删除。"""
     await _register(client)
     project = await _create_project(client)
     node = await _create_node(client, project["id"], "施工")
@@ -141,8 +173,17 @@ async def test_delete_source_allowed_with_other_evidence(
 
     response = await client.delete(f"/api/sources/{source_a['id']}")
 
+    assert response.status_code == 409
+    assert "已处理完成" in response.json()["detail"]
+
+
+@pytest.mark.asyncio
+async def test_delete_unprocessed_source_allowed(client: httpx.AsyncClient) -> None:
+    """未处理的来源可直接删除。"""
+    await _register(client)
+    project = await _create_project(client)
+    source = await _create_source(client, project["id"])
+
+    response = await client.delete(f"/api/sources/{source['id']}")
+
     assert response.status_code == 200
-    entry_after = (await client.get(f"/api/entries/{entry['id']}")).json()
-    assert [evidence["source_id"] for evidence in entry_after["evidences"]] == [
-        source_b["id"]
-    ]

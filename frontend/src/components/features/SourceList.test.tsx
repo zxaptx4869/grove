@@ -40,28 +40,18 @@ function renderList(source: SourcePayload, onDelete = vi.fn()) {
 }
 
 describe('SourceList', () => {
-  it('被正式知识引用的来源禁用改归属', () => {
-    renderList(baseSource({ project_locked: true }))
+  it('已处理完成的来源不展示改归属与删除', () => {
+    renderList(baseSource({ status: 'done', project_locked: true, evidence_entry_count: 1 }))
 
-    expect(screen.getByLabelText('测试来源 所属项目')).toBeDisabled()
+    expect(screen.queryByLabelText('测试来源 所属项目')).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: '删除 测试来源' })).not.toBeInTheDocument()
   })
 
-  it('有证据引用的来源删除需二次确认', async () => {
-    const onDelete = vi.fn()
-    renderList(baseSource({ evidence_entry_count: 2 }), onDelete)
-
-    await userEvent.click(screen.getByRole('button', { name: '删除 测试来源' }))
-
-    expect(await screen.findByText('删除来源？')).toBeInTheDocument()
-    expect(screen.getByText(/被 2 条正式知识引用/)).toBeInTheDocument()
-    await userEvent.click(screen.getByRole('button', { name: '确认删除' }))
-    expect(onDelete).toHaveBeenCalledWith(1)
-  })
-
-  it('无证据引用直接删除', async () => {
+  it('未处理来源可改归属并直接删除', async () => {
     const onDelete = vi.fn()
     renderList(baseSource({}), onDelete)
 
+    expect(screen.getByLabelText('测试来源 所属项目')).not.toBeDisabled()
     await userEvent.click(screen.getByRole('button', { name: '删除 测试来源' }))
 
     expect(onDelete).toHaveBeenCalledWith(1)

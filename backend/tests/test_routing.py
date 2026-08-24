@@ -96,11 +96,6 @@ async def test_global_source_routes_after_project_assignment(
     project = await _project(client, "装修")
     node = await _node(client, project["id"], "施工")
     source = await _source(client, "闭水试验至少持续 24 小时")
-    await _process(client, source["id"])
-
-    before = await _candidates(client, source["id"])
-    assert before[0]["routing_status"] == "pending"
-    assert before[0]["recommended_node_id"] is None
 
     response = await client.patch(
         f"/api/sources/{source['id']}",
@@ -108,31 +103,26 @@ async def test_global_source_routes_after_project_assignment(
     )
     assert response.status_code == 200
 
+    await _process(client, source["id"])
     after = await _candidates(client, source["id"])
     assert after[0]["recommended_node_id"] == node["id"]
     assert after[0]["routing_status"] == "recommended"
 
 
 @pytest.mark.asyncio
-async def test_reroute_on_project_change(client: httpx.AsyncClient) -> None:
-    """修改来源项目后应重新计算目录推荐。"""
+async def test_unprocessed_source_can_change_project(client: httpx.AsyncClient) -> None:
+    """未处理的来源可以在项目间移动（已处理来源受 done 锁定保护）。"""
     await _register(client)
     first = await _project(client, "项目甲")
-    first_node = await _node(client, first["id"], "节点甲")
     second = await _project(client, "项目乙")
-    second_node = await _node(client, second["id"], "节点乙")
     source = await _source(client, "闭水试验至少持续 24 小时", first["id"])
-    await _process(client, source["id"])
-
-    assert (await _candidates(client, source["id"]))[0]["recommended_node_id"] == first_node["id"]
 
     response = await client.patch(
         f"/api/sources/{source['id']}",
         json={"project_id": second["id"]},
     )
     assert response.status_code == 200
-
-    assert (await _candidates(client, source["id"]))[0]["recommended_node_id"] == second_node["id"]
+    assert (await client.get(f"/api/sources/{source['id']}")).json()["project_id"] == second["id"]
 
 
 @pytest.mark.asyncio

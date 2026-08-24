@@ -85,4 +85,36 @@ describe('SourceHistoryPage', () => {
     expect(calls.some((href) => href.includes('/api/sources/query') && href.includes('q=%E9%97%AD%E6%B0%B4'))).toBe(true)
     vi.unstubAllGlobals()
   })
+
+  it('清空搜索后回到全部数据', async () => {
+    const calls: string[] = []
+    vi.stubGlobal(
+      'fetch',
+      vi.fn((input: RequestInfo | URL) => {
+        const url = new URL(String(input), 'http://localhost')
+        calls.push(url.href)
+        if (url.pathname === '/api/projects') return ok([])
+        if (url.pathname === '/api/sources/query') {
+          return ok({ items: [], total: 0, limit: 20, offset: 0 })
+        }
+        return ok([])
+      }),
+    )
+
+    renderPage()
+
+    await userEvent.type(screen.getByLabelText('搜索来源'), '闭水')
+    await userEvent.click(screen.getByRole('button', { name: '搜索' }))
+    await screen.findByText('还没有来源')
+    await userEvent.click(screen.getByRole('button', { name: '清空搜索' }))
+
+    await screen.findByText('还没有来源')
+    expect(
+      calls.some(
+        (href) =>
+          href.includes('/api/sources/query') && !href.includes('q='),
+      ),
+    ).toBe(true)
+    vi.unstubAllGlobals()
+  })
 })
