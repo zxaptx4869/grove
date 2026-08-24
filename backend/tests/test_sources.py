@@ -182,6 +182,58 @@ def test_reject_non_image(client: TestClient) -> None:
     assert response.status_code == 400
 
 
+def test_list_sources_limit(client: TestClient) -> None:
+    """limit 参数应限制最近来源条数。"""
+    _register(client)
+    for index in range(3):
+        client.post("/api/sources", data={"text": f"来源 {index}"})
+
+    response = client.get("/api/sources", params={"limit": 2})
+
+    assert response.status_code == 200
+    assert len(response.json()) == 2
+
+
+def test_query_sources_filters_and_pagination(client: TestClient) -> None:
+    """query 端点应支持项目/状态/关键词筛选与分页。"""
+    _register(client)
+    project = _create_project(client)
+    client.post("/api/sources", data={"text": "闭水试验 24 小时"})
+    client.post(
+        "/api/sources",
+        data={"text": "瓷砖铺贴", "project_id": str(project["id"]), "note": "阳台"},
+    )
+    client.post(
+        "/api/sources",
+        data={"text": "闭水试验 48 小时", "project_id": str(project["id"])},
+    )
+
+    by_project = client.get("/api/sources/query", params={"project_id": project["id"]})
+    assert by_project.status_code == 200
+    assert by_project.json()["total"] == 2
+    assert all(item["project_id"] == project["id"] for item in by_project.json()["items"])
+
+    by_q = client.get("/api/sources/query", params={"q": "闭水"})
+    assert by_q.json()["total"] == 2
+
+    by_status = client.get("/api/sources/query", params={"status": "waiting"})
+    assert by_status.json()["total"] == 3
+
+    page1 = client.get("/api/sources/query", params={"limit": 2, "offset": 0}).json()
+    page2 = client.get("/api/sources/query", params={"limit": 2, "offset": 2}).json()
+    assert len(page1["items"]) == 2
+    assert page1["total"] == 3
+    assert len(page2["items"]) == 1
+    assert not {item["id"] for item in page1["items"]} & {item["id"] for item in page2["items"]}
+
+    other = _new_client()
+    _register(other)
+    assert (
+        other.get("/api/sources/query", params={"project_id": project["id"]}).status_code
+        == 404
+    )
+
+
 def test_reject_too_many_images(client: TestClient) -> None:
     """超过 5 张图片应返回 400。"""
     _register(client)

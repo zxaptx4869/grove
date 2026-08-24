@@ -6,6 +6,7 @@ import {
   ChartPie,
   FolderPlus,
   FolderTree,
+  Images,
   LayoutGrid,
   List,
   MoreHorizontal,
@@ -1035,6 +1036,21 @@ export function ProjectPage() {
                       {nodes.length > 0
                         ? `当前共有 ${project.node_count} 个目录节点`
                         : '进入知识空间，创建第一个根节点。'}
+                    </span>
+                  </span>
+                  <ArrowRight className="size-4 shrink-0 text-muted-foreground transition-transform group-hover:translate-x-0.5" />
+                </Link>
+                <Link
+                  to={`/sources?project=${id}`}
+                  className="group flex min-h-[76px] items-center gap-3 border-t px-2 hover:bg-muted/50"
+                >
+                  <span className="flex size-9 shrink-0 items-center justify-center rounded-md bg-muted">
+                    <Images className="size-[18px] text-brand" />
+                  </span>
+                  <span className="min-w-0 flex-1">
+                    <span className="block text-body font-[650]">来源与处理状态</span>
+                    <span className="mt-0.5 block text-body-sm text-muted-foreground">
+                      查看本项目全部采集来源、处理状态与失败重试。
                     </span>
                   </span>
                   <ArrowRight className="size-4 shrink-0 text-muted-foreground transition-transform group-hover:translate-x-0.5" />

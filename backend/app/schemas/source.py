@@ -30,6 +30,17 @@ class SourceOut(BaseModel):
     created_at: datetime
     updated_at: datetime
     attachments: list[AttachmentOut] = []
+    project_locked: bool = False
+    evidence_entry_count: int = 0
+
+
+class SourcePageOut(BaseModel):
+    """全量来源历史查询的分页结果。"""
+
+    items: list[SourceOut]
+    total: int
+    limit: int
+    offset: int
 
 
 class SourceUpdate(BaseModel):

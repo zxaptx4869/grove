@@ -1,5 +1,6 @@
 import { useState } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
+import { useNavigate } from 'react-router-dom'
 import { toast } from 'sonner'
 
 import { SourceCapture } from '@/components/features/SourceCapture'
@@ -21,6 +22,7 @@ const PROJECT_STATUSES: ProjectStatus[] = ['active', 'paused', 'completed', 'arc
 /** 全局收集箱：采集入口与未归属/全部来源列表。 */
 export function InboxPage() {
   const queryClient = useQueryClient()
+  const navigate = useNavigate()
   const [filter, setFilter] = useState<'all' | 'unassigned'>('unassigned')
 
   const projects = useQuery({
@@ -31,7 +33,8 @@ export function InboxPage() {
   })
   const sources = useQuery({
     queryKey: [...queryKeys.sources, filter],
-    queryFn: () => fetchSources({ unassigned: filter === 'unassigned' }),
+    queryFn: () =>
+      fetchSources({ unassigned: filter === 'unassigned', limit: 10 }),
     refetchInterval: (query) =>
       query.state.data?.some(
         (source) => source.status === 'waiting' || source.status === 'processing',
@@ -100,6 +103,13 @@ export function InboxPage() {
                 {label}
               </button>
             ))}
+            <button
+              type="button"
+              onClick={() => navigate('/sources')}
+              className="ml-auto flex h-[34px] items-center rounded-md px-2.5 text-body text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+            >
+              查看全部来源
+            </button>
           </div>
 
           {sources.isLoading ? (

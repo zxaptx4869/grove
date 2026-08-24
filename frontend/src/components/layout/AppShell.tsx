@@ -6,7 +6,6 @@ import {
   FolderKanban,
   FolderTree,
   House,
-  Images,
   Inbox,
   KeyRound,
   ListChecks,
@@ -148,13 +147,6 @@ function ProjectNavigation({ project }: { project?: ProjectPayload }) {
           className={`flex min-h-[38px] items-center gap-[9px] rounded-md px-2.5 text-body ${isReview ? 'bg-brand-soft font-semibold text-brand' : 'text-muted-foreground hover:bg-muted hover:text-foreground'}`}
         >
           <ListChecks className="size-4" />确认台
-        </Link>
-        <Link
-          to={`/projects/${projectId}?view=sources`}
-          aria-current={isSources ? 'page' : undefined}
-          className={`flex min-h-[38px] items-center gap-[9px] rounded-md px-2.5 text-body ${isSources ? 'bg-brand-soft font-semibold text-brand' : 'text-muted-foreground hover:bg-muted hover:text-foreground'}`}
-        >
-          <Images className="size-4" />采集与来源
         </Link>
       </nav>
     </div>

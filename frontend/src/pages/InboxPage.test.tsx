@@ -27,6 +27,7 @@ describe('InboxPage', () => {
         }
         if (url.pathname === '/api/sources') {
           expect(url.searchParams.get('unassigned')).toBe('true')
+          expect(url.searchParams.get('limit')).toBe('10')
           return Promise.resolve({
             ok: true,
             json: async () => [
@@ -62,6 +63,25 @@ describe('InboxPage', () => {
     expect(await screen.findByText('洗烘使用体验.png')).toBeInTheDocument()
     expect(screen.getByLabelText('来源列表')).toBeInTheDocument()
     expect(screen.getByText('等待处理')).toBeInTheDocument()
+    vi.unstubAllGlobals()
+  })
+
+  it('右上角提供查看全部来源入口', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn((input: RequestInfo | URL) => {
+        const url = new URL(String(input), 'http://localhost')
+        return Promise.resolve({
+          ok: true,
+          json: async () => (url.pathname === '/api/sources' ? [] : []),
+        })
+      }),
+    )
+
+    renderInbox()
+
+    const button = await screen.findByRole('button', { name: '查看全部来源' })
+    expect(button).toBeInTheDocument()
     vi.unstubAllGlobals()
   })
 

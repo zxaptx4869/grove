@@ -218,15 +218,48 @@ export interface SourcePayload {
   project_recommendation_reason: string | null
   created_at: string
   updated_at: string
+  project_locked: boolean
+  evidence_entry_count: number
   attachments: AttachmentPayload[]
 }
 
-export const fetchSources = (params?: { projectId?: number; unassigned?: boolean }) => {
+export const fetchSources = (params?: {
+  projectId?: number
+  unassigned?: boolean
+  limit?: number
+}) => {
   const search = new URLSearchParams()
   if (params?.projectId != null) search.set('project_id', String(params.projectId))
   if (params?.unassigned) search.set('unassigned', 'true')
+  if (params?.limit != null) search.set('limit', String(params.limit))
   const query = search.toString()
   return request<SourcePayload[]>(`/api/sources${query ? `?${query}` : ''}`)
+}
+
+export interface SourcePagePayload {
+  items: SourcePayload[]
+  total: number
+  limit: number
+  offset: number
+}
+
+export const fetchSourcePage = (params?: {
+  projectId?: number
+  unassigned?: boolean
+  status?: SourceStatus
+  q?: string
+  limit?: number
+  offset?: number
+}) => {
+  const search = new URLSearchParams()
+  if (params?.projectId != null) search.set('project_id', String(params.projectId))
+  if (params?.unassigned) search.set('unassigned', 'true')
+  if (params?.status) search.set('status', params.status)
+  if (params?.q) search.set('q', params.q)
+  if (params?.limit != null) search.set('limit', String(params.limit))
+  if (params?.offset != null) search.set('offset', String(params.offset))
+  const query = search.toString()
+  return request<SourcePagePayload>(`/api/sources/query${query ? `?${query}` : ''}`)
 }
 
 export const createSource = async (formData: FormData): Promise<SourcePayload> => {

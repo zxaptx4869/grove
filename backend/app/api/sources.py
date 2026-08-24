@@ -4,15 +4,24 @@ import logging
 from pathlib import Path
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile, status
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile, status
 from fastapi.responses import FileResponse
-from sqlalchemy import select
+from sqlalchemy import delete, func, select
 from sqlalchemy.orm import selectinload
 
 from app.api.deps import DbSession, get_current_workspace
-from app.models import Attachment, ProcessingTask, Project, Source, Workspace
+from app.models import (
+    Attachment,
+    Candidate,
+    EntrySourceEvidence,
+    ProcessingTask,
+    Project,
+    Source,
+    Workspace,
+)
+from app.models.extraction import CANDIDATE_CONFIRMED
 from app.models.processing import DONE, FAILED, PROCESSING, WAITING
-from app.schemas.source import AttachmentOut, SourceOut, SourceUpdate
+from app.schemas.source import AttachmentOut, SourceOut, SourcePageOut, SourceUpdate
 from app.services.attachment_storage import AttachmentStorage
 from app.services.entry_relation import clear_candidate_relations, route_relations
 from app.services.routing import clear_candidate_routing, route_source
@@ -32,7 +41,12 @@ MAX_IMAGE_BYTES = 10 * 1024 * 1024
 MAX_IMAGES = 5
 
 
-def _source_out(source: Source, attachments: list[Attachment]) -> SourceOut:
+def _source_out(
+    source: Source,
+    attachments: list[Attachment],
+    project_locked: bool = False,
+    evidence_entry_count: int = 0,
+) -> SourceOut:
     """把 ORM 对象组装为响应模型。"""
     return SourceOut(
         id=source.id,
@@ -44,6 +58,8 @@ def _source_out(source: Source, attachments: list[Attachment]) -> SourceOut:
         project_recommendation_reason=source.project_recommendation_reason,
         created_at=source.created_at,
         updated_at=source.updated_at,
+        project_locked=project_locked,
+        evidence_entry_count=evidence_entry_count,
         attachments=[
             AttachmentOut(
                 id=item.id,
@@ -88,7 +104,45 @@ async def _load_source_out(db: DbSession, source_id: int) -> SourceOut:
             select(Source).options(selectinload(Source.attachments)).where(Source.id == source_id)
         )
     ).scalar_one()
-    return _source_out(source, list(source.attachments))
+    locked, counts = await _source_state_counts(db, [source.id])
+    return _source_out(
+        source,
+        list(source.attachments),
+        source.id in locked,
+        counts.get(source.id, 0),
+    )
+
+
+async def _source_state_counts(
+    db: DbSession,
+    source_ids: list[int],
+) -> tuple[set[int], dict[int, int]]:
+    """批量计算来源的锁定标记与 Entry 证据计数，避免列表 N+1。"""
+    locked: set[int] = set()
+    entry_ids_by_source: dict[int, set[int]] = {}
+    if source_ids:
+        confirmed = (
+            await db.execute(
+                select(Candidate.source_id).where(
+                    Candidate.source_id.in_(source_ids),
+                    Candidate.status == CANDIDATE_CONFIRMED,
+                    Candidate.entry_id.is_not(None),
+                )
+            )
+        ).scalars().all()
+        locked.update(confirmed)
+        rows = (
+            await db.execute(
+                select(EntrySourceEvidence.source_id, EntrySourceEvidence.entry_id).where(
+                    EntrySourceEvidence.source_id.in_(source_ids)
+                )
+            )
+        ).all()
+        for source_id, entry_id in rows:
+            locked.add(source_id)
+            entry_ids_by_source.setdefault(source_id, set()).add(entry_id)
+    counts = {source_id: len(entries) for source_id, entries in entry_ids_by_source.items()}
+    return locked, counts
 
 
 @router.get("", response_model=list[SourceOut])
@@ -97,6 +151,7 @@ async def list_sources(
     workspace: CurrentWorkspace,
     project_id: int | None = None,
     unassigned: bool = False,
+    limit: int | None = Query(default=None, ge=1, le=100),
 ) -> list[SourceOut]:
     """列出当前 Workspace 的 Source，可按项目或未归属筛选。"""
     query = (
@@ -110,8 +165,66 @@ async def list_sources(
     elif unassigned:
         query = query.where(Source.project_id.is_(None))
 
-    sources = (await db.execute(query.order_by(Source.created_at.desc()))).scalars().unique().all()
-    return [_source_out(source, list(source.attachments)) for source in sources]
+    ordered = query.order_by(Source.created_at.desc())
+    if limit is not None:
+        ordered = ordered.limit(limit)
+    sources = (await db.execute(ordered)).scalars().unique().all()
+    locked, counts = await _source_state_counts(db, [source.id for source in sources])
+    return [
+        _source_out(source, list(source.attachments), source.id in locked, counts.get(source.id, 0))
+        for source in sources
+    ]
+
+
+@router.get("/query", response_model=SourcePageOut)
+async def query_sources(
+    db: DbSession,
+    workspace: CurrentWorkspace,
+    project_id: int | None = None,
+    unassigned: bool = False,
+    source_status: str | None = Query(default=None, alias="status"),
+    q: str | None = Query(default=None, max_length=100),
+    limit: int = Query(default=20, ge=1, le=100),
+    offset: int = Query(default=0, ge=0),
+) -> SourcePageOut:
+    """全量来源历史查询：筛选、搜索与分页。"""
+    base = select(Source).where(Source.workspace_id == workspace.id)
+    if project_id is not None:
+        await _validate_project(db, workspace.id, project_id)
+        base = base.where(Source.project_id == project_id)
+    elif unassigned:
+        base = base.where(Source.project_id.is_(None))
+    if source_status:
+        base = base.where(Source.status == source_status)
+    if q and q.strip():
+        keyword = f"%{q.strip()}%"
+        base = base.where(Source.title.ilike(keyword) | Source.note.ilike(keyword))
+
+    total = (
+        await db.execute(select(func.count()).select_from(base.subquery()))
+    ).scalar_one()
+    result = await db.execute(
+        base.options(selectinload(Source.attachments))
+        .order_by(Source.created_at.desc())
+        .limit(limit)
+        .offset(offset)
+    )
+    sources = result.scalars().unique().all()
+    locked, counts = await _source_state_counts(db, [source.id for source in sources])
+    return SourcePageOut(
+        items=[
+            _source_out(
+                source,
+                list(source.attachments),
+                source.id in locked,
+                counts.get(source.id, 0),
+            )
+            for source in sources
+        ],
+        total=total,
+        limit=limit,
+        offset=offset,
+    )
 
 
 @router.post("", status_code=status.HTTP_201_CREATED, response_model=SourceOut)
@@ -219,6 +332,12 @@ async def update_source(
     if project_changed:
         if payload.project_id is not None:
             await _validate_project(db, workspace.id, payload.project_id)
+        locked, _ = await _source_state_counts(db, [source.id])
+        if source.id in locked:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="该来源已被正式知识引用，如需移动请先处理关联 Entry",
+            )
         source.project_id = payload.project_id
         await clear_candidate_routing(db, source.id)
         await clear_candidate_relations(db, source.id)
@@ -280,11 +399,37 @@ async def delete_source(
 ) -> dict[str, bool]:
     """删除 Source 并级联清理附件与本地文件。"""
     source = await _get_owned_source(db, workspace.id, source_id)
+    referenced_entry_ids = (
+        await db.execute(
+            select(EntrySourceEvidence.entry_id).where(
+                EntrySourceEvidence.source_id == source.id
+            )
+        )
+    ).scalars().all()
+    if referenced_entry_ids:
+        totals = (
+            await db.execute(
+                select(EntrySourceEvidence.entry_id, func.count())
+                .where(EntrySourceEvidence.entry_id.in_(referenced_entry_ids))
+                .group_by(EntrySourceEvidence.entry_id)
+            )
+        ).all()
+        total_by_entry = {entry_id: count for entry_id, count in totals}
+        if any(total_by_entry.get(entry_id, 0) == 1 for entry_id in referenced_entry_ids):
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="该来源是某条正式知识的唯一来源证据，不能删除；请先处理关联 Entry",
+            )
+
     attachments = (
         await db.execute(select(Attachment).where(Attachment.source_id == source.id))
     ).scalars().all()
     file_paths = [item.file_path for item in attachments if item.kind == "image" and item.file_path]
 
+    # 显式删除来源证据行：SQLite 默认不启用外键级联，需与 MySQL 行为保持一致
+    await db.execute(
+        delete(EntrySourceEvidence).where(EntrySourceEvidence.source_id == source.id)
+    )
     await db.delete(source)
     await db.commit()
 
