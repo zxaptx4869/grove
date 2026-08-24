@@ -87,26 +87,28 @@ export function InboxPage() {
         <SourceCapture projects={projectOptions} onCreated={invalidateSources} />
 
         <div className="min-w-0">
-          <div className="mb-2 flex h-[34px] items-center gap-1.5" role="tablist" aria-label="来源筛选">
-            {([
-              ['all', '全部'],
-              ['unassigned', '未归属'],
-            ] as const).map(([key, label]) => (
-              <button
-                key={key}
-                type="button"
-                role="tab"
-                aria-selected={filter === key}
-                onClick={() => setFilter(key)}
-                className={`flex h-[34px] items-center rounded-md px-2.5 text-body transition-colors ${filter === key ? 'bg-card text-foreground shadow-[0_1px_2px_rgb(0_0_0/0.06)]' : 'text-muted-foreground hover:bg-muted hover:text-foreground'}`}
-              >
-                {label}
-              </button>
-            ))}
+          <div className="mb-2 flex h-[34px] items-center justify-between gap-1.5">
+            <div className="flex h-[34px] items-center gap-1.5" role="tablist" aria-label="来源筛选">
+              {([
+                ['all', '全部'],
+                ['unassigned', '未归属'],
+              ] as const).map(([key, label]) => (
+                <button
+                  key={key}
+                  type="button"
+                  role="tab"
+                  aria-selected={filter === key}
+                  onClick={() => setFilter(key)}
+                  className={`flex h-[34px] items-center rounded-md px-2.5 text-body transition-colors ${filter === key ? 'bg-card text-foreground shadow-[0_1px_2px_rgb(0_0_0/0.06)]' : 'text-muted-foreground hover:bg-muted hover:text-foreground'}`}
+                >
+                  {label}
+                </button>
+              ))}
+            </div>
             <button
               type="button"
               onClick={() => navigate('/sources')}
-              className="ml-auto flex h-[34px] items-center rounded-md px-2.5 text-body text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+              className="flex h-[34px] items-center rounded-md px-2.5 text-body text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
             >
               查看全部来源
             </button>

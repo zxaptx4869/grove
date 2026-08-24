@@ -78,24 +78,21 @@ export function SourceCapture({ projects, fixedProjectId, onCreated }: SourceCap
 
   useEffect(() => {
     function onWindowPaste(event: ClipboardEvent) {
-      const files = Array.from(event.clipboardData?.items ?? [])
+      const incoming = Array.from(event.clipboardData?.items ?? [])
         .filter((item) => item.kind === 'file' && item.type.startsWith('image/'))
         .map((item) => item.getAsFile())
         .filter((file): file is File => file !== null)
-      if (files.length === 0) return
+      if (incoming.length === 0) return
       event.preventDefault()
-      setFiles((prev) => {
-        const combined = [...prev, ...files]
-        if (combined.length > 5) {
-          setError('一次最多 5 张图片，超出部分未加入')
-        }
-        return combined.slice(0, 5)
-      })
+      if (files.length + incoming.length > 5) {
+        setError('一次最多 5 张图片，超出部分未加入')
+      }
+      setFiles((prev) => [...prev, ...incoming].slice(0, 5))
       setMode('image')
     }
     window.addEventListener('paste', onWindowPaste)
     return () => window.removeEventListener('paste', onWindowPaste)
-  }, [])
+  }, [files])
 
   function reset() {
     setFiles([])
