@@ -750,16 +750,16 @@ export function ProjectPage() {
                   </div>
                 ) : selectedNode ? (
                   <div className="mb-4 border-b">
-                    <p className="truncate text-caption text-muted-foreground">
-                      {effectiveSelectedPath?.map((node) => node.name).join(' / ')}
-                    </p>
                     <div className="flex min-h-[50px] items-center justify-between gap-4">
                       <div className="min-w-0">
                         <h2 className="truncate text-[16px] font-[650] leading-6">
                           {selectedNode.name}
                         </h2>
                         <p className="truncate text-caption text-muted-foreground">
-                          {selectedNode.description || '尚未填写节点说明。'}
+                          {effectiveSelectedPath?.map((node) => node.name).join(' / ')}
+                          {selectedNode.description
+                            ? ` · ${selectedNode.description}`
+                            : ' · 尚未填写节点说明。'}
                         </p>
                       </div>
                       <div className="flex shrink-0 gap-2">

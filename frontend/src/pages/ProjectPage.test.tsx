@@ -168,7 +168,9 @@ describe('ProjectPage', () => {
       'aria-selected',
       'true',
     )
-    expect(screen.getByText('装修准备 / 需求确认')).toBeInTheDocument()
+    expect(
+      screen.getByText((content) => content.includes('装修准备 / 需求确认')),
+    ).toBeInTheDocument()
   })
 
   it('存在进行中草稿时展示提示条与操作', async () => {
