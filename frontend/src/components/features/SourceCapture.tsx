@@ -122,7 +122,7 @@ export function SourceCapture({ projects, fixedProjectId, onCreated }: SourceCap
 
     const form = new FormData()
     files.forEach((file) => form.append('files', file))
-    if (files.length === 0 && text.trim()) form.append('text', text)
+    if (text.trim()) form.append('text', text)
     if (projectId) form.append('project_id', projectId)
     if (note.trim()) form.append('note', note.trim())
 
@@ -236,6 +236,21 @@ export function SourceCapture({ projects, fixedProjectId, onCreated }: SourceCap
                 </option>
               ))}
             </select>
+          </div>
+        ) : null}
+
+        {mode === 'image' ? (
+          <div className="space-y-1.5">
+            <label htmlFor="capture-text" className="text-body-sm font-medium">
+              附加文字内容（可选）
+            </label>
+            <Textarea
+              id="capture-text"
+              value={text}
+              onChange={(event) => setText(event.target.value)}
+              placeholder="可粘贴一段与截图相关的文字，将作为材料正文一起处理…"
+              rows={3}
+            />
           </div>
         ) : null}
 

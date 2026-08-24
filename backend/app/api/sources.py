@@ -281,8 +281,6 @@ async def create_source(
     text = (text or "").strip() or None
     note = (note or "").strip() or None
 
-    if files and text:
-        raise HTTPException(status_code=400, detail="一次采集只能包含图片或文字，不能同时提交")
     if not files and not text:
         raise HTTPException(status_code=400, detail="请提供图片或文字")
     if len(files) > MAX_IMAGES:
@@ -293,7 +291,7 @@ async def create_source(
     storage = AttachmentStorage.from_settings()
     attachment_kwargs: list[dict] = []
     saved_paths: list[str] = []
-    title = "未命名图片"
+    title = "未命名文字"
 
     if files:
         title = Path(files[0].filename or "图片").name[:255] or "未命名图片"
@@ -324,9 +322,10 @@ async def create_source(
                     "file_path": relative_path,
                 }
             )
-    else:
-        title = _text_title(text)[:255]
-        attachment_kwargs.append({"kind": "text", "position": 0, "text_content": text})
+    if text:
+        attachment_kwargs.append({"kind": "text", "position": len(files), "text_content": text})
+    if not files:
+        title = _text_title(text)[:255] or "未命名文字"
 
     source = Source(
         workspace_id=workspace.id,

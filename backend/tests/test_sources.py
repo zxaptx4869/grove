@@ -257,14 +257,21 @@ def test_reject_oversized_image(client: TestClient) -> None:
     assert response.status_code == 400
 
 
-def test_reject_files_and_text(client: TestClient) -> None:
-    """图片与文字同时提交应返回 400。"""
+def test_create_source_with_images_and_text(client: TestClient) -> None:
+    """图片与文字可以同源采集，图片在前、文字附件在后。"""
     _register(client)
 
     response = client.post(
         "/api/sources",
         files=[("files", ("a.png", PNG_BYTES, "image/png"))],
-        data={"text": "同时提交"},
+        data={"text": "这是截图对应的说明文字", "project_id": str(_create_project(client)["id"])},
     )
 
-    assert response.status_code == 400
+    assert response.status_code == 201
+    body = response.json()
+    assert body["attachments"][0]["kind"] == "image"
+    assert body["attachments"][0]["position"] == 0
+    assert body["attachments"][1]["kind"] == "text"
+    assert body["attachments"][1]["position"] == 1
+    assert body["attachments"][1]["text_content"] == "这是截图对应的说明文字"
+    assert body["title"] == "a.png"
