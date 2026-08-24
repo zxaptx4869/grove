@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, type ChangeEvent } from 'react'
-import { ClipboardPaste, Images, Upload } from 'lucide-react'
+import { ClipboardPaste, Images, Upload, X } from 'lucide-react'
 import { toast } from 'sonner'
 
 import { Button } from '@/components/ui/button'
@@ -16,6 +16,50 @@ interface SourceCaptureProps {
   projects: ProjectOption[]
   fixedProjectId?: number
   onCreated: () => void
+}
+
+/** 已选图片的缩略图条：本地预览 + 逐张移除。 */
+function ImageThumbnails({
+  files,
+  onRemove,
+}: {
+  files: File[]
+  onRemove: (index: number) => void
+}) {
+  const [urls, setUrls] = useState<string[]>([])
+  const [urlFiles, setUrlFiles] = useState<readonly File[]>([])
+  // files 变化时重建预览并释放旧 URL（渲染期派生状态模式）
+  if (urlFiles !== files) {
+    setUrlFiles(files)
+    urls.forEach((url) => URL.revokeObjectURL(url))
+    setUrls(files.map((file) => URL.createObjectURL(file)))
+  }
+  useEffect(() => () => urls.forEach((url) => URL.revokeObjectURL(url)), [urls])
+
+  if (files.length === 0) return null
+  return (
+    <div className="mt-3 grid grid-cols-5 gap-2">
+      {files.map((file, index) => (
+        <div
+          key={`${file.name}-${index}`}
+          className="group relative aspect-square overflow-hidden rounded-md border"
+        >
+          <img src={urls[index]} alt={file.name} className="size-full object-cover" />
+          <span className="absolute inset-x-0 bottom-0 truncate bg-black/40 px-1 text-[10px] text-white">
+            {file.name}
+          </span>
+          <button
+            type="button"
+            aria-label={`移除第 ${index + 1} 张图片`}
+            onClick={() => onRemove(index)}
+            className="absolute right-0.5 top-0.5 flex size-5 items-center justify-center rounded-full bg-black/60 text-white opacity-0 transition-opacity group-hover:opacity-100 focus-visible:opacity-100"
+          >
+            <X className="size-3" />
+          </button>
+        </div>
+      ))}
+    </div>
+  )
 }
 
 /** 采集框：图片批量上传或粘贴内容，可选项目与说明。 */
@@ -39,7 +83,13 @@ export function SourceCapture({ projects, fixedProjectId, onCreated }: SourceCap
         .filter((file): file is File => file !== null)
       if (files.length === 0) return
       event.preventDefault()
-      setFiles((prev) => [...prev, ...files].slice(0, 5))
+      setFiles((prev) => {
+        const combined = [...prev, ...files]
+        if (combined.length > 5) {
+          setError('一次最多 5 张图片，超出部分未加入')
+        }
+        return combined.slice(0, 5)
+      })
       setMode('image')
     }
     window.addEventListener('paste', onWindowPaste)
@@ -139,9 +189,17 @@ export function SourceCapture({ projects, fixedProjectId, onCreated }: SourceCap
               选择图片
             </Button>
             {files.length > 0 ? (
-              <p className="mt-2 text-caption text-muted-foreground">
-                已选择 {files.length} 张图片
-              </p>
+              <>
+                <p className="mt-2 text-caption text-muted-foreground">
+                  已选择 {files.length} 张图片（最多 5 张）
+                </p>
+                <ImageThumbnails
+                  files={files}
+                  onRemove={(index) =>
+                    setFiles((prev) => prev.filter((_, itemIndex) => itemIndex !== index))
+                  }
+                />
+              </>
             ) : null}
           </div>
         ) : (
