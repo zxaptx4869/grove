@@ -6,6 +6,11 @@ import httpx
 import pytest
 from sqlalchemy import select
 
+from app.agents.organizing import (
+    SYSTEM_PROMPT,
+    ExtractionDraft,
+    _adopt_project_recommendation,
+)
 from app.db.session import async_session_factory
 from app.main import create_app
 from app.models import Extraction, Source
@@ -19,6 +24,37 @@ async def client():
     transport = httpx.ASGITransport(app=create_app())
     async with httpx.AsyncClient(transport=transport, base_url="http://test") as api_client:
         yield api_client
+
+
+def test_organizing_prompt_requires_project_recommendation() -> None:
+    """未归属来源的项目推荐必须是必答项。"""
+    assert "必须从「可选项目」" in SYSTEM_PROMPT
+    assert "确实没有合适项目" in SYSTEM_PROMPT
+
+
+def test_adopt_project_recommendation_keeps_candidates() -> None:
+    """重试补充项目推荐时应保留首次候选，并忽略无效项目 id。"""
+    draft = ExtractionDraft(source_title="标题", candidates=[])
+    retry_valid = ExtractionDraft(
+        source_title="重试标题",
+        recommended_project_id=26,
+        project_recommendation_reason="属于装修",
+        candidates=[],
+    )
+
+    assert _adopt_project_recommendation(draft, retry_valid, {26}) is True
+    assert draft.recommended_project_id == 26
+    assert draft.project_recommendation_reason == "属于装修"
+    assert draft.source_title == "标题"
+
+    retry_invalid = ExtractionDraft(
+        source_title="重试标题",
+        recommended_project_id=999,
+        project_recommendation_reason="无效",
+        candidates=[],
+    )
+    assert _adopt_project_recommendation(draft, retry_invalid, {26}) is False
+    assert draft.recommended_project_id == 26
 
 
 async def _register(client: httpx.AsyncClient) -> str:

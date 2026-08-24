@@ -89,9 +89,10 @@ SYSTEM_PROMPT = """你是 Grove 的整理 Agent。请把用户提供的原始材
 4. main_type 只使用 knowledge（知识）、method（方法）、parameter（参数）、reminder（提醒）。
 5. source_title 生成简洁、可识别的标题，不超过 120 字。
 6. AI 输出永远是候选，不直接成为正式知识。
-7. 如果来源尚未归属项目，请从「可选项目」列表中选择最合适的项目，
-   输出 recommended_project_id 与 project_recommendation_reason；
-   不确定时两者留空。来源已归属项目时不要推荐项目。"""
+7. 如果来源尚未归属项目，必须从「可选项目」列表中选择最合适的项目，
+   输出 recommended_project_id（可选项目的数字 id）与 project_recommendation_reason；
+   只有确实没有合适项目时 recommended_project_id 才可为 null，
+   并必须在 project_recommendation_reason 说明原因。来源已归属项目时不要推荐项目。"""
 
 
 ROUTING_SYSTEM_PROMPT = """你是 Grove 整理 Agent 的路由步骤。请为每条候选推荐目录节点。
@@ -248,7 +249,37 @@ async def run_organizing_agent(
     result = await agent.run(context)
     if result.output is None:
         raise RuntimeError("Organizing Agent 未返回结构化结果")
-    return result.output
+    draft = result.output
+
+    # 兜底：未归属来源存在可选项目但模型漏输出项目推荐时，重试一次补充推荐
+    if project is None and workspace_projects and draft.recommended_project_id is None:
+        retry_context = (
+            context
+            + "\n\n【补充要求】该来源尚未归属项目，必须从「可选项目」中选择最合适的项目："
+            "输出 recommended_project_id（可选项目的数字 id）与 project_recommendation_reason。"
+            "确实没有合适项目时才输出 null 并说明原因。"
+        )
+        retry_result = await agent.run(retry_context)
+        if retry_result.output is not None:
+            _adopt_project_recommendation(
+                draft,
+                retry_result.output,
+                {item.id for item in workspace_projects},
+            )
+    return draft
+
+
+def _adopt_project_recommendation(
+    draft: ExtractionDraft,
+    retry_draft: ExtractionDraft,
+    valid_project_ids: set[int],
+) -> bool:
+    """把重试草稿里的有效项目推荐补回首次草稿，不覆盖候选；无效推荐忽略。"""
+    if retry_draft.recommended_project_id not in valid_project_ids:
+        return False
+    draft.recommended_project_id = retry_draft.recommended_project_id
+    draft.project_recommendation_reason = retry_draft.project_recommendation_reason
+    return True
 
 
 async def run_routing_agent(
