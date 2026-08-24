@@ -20,6 +20,10 @@ from app.models import (
     Project,
     Source,
 )
+from app.models.behavior_signal import (
+    SIGNAL_NODE_DECISION,
+    SIGNAL_RELATION_DECISION,
+)
 from app.models.entry import (
     VERSION_AI_REVISION,
     VERSION_CREATED,
@@ -41,6 +45,7 @@ from app.schemas.entry import (
     RevisionSuggestionOut,
     RevisionSuggestionRequest,
 )
+from app.services.behavior_signal import record_behavior_signal
 from app.services.project_context import schedule_refresh
 
 logger = logging.getLogger(__name__)
@@ -178,6 +183,8 @@ async def archive_candidate(
     db: AsyncSession,
     candidate: Candidate,
     node_id: int,
+    *,
+    signal_user_id: int | None = None,
 ) -> Entry:
     """采纳候选并原子创建 Entry 与证据。"""
     if candidate.status != CANDIDATE_PENDING:
@@ -210,6 +217,24 @@ async def archive_candidate(
 
     candidate.status = CANDIDATE_CONFIRMED
     candidate.entry_id = entry.id
+    await record_behavior_signal(
+        db,
+        workspace_id=source.workspace_id,
+        user_id=signal_user_id,
+        signal_type=SIGNAL_NODE_DECISION,
+        recommended={
+            "node_id": candidate.recommended_node_id,
+            "routing_status": candidate.routing_status,
+        },
+        final={"node_id": node_id, "created_new_node": False},
+        accepted=(
+            candidate.recommended_node_id is not None
+            and node_id == candidate.recommended_node_id
+        ),
+        project_id=source.project_id,
+        source_id=candidate.source_id,
+        candidate_id=candidate.id,
+    )
     await db.flush()
     await schedule_refresh(db, source.project_id, "entry_archived")
     return (
@@ -223,6 +248,8 @@ async def add_evidence_to_entry(
     db: AsyncSession,
     candidate: Candidate,
     entry_id: int,
+    *,
+    signal_user_id: int | None = None,
 ) -> Entry:
     """把候选来源证据补充到已有 Entry，并锁定候选。"""
     if candidate.status != CANDIDATE_PENDING:
@@ -240,6 +267,21 @@ async def add_evidence_to_entry(
     _add_candidate_evidence_to_entry(db, candidate, entry)
     candidate.status = CANDIDATE_CONFIRMED
     candidate.entry_id = entry.id
+    await record_behavior_signal(
+        db,
+        workspace_id=source.workspace_id,
+        user_id=signal_user_id,
+        signal_type=SIGNAL_RELATION_DECISION,
+        recommended={
+            "relation_status": candidate.relation_status,
+            "target_entry_id": candidate.relation_target_entry_id,
+        },
+        final={"action": "supplement_evidence", "entry_id": entry_id},
+        accepted=candidate.relation_status == "duplicate",
+        project_id=source.project_id,
+        source_id=candidate.source_id,
+        candidate_id=candidate.id,
+    )
     await db.flush()
     return (
         await db.execute(
@@ -252,6 +294,8 @@ async def apply_revision_to_entry(
     db: AsyncSession,
     candidate: Candidate,
     payload: ApplyRevisionRequest,
+    *,
+    signal_user_id: int | None = None,
 ) -> Entry:
     """把候选修订草稿应用到已有 Entry，并补充来源证据、锁定候选。"""
     if candidate.status != CANDIDATE_PENDING:
@@ -272,6 +316,21 @@ async def apply_revision_to_entry(
     _add_candidate_evidence_to_entry(db, candidate, entry)
     candidate.status = CANDIDATE_CONFIRMED
     candidate.entry_id = entry.id
+    await record_behavior_signal(
+        db,
+        workspace_id=source.workspace_id,
+        user_id=signal_user_id,
+        signal_type=SIGNAL_RELATION_DECISION,
+        recommended={
+            "relation_status": candidate.relation_status,
+            "target_entry_id": candidate.relation_target_entry_id,
+        },
+        final={"action": "apply_revision", "entry_id": payload.entry_id},
+        accepted=candidate.relation_status == "supplement",
+        project_id=source.project_id,
+        source_id=candidate.source_id,
+        candidate_id=candidate.id,
+    )
     await db.flush()
     if changed:
         await _snapshot_entry_version(db, entry, VERSION_AI_REVISION, payload.change_summary)
@@ -330,6 +389,8 @@ async def archive_candidate_with_new_node(
     db: AsyncSession,
     candidate: Candidate,
     payload: NewNodeArchiveRequest,
+    *,
+    signal_user_id: int | None = None,
 ) -> Entry:
     """创建或复用节点，并在同一事务内归档候选。"""
     if candidate.status != CANDIDATE_PENDING:
@@ -357,7 +418,29 @@ async def archive_candidate_with_new_node(
     if created:
         await schedule_refresh(db, source.project_id)
 
-    return await archive_candidate(db, candidate, node.id)
+    entry = await archive_candidate(db, candidate, node.id, signal_user_id=None)
+    # 新节点归档：推荐通常无真实节点，单独记录 AI 新节点建议与用户最终动作
+    await record_behavior_signal(
+        db,
+        workspace_id=source.workspace_id,
+        user_id=signal_user_id,
+        signal_type=SIGNAL_NODE_DECISION,
+        recommended={
+            "node_id": candidate.recommended_node_id,
+            "routing_status": candidate.routing_status,
+            "new_node_name": candidate.new_node_name,
+        },
+        final={"node_id": node.id, "created_new_node": created},
+        accepted=(
+            candidate.recommended_node_id is not None
+            and node.id == candidate.recommended_node_id
+        ),
+        detail=f"新节点：{payload.name}",
+        project_id=source.project_id,
+        source_id=candidate.source_id,
+        candidate_id=candidate.id,
+    )
+    return entry
 
 
 async def edit_entry(

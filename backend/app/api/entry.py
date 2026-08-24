@@ -5,8 +5,8 @@ from typing import Annotated
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy import select
 
-from app.api.deps import DbSession, get_current_workspace
-from app.models import Candidate, Entry, Node, Project, Source, Workspace
+from app.api.deps import DbSession, get_current_user, get_current_workspace
+from app.models import Candidate, Entry, Node, Project, Source, User, Workspace
 from app.schemas.entry import (
     AddEvidenceRequest,
     ApplyRevisionRequest,
@@ -41,6 +41,7 @@ from app.services.entry import (
 
 router = APIRouter(prefix="/api", tags=["entry"])
 CurrentWorkspace = Annotated[Workspace, Depends(get_current_workspace)]
+CurrentUser = Annotated[User, Depends(get_current_user)]
 
 
 async def _get_owned_candidate(
@@ -80,10 +81,11 @@ async def archive_candidate_endpoint(
     payload: ArchiveCandidateRequest,
     db: DbSession,
     workspace: CurrentWorkspace,
+    user: CurrentUser,
 ) -> EntryOut:
     """采纳候选并归档为 Entry。"""
     candidate = await _get_owned_candidate(db, workspace.id, candidate_id)
-    entry = await archive_candidate(db, candidate, payload.node_id)
+    entry = await archive_candidate(db, candidate, payload.node_id, signal_user_id=user.id)
     await db.commit()
     return entry_out(entry)
 
@@ -97,10 +99,11 @@ async def archive_candidate_with_new_node_endpoint(
     payload: NewNodeArchiveRequest,
     db: DbSession,
     workspace: CurrentWorkspace,
+    user: CurrentUser,
 ) -> EntryOut:
     """创建或复用节点，并在同一事务内归档候选。"""
     candidate = await _get_owned_candidate(db, workspace.id, candidate_id)
-    entry = await archive_candidate_with_new_node(db, candidate, payload)
+    entry = await archive_candidate_with_new_node(db, candidate, payload, signal_user_id=user.id)
     await db.commit()
     return entry_out(entry)
 
@@ -114,11 +117,12 @@ async def add_evidence_endpoint(
     payload: AddEvidenceRequest,
     db: DbSession,
     workspace: CurrentWorkspace,
+    user: CurrentUser,
 ) -> EntryOut:
     """把候选来源证据补充到已有 Entry。"""
     candidate = await _get_owned_candidate(db, workspace.id, candidate_id)
     await _get_owned_entry(db, workspace.id, payload.entry_id)
-    entry = await add_evidence_to_entry(db, candidate, payload.entry_id)
+    entry = await add_evidence_to_entry(db, candidate, payload.entry_id, signal_user_id=user.id)
     await db.commit()
     return entry_out(entry)
 
@@ -132,11 +136,12 @@ async def apply_revision_endpoint(
     payload: ApplyRevisionRequest,
     db: DbSession,
     workspace: CurrentWorkspace,
+    user: CurrentUser,
 ) -> EntryOut:
     """把候选修订草稿应用到已有 Entry。"""
     candidate = await _get_owned_candidate(db, workspace.id, candidate_id)
     await _get_owned_entry(db, workspace.id, payload.entry_id)
-    entry = await apply_revision_to_entry(db, candidate, payload)
+    entry = await apply_revision_to_entry(db, candidate, payload, signal_user_id=user.id)
     await db.commit()
     return entry_out(entry)
 

@@ -1,6 +1,7 @@
 """ORM 模型包。"""
 
 from app.models.ai_settings import AIProviderSettings
+from app.models.behavior_signal import BehaviorSignal
 from app.models.directory_draft import (
     DirectoryDraft,
     DirectoryDraftMessage,
@@ -19,6 +20,7 @@ from app.models.workspace import Workspace, WorkspaceMember
 __all__ = [
     "AIProviderSettings",
     "Attachment",
+    "BehaviorSignal",
     "Candidate",
     "DirectoryDraft",
     "DirectoryDraftMessage",

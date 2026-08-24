@@ -3,10 +3,10 @@
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, status
-from sqlalchemy import func, select
+from sqlalchemy import func, select, update
 
 from app.api.deps import DbSession, get_current_workspace
-from app.models import Entry, Node, Project, Source, Workspace
+from app.models import BehaviorSignal, Entry, Node, Project, Source, Workspace
 from app.models.directory_draft import DRAFT_DISCARDED, DirectoryDraft
 from app.schemas.project import (
     NodeCreate,
@@ -228,6 +228,12 @@ async def delete_project(
 ) -> dict[str, bool]:
     """删除项目并级联删除全部节点。"""
     project = await _get_owned_project(db, workspace.id, project_id)
+    # 行为信号保留：删除前把项目引用置空（SQLite 外键级联不生效，显式处理）
+    await db.execute(
+        update(BehaviorSignal)
+        .where(BehaviorSignal.project_id == project.id)
+        .values(project_id=None)
+    )
     # 删除项目前，把其 Source 置为未归属，保留原始材料与证据
     sources = (
         await db.execute(select(Source).where(Source.project_id == project.id))

@@ -6,10 +6,10 @@ from typing import Annotated
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile, status
 from fastapi.responses import FileResponse
-from sqlalchemy import delete, func, select
+from sqlalchemy import delete, func, select, update
 from sqlalchemy.orm import selectinload
 
-from app.api.deps import DbSession, get_current_workspace
+from app.api.deps import DbSession, get_current_user, get_current_workspace
 from app.models import (
     Attachment,
     Candidate,
@@ -17,17 +17,21 @@ from app.models import (
     ProcessingTask,
     Project,
     Source,
+    User,
     Workspace,
 )
+from app.models.behavior_signal import SIGNAL_PROJECT_DECISION, BehaviorSignal
 from app.models.extraction import CANDIDATE_CONFIRMED, CANDIDATE_PENDING
 from app.models.processing import DONE, FAILED, PROCESSING, WAITING
 from app.schemas.source import AttachmentOut, SourceOut, SourcePageOut, SourceUpdate
 from app.services.attachment_storage import AttachmentStorage
+from app.services.behavior_signal import record_behavior_signal
 from app.services.entry_relation import clear_candidate_relations, route_relations
 from app.services.routing import clear_candidate_routing, route_source
 
 router = APIRouter(prefix="/api/sources", tags=["sources"])
 CurrentWorkspace = Annotated[Workspace, Depends(get_current_workspace)]
+CurrentUser = Annotated[User, Depends(get_current_user)]
 logger = logging.getLogger(__name__)
 
 IMAGE_EXTENSIONS = {
@@ -359,9 +363,11 @@ async def update_source(
     payload: SourceUpdate,
     db: DbSession,
     workspace: CurrentWorkspace,
+    user: CurrentUser,
 ) -> SourceOut:
     """修改 Source 的说明或项目归属。"""
     source = await _get_owned_source(db, workspace.id, source_id)
+    recommended_project_id = source.recommended_project_id
     if "note" in payload.model_fields_set:
         source.note = payload.note
     project_changed = (
@@ -383,6 +389,21 @@ async def update_source(
                 detail="来源正在处理中，不能修改归属",
             )
         source.project_id = payload.project_id
+        await record_behavior_signal(
+            db,
+            workspace_id=workspace.id,
+            user_id=user.id,
+            signal_type=SIGNAL_PROJECT_DECISION,
+            recommended={"project_id": recommended_project_id},
+            final={"project_id": payload.project_id},
+            accepted=(
+                payload.project_id == recommended_project_id
+                if recommended_project_id is not None
+                else None
+            ),
+            project_id=payload.project_id or recommended_project_id,
+            source_id=source.id,
+        )
         await clear_candidate_routing(db, source.id)
         await clear_candidate_relations(db, source.id)
     await db.commit()
@@ -470,6 +491,21 @@ async def delete_source(
     await db.execute(
         delete(EntrySourceEvidence).where(EntrySourceEvidence.source_id == source.id)
     )
+    # 行为信号保留：删除前把来源与候选引用置空（SQLite 外键级联不生效，显式处理）
+    candidate_ids = (
+        await db.execute(select(Candidate.id).where(Candidate.source_id == source.id))
+    ).scalars().all()
+    await db.execute(
+        update(BehaviorSignal)
+        .where(BehaviorSignal.source_id == source.id)
+        .values(source_id=None)
+    )
+    if candidate_ids:
+        await db.execute(
+            update(BehaviorSignal)
+            .where(BehaviorSignal.candidate_id.in_(candidate_ids))
+            .values(candidate_id=None)
+        )
     await db.delete(source)
     await db.commit()
 

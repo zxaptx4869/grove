@@ -5,6 +5,10 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models import Candidate, Node, Source
+from app.models.behavior_signal import (
+    SIGNAL_CONTENT_EDIT,
+    SIGNAL_NODE_DECISION,
+)
 from app.models.extraction import (
     CANDIDATE_CONFIRMED,
     CANDIDATE_KIND_RECOMMENDED,
@@ -23,6 +27,7 @@ from app.schemas.review import (
     ProjectBatchDecisionResult,
     ReviewCandidateOut,
 )
+from app.services.behavior_signal import record_behavior_signal
 from app.services.entry import archive_candidate
 from app.services.entry_relation import load_relation_targets
 from app.services.extraction import candidate_out, parse_risk_flags
@@ -32,21 +37,53 @@ async def edit_candidate(
     db: AsyncSession,
     candidate: Candidate,
     payload: CandidateUpdate,
+    *,
+    user_id: int | None = None,
 ) -> Candidate:
     """编辑候选字段；字段缺失表示不修改。"""
+    changed: dict[str, tuple[object | None, object | None]] = {}
     fields = payload.model_fields_set
-    if "title" in fields and payload.title is not None:
+    if "title" in fields and payload.title is not None and payload.title != candidate.title:
+        changed["title"] = (candidate.title, payload.title)
         candidate.title = payload.title
-    if "content" in fields and payload.content is not None:
+    if "content" in fields and payload.content is not None and payload.content != candidate.content:
+        changed["content"] = (candidate.content, payload.content)
         candidate.content = payload.content
-    if "main_type" in fields and payload.main_type is not None:
+    if (
+        "main_type" in fields
+        and payload.main_type is not None
+        and payload.main_type != candidate.main_type
+    ):
+        changed["main_type"] = (candidate.main_type, payload.main_type)
         candidate.main_type = payload.main_type
-    if "info_nature" in fields:
+    if "info_nature" in fields and payload.info_nature != candidate.info_nature:
+        changed["info_nature"] = (candidate.info_nature, payload.info_nature)
         candidate.info_nature = payload.info_nature
-    if "applicable_condition" in fields:
+    if (
+        "applicable_condition" in fields
+        and payload.applicable_condition != candidate.applicable_condition
+    ):
+        changed["applicable_condition"] = (
+            candidate.applicable_condition,
+            payload.applicable_condition,
+        )
         candidate.applicable_condition = payload.applicable_condition
-    if "note" in fields:
+    if "note" in fields and payload.note != candidate.note:
+        changed["note"] = (candidate.note, payload.note)
         candidate.note = payload.note
+    if changed:
+        source = await db.get(Source, candidate.source_id)
+        await record_behavior_signal(
+            db,
+            workspace_id=source.workspace_id,
+            user_id=user_id,
+            signal_type=SIGNAL_CONTENT_EDIT,
+            recommended={field: old for field, (old, _) in changed.items()},
+            final={field: new for field, (_, new) in changed.items()},
+            project_id=source.project_id,
+            source_id=candidate.source_id,
+            candidate_id=candidate.id,
+        )
     return candidate
 
 
@@ -139,6 +176,8 @@ async def batch_decide_project_candidates(
     db: AsyncSession,
     project_id: int,
     payload: ProjectBatchDecisionRequest,
+    *,
+    user_id: int | None = None,
 ) -> list[ProjectBatchDecisionResult]:
     """对项目内选中候选执行批量确认/拒绝，逐条返回结果。"""
     rows = (
@@ -161,11 +200,28 @@ async def batch_decide_project_candidates(
         )
 
     results: list[ProjectBatchDecisionResult] = []
+    source_by_id = {candidate.id: source for candidate, source in rows}
     for candidate_id in candidate_ids:
         candidate = by_id[candidate_id]
         try:
             if payload.action == "reject":
+                source = source_by_id[candidate_id]
                 await decide_candidate(db, candidate, CANDIDATE_REJECTED)
+                await record_behavior_signal(
+                    db,
+                    workspace_id=source.workspace_id,
+                    user_id=user_id,
+                    signal_type=SIGNAL_NODE_DECISION,
+                    recommended={
+                        "node_id": candidate.recommended_node_id,
+                        "routing_status": candidate.routing_status,
+                    },
+                    final={"node_id": None, "status": "rejected"},
+                    accepted=candidate.recommended_node_id is not None,
+                    project_id=project_id,
+                    source_id=candidate.source_id,
+                    candidate_id=candidate.id,
+                )
                 await db.commit()
                 results.append(
                     ProjectBatchDecisionResult(candidate_id=candidate_id, status="rejected")
@@ -200,6 +256,8 @@ async def batch_update_candidates_directory(
     db: AsyncSession,
     project_id: int,
     payload: BatchUpdateDirectoryRequest,
+    *,
+    user_id: int | None = None,
 ) -> BatchUpdateDirectoryResult:
     """把统一目录持久化到选中候选，返回更新数量。"""
     rows = (
@@ -232,7 +290,28 @@ async def batch_update_candidates_directory(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="目录节点不属于当前项目",
         )
+    source_by_id = {candidate.id: source for candidate, source in rows}
     for candidate_id in candidate_ids:
-        by_id[candidate_id].user_node_id = payload.node_id
+        candidate = by_id[candidate_id]
+        source = source_by_id[candidate_id]
+        candidate.user_node_id = payload.node_id
+        await record_behavior_signal(
+            db,
+            workspace_id=source.workspace_id,
+            user_id=user_id,
+            signal_type=SIGNAL_NODE_DECISION,
+            recommended={
+                "node_id": candidate.recommended_node_id,
+                "routing_status": candidate.routing_status,
+            },
+            final={"node_id": payload.node_id, "user_overridden": True},
+            accepted=(
+                candidate.recommended_node_id is not None
+                and payload.node_id == candidate.recommended_node_id
+            ),
+            project_id=project_id,
+            source_id=candidate.source_id,
+            candidate_id=candidate.id,
+        )
     await db.commit()
     return BatchUpdateDirectoryResult(updated=len(candidate_ids))

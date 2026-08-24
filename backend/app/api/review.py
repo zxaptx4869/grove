@@ -5,8 +5,8 @@ from typing import Annotated
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy import case, func, select
 
-from app.api.deps import DbSession, get_current_workspace
-from app.models import Candidate, Project, Source, Workspace
+from app.api.deps import DbSession, get_current_user, get_current_workspace
+from app.models import Candidate, Project, Source, User, Workspace
 from app.models.extraction import CANDIDATE_PENDING
 from app.models.source import REVIEW_PARTIAL, REVIEW_PENDING
 from app.schemas.candidate import CandidateOut
@@ -33,6 +33,7 @@ from app.services.extraction import candidate_out
 
 router = APIRouter(prefix="/api", tags=["review"])
 CurrentWorkspace = Annotated[Workspace, Depends(get_current_workspace)]
+CurrentUser = Annotated[User, Depends(get_current_user)]
 
 
 async def _get_owned_project(db: DbSession, workspace_id: int, project_id: int) -> Project:
@@ -132,10 +133,11 @@ async def batch_decision_project_endpoint(
     payload: ProjectBatchDecisionRequest,
     db: DbSession,
     workspace: CurrentWorkspace,
+    user: CurrentUser,
 ) -> list[ProjectBatchDecisionResult]:
     """对项目内选中候选执行批量确认或拒绝。"""
     await _get_owned_project(db, workspace.id, project_id)
-    return await batch_decide_project_candidates(db, project_id, payload)
+    return await batch_decide_project_candidates(db, project_id, payload, user_id=user.id)
 
 
 @router.post(
@@ -147,10 +149,11 @@ async def batch_update_directory_endpoint(
     payload: BatchUpdateDirectoryRequest,
     db: DbSession,
     workspace: CurrentWorkspace,
+    user: CurrentUser,
 ) -> BatchUpdateDirectoryResult:
     """把统一目录持久化到选中候选。"""
     await _get_owned_project(db, workspace.id, project_id)
-    return await batch_update_candidates_directory(db, project_id, payload)
+    return await batch_update_candidates_directory(db, project_id, payload, user_id=user.id)
 
 
 @router.patch("/candidates/{candidate_id}", response_model=CandidateOut)
@@ -159,10 +162,11 @@ async def update_candidate(
     payload: CandidateUpdate,
     db: DbSession,
     workspace: CurrentWorkspace,
+    user: CurrentUser,
 ) -> CandidateOut:
     """编辑候选字段。"""
     candidate = await _get_owned_candidate(db, workspace.id, candidate_id)
-    await edit_candidate(db, candidate, payload)
+    await edit_candidate(db, candidate, payload, user_id=user.id)
     await db.commit()
     return candidate_out(candidate)
 
