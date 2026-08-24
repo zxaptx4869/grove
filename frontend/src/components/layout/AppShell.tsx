@@ -2,6 +2,7 @@ import { useMemo, useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import {
   BookOpen,
+  Check,
   ChevronDown,
   FolderKanban,
   FolderTree,
@@ -98,9 +99,11 @@ function RecentProjects({ projects }: { projects: ProjectPayload[] }) {
   )
 }
 
-function ProjectNavigation({ project }: { project?: ProjectPayload }) {
+function ProjectNavigation({ project, projects }: { project?: ProjectPayload; projects?: ProjectPayload[] }) {
   const location = useLocation()
+  const navigate = useNavigate()
   const projectId = project?.id ?? Number(location.pathname.match(/^\/projects\/(\d+)/)?.[1])
+  const currentProject = projects?.find((item) => item.id === projectId) ?? project
   const isDirectory = new URLSearchParams(location.search).get('view') === 'directory'
   const isSources = new URLSearchParams(location.search).get('view') === 'sources'
   const isAiRead = new URLSearchParams(location.search).get('view') === 'ai-read'
@@ -113,11 +116,70 @@ function ProjectNavigation({ project }: { project?: ProjectPayload }) {
     archived: '已归档',
   }
 
+  // 非归档项目按状态分组：组内按名称排序，当前项目置顶并带选中标识
+  const projectGroups = PROJECT_STATUSES.filter((status) => status !== 'archived').map((status) => ({
+    status,
+    label: statusLabel[status],
+    items: (projects ?? [])
+      .filter((item) => item.status === status)
+      .sort((a, b) => {
+        if (a.id === projectId) return -1
+        if (b.id === projectId) return 1
+        return a.name.localeCompare(b.name, 'zh-CN')
+      }),
+  })).filter((group) => group.items.length > 0)
+
+  /** 切换项目：仅替换 URL 中的项目 id，保留视图类型与查询参数 */
+  function switchProject(nextId: number) {
+    const nextPath = location.pathname.replace(/^\/projects\/\d+/, `/projects/${nextId}`)
+    navigate(`${nextPath}${location.search}`)
+  }
+
   return (
     <div className="flex min-h-0 flex-1 flex-col px-2 pb-3 pt-2">
       <div className="mb-3 px-2.5 pb-1">
-        <p className="truncate text-[15px] font-[650] leading-6">{project?.name ?? '项目工作台'}</p>
-        <p className="mt-0.5 text-caption text-muted-foreground">{project ? statusLabel[project.status] : '加载中'}</p>
+        <DropdownMenu>
+          <DropdownMenuTrigger asChild>
+            <Button variant="ghost" className="h-auto w-full justify-start gap-2 rounded-md px-2 py-1.5">
+              <span className="flex min-w-0 flex-col items-start gap-0.5">
+                <span className="max-w-full truncate text-[15px] font-[650] leading-6">{currentProject?.name ?? '项目工作台'}</span>
+                <span className="text-caption text-muted-foreground">{currentProject ? statusLabel[currentProject.status] : '加载中'}</span>
+              </span>
+              <ChevronDown className="ml-auto size-3.5 shrink-0 text-muted-foreground" />
+            </Button>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="start" className="w-[240px]">
+            {currentProject?.status === 'archived' ? (
+              <>
+                <DropdownMenuItem disabled>
+                  <Check className="text-brand" />
+                  <span className="min-w-0 flex-1 truncate">{currentProject.name}</span>
+                  <span className="text-caption text-muted-foreground">已归档</span>
+                </DropdownMenuItem>
+                <DropdownMenuSeparator />
+              </>
+            ) : null}
+            {projectGroups.map((group) => (
+              <div key={group.status}>
+                <DropdownMenuLabel>{group.label}</DropdownMenuLabel>
+                {group.items.map((item) => (
+                  <DropdownMenuItem key={item.id} onSelect={() => switchProject(item.id)}>
+                    {item.id === projectId ? (
+                      <Check className="text-brand" />
+                    ) : (
+                      <span className="size-4 shrink-0" aria-hidden="true" />
+                    )}
+                    <span className="min-w-0 flex-1 truncate">{item.name}</span>
+                  </DropdownMenuItem>
+                ))}
+              </div>
+            ))}
+            <DropdownMenuSeparator />
+            <DropdownMenuItem onSelect={() => navigate('/projects')}>
+              <FolderKanban />全部项目
+            </DropdownMenuItem>
+          </DropdownMenuContent>
+        </DropdownMenu>
       </div>
       <nav aria-label="项目导航">
         <Link
@@ -195,7 +257,7 @@ export function AppShell() {
             <div className="min-h-0 flex-1 overflow-y-auto">
               <GlobalNavItems />
               {projectId ? (
-                <ProjectNavigation project={currentProject} />
+                <ProjectNavigation project={currentProject} projects={projects.data ?? []} />
               ) : (
                 <RecentProjects projects={projects.data ?? []} />
               )}
