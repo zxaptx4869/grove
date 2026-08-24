@@ -123,7 +123,7 @@ export function SourceList({
                 {reviewLabel(source)}
               </Badge>
             ) : null}
-            {source.status === 'done' ? (
+            {source.status === 'done' && source.pending_candidate_count > 0 ? (
               <Button
                 size="sm"
                 variant="outline"

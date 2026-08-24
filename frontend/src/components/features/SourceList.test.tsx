@@ -50,6 +50,7 @@ describe('SourceList', () => {
 
     expect(screen.getByText('提取完成')).toBeInTheDocument()
     expect(screen.getByText('待确认 2 条')).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: '候选' })).toBeInTheDocument()
     await userEvent.click(screen.getByRole('button', { name: '删除 测试来源' }))
 
     expect(await screen.findByText('删除来源？')).toBeInTheDocument()
@@ -69,6 +70,7 @@ describe('SourceList', () => {
     )
 
     expect(screen.getByText('1 条正式知识')).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: '候选' })).not.toBeInTheDocument()
     expect(screen.queryByLabelText('测试来源 所属项目')).not.toBeInTheDocument()
     expect(screen.queryByRole('button', { name: '删除 测试来源' })).not.toBeInTheDocument()
   })
@@ -84,6 +86,7 @@ describe('SourceList', () => {
     )
 
     expect(screen.getByText('部分确认')).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: '候选' })).toBeInTheDocument()
     expect(screen.queryByRole('button', { name: '删除 测试来源' })).not.toBeInTheDocument()
   })
 
@@ -92,6 +95,7 @@ describe('SourceList', () => {
     renderList(baseSource({ status: 'done', pending_candidate_count: 0 }), onDelete)
 
     expect(screen.getByText('已处理')).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: '候选' })).not.toBeInTheDocument()
     await userEvent.click(screen.getByRole('button', { name: '删除 测试来源' }))
     expect(onDelete).toHaveBeenCalledWith(1)
   })
