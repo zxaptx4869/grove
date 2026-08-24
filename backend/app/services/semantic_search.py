@@ -25,7 +25,7 @@ def _keyword_hit(query: str, entry: Entry) -> bool:
         return False
     fields = [entry.title, entry.content, entry.node.name, entry.node.description or ""]
     for evidence in entry.evidences:
-        fields.append(evidence.source.title or "")
+        fields.append(evidence.source.title if evidence.source else "")
     return any(q in (field or "").casefold() for field in fields)
 
 

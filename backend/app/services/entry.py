@@ -104,7 +104,7 @@ def entry_out(entry: Entry) -> EntryOut:
                 source_id=item.source_id,
                 attachment_id=item.attachment_id,
                 quote=item.quote,
-                source_title=item.source.title,
+                source_title=item.source.title if item.source else "已删除来源",
             )
             for item in entry.evidences
         ],

@@ -113,7 +113,7 @@ def _validate_citations(
                 entry_id=entry.id,
                 entry_title=entry.title,
                 source_id=evidence.source_id,
-                source_title=evidence.source.title or "未命名来源",
+                source_title=evidence.source.title if evidence.source else "已删除来源",
                 quote=citation.quote or evidence.quote or "",
             )
         )
