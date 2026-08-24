@@ -34,7 +34,8 @@ function ImageThumbnails({
     urls.forEach((url) => URL.revokeObjectURL(url))
     setUrls(files.map((file) => URL.createObjectURL(file)))
   }
-  useEffect(() => () => urls.forEach((url) => URL.revokeObjectURL(url)), [urls])
+  // 说明：不在这里做卸载时 revoke——StrictMode 开发环境会先卸载再重挂，
+  // effect 清理会提前释放 blob 导致缩略图加载失败；blob 随页面卸载自动释放。
 
   if (files.length === 0) return null
   return (
