@@ -45,7 +45,7 @@ from app.schemas.entry import (
     RevisionSuggestionOut,
     RevisionSuggestionRequest,
 )
-from app.services.behavior_signal import record_behavior_signal
+from app.services.behavior_signal import acceptance, record_behavior_signal
 from app.services.project_context import schedule_refresh
 
 logger = logging.getLogger(__name__)
@@ -227,10 +227,7 @@ async def archive_candidate(
             "routing_status": candidate.routing_status,
         },
         final={"node_id": node_id, "created_new_node": False},
-        accepted=(
-            candidate.recommended_node_id is not None
-            and node_id == candidate.recommended_node_id
-        ),
+        accepted=acceptance(candidate.recommended_node_id, node_id),
         project_id=source.project_id,
         source_id=candidate.source_id,
         candidate_id=candidate.id,
@@ -277,7 +274,10 @@ async def add_evidence_to_entry(
             "target_entry_id": candidate.relation_target_entry_id,
         },
         final={"action": "supplement_evidence", "entry_id": entry_id},
-        accepted=candidate.relation_status == "duplicate",
+        accepted=acceptance(
+            None if candidate.relation_status == "pending" else candidate.relation_status,
+            "duplicate",
+        ),
         project_id=source.project_id,
         source_id=candidate.source_id,
         candidate_id=candidate.id,
@@ -326,7 +326,10 @@ async def apply_revision_to_entry(
             "target_entry_id": candidate.relation_target_entry_id,
         },
         final={"action": "apply_revision", "entry_id": payload.entry_id},
-        accepted=candidate.relation_status == "supplement",
+        accepted=acceptance(
+            None if candidate.relation_status == "pending" else candidate.relation_status,
+            "supplement",
+        ),
         project_id=source.project_id,
         source_id=candidate.source_id,
         candidate_id=candidate.id,
@@ -431,10 +434,7 @@ async def archive_candidate_with_new_node(
             "new_node_name": candidate.new_node_name,
         },
         final={"node_id": node.id, "created_new_node": created},
-        accepted=(
-            candidate.recommended_node_id is not None
-            and node.id == candidate.recommended_node_id
-        ),
+        accepted=acceptance(candidate.recommended_node_id, node.id),
         detail=f"新节点：{payload.name}",
         project_id=source.project_id,
         source_id=candidate.source_id,

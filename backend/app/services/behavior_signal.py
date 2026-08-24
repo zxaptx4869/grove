@@ -15,6 +15,13 @@ def _json_snapshot(value: dict[str, Any] | None) -> str | None:
     return json.dumps(value, ensure_ascii=False, default=str)
 
 
+def acceptance(recommended_value: Any, final_value: Any) -> bool | None:
+    """推荐接受度：无推荐返回 None，有推荐时按最终值是否一致判定。"""
+    if recommended_value is None:
+        return None
+    return final_value == recommended_value
+
+
 async def record_behavior_signal(
     db: AsyncSession,
     *,

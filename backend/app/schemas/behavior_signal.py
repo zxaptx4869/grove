@@ -17,6 +17,7 @@ class BehaviorSignalOut(BaseModel):
     final: dict | None
     accepted: bool | None
     detail: str | None
+    user_id: int | None
     project_id: int | None
     source_id: int | None
     candidate_id: int | None

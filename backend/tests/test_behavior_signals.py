@@ -4,7 +4,9 @@ import uuid
 
 import httpx
 import pytest
+from sqlalchemy import text
 
+from app.db.session import engine
 from app.main import create_app
 
 
@@ -87,6 +89,15 @@ async def _signals(client: httpx.AsyncClient, **params) -> list[dict]:
     return response.json()
 
 
+async def _set_recommended_node(candidate_id: int, node_id: int | None) -> None:
+    """直接更新候选的推荐节点，构造确定的接受度场景。"""
+    async with engine.begin() as conn:
+        await conn.execute(
+            text("UPDATE candidates SET recommended_node_id = :node_id WHERE id = :candidate_id"),
+            {"node_id": node_id, "candidate_id": candidate_id},
+        )
+
+
 @pytest.mark.asyncio
 async def test_archive_candidate_records_node_decision(client) -> None:
     await _register(client)
@@ -109,8 +120,86 @@ async def test_archive_candidate_records_node_decision(client) -> None:
     assert signal["source_id"] == source["id"]
     assert signal["project_id"] == project["id"]
     assert signal["final"] == {"node_id": node["id"], "created_new_node": False}
-    assert "recommended" in signal
-    assert signal["accepted"] is None or signal["accepted"] is True or signal["accepted"] is False
+    assert signal["user_id"] is not None
+
+
+@pytest.mark.asyncio
+async def test_archive_follows_recommendation_sets_accepted_true(client) -> None:
+    await _register(client)
+    project = await _create_project(client, "推荐接受信号")
+    node = await _create_node(client, project["id"], "施工")
+    source = await _create_source(client, project["id"], "闭水试验通常持续 24 小时")
+    await _process(client, source["id"])
+    candidate = (await _candidates(client, source["id"]))[0]
+    await _set_recommended_node(candidate["id"], node["id"])
+
+    response = await client.post(
+        f"/api/candidates/{candidate['id']}/archive",
+        json={"node_id": node["id"]},
+    )
+    assert response.status_code == 200
+
+    signal = (await _signals(client, signal_type="node_decision"))[0]
+    assert signal["accepted"] is True
+
+
+@pytest.mark.asyncio
+async def test_batch_confirm_and_reject_record_node_decision(client) -> None:
+    await _register(client)
+    project = await _create_project(client, "批量信号")
+    node = await _create_node(client, project["id"], "施工")
+    confirm_source = await _create_source(client, project["id"], "确认知识")
+    reject_source = await _create_source(client, project["id"], "拒绝知识")
+    await _process(client, confirm_source["id"])
+    await _process(client, reject_source["id"])
+    confirm_candidate = (await _candidates(client, confirm_source["id"]))[0]
+    reject_candidate = (await _candidates(client, reject_source["id"]))[0]
+
+    confirm = await client.post(
+        f"/api/projects/{project['id']}/review/candidates/batch-decision",
+        json={
+            "candidate_ids": [confirm_candidate["id"]],
+            "action": "confirm",
+            "node_id": node["id"],
+        },
+    )
+    assert confirm.status_code == 200
+    reject = await client.post(
+        f"/api/projects/{project['id']}/review/candidates/batch-decision",
+        json={"candidate_ids": [reject_candidate["id"]], "action": "reject"},
+    )
+    assert reject.status_code == 200
+
+    signals = await _signals(client, signal_type="node_decision")
+    assert len(signals) == 2
+    confirmed = next(item for item in signals if item["candidate_id"] == confirm_candidate["id"])
+    rejected = next(item for item in signals if item["candidate_id"] == reject_candidate["id"])
+    assert confirmed["final"]["node_id"] == node["id"]
+    assert confirmed["user_id"] is not None
+    assert rejected["final"] == {"node_id": None, "status": "rejected"}
+    # 无推荐时接受度为空；有推荐且被拒绝时为 false
+    assert rejected["accepted"] is None or rejected["accepted"] is False
+
+
+@pytest.mark.asyncio
+async def test_batch_update_directory_records_signal(client) -> None:
+    await _register(client)
+    project = await _create_project(client, "批量改目录信号")
+    node = await _create_node(client, project["id"], "施工")
+    source = await _create_source(client, project["id"], "改目录知识")
+    await _process(client, source["id"])
+    candidate = (await _candidates(client, source["id"]))[0]
+
+    response = await client.post(
+        f"/api/projects/{project['id']}/review/candidates/batch-update-directory",
+        json={"candidate_ids": [candidate["id"]], "node_id": node["id"]},
+    )
+    assert response.status_code == 200
+
+    signal = (await _signals(client, signal_type="node_decision"))[0]
+    assert signal["candidate_id"] == candidate["id"]
+    assert signal["final"] == {"node_id": node["id"], "user_overridden": True}
+    assert signal["user_id"] is not None
 
 
 @pytest.mark.asyncio

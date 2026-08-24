@@ -27,7 +27,7 @@ from app.schemas.review import (
     ProjectBatchDecisionResult,
     ReviewCandidateOut,
 )
-from app.services.behavior_signal import record_behavior_signal
+from app.services.behavior_signal import acceptance, record_behavior_signal
 from app.services.entry import archive_candidate
 from app.services.entry_relation import load_relation_targets
 from app.services.extraction import candidate_out, parse_risk_flags
@@ -217,7 +217,7 @@ async def batch_decide_project_candidates(
                         "routing_status": candidate.routing_status,
                     },
                     final={"node_id": None, "status": "rejected"},
-                    accepted=candidate.recommended_node_id is not None,
+                    accepted=acceptance(candidate.recommended_node_id, None),
                     project_id=project_id,
                     source_id=candidate.source_id,
                     candidate_id=candidate.id,
@@ -235,7 +235,7 @@ async def batch_decide_project_candidates(
             )
             if node_id is None:
                 raise ValueError("候选没有可归档目录，请先精审")
-            await archive_candidate(db, candidate, node_id)
+            await archive_candidate(db, candidate, node_id, signal_user_id=user_id)
             await db.commit()
             results.append(
                 ProjectBatchDecisionResult(candidate_id=candidate_id, status="confirmed")
@@ -305,10 +305,7 @@ async def batch_update_candidates_directory(
                 "routing_status": candidate.routing_status,
             },
             final={"node_id": payload.node_id, "user_overridden": True},
-            accepted=(
-                candidate.recommended_node_id is not None
-                and payload.node_id == candidate.recommended_node_id
-            ),
+            accepted=acceptance(candidate.recommended_node_id, payload.node_id),
             project_id=project_id,
             source_id=candidate.source_id,
             candidate_id=candidate.id,
