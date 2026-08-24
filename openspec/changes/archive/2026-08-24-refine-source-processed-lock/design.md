@@ -24,7 +24,7 @@
 
 ### D2：done 锁定（前端）
 
-`SourceList` 对 `status === 'done'` 的行不渲染改归属下拉与删除按钮；`project_locked` 禁用逻辑保留（覆盖非 done 但有证据的边界场景）。
+`SourceList` 对 `status === 'done'` 的行不渲染改归属下拉与删除按钮；删除不再提供二次确认（有 Entry 证据的来源必然为 done、已被隐藏，二次确认路径不可达）。
 
 ### D3：搜索交互
 
