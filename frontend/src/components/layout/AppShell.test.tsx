@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
-import { render, screen, waitFor, within } from '@testing-library/react'
+import { render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { MemoryRouter, Route, Routes, useLocation } from 'react-router-dom'
 import { describe, expect, it, vi } from 'vitest'
@@ -62,8 +62,8 @@ describe('AppShell 项目切换下拉', () => {
     renderShell('/projects/1')
 
     const trigger = await screen.findByRole('button', { name: /装修计划/ })
-    // 状态以图标展示并带可访问名称
-    expect(screen.getByRole('img', { name: '进行中' })).toBeInTheDocument()
+    // 状态以「文字 + 边框 + 浅底色」小标签展示
+    expect(screen.getByText('进行中')).toBeInTheDocument()
     await userEvent.click(trigger)
 
     // 分组标签：进行中 / 暂停；已归档不进入常规分组
@@ -112,7 +112,6 @@ describe('AppShell 项目切换下拉', () => {
 
     const archivedItem = await screen.findByRole('menuitem', { name: /旧归档/ })
     expect(archivedItem).toHaveTextContent('已归档')
-    expect(within(archivedItem).getByRole('img', { name: '已归档' })).toBeInTheDocument()
     expect(archivedItem).toHaveAttribute('aria-disabled', 'true')
     vi.unstubAllGlobals()
   })

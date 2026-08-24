@@ -1,12 +1,9 @@
 import { useMemo, useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import {
-  Archive,
   BookOpen,
   Check,
   ChevronDown,
-  CircleCheck,
-  CircleDot,
   FolderKanban,
   FolderTree,
   House,
@@ -14,14 +11,13 @@ import {
   KeyRound,
   ListChecks,
   LogOut,
-  Pause,
   Search,
   UserRound,
 } from 'lucide-react'
-import type { LucideIcon } from 'lucide-react'
 import { Link, NavLink, Outlet, useLocation, useNavigate } from 'react-router-dom'
 import { toast } from 'sonner'
 
+import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import {
   Dialog,
@@ -52,18 +48,11 @@ const STATUS_LABELS: Record<ProjectStatus, string> = {
   archived: '已归档',
 }
 
-const STATUS_ICONS: Record<ProjectStatus, LucideIcon> = {
-  active: CircleDot,
-  paused: Pause,
-  completed: CircleCheck,
-  archived: Archive,
-}
-
-const STATUS_ICON_CLASSES: Record<ProjectStatus, string> = {
-  active: 'text-success',
-  paused: 'text-warning',
-  completed: 'text-confirmed',
-  archived: 'text-muted-foreground',
+const STATUS_BADGE_CLASSES: Record<ProjectStatus, string> = {
+  active: 'border-success/30 bg-success-soft text-success',
+  paused: 'border-warning/30 bg-warning-soft text-warning',
+  completed: 'border-confirmed/30 bg-confirmed-soft text-confirmed',
+  archived: 'border-border bg-muted text-muted-foreground',
 }
 
 function useAllProjects() {
@@ -75,18 +64,6 @@ function useAllProjects() {
     },
     staleTime: 30_000,
   })
-}
-
-/** 项目状态图标：图标 + 语义色区分四种状态，带可访问名称。 */
-function ProjectStatusIcon({ status }: { status: ProjectStatus }) {
-  const Icon = STATUS_ICONS[status]
-  return (
-    <Icon
-      role="img"
-      aria-label={STATUS_LABELS[status]}
-      className={`size-4 shrink-0 ${STATUS_ICON_CLASSES[status]}`}
-    />
-  )
 }
 
 /** 全局一级菜单：固定位于侧栏顶部，进入项目后保持不变。 */
@@ -172,13 +149,17 @@ function ProjectNavigation({ project, projects }: { project?: ProjectPayload; pr
       <div className="mb-2 px-2.5">
         <DropdownMenu>
           <DropdownMenuTrigger asChild>
-            <Button variant="ghost" className="h-auto w-full justify-start gap-2 rounded-md px-2 py-1">
-              {currentProject ? (
-                <ProjectStatusIcon status={currentProject.status} />
-              ) : (
-                <span className="size-4 shrink-0" aria-hidden="true" />
-              )}
-              <span className="min-w-0 flex-1 truncate text-left text-[15px] font-[650] leading-6">{currentProject?.name ?? '项目工作台'}</span>
+            <Button variant="ghost" className="h-auto w-full justify-start gap-2 rounded-md px-2 py-1.5">
+              <span className="flex min-w-0 flex-col items-start gap-1">
+                <span className="max-w-full truncate text-[15px] font-[650] leading-6">{currentProject?.name ?? '项目工作台'}</span>
+                {currentProject ? (
+                  <Badge variant="outline" className={`h-[18px] rounded-md px-1.5 text-[11px] font-normal leading-4 ${STATUS_BADGE_CLASSES[currentProject.status]}`}>
+                    {STATUS_LABELS[currentProject.status]}
+                  </Badge>
+                ) : (
+                  <span className="text-caption text-muted-foreground">加载中</span>
+                )}
+              </span>
               <ChevronDown className="ml-auto size-3.5 shrink-0 text-muted-foreground" />
             </Button>
           </DropdownMenuTrigger>
@@ -186,7 +167,7 @@ function ProjectNavigation({ project, projects }: { project?: ProjectPayload; pr
             {currentProject?.status === 'archived' ? (
               <>
                 <DropdownMenuItem disabled>
-                  <ProjectStatusIcon status="archived" />
+                  <Check className="text-brand" />
                   <span className="min-w-0 flex-1 truncate">{currentProject.name}</span>
                   <span className="text-caption text-muted-foreground">已归档</span>
                 </DropdownMenuItem>
@@ -198,9 +179,12 @@ function ProjectNavigation({ project, projects }: { project?: ProjectPayload; pr
                 <DropdownMenuLabel>{group.label}</DropdownMenuLabel>
                 {group.items.map((item) => (
                   <DropdownMenuItem key={item.id} onSelect={() => switchProject(item.id)}>
-                    <ProjectStatusIcon status={item.status} />
+                    {item.id === projectId ? (
+                      <Check className="text-brand" />
+                    ) : (
+                      <span className="size-4 shrink-0" aria-hidden="true" />
+                    )}
                     <span className="min-w-0 flex-1 truncate">{item.name}</span>
-                    {item.id === projectId ? <Check className="size-4 shrink-0 text-brand" /> : null}
                   </DropdownMenuItem>
                 ))}
               </div>
