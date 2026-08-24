@@ -33,6 +33,7 @@ const SOURCE = {
   updated_at: '',
   project_locked: true,
   evidence_entry_count: 1,
+  pending_candidate_count: 0,
   attachments: [],
 }
 

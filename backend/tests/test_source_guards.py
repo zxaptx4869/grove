@@ -4,8 +4,12 @@ import uuid
 
 import httpx
 import pytest
+from sqlalchemy import update
 
+from app.db.session import async_session_factory
 from app.main import create_app
+from app.models import ProcessingTask, Source
+from app.models.processing import PROCESSING
 from app.processing import worker
 
 
@@ -97,8 +101,10 @@ async def test_update_source_blocked_after_archive(client: httpx.AsyncClient) ->
 
 
 @pytest.mark.asyncio
-async def test_update_source_blocked_when_done(client: httpx.AsyncClient) -> None:
-    """已处理完成（未归档）的来源禁止改归属。"""
+async def test_update_source_allowed_when_done_unconfirmed(
+    client: httpx.AsyncClient,
+) -> None:
+    """提取完成但候选未确认的来源可以改归属。"""
     await _register(client)
     project = await _create_project(client)
     other = await _create_project(client)
@@ -110,8 +116,36 @@ async def test_update_source_blocked_when_done(client: httpx.AsyncClient) -> Non
         json={"project_id": other["id"]},
     )
 
+    assert response.status_code == 200
+    assert (await client.get(f"/api/sources/{source['id']}")).json()["project_id"] == other["id"]
+
+
+@pytest.mark.asyncio
+async def test_update_source_blocked_when_processing(client: httpx.AsyncClient) -> None:
+    """处理中的来源禁止改归属。"""
+    await _register(client)
+    project = await _create_project(client)
+    other = await _create_project(client)
+    source = await _create_source(client, project["id"])
+    await client.post(f"/api/sources/{source['id']}/process")
+    async with async_session_factory() as db:
+        await db.execute(
+            update(ProcessingTask)
+            .where(ProcessingTask.source_id == source["id"])
+            .values(status=PROCESSING)
+        )
+        await db.execute(
+            update(Source).where(Source.id == source["id"]).values(status=PROCESSING)
+        )
+        await db.commit()
+
+    response = await client.patch(
+        f"/api/sources/{source['id']}",
+        json={"project_id": other["id"]},
+    )
+
     assert response.status_code == 409
-    assert "已处理完成" in response.json()["detail"]
+    assert "处理中" in response.json()["detail"]
 
 
 @pytest.mark.asyncio
@@ -130,16 +164,19 @@ async def test_delete_source_blocked_unique_evidence(
     item = next(entry for entry in query["items"] if entry["id"] == source["id"])
     assert item["project_locked"] is True
     assert item["evidence_entry_count"] == 1
+    assert item["pending_candidate_count"] == 0
 
     response = await client.delete(f"/api/sources/{source['id']}")
 
     assert response.status_code == 409
-    assert "唯一来源证据" in response.json()["detail"]
+    assert "正式知识引用" in response.json()["detail"]
 
 
 @pytest.mark.asyncio
-async def test_delete_source_blocked_when_done(client: httpx.AsyncClient) -> None:
-    """已处理完成（未归档）的来源禁止删除。"""
+async def test_delete_source_allowed_when_done_unconfirmed(
+    client: httpx.AsyncClient,
+) -> None:
+    """提取完成但候选未确认的来源可以删除（连带候选）。"""
     await _register(client)
     project = await _create_project(client)
     source = await _create_source(client, project["id"])
@@ -147,15 +184,14 @@ async def test_delete_source_blocked_when_done(client: httpx.AsyncClient) -> Non
 
     response = await client.delete(f"/api/sources/{source['id']}")
 
-    assert response.status_code == 409
-    assert "已处理完成" in response.json()["detail"]
+    assert response.status_code == 200
 
 
 @pytest.mark.asyncio
 async def test_delete_done_source_blocked_even_with_other_evidence(
     client: httpx.AsyncClient,
 ) -> None:
-    """已处理完成来源即使有其他证据也禁止删除。"""
+    """已产生正式知识的来源即使有其他证据也禁止删除。"""
     await _register(client)
     project = await _create_project(client)
     node = await _create_node(client, project["id"], "施工")
@@ -174,7 +210,31 @@ async def test_delete_done_source_blocked_even_with_other_evidence(
     response = await client.delete(f"/api/sources/{source_a['id']}")
 
     assert response.status_code == 409
-    assert "已处理完成" in response.json()["detail"]
+    assert "正式知识引用" in response.json()["detail"]
+
+
+@pytest.mark.asyncio
+async def test_delete_source_blocked_when_processing(client: httpx.AsyncClient) -> None:
+    """处理中的来源禁止删除。"""
+    await _register(client)
+    project = await _create_project(client)
+    source = await _create_source(client, project["id"])
+    await client.post(f"/api/sources/{source['id']}/process")
+    async with async_session_factory() as db:
+        await db.execute(
+            update(ProcessingTask)
+            .where(ProcessingTask.source_id == source["id"])
+            .values(status=PROCESSING)
+        )
+        await db.execute(
+            update(Source).where(Source.id == source["id"]).values(status=PROCESSING)
+        )
+        await db.commit()
+
+    response = await client.delete(f"/api/sources/{source['id']}")
+
+    assert response.status_code == 409
+    assert "处理中" in response.json()["detail"]
 
 
 @pytest.mark.asyncio

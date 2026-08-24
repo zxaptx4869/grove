@@ -19,7 +19,7 @@ from app.models import (
     Source,
     Workspace,
 )
-from app.models.extraction import CANDIDATE_CONFIRMED
+from app.models.extraction import CANDIDATE_CONFIRMED, CANDIDATE_PENDING
 from app.models.processing import DONE, FAILED, PROCESSING, WAITING
 from app.schemas.source import AttachmentOut, SourceOut, SourcePageOut, SourceUpdate
 from app.services.attachment_storage import AttachmentStorage
@@ -46,6 +46,7 @@ def _source_out(
     attachments: list[Attachment],
     project_locked: bool = False,
     evidence_entry_count: int = 0,
+    pending_candidate_count: int = 0,
 ) -> SourceOut:
     """把 ORM 对象组装为响应模型。"""
     return SourceOut(
@@ -60,6 +61,7 @@ def _source_out(
         updated_at=source.updated_at,
         project_locked=project_locked,
         evidence_entry_count=evidence_entry_count,
+        pending_candidate_count=pending_candidate_count,
         attachments=[
             AttachmentOut(
                 id=item.id,
@@ -104,22 +106,24 @@ async def _load_source_out(db: DbSession, source_id: int) -> SourceOut:
             select(Source).options(selectinload(Source.attachments)).where(Source.id == source_id)
         )
     ).scalar_one()
-    locked, counts = await _source_state_counts(db, [source.id])
+    locked, counts, pending = await _source_state_counts(db, [source.id])
     return _source_out(
         source,
         list(source.attachments),
         source.id in locked,
         counts.get(source.id, 0),
+        pending.get(source.id, 0),
     )
 
 
 async def _source_state_counts(
     db: DbSession,
     source_ids: list[int],
-) -> tuple[set[int], dict[int, int]]:
-    """批量计算来源的锁定标记与 Entry 证据计数，避免列表 N+1。"""
+) -> tuple[set[int], dict[int, int], dict[int, int]]:
+    """批量计算来源的锁定标记、Entry 证据计数与待确认候选数，避免列表 N+1。"""
     locked: set[int] = set()
     entry_ids_by_source: dict[int, set[int]] = {}
+    pending_counts: dict[int, int] = {}
     if source_ids:
         confirmed = (
             await db.execute(
@@ -141,8 +145,19 @@ async def _source_state_counts(
         for source_id, entry_id in rows:
             locked.add(source_id)
             entry_ids_by_source.setdefault(source_id, set()).add(entry_id)
+        pending_rows = (
+            await db.execute(
+                select(Candidate.source_id, func.count())
+                .where(
+                    Candidate.source_id.in_(source_ids),
+                    Candidate.status == CANDIDATE_PENDING,
+                )
+                .group_by(Candidate.source_id)
+            )
+        ).all()
+        pending_counts = {source_id: count for source_id, count in pending_rows}
     counts = {source_id: len(entries) for source_id, entries in entry_ids_by_source.items()}
-    return locked, counts
+    return locked, counts, pending_counts
 
 
 @router.get("", response_model=list[SourceOut])
@@ -169,9 +184,17 @@ async def list_sources(
     if limit is not None:
         ordered = ordered.limit(limit)
     sources = (await db.execute(ordered)).scalars().unique().all()
-    locked, counts = await _source_state_counts(db, [source.id for source in sources])
+    locked, counts, pending = await _source_state_counts(
+        db, [source.id for source in sources]
+    )
     return [
-        _source_out(source, list(source.attachments), source.id in locked, counts.get(source.id, 0))
+        _source_out(
+            source,
+            list(source.attachments),
+            source.id in locked,
+            counts.get(source.id, 0),
+            pending.get(source.id, 0),
+        )
         for source in sources
     ]
 
@@ -210,7 +233,9 @@ async def query_sources(
         .offset(offset)
     )
     sources = result.scalars().unique().all()
-    locked, counts = await _source_state_counts(db, [source.id for source in sources])
+    locked, counts, pending = await _source_state_counts(
+        db, [source.id for source in sources]
+    )
     return SourcePageOut(
         items=[
             _source_out(
@@ -218,6 +243,7 @@ async def query_sources(
                 list(source.attachments),
                 source.id in locked,
                 counts.get(source.id, 0),
+                pending.get(source.id, 0),
             )
             for source in sources
         ],
@@ -332,16 +358,16 @@ async def update_source(
     if project_changed:
         if payload.project_id is not None:
             await _validate_project(db, workspace.id, payload.project_id)
-        locked, _ = await _source_state_counts(db, [source.id])
+        locked, _, _ = await _source_state_counts(db, [source.id])
         if source.id in locked:
             raise HTTPException(
                 status_code=status.HTTP_409_CONFLICT,
                 detail="该来源已被正式知识引用，如需移动请先处理关联 Entry",
             )
-        if source.status == DONE:
+        if source.status == PROCESSING:
             raise HTTPException(
                 status_code=status.HTTP_409_CONFLICT,
-                detail="来源已处理完成，不能修改归属",
+                detail="来源正在处理中，不能修改归属",
             )
         source.project_id = payload.project_id
         await clear_candidate_routing(db, source.id)
@@ -412,23 +438,14 @@ async def delete_source(
         )
     ).scalars().all()
     if referenced_entry_ids:
-        totals = (
-            await db.execute(
-                select(EntrySourceEvidence.entry_id, func.count())
-                .where(EntrySourceEvidence.entry_id.in_(referenced_entry_ids))
-                .group_by(EntrySourceEvidence.entry_id)
-            )
-        ).all()
-        total_by_entry = {entry_id: count for entry_id, count in totals}
-        if any(total_by_entry.get(entry_id, 0) == 1 for entry_id in referenced_entry_ids):
-            raise HTTPException(
-                status_code=status.HTTP_409_CONFLICT,
-                detail="该来源是某条正式知识的唯一来源证据，不能删除；请先处理关联 Entry",
-            )
-    if source.status == DONE:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
-            detail="来源已处理完成，不能删除",
+            detail="该来源已被正式知识引用，不能删除；请先处理关联 Entry",
+        )
+    if source.status == PROCESSING:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="来源正在处理中，不能删除",
         )
 
     attachments = (

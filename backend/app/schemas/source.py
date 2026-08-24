@@ -32,6 +32,7 @@ class SourceOut(BaseModel):
     attachments: list[AttachmentOut] = []
     project_locked: bool = False
     evidence_entry_count: int = 0
+    pending_candidate_count: int = 0
 
 
 class SourcePageOut(BaseModel):
