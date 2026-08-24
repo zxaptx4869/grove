@@ -221,6 +221,7 @@ export interface SourcePayload {
   project_locked: boolean
   evidence_entry_count: number
   pending_candidate_count: number
+  candidate_count: number
   attachments: AttachmentPayload[]
 }
 

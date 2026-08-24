@@ -20,6 +20,7 @@ function baseSource(overrides: Partial<SourcePayload>): SourcePayload {
     project_locked: false,
     evidence_entry_count: 0,
     pending_candidate_count: 0,
+    candidate_count: 0,
     attachments: [],
     ...overrides,
   }
@@ -44,7 +45,7 @@ describe('SourceList', () => {
   it('提取完成且有待确认候选：显示副徽标，删除需确认', async () => {
     const onDelete = vi.fn()
     renderList(
-      baseSource({ status: 'done', pending_candidate_count: 2 }),
+      baseSource({ status: 'done', pending_candidate_count: 2, candidate_count: 2 }),
       onDelete,
     )
 
@@ -66,11 +67,12 @@ describe('SourceList', () => {
         project_locked: true,
         evidence_entry_count: 1,
         pending_candidate_count: 0,
+        candidate_count: 1,
       }),
     )
 
     expect(screen.getByText('1 条正式知识')).toBeInTheDocument()
-    expect(screen.queryByRole('button', { name: '候选' })).not.toBeInTheDocument()
+    expect(screen.getByRole('button', { name: '候选' })).toBeInTheDocument()
     expect(screen.queryByLabelText('测试来源 所属项目')).not.toBeInTheDocument()
     expect(screen.queryByRole('button', { name: '删除 测试来源' })).not.toBeInTheDocument()
   })
@@ -82,6 +84,7 @@ describe('SourceList', () => {
         project_locked: true,
         evidence_entry_count: 1,
         pending_candidate_count: 1,
+        candidate_count: 2,
       }),
     )
 
@@ -92,12 +95,35 @@ describe('SourceList', () => {
 
   it('全部拒绝已处理的来源可操作', async () => {
     const onDelete = vi.fn()
-    renderList(baseSource({ status: 'done', pending_candidate_count: 0 }), onDelete)
+    renderList(
+      baseSource({
+        status: 'done',
+        pending_candidate_count: 0,
+        evidence_entry_count: 0,
+        candidate_count: 1,
+      }),
+      onDelete,
+    )
 
     expect(screen.getByText('已处理')).toBeInTheDocument()
-    expect(screen.queryByRole('button', { name: '候选' })).not.toBeInTheDocument()
+    expect(screen.getByRole('button', { name: '候选' })).toBeInTheDocument()
     await userEvent.click(screen.getByRole('button', { name: '删除 测试来源' }))
     expect(onDelete).toHaveBeenCalledWith(1)
+  })
+
+  it('无候选的虚拟来源（如 AI 修订）不显示候选按钮', () => {
+    renderList(
+      baseSource({
+        status: 'done',
+        project_locked: true,
+        evidence_entry_count: 1,
+        pending_candidate_count: 0,
+        candidate_count: 0,
+      }),
+    )
+
+    expect(screen.getByText('1 条正式知识')).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: '候选' })).not.toBeInTheDocument()
   })
 
   it('处理中的来源不展示改归属与删除', () => {

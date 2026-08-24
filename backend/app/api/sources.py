@@ -47,6 +47,7 @@ def _source_out(
     project_locked: bool = False,
     evidence_entry_count: int = 0,
     pending_candidate_count: int = 0,
+    candidate_count: int = 0,
 ) -> SourceOut:
     """把 ORM 对象组装为响应模型。"""
     return SourceOut(
@@ -62,6 +63,7 @@ def _source_out(
         project_locked=project_locked,
         evidence_entry_count=evidence_entry_count,
         pending_candidate_count=pending_candidate_count,
+        candidate_count=candidate_count,
         attachments=[
             AttachmentOut(
                 id=item.id,
@@ -106,24 +108,26 @@ async def _load_source_out(db: DbSession, source_id: int) -> SourceOut:
             select(Source).options(selectinload(Source.attachments)).where(Source.id == source_id)
         )
     ).scalar_one()
-    locked, counts, pending = await _source_state_counts(db, [source.id])
+    locked, counts, pending, total = await _source_state_counts(db, [source.id])
     return _source_out(
         source,
         list(source.attachments),
         source.id in locked,
         counts.get(source.id, 0),
         pending.get(source.id, 0),
+        total.get(source.id, 0),
     )
 
 
 async def _source_state_counts(
     db: DbSession,
     source_ids: list[int],
-) -> tuple[set[int], dict[int, int], dict[int, int]]:
-    """批量计算来源的锁定标记、Entry 证据计数与待确认候选数，避免列表 N+1。"""
+) -> tuple[set[int], dict[int, int], dict[int, int], dict[int, int]]:
+    """批量计算锁定标记、证据计数、待确认候选数与候选总数，避免列表 N+1。"""
     locked: set[int] = set()
     entry_ids_by_source: dict[int, set[int]] = {}
     pending_counts: dict[int, int] = {}
+    candidate_counts: dict[int, int] = {}
     if source_ids:
         confirmed = (
             await db.execute(
@@ -156,8 +160,16 @@ async def _source_state_counts(
             )
         ).all()
         pending_counts = {source_id: count for source_id, count in pending_rows}
+        total_rows = (
+            await db.execute(
+                select(Candidate.source_id, func.count())
+                .where(Candidate.source_id.in_(source_ids))
+                .group_by(Candidate.source_id)
+            )
+        ).all()
+        candidate_counts = {source_id: count for source_id, count in total_rows}
     counts = {source_id: len(entries) for source_id, entries in entry_ids_by_source.items()}
-    return locked, counts, pending_counts
+    return locked, counts, pending_counts, candidate_counts
 
 
 @router.get("", response_model=list[SourceOut])
@@ -184,7 +196,7 @@ async def list_sources(
     if limit is not None:
         ordered = ordered.limit(limit)
     sources = (await db.execute(ordered)).scalars().unique().all()
-    locked, counts, pending = await _source_state_counts(
+    locked, counts, pending, candidate_total = await _source_state_counts(
         db, [source.id for source in sources]
     )
     return [
@@ -194,6 +206,7 @@ async def list_sources(
             source.id in locked,
             counts.get(source.id, 0),
             pending.get(source.id, 0),
+            candidate_total.get(source.id, 0),
         )
         for source in sources
     ]
@@ -233,7 +246,7 @@ async def query_sources(
         .offset(offset)
     )
     sources = result.scalars().unique().all()
-    locked, counts, pending = await _source_state_counts(
+    locked, counts, pending, candidate_total = await _source_state_counts(
         db, [source.id for source in sources]
     )
     return SourcePageOut(
@@ -244,6 +257,7 @@ async def query_sources(
                 source.id in locked,
                 counts.get(source.id, 0),
                 pending.get(source.id, 0),
+                candidate_total.get(source.id, 0),
             )
             for source in sources
         ],
@@ -358,7 +372,7 @@ async def update_source(
     if project_changed:
         if payload.project_id is not None:
             await _validate_project(db, workspace.id, payload.project_id)
-        locked, _, _ = await _source_state_counts(db, [source.id])
+        locked, _, _, _ = await _source_state_counts(db, [source.id])
         if source.id in locked:
             raise HTTPException(
                 status_code=status.HTTP_409_CONFLICT,

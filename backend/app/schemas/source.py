@@ -33,6 +33,7 @@ class SourceOut(BaseModel):
     project_locked: bool = False
     evidence_entry_count: int = 0
     pending_candidate_count: int = 0
+    candidate_count: int = 0
 
 
 class SourcePageOut(BaseModel):

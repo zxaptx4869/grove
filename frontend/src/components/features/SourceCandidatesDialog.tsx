@@ -10,7 +10,11 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog'
-import { fetchSourceCandidates, type CandidatePayload } from '@/lib/api'
+import {
+  fetchSourceCandidates,
+  type CandidateDecisionStatus,
+  type CandidatePayload,
+} from '@/lib/api'
 import { queryKeys } from '@/lib/queryKeys'
 
 const TYPE_LABELS: Record<CandidatePayload['main_type'], string> = {
@@ -18,6 +22,18 @@ const TYPE_LABELS: Record<CandidatePayload['main_type'], string> = {
   method: '方法',
   parameter: '参数',
   reminder: '提醒',
+}
+
+const DECISION_LABELS: Record<CandidateDecisionStatus, string> = {
+  pending: '待确认',
+  confirmed: '已确认',
+  rejected: '已拒绝',
+}
+
+const DECISION_CLASS: Record<CandidateDecisionStatus, string> = {
+  pending: 'bg-ai-candidate-soft text-ai-candidate',
+  confirmed: 'bg-confirmed-soft text-confirmed',
+  rejected: 'bg-muted text-muted-foreground',
 }
 
 function CandidateItem({ candidate }: { candidate: CandidatePayload }) {
@@ -31,7 +47,12 @@ function CandidateItem({ candidate }: { candidate: CandidatePayload }) {
             {candidate.info_nature ? ` · ${candidate.info_nature}` : ''}
           </p>
         </div>
-        <Badge className="shrink-0 bg-ai-candidate-soft text-ai-candidate">AI 候选</Badge>
+        <div className="flex shrink-0 items-center gap-1.5">
+          <Badge className={`shrink-0 ${DECISION_CLASS[candidate.status]}`}>
+            {DECISION_LABELS[candidate.status]}
+          </Badge>
+          <Badge className="shrink-0 bg-ai-candidate-soft text-ai-candidate">AI 候选</Badge>
+        </div>
       </div>
       <p className="mt-2 whitespace-pre-wrap text-body-sm leading-6 text-foreground">
         {candidate.content}

@@ -165,6 +165,7 @@ async def test_delete_source_blocked_unique_evidence(
     assert item["project_locked"] is True
     assert item["evidence_entry_count"] == 1
     assert item["pending_candidate_count"] == 0
+    assert item["candidate_count"] == 1
 
     response = await client.delete(f"/api/sources/{source['id']}")
 
