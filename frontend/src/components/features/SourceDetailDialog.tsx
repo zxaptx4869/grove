@@ -179,7 +179,15 @@ export function SourceDetailDialog({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="sm:max-w-4xl">
+      <DialogContent
+        className="sm:max-w-4xl"
+        onInteractOutside={(event) => {
+          if (lightboxUrl) event.preventDefault()
+        }}
+        onEscapeKeyDown={(event) => {
+          if (lightboxUrl) event.preventDefault()
+        }}
+      >
         <DialogHeader>
           <DialogTitle>来源详情</DialogTitle>
           <DialogDescription>
