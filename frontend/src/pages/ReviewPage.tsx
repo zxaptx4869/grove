@@ -35,7 +35,7 @@ import {
   type CandidateUpdatePayload,
   type TreeNodePayload,
 } from '@/lib/api'
-import { highlightEvidence } from '@/lib/evidenceHighlight'
+import { highlightEvidenceAll } from '@/lib/evidenceHighlight'
 import { queryKeys } from '@/lib/queryKeys'
 
 function formatTime(value: string) {
@@ -699,11 +699,11 @@ export function ReviewPage() {
                     <figure key={attachment.id} className="min-w-60 flex-1">
                       {attachment.ocr_text ? (
                         <div className="mb-2 max-h-40 overflow-y-auto whitespace-pre-wrap rounded-md bg-muted/30 p-3 text-body-sm">
-                          {highlightEvidence(
+                          {highlightEvidenceAll(
                             attachment.ocr_text,
-                            currentCandidate?.evidence.find(
-                              (item) => item.attachment_id === attachment.id,
-                            )?.quote,
+                            (currentCandidate?.evidence ?? [])
+                              .filter((item) => item.attachment_id === attachment.id)
+                              .map((item) => item.quote),
                           )}
                         </div>
                       ) : null}
@@ -719,11 +719,11 @@ export function ReviewPage() {
                       key={attachment.id}
                       className="w-full whitespace-pre-wrap rounded-md bg-muted/30 p-3 text-body-sm"
                     >
-                      {highlightEvidence(
+                      {highlightEvidenceAll(
                         attachment.text_content ?? '',
-                        currentCandidate?.evidence.find(
-                          (item) => item.attachment_id === attachment.id,
-                        )?.quote,
+                        (currentCandidate?.evidence ?? [])
+                          .filter((item) => item.attachment_id === attachment.id)
+                          .map((item) => item.quote),
                       )}
                     </div>
                   ),

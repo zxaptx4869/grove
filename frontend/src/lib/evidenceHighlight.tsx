@@ -6,20 +6,17 @@ export interface EvidenceRange {
   end: number
 }
 
-/** 归一化：去全部空白、全角标点转半角、英文转小写。 */
+/** 归一化：仅保留字母/数字/CJK，其余符号（空白、标点、装饰符号等）全部忽略，英文转小写。 */
 export function normalizeText(text: string): string {
-  return text
-    .replace(/\s+/g, '')
-    .replace(/[\uFF01-\uFF5E]/g, (ch) => String.fromCharCode(ch.charCodeAt(0) - 0xfee0))
-    .toLowerCase()
+  return text.replace(/[^\p{L}\p{N}]/gu, '').toLowerCase()
 }
 
-/** 构建「归一化字符位置 → 原文索引」映射（跳过原文空白）。 */
+/** 构建「归一化字符位置 → 原文索引」映射（跳过原文中非字母/数字字符）。 */
 function buildIndexMap(text: string): number[] {
   const map: number[] = []
   let normalizedPosition = 0
   for (let i = 0; i < text.length; i++) {
-    if (/\s/.test(text[i])) continue
+    if (!/[\p{L}\p{N}]/u.test(text[i])) continue
     map[normalizedPosition] = i
     normalizedPosition += 1
   }
@@ -66,6 +63,36 @@ export function highlightEvidence(text: string, quote?: string): ReactNode {
   const nodes: ReactNode[] = []
   let cursor = 0
   ranges.forEach((range, index) => {
+    nodes.push(text.slice(cursor, range.start))
+    nodes.push(
+      <mark key={index} data-evidence-highlight className="rounded bg-amber-100 text-foreground">
+        {text.slice(range.start, range.end)}
+      </mark>,
+    )
+    cursor = range.end
+  })
+  nodes.push(text.slice(cursor))
+  return nodes
+}
+
+/** 高亮同一附件的多条证据引用（区间合并去重后统一渲染）。 */
+export function highlightEvidenceAll(text: string, quotes: string[]): ReactNode {
+  const collected = quotes.flatMap((quote) => findEvidenceRanges(text, quote))
+  if (collected.length === 0) return text
+  const merged = collected
+    .sort((a, b) => a.start - b.start)
+    .reduce<EvidenceRange[]>((acc, range) => {
+      const last = acc[acc.length - 1]
+      if (last && range.start <= last.end) {
+        last.end = Math.max(last.end, range.end)
+      } else {
+        acc.push({ ...range })
+      }
+      return acc
+    }, [])
+  const nodes: ReactNode[] = []
+  let cursor = 0
+  merged.forEach((range, index) => {
     nodes.push(text.slice(cursor, range.start))
     nodes.push(
       <mark key={index} data-evidence-highlight className="rounded bg-amber-100 text-foreground">

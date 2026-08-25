@@ -19,7 +19,7 @@ import {
   type CandidatePayload,
   type SourceStatus,
 } from '@/lib/api'
-import { highlightEvidence } from '@/lib/evidenceHighlight'
+import { highlightEvidenceAll } from '@/lib/evidenceHighlight'
 import { queryKeys } from '@/lib/queryKeys'
 
 const STATUS_LABELS: Record<SourceStatus, string> = {
@@ -265,11 +265,11 @@ export function SourceDetailDialog({
                     <figure key={attachment.id} className="mb-3">
                       {attachment.ocr_text ? (
                         <div className="mb-2 max-h-40 overflow-y-auto whitespace-pre-wrap rounded-md bg-muted/30 p-3 text-body-sm">
-                          {highlightEvidence(
+                          {highlightEvidenceAll(
                             attachment.ocr_text,
-                            selectedCandidate?.evidence.find(
-                              (item) => item.attachment_id === attachment.id,
-                            )?.quote,
+                            (selectedCandidate?.evidence ?? [])
+                              .filter((item) => item.attachment_id === attachment.id)
+                              .map((item) => item.quote),
                           )}
                         </div>
                       ) : null}
@@ -288,11 +288,11 @@ export function SourceDetailDialog({
                       key={attachment.id}
                       className="mb-3 whitespace-pre-wrap rounded-md bg-muted/30 p-3 text-body-sm"
                     >
-                      {highlightEvidence(
+                      {highlightEvidenceAll(
                         attachment.text_content ?? '',
-                        selectedCandidate?.evidence.find(
-                          (item) => item.attachment_id === attachment.id,
-                        )?.quote,
+                        (selectedCandidate?.evidence ?? [])
+                          .filter((item) => item.attachment_id === attachment.id)
+                          .map((item) => item.quote),
                       )}
                     </div>
                   ),

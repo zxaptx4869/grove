@@ -1,14 +1,19 @@
 import { renderToStaticMarkup } from 'react-dom/server'
 import { describe, expect, it } from 'vitest'
-import { findEvidenceRanges, highlightEvidence, normalizeText } from './evidenceHighlight'
+import {
+  findEvidenceRanges,
+  highlightEvidence,
+  highlightEvidenceAll,
+  normalizeText,
+} from './evidenceHighlight'
 
 describe('evidenceHighlight', () => {
-  it('归一化去除全部空白', () => {
-    expect(normalizeText('3 净水器:\n1) 水槽')).toBe('3净水器:1)水槽')
+  it('归一化忽略空白与标点符号', () => {
+    expect(normalizeText('3 净水器:\n1) 水槽')).toBe('3净水器1水槽')
   })
 
-  it('归一化全角转半角', () => {
-    expect(normalizeText('：（）')).toBe(':()')
+  it('归一化忽略全角标点与装饰符号', () => {
+    expect(normalizeText('：（）☞✨✅')).toBe('')
   })
 
   it('归一化英文转小写', () => {
@@ -39,6 +44,14 @@ describe('evidenceHighlight', () => {
     expect(findEvidenceRanges('完全没有相关内容', '不存在的引用')).toEqual([])
   })
 
+  it('引用去掉行首装饰符号仍可匹配', () => {
+    const text = '☞每层层板后缩2cm，不妨碍放鞋子，但是鞋柜内空气可以流通起来'
+    const quote = '每层层板后缩2cm，不妨碍放鞋子，但是鞋柜内空气可以流通起来'
+    const ranges = findEvidenceRanges(text, quote)
+    expect(ranges).toHaveLength(1)
+    expect(text.slice(ranges[0].start, ranges[0].end)).toContain('每层层板后缩')
+  })
+
   it('省略号摘要引用按段匹配并分别高亮', () => {
     const text =
       '厨房灯光 推荐4000k 厨房是食材处理、烹饪操作的功能区，洗菜、切菜需要光线。4000K 色温光线通透明亮'
@@ -63,5 +76,13 @@ describe('evidenceHighlight', () => {
 
   it('无引用时返回原文', () => {
     expect(renderToStaticMarkup(highlightEvidence('abc', undefined))).toBe('abc')
+  })
+
+  it('多证据引用全部高亮并合并重叠', () => {
+    const text = 'A 欧派 ENF 级。B 39800 套餐。C 结束'
+    const quotes = ['欧派 ENF 级', 'ENF 级。B 39800']
+    const html = renderToStaticMarkup(highlightEvidenceAll(text, quotes))
+    expect(html).toContain('<mark')
+    expect(html).toContain('data-evidence-highlight')
   })
 })
