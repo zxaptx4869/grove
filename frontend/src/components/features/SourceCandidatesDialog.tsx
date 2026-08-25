@@ -1,3 +1,4 @@
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { FileText, Loader2 } from 'lucide-react'
 
@@ -11,10 +12,13 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog'
 import {
+  fetchSource,
   fetchSourceCandidates,
+  sourceImageUrl,
   type CandidateDecisionStatus,
   type CandidatePayload,
 } from '@/lib/api'
+import { highlightEvidence } from '@/lib/evidenceHighlight'
 import { queryKeys } from '@/lib/queryKeys'
 
 const TYPE_LABELS: Record<CandidatePayload['main_type'], string> = {
@@ -36,9 +40,20 @@ const DECISION_CLASS: Record<CandidateDecisionStatus, string> = {
   rejected: 'bg-muted text-muted-foreground',
 }
 
-function CandidateItem({ candidate }: { candidate: CandidatePayload }) {
+function CandidateItem({
+  candidate,
+  selected,
+  onSelect,
+}: {
+  candidate: CandidatePayload
+  selected: boolean
+  onSelect: () => void
+}) {
   return (
-    <article className="rounded-md border p-3">
+    <article
+      className={`cursor-pointer rounded-md border p-3 transition-colors ${selected ? 'border-brand bg-brand-soft/30' : 'hover:bg-muted/40'}`}
+      onClick={onSelect}
+    >
       <div className="flex items-center justify-between gap-3">
         <div className="min-w-0">
           <h3 className="truncate text-body font-[650]">{candidate.title}</h3>
@@ -98,10 +113,32 @@ export function SourceCandidatesDialog({
     queryFn: () => fetchSourceCandidates(sourceId as number),
     enabled: open && sourceId !== null,
   })
+  const source = useQuery({
+    queryKey: [...queryKeys.sources, 'detail', sourceId ?? 0],
+    queryFn: () => fetchSource(sourceId as number),
+    enabled: open && sourceId !== null,
+  })
+  const [selectedId, setSelectedId] = useState<number | null>(null)
+  const evidenceAreaRef = useRef<HTMLElement>(null)
+
+  // 未显式选择时默认选中第一条候选（渲染期派生，避免 effect 内 setState）
+  const effectiveSelectedId = selectedId ?? candidates.data?.[0]?.id ?? null
+  const selectedCandidate = useMemo(
+    () => candidates.data?.find((candidate) => candidate.id === effectiveSelectedId) ?? null,
+    [candidates.data, effectiveSelectedId],
+  )
+
+  // 切换候选后，原文区自动滚动定位到第一个高亮片段（无命中不滚动）
+  useEffect(() => {
+    const mark = evidenceAreaRef.current?.querySelector<HTMLElement>('[data-evidence-highlight]')
+    if (mark && typeof mark.scrollIntoView === 'function') {
+      mark.scrollIntoView({ behavior: 'smooth', block: 'center' })
+    }
+  }, [effectiveSelectedId])
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="sm:max-w-2xl">
+      <DialogContent className="sm:max-w-4xl">
         <DialogHeader>
           <DialogTitle>AI 候选</DialogTitle>
           <DialogDescription>
@@ -132,10 +169,60 @@ export function SourceCandidatesDialog({
             还没有候选
           </div>
         ) : (
-          <div className="max-h-[65vh] space-y-3 overflow-y-auto pr-1">
-            {candidates.data?.map((candidate) => (
-              <CandidateItem key={candidate.id} candidate={candidate} />
-            ))}
+          <div className="grid min-h-0 grid-cols-2 gap-4">
+            <section ref={evidenceAreaRef} className="min-h-0 max-h-[65vh] overflow-y-auto rounded-md border p-4">
+              <h3 className="mb-2 text-body font-[650]">原始材料与证据</h3>
+              {source.isLoading ? (
+                <div className="h-40 animate-pulse rounded-md bg-muted/40" />
+              ) : ((source.data?.attachments ?? []).length) === 0 ? (
+                <p className="py-8 text-center text-body-sm text-muted-foreground">没有附件</p>
+              ) : (
+                source.data?.attachments.map((attachment) =>
+                  attachment.kind === 'image' ? (
+                    <figure key={attachment.id} className="mb-3">
+                      {attachment.ocr_text ? (
+                        <div className="mb-2 max-h-40 overflow-y-auto whitespace-pre-wrap rounded-md bg-muted/30 p-3 text-body-sm">
+                          {highlightEvidence(
+                            attachment.ocr_text,
+                            selectedCandidate?.evidence.find(
+                              (item) => item.attachment_id === attachment.id,
+                            )?.quote,
+                          )}
+                        </div>
+                      ) : null}
+                      <img
+                        src={sourceImageUrl(source.data.id, attachment.id)}
+                        alt={attachment.file_name ?? '来源图片'}
+                        className="w-full rounded-md border object-contain"
+                        style={{ maxHeight: '40vh' }}
+                      />
+                    </figure>
+                  ) : (
+                    <div
+                      key={attachment.id}
+                      className="mb-3 whitespace-pre-wrap rounded-md bg-muted/30 p-3 text-body-sm"
+                    >
+                      {highlightEvidence(
+                        attachment.text_content ?? '',
+                        selectedCandidate?.evidence.find(
+                          (item) => item.attachment_id === attachment.id,
+                        )?.quote,
+                      )}
+                    </div>
+                  ),
+                )
+              )}
+            </section>
+            <div className="max-h-[65vh] space-y-3 overflow-y-auto pr-1">
+              {candidates.data?.map((candidate) => (
+                <CandidateItem
+                  key={candidate.id}
+                  candidate={candidate}
+                  selected={candidate.id === effectiveSelectedId}
+                  onSelect={() => setSelectedId(candidate.id)}
+                />
+              ))}
+            </div>
           </div>
         )}
       </DialogContent>

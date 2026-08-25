@@ -51,13 +51,35 @@ describe('SourceCandidatesDialog', () => {
   it('展示候选的决策状态徽标', async () => {
     vi.stubGlobal(
       'fetch',
-      vi.fn(() =>
-        ok([
-          { ...BASE, id: 1, status: 'pending' },
-          { ...BASE, id: 2, status: 'confirmed' },
-          { ...BASE, id: 3, status: 'rejected' },
-        ]),
-      ),
+      vi.fn((input: RequestInfo | URL) => {
+        const url = String(input)
+        if (url.includes('/candidates')) {
+          return ok([
+            { ...BASE, id: 1, status: 'pending' },
+            { ...BASE, id: 2, status: 'confirmed' },
+            { ...BASE, id: 3, status: 'rejected' },
+          ])
+        }
+        if (url.endsWith('/api/sources/1')) {
+          return ok({
+            id: 1,
+            title: '来源',
+            note: null,
+            project_id: 1,
+            status: 'pending',
+            recommended_project_id: null,
+            project_recommendation_reason: null,
+            created_at: '',
+            updated_at: '',
+            attachments: [],
+            project_locked: false,
+            evidence_entry_count: 0,
+            pending_candidate_count: 3,
+            candidate_count: 3,
+          })
+        }
+        return ok({})
+      }),
     )
 
     renderDialog()

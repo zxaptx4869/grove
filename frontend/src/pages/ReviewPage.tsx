@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import {
   Check,
@@ -35,6 +35,7 @@ import {
   type CandidateUpdatePayload,
   type TreeNodePayload,
 } from '@/lib/api'
+import { highlightEvidence } from '@/lib/evidenceHighlight'
 import { queryKeys } from '@/lib/queryKeys'
 
 function formatTime(value: string) {
@@ -79,19 +80,6 @@ function findSuggestionNodeId(
   return nodes.find(
     (node) => node.name.trim().toLowerCase() === name && node.parentId === parentId,
   )?.id ?? null
-}
-
-function highlightQuote(text: string, quote?: string) {
-  if (!quote) return text
-  const index = text.indexOf(quote)
-  if (index < 0) return text
-  return (
-    <>
-      {text.slice(0, index)}
-      <mark className="rounded bg-amber-100 text-foreground">{quote}</mark>
-      {text.slice(index + quote.length)}
-    </>
-  )
 }
 
 function CandidateEditor({
@@ -476,6 +464,15 @@ export function ReviewPage() {
     (source.data?.attachments.filter((attachment) => attachment.kind === 'image').length ?? 0) ===
     1
 
+  const evidenceAreaRef = useRef<HTMLElement>(null)
+  // 切换候选后，证据区自动滚动定位到第一个高亮片段（无命中不滚动）
+  useEffect(() => {
+    const mark = evidenceAreaRef.current?.querySelector<HTMLElement>('[data-evidence-highlight]')
+    if (mark && typeof mark.scrollIntoView === 'function') {
+      mark.scrollIntoView({ behavior: 'smooth', block: 'center' })
+    }
+  }, [currentCandidate?.id])
+
   const adopt = useGroveMutation({
     mutationFn: async ({
       candidate,
@@ -684,7 +681,7 @@ export function ReviewPage() {
         </div>
 
         <div className="grid min-h-0 flex-1 grid-cols-2">
-          <section className="min-h-0 min-w-0 overflow-y-auto border-r p-5">
+          <section ref={evidenceAreaRef} className="min-h-0 min-w-0 overflow-y-auto border-r p-5">
             <div className="mb-3 flex items-center justify-between">
               <h2 className="text-[16px] font-[650]">原始材料与证据</h2>
               {source.data?.note ? (
@@ -702,7 +699,7 @@ export function ReviewPage() {
                     <figure key={attachment.id} className="min-w-60 flex-1">
                       {attachment.ocr_text ? (
                         <div className="mb-2 max-h-40 overflow-y-auto whitespace-pre-wrap rounded-md bg-muted/30 p-3 text-body-sm">
-                          {highlightQuote(
+                          {highlightEvidence(
                             attachment.ocr_text,
                             currentCandidate?.evidence.find(
                               (item) => item.attachment_id === attachment.id,
@@ -722,7 +719,7 @@ export function ReviewPage() {
                       key={attachment.id}
                       className="w-full whitespace-pre-wrap rounded-md bg-muted/30 p-3 text-body-sm"
                     >
-                      {highlightQuote(
+                      {highlightEvidence(
                         attachment.text_content ?? '',
                         currentCandidate?.evidence.find(
                           (item) => item.attachment_id === attachment.id,
