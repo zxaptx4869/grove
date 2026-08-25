@@ -32,7 +32,7 @@
 - [x] 默认空目录创建，移除装修模板作为产品默认路径。
 - [x] 图片批量上传、图片粘贴和文字粘贴采集。
 - [x] Source、Attachment、Processing Task 与版本化 Extraction。
-- [ ] OCR 或多模态解析 Provider 评测与接入。
+- [ ] OCR 或多模态解析 Provider 评测与接入（Demo 链路已可用，真实 Provider 评测接入待真实使用后按需推进）。
 - [x] Project Context Snapshot 初始版本：基于项目说明与正式目录生成，支持异步更新、失败回退、展示和纠正。
 - [x] Organizing Agent 基于 PydanticAI 输出结构化 Candidate。
 - [x] 语义拆分、推荐候选、其他发现和证据定位。
@@ -60,9 +60,9 @@
 - [x] 新建、疑似重复、补充、可能冲突的归档建议。
 - [x] 重复时只为已有 Entry 补充新 Source 证据。
 - [x] Project Context Snapshot 增强：纳入已确认 Entry、知识覆盖和近期主题，并记录上下文版本。
-- [ ] 记录用户接受、修改和拒绝推荐的行为，为后续个性化提供信号。
+- [x] 记录用户接受、修改和拒绝推荐的行为，为后续个性化提供信号（行为信号记录已上线）。
 
-P0-A 与 P0-B 都完成后才视为 MVP 验证版本。实施时分开做小 change，避免一次交付过大。
+P0-A 与 P0-B 都完成后才视为 MVP 验证版本；其中 P0-A 的 OCR 真实 Provider 评测接入不阻塞实际体验验证，但正式宣称 MVP 验证版本前需完成。实施时分开做小 change，避免一次交付过大。
 
 ### P1：目录共创与知识回忆
 
@@ -83,9 +83,10 @@ P0-A 与 P0-B 都完成后才视为 MVP 验证版本。实施时分开做小 cha
 
 ### P2：知识质量与媒介扩展
 
-- [ ] 网页链接采集与正文提取。
+- [ ] 网页链接采集与正文提取（暂缓：小红书/知乎/公众号等主流来源难爬，采集主路径由浏览器截图扩展承接）。
 - [ ] PDF、Word 等文档解析。
-- [ ] 浏览器扩展；移动端系统分享入口随原生 App 单独规划。
+- [x] 浏览器扩展（Grove 快采：框选截图 + 批次 + 一键进收集箱，复用登录态与多图 Source 链路）。
+- [ ] 移动端系统分享入口（随原生 App 单独规划）。
 - [ ] Review：重复、冲突、缺少条件、缺少来源和过期风险。
 - [ ] 组合筛选、标签管理和更完整的批量管理。
 - [ ] 多 Source 证据比较与来源可信度辅助判断。
@@ -139,6 +140,8 @@ P0-A 与 P0-B 都完成后才视为 MVP 验证版本。实施时分开做小 cha
 旅行场景补充一小组以验证系统不会把主观体验错误降级为低价值。
 
 ### 核心指标
+
+指标数据由行为信号记录（`behavior-signals`）自动采集，供真实使用验证使用。
 
 - Source 到第一条 Candidate 的时间；
 - 每条 Source 产生的推荐候选数与其他发现数；
@@ -248,6 +251,17 @@ P0-A 与 P0-B 都完成后才视为 MVP 验证版本。实施时分开做小 cha
 17. `add-reader-agent-with-citations`
 18. `add-directory-mind-map-view`
 19. `add-knowledge-overview`（知识全景：旭日图 + 思维导图合并入口，顶部切换、跨模式联动与缩放）
+
+### 已实施补充 Change（不在原建议列表）
+
+以下 Change 已完成并归档，按主题归类：
+
+- 修订建议与版本历史：`add-entry-version-history-and-revision`、`add-ai-revision-external-knowledge`、`refine-ai-revision-source-rule`、`add-ai-revision-discussion-intent`；
+- 来源管理重构：`add-source-history-and-protections`、`refine-source-lock-and-review-status`、`refine-source-processed-lock`、`refine-source-project-recommendation`；
+- 侧栏项目切换：`add-sidebar-project-switcher`、`refine-sidebar-project-status-badge`；
+- 行为信号：`add-behavior-signal-logging`；
+- 浏览器快采：`add-browser-capture-extension`；
+- 证据高亮与来源详情：`refine-evidence-highlight`、`refine-evidence-quote-normalization`、`add-source-detail-view`。
 
 每个 change 必须完整执行：proposal → specs → design → tasks → validate → 实施 → sync specs → archive → commit。推送与合并仍需用户明确确认。
 
