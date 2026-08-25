@@ -331,7 +331,7 @@ export function SourceDetailDialog({
       {lightboxUrl
         ? createPortal(
             <div
-              className="fixed inset-0 z-[60] flex items-center justify-center bg-black/75 p-6"
+              className="pointer-events-auto fixed inset-0 z-[60] flex items-center justify-center bg-black/75 p-6"
               onClick={() => setLightboxUrl(null)}
               role="dialog"
               aria-label="查看原图"
@@ -342,7 +342,7 @@ export function SourceDetailDialog({
               >
                 <button
                   type="button"
-                  className="absolute -top-10 right-0 flex size-9 items-center justify-center rounded-full bg-black/60 text-white hover:bg-black/80"
+                  className="absolute right-2 top-2 flex size-9 items-center justify-center rounded-full bg-black/60 text-white hover:bg-black/80"
                   onClick={() => setLightboxUrl(null)}
                   aria-label="关闭原图"
                 >
