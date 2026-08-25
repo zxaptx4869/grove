@@ -1,0 +1,100 @@
+# browser-capture Specification
+
+## Purpose
+TBD - created by archiving change add-browser-capture-extension. Update Purpose after archive.
+## Requirements
+### Requirement: 框选截图
+
+扩展 MUST 提供浏览器页面内框选截图：按快捷键或点击扩展图标进入框选模式，页面显示遮罩，用户拖拽矩形选区；框满视口即整页截图，拖局部即局部截图。扩展 MUST NOT 尝试在浏览器内置页（`chrome://`、扩展商店）与 Chrome 内置 PDF 查看器注入截图。
+
+#### Scenario: 快捷键进入框选
+
+- **WHEN** 用户在任意普通网页按快捷键（`Cmd+S`，冲突时退 `Cmd+Shift+S`）
+- **THEN** 页面进入框选模式，显示遮罩并允许拖框
+
+#### Scenario: 局部框选
+
+- **WHEN** 用户拖出局部选区并松手
+- **THEN** 生成该区域截图并进入预览流程
+
+#### Scenario: 框满即整页
+
+- **WHEN** 用户拖框覆盖整个视口
+- **THEN** 按整页截图处理，与局部截图走同一批次链路
+
+#### Scenario: 内置页面不注入
+
+- **WHEN** 用户在 `chrome://`、扩展商店或 Chrome 内置 PDF 查看器触发截图
+- **THEN** 扩展给出明确不可用提示，不注入截图
+
+### Requirement: 预览与单张发送
+
+截图后扩展 MUST 原地显示预览（与框选区域等大，大图自动等比缩放）；预览 MUST 提供「发送」「暂存」「关闭」三个操作：「发送」MUST 将单张作为一个 Source 直进收集箱（不进批次）；「关闭」MUST 丢弃该张；预览显示期间 MUST 忽略新的框选请求，避免预览被截进截图。
+
+#### Scenario: 单张直接发送
+
+- **WHEN** 用户在预览中点「发送」
+- **THEN** 该张直接作为一个 Source 进入收集箱并触发处理，预览关闭
+
+#### Scenario: 预览等大显示
+
+- **WHEN** 用户框选一个小区域并查看预览
+- **THEN** 预览与该区域在页面中的逻辑尺寸一致，不被高分屏像素放大
+
+#### Scenario: 预览期间忽略新截图
+
+- **WHEN** 预览仍显示时用户再次触发框选
+- **THEN** 扩展忽略该请求，待预览处理完后再继续
+
+### Requirement: 批次管理与整批发送
+
+「暂存」MUST 将截图加入批次；批次非空时右下角小窗 MUST 显示并跨标签页同步，小窗 MUST 支持移除单张、清空批次与拖动位置；「发送」MUST 以单个 Source 的多个图片附件直进 Grove 收集箱（不选项目，归属由 AI 推荐）；发送成功后 MUST 清空批次、隐藏小窗并给出成功反馈。
+
+#### Scenario: 暂存后继续截图
+
+- **WHEN** 用户点「暂存」并继续截取多张
+- **THEN** 每张进入同一批次，右下角小窗显示张数与缩略图
+
+#### Scenario: 移除与清空批次
+
+- **WHEN** 用户在小窗悬停缩略图删除单张，或点击右上角关闭清空全部
+- **THEN** 批次相应更新，全部清空后小窗隐藏
+
+#### Scenario: 整批发送进收集箱
+
+- **WHEN** 用户在小窗点击「发送」
+- **THEN** 批次全部图片作为同一 Source 的多个附件提交到 Grove，成功后批次清空、小窗隐藏
+
+### Requirement: 登录态与首次引导
+
+扩展 MUST 复用浏览器中的 Grove 登录会话；发送前 MUST 校验登录态，未登录时 MUST 提示并打开 Grove 登录页；点击扩展图标 MUST 展示快捷键与使用说明（首次引导）。
+
+#### Scenario: 已登录直接发送
+
+- **WHEN** 用户在浏览器已登录 Grove 并发送批次
+- **THEN** 直接提交成功，无需再次登录
+
+#### Scenario: 未登录提示跳转
+
+- **WHEN** 用户未登录 Grove 时触发发送
+- **THEN** 扩展提示「请先登录 Grove」并提供打开登录页入口
+
+#### Scenario: 图标展示引导
+
+- **WHEN** 用户点击扩展图标
+- **THEN** 弹出面板展示快捷键、当前批次状态与使用说明
+
+### Requirement: 服务器地址配置
+
+扩展 MUST 允许配置 Grove 服务器地址，默认使用本地开发地址；配置 MUST 持久化并用于登录校验与上传。
+
+#### Scenario: 默认本地地址
+
+- **WHEN** 用户首次安装扩展
+- **THEN** 默认 Grove 地址为本地开发地址，可直接使用
+
+#### Scenario: 修改服务器地址
+
+- **WHEN** 用户在设置中修改 Grove 地址
+- **THEN** 后续登录校验与上传均使用新地址
+

@@ -26,5 +26,5 @@
 ## 6. 验证与收尾
 
 - [x] 6.1 本地开发者模式加载扩展；在真实页面（小红书/知乎）端到端走查：框选 → 预览/暂存/发送 → 收集箱 Source → 确认流程（用户已本地走查通过）
-- [ ] 6.2 `openspec validate --all --strict` 通过后归档同步主规格
-- [ ] 6.3 本地提交（不 push、不 merge）
+- [x] 6.2 `openspec validate --all --strict` 通过后归档同步主规格
+- [x] 6.3 本地提交（不 push、不 merge）
