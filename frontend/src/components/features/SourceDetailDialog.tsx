@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { FileText, Loader2 } from 'lucide-react'
+import { createPortal } from 'react-dom'
 
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -148,8 +149,11 @@ export function SourceDetailDialog({
   const [lightboxUrl, setLightboxUrl] = useState<string | null>(null)
   const evidenceAreaRef = useRef<HTMLElement>(null)
 
-  // 未显式选择时默认选中第一条候选（渲染期派生，避免 effect 内 setState）
-  const effectiveSelectedId = selectedId ?? candidates.data?.[0]?.id ?? null
+  // 未显式选择或选中项已不在当前候选列表时，回退第一条（渲染期派生）
+  const effectiveSelectedId = useMemo(() => {
+    const exists = candidates.data?.some((candidate) => candidate.id === selectedId)
+    return exists ? selectedId : (candidates.data?.[0]?.id ?? null)
+  }, [candidates.data, selectedId])
   const selectedCandidate = useMemo(
     () => candidates.data?.find((candidate) => candidate.id === effectiveSelectedId) ?? null,
     [candidates.data, effectiveSelectedId],
@@ -317,20 +321,23 @@ export function SourceDetailDialog({
           </>
         )}
       </DialogContent>
-      {lightboxUrl ? (
-        <div
-          className="fixed inset-0 z-50 flex items-center justify-center bg-black/75 p-6"
-          onClick={() => setLightboxUrl(null)}
-          role="dialog"
-          aria-label="查看原图"
-        >
-          <img
-            src={lightboxUrl}
-            alt="来源图片原图"
-            className="max-h-[85vh] max-w-[90vw] object-contain"
-          />
-        </div>
-      ) : null}
+      {lightboxUrl
+        ? createPortal(
+            <div
+              className="fixed inset-0 z-[60] flex items-center justify-center bg-black/75 p-6"
+              onClick={() => setLightboxUrl(null)}
+              role="dialog"
+              aria-label="查看原图"
+            >
+              <img
+                src={lightboxUrl}
+                alt="来源图片原图"
+                className="max-h-[85vh] max-w-[90vw] object-contain"
+              />
+            </div>,
+            document.body,
+          )
+        : null}
     </Dialog>
   )
 }
