@@ -120,9 +120,8 @@ export function findEvidenceRanges(text: string, quote: string): EvidenceRange[]
   return ranges
 }
 
-/** 原文中高亮证据引用（多段命中均高亮，带定位标记）。 */
-export function highlightEvidence(text: string, quote?: string): ReactNode {
-  const ranges = quote ? findEvidenceRanges(text, quote) : []
+/** 按区间渲染高亮片段（多段命中均高亮，带定位标记）。 */
+function renderHighlightedRanges(text: string, ranges: EvidenceRange[]): ReactNode {
   if (ranges.length === 0) return text
   const nodes: ReactNode[] = []
   let cursor = 0
@@ -137,6 +136,12 @@ export function highlightEvidence(text: string, quote?: string): ReactNode {
   })
   nodes.push(text.slice(cursor))
   return nodes
+}
+
+/** 原文中高亮单条证据引用。 */
+export function highlightEvidence(text: string, quote?: string): ReactNode {
+  const ranges = quote ? findEvidenceRanges(text, quote) : []
+  return renderHighlightedRanges(text, ranges)
 }
 
 /** 高亮同一附件的多条证据引用（区间合并去重后统一渲染）。 */
@@ -154,17 +159,5 @@ export function highlightEvidenceAll(text: string, quotes: string[]): ReactNode 
       }
       return acc
     }, [])
-  const nodes: ReactNode[] = []
-  let cursor = 0
-  merged.forEach((range, index) => {
-    nodes.push(text.slice(cursor, range.start))
-    nodes.push(
-      <mark key={index} data-evidence-highlight className="rounded bg-amber-100 text-foreground">
-        {text.slice(range.start, range.end)}
-      </mark>,
-    )
-    cursor = range.end
-  })
-  nodes.push(text.slice(cursor))
-  return nodes
+  return renderHighlightedRanges(text, merged)
 }

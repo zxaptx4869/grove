@@ -17,14 +17,7 @@ def normalize_evidence_text(text: str) -> str:
 
 def build_index_map(text: str) -> list[int]:
     """归一化字符位置 → 原文索引映射（跳过原文中的符号）。"""
-    mapping: list[int] = []
-    position = 0
-    for i, char in enumerate(text):
-        if _NON_ALNUM.match(char):
-            continue
-        mapping.append(i)
-        position += 1
-    return mapping
+    return [i for i, char in enumerate(text) if not _NON_ALNUM.match(char)]
 
 
 def _locate_prefix(normalized_text: str, normalized_quote: str) -> int:
