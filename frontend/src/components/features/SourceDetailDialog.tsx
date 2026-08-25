@@ -178,16 +178,15 @@ export function SourceDetailDialog({
   }, [lightboxUrl])
 
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent
-        className="sm:max-w-4xl"
-        onInteractOutside={(event) => {
-          if (lightboxUrl) event.preventDefault()
-        }}
-        onEscapeKeyDown={(event) => {
-          if (lightboxUrl) event.preventDefault()
-        }}
-      >
+    <Dialog
+      open={open}
+      onOpenChange={(next) => {
+        // 图片放大打开期间不允许关闭弹窗（点外部/Esc 只关放大层）
+        if (!next && lightboxUrl) return
+        onOpenChange(next)
+      }}
+    >
+      <DialogContent className="sm:max-w-4xl">
         <DialogHeader>
           <DialogTitle>来源详情</DialogTitle>
           <DialogDescription>
@@ -337,30 +336,34 @@ export function SourceDetailDialog({
               role="dialog"
               aria-label="查看原图"
             >
-              <button
-                type="button"
-                className="absolute right-4 top-4 flex size-9 items-center justify-center rounded-full bg-black/60 text-white hover:bg-black/80"
-                onClick={() => setLightboxUrl(null)}
-                aria-label="关闭原图"
-              >
-                <svg
-                  viewBox="0 0 24 24"
-                  width="16"
-                  height="16"
-                  fill="none"
-                  stroke="currentColor"
-                  strokeWidth={2.5}
-                  strokeLinecap="round"
-                >
-                  <path d="M18 6 6 18M6 6l12 12" />
-                </svg>
-              </button>
-              <img
-                src={lightboxUrl}
-                alt="来源图片原图"
-                className="max-h-[85vh] max-w-[90vw] object-contain"
+              <div
+                className="relative"
                 onClick={(event) => event.stopPropagation()}
-              />
+              >
+                <button
+                  type="button"
+                  className="absolute -top-10 right-0 flex size-9 items-center justify-center rounded-full bg-black/60 text-white hover:bg-black/80"
+                  onClick={() => setLightboxUrl(null)}
+                  aria-label="关闭原图"
+                >
+                  <svg
+                    viewBox="0 0 24 24"
+                    width="16"
+                    height="16"
+                    fill="none"
+                    stroke="currentColor"
+                    strokeWidth={2.5}
+                    strokeLinecap="round"
+                  >
+                    <path d="M18 6 6 18M6 6l12 12" />
+                  </svg>
+                </button>
+                <img
+                  src={lightboxUrl}
+                  alt="来源图片原图"
+                  className="max-h-[85vh] max-w-[90vw] object-contain"
+                />
+              </div>
             </div>,
             document.body,
           )
