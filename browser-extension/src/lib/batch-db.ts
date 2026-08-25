@@ -49,21 +49,22 @@ export async function addBatchImage(blob: Blob): Promise<BatchImage> {
   const db = await openDb()
   return new Promise<BatchImage>((resolve, reject) => {
     const tx = db.transaction([IMAGE_STORE, META_STORE], 'readwrite')
-    const put = tx.objectStore(IMAGE_STORE).put({ blob, createdAt: Date.now() })
-    tx.oncomplete = async () => {
-      const image: BatchImage = { id: put.result as number, createdAt: Date.now() }
-      const ids = await readBatchIds()
-      ids.push(image.id)
-      const tx2 = db.transaction(META_STORE, 'readwrite')
-      tx2.objectStore(META_STORE).put(ids, BATCH_KEY)
-      tx2.oncomplete = () => {
-        db.close()
-        resolve(image)
-      }
-      tx2.onerror = () => {
-        db.close()
-        reject(tx2.error)
-      }
+    const imageStore = tx.objectStore(IMAGE_STORE)
+    const metaStore = tx.objectStore(META_STORE)
+    let imageId: number | undefined
+    const put = imageStore.put({ blob, createdAt: Date.now() })
+    put.onsuccess = () => {
+      imageId = put.result as number
+    }
+    const getIds = metaStore.get(BATCH_KEY)
+    getIds.onsuccess = () => {
+      const ids = ((getIds.result as number[] | undefined) ?? []).slice()
+      if (imageId != null) ids.push(imageId)
+      metaStore.put(ids, BATCH_KEY)
+    }
+    tx.oncomplete = () => {
+      db.close()
+      resolve({ id: imageId as number, createdAt: Date.now() })
     }
     tx.onerror = () => {
       db.close()

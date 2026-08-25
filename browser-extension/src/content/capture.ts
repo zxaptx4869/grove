@@ -16,7 +16,6 @@ let overlay: HTMLElement | null = null
 let selectionBox: HTMLElement | null = null
 let sizeHint: HTMLElement | null = null
 let dragStart: { x: number; y: number } | null = null
-let capturing = false
 
 /** 安全发送：扩展上下文失效（刷新/更新后旧脚本）时静默返回，不抛错。 */
 function safeSend(message: unknown): Promise<unknown> {
@@ -43,7 +42,8 @@ void safeSend({ type: 'GET_BATCH' }).then((response) => {
 
 function startCapture(): void {
   if (overlay) return
-  capturing = false
+  // 预览层显示时忽略新的框选请求，避免预览被截进图
+  if (preview) return
   overlay = document.createElement('div')
   overlay.className = 'gv-overlay'
   selectionBox = document.createElement('div')
@@ -70,7 +70,6 @@ function startCapture(): void {
     dragStart = null
     cleanup()
     if (width < 4 || height < 4) return
-    capturing = true
     // 强制一次布局，确保遮罩/选区框从画面撤掉后再抓屏
     void document.body.offsetHeight
     // 等两帧让遮罩与选区框从画面消失，避免被截进图
@@ -258,7 +257,6 @@ function showPreview(dataUrl: string, widthPx?: number): void {
   })
   actions.appendChild(stashBtn)
   actions.appendChild(sendBtn)
-  frame.appendChild(actions)
   stage.appendChild(frame)
   stage.appendChild(actions)
   preview.appendChild(stage)
