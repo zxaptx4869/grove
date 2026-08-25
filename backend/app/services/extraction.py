@@ -5,8 +5,8 @@ import json
 from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.agents.organizing import ExtractionDraft
-from app.models import Candidate, Extraction, Source
+from app.agents.organizing import EvidenceRefDraft, ExtractionDraft
+from app.models import Attachment, Candidate, Extraction, Source
 from app.models.extraction import (
     CANDIDATE_PENDING,
     EXTRACTION_ACTIVE,
@@ -19,6 +19,10 @@ from app.schemas.candidate import (
     EvidenceRefOut,
     NewNodeSuggestionOut,
     NodeAlternativeOut,
+)
+from app.services.evidence_normalize import (
+    normalize_evidence_quote,
+    split_evidence_quote_segments,
 )
 
 
@@ -179,7 +183,35 @@ async def save_success_extraction(
     source.recommended_project_id = draft.recommended_project_id
     source.project_recommendation_reason = draft.project_recommendation_reason
 
+    attachments = {
+        attachment.id: attachment
+        for attachment in (
+            await db.execute(select(Attachment).where(Attachment.source_id == source.id))
+        ).scalars().all()
+    }
     for candidate_draft in draft.candidates:
+        normalized_evidence: list[EvidenceRefDraft] = []
+        for item in candidate_draft.evidence:
+            attachment = attachments.get(item.attachment_id)
+            text = None
+            if attachment is not None:
+                text = attachment.text_content or attachment.ocr_text
+            if not text:
+                normalized_evidence.append(item)
+                continue
+            matched = [
+                match
+                for segment in split_evidence_quote_segments(item.quote)
+                if (match := normalize_evidence_quote(text, segment)) is not None
+            ]
+            if matched:
+                normalized_evidence.extend(
+                    EvidenceRefDraft(attachment_id=item.attachment_id, quote=quote)
+                    for quote in matched
+                )
+            else:
+                normalized_evidence.append(item)
+        candidate_draft.evidence = normalized_evidence
         db.add(
             Candidate(
                 extraction_id=extraction.id,

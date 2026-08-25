@@ -85,4 +85,18 @@ describe('evidenceHighlight', () => {
     expect(html).toContain('<mark')
     expect(html).toContain('data-evidence-highlight')
   })
+
+  it('轻微改写差异由模糊匹配兜底', () => {
+    const text = '厨房是食材处理、烹饪操作的功能区，洗菜、切配都需要清晰充足的光线'
+    const quote = '厨房是食材处理烹饪操作的功能区洗菜切配都需要清晰光线'
+    const ranges = findEvidenceRanges(text, quote)
+    expect(ranges).toHaveLength(1)
+    expect(text.slice(ranges[0].start, ranges[0].end)).toContain('厨房是食材处理')
+  })
+
+  it('相似度低于阈值不高亮', () => {
+    expect(
+      findEvidenceRanges('完全不相关的原文内容', '39800 王牌臻选套餐'),
+    ).toEqual([])
+  })
 })

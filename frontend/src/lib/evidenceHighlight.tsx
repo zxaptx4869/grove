@@ -25,6 +25,64 @@ function buildIndexMap(text: string): number[] {
 
 /** 引用按省略号拆段（AI 生成的摘要式引用会跳过原文内容）。 */
 const QUOTE_SEGMENT_SPLIT = /…|\.{2,}/
+const FUZZY_THRESHOLD = 0.75
+
+/** 字符多重集相似度：两个字符串的公共字符比例（0~1）。 */
+function charSimilarity(a: string, b: string): number {
+  const counts = new Map<string, number>()
+  for (const ch of b) {
+    counts.set(ch, (counts.get(ch) ?? 0) + 1)
+  }
+  let matched = 0
+  for (const ch of a) {
+    const count = counts.get(ch)
+    if (count && count > 0) {
+      counts.set(ch, count - 1)
+      matched += 1
+    }
+  }
+  return matched / Math.max(a.length, b.length, 1)
+}
+
+/** 模糊定位：前缀锚点 + 附近滑动窗口取相似度最高的区间。 */
+function fuzzyFind(
+  normalizedText: string,
+  segment: string,
+): { start: number; size: number } | null {
+  let start = -1
+  const prefixLen = Math.min(segment.length, 12)
+  for (let len = prefixLen; len >= 6; len--) {
+    const index = normalizedText.indexOf(segment.slice(0, len))
+    if (index >= 0) {
+      start = index
+      break
+    }
+  }
+  if (start < 0) return null
+  const segmentLen = segment.length
+  const windowMin = Math.max(1, Math.floor(segmentLen * 0.85))
+  const windowMax = segmentLen + Math.max(5, Math.floor(segmentLen * 0.15))
+  const searchStart = Math.max(0, start - windowMax)
+  const searchEnd = Math.min(normalizedText.length, start + windowMax + segmentLen)
+  let bestRatio = 0
+  let bestStart = -1
+  let bestSize = 0
+  for (let size = windowMin; size <= windowMax; size++) {
+    for (let windowStart = searchStart; windowStart <= searchEnd - size; windowStart++) {
+      const ratio = charSimilarity(
+        normalizedText.slice(windowStart, windowStart + size),
+        segment,
+      )
+      if (ratio > bestRatio) {
+        bestRatio = ratio
+        bestStart = windowStart
+        bestSize = size
+      }
+    }
+  }
+  if (bestRatio < FUZZY_THRESHOLD || bestStart < 0) return null
+  return { start: bestStart, size: bestSize }
+}
 
 /**
  * 分段归一化匹配引用，返回全部命中区间的原文索引。
@@ -42,16 +100,22 @@ export function findEvidenceRanges(text: string, quote: string): EvidenceRange[]
   const ranges: EvidenceRange[] = []
   let cursor = 0
   for (let i = 0; i < segments.length; i++) {
-    const index = normalizedText.indexOf(segments[i], cursor)
+    let index = normalizedText.indexOf(segments[i], cursor)
+    let size = segments[i].length
     if (index < 0) {
-      if (i === 0) return []
-      continue
+      const fuzzy = fuzzyFind(normalizedText, segments[i])
+      if (!fuzzy) {
+        if (i === 0) return []
+        continue
+      }
+      index = fuzzy.start
+      size = fuzzy.size
     }
     const start = map[index]
-    const last = map[index + segments[i].length - 1]
+    const last = map[index + size - 1]
     if (start == null || last == null) return []
     ranges.push({ start, end: last + 1 })
-    cursor = index + segments[i].length
+    cursor = index + size
   }
   return ranges
 }
