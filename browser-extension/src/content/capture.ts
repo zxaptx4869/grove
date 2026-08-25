@@ -18,6 +18,15 @@ let sizeHint: HTMLElement | null = null
 let dragStart: { x: number; y: number } | null = null
 let capturing = false
 
+/** 安全发送：扩展上下文失效（刷新/更新后旧脚本）时静默返回，不抛错。 */
+function safeSend(message: unknown): Promise<unknown> {
+  try {
+    return chrome.runtime.sendMessage(message)
+  } catch {
+    return Promise.resolve(undefined)
+  }
+}
+
 chrome.runtime.onMessage.addListener((message) => {
   if (message.type === 'START_CAPTURE') startCapture()
   else if (message.type === 'BATCH_UPDATED') {
@@ -27,7 +36,7 @@ chrome.runtime.onMessage.addListener((message) => {
 })
 
 // 页面注入时主动拉取当前批次：切到已打开的页面也能恢复小窗
-void chrome.runtime.sendMessage({ type: 'GET_BATCH' }).then((response) => {
+void safeSend({ type: 'GET_BATCH' }).then((response) => {
   const images = (response as { images?: BatchThumb[] } | undefined)?.images
   if (images) renderBar(images)
 }).catch(() => undefined)
@@ -67,7 +76,7 @@ function startCapture(): void {
     // 等两帧让遮罩与选区框从画面消失，避免被截进图
     requestAnimationFrame(() => {
       requestAnimationFrame(() => {
-        void chrome.runtime.sendMessage({
+        void safeSend({
           type: 'CAPTURE_PREVIEW',
           rect: { x, y, width, height } satisfies SelectionRect,
           dpr: window.devicePixelRatio,
@@ -156,7 +165,7 @@ function renderBar(images: BatchThumb[]): void {
     remove.innerHTML =
       '<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><path d="M18 6 6 18M6 6l12 12"/></svg>'
     remove.addEventListener('click', () => {
-      void chrome.runtime.sendMessage({ type: 'REMOVE_IMAGE', id: image.id }).catch(() => undefined)
+      void safeSend({ type: 'REMOVE_IMAGE', id: image.id }).catch(() => undefined)
     })
     item.appendChild(img)
     item.appendChild(remove)
@@ -170,7 +179,7 @@ function renderBar(images: BatchThumb[]): void {
   send.textContent = '发送'
   send.disabled = images.length === 0
   send.addEventListener('click', () => {
-    void chrome.runtime.sendMessage({ type: 'SEND_BATCH' }).catch(() => undefined)
+    void safeSend({ type: 'SEND_BATCH' }).catch(() => undefined)
   })
   bar.appendChild(send)
 }
@@ -185,7 +194,7 @@ function createCloseButton(): HTMLButtonElement {
   close.addEventListener('click', () => {
     bar?.remove()
     bar = null
-    void chrome.runtime.sendMessage({ type: 'CLEAR_BATCH' }).catch(() => undefined)
+    void safeSend({ type: 'CLEAR_BATCH' }).catch(() => undefined)
   })
   return close
 }
@@ -216,7 +225,7 @@ function showPreview(dataUrl: string, widthPx?: number): void {
   closeBtn.innerHTML =
     '<svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><path d="M18 6 6 18M6 6l12 12"/></svg>'
   closeBtn.addEventListener('click', () => {
-    void chrome.runtime.sendMessage({ type: 'DISCARD_PREVIEW' }).catch(() => undefined)
+    void safeSend({ type: 'DISCARD_PREVIEW' }).catch(() => undefined)
     hidePreview()
   })
   frame.appendChild(closeBtn)
@@ -230,7 +239,7 @@ function showPreview(dataUrl: string, widthPx?: number): void {
   stashBtn.dataset.tooltip =
     '暂存：收进批次继续截图，最后一起作为一条采集发送。长内容分多张截图时用这个；单张直接点发送。'
   stashBtn.addEventListener('click', () => {
-    void chrome.runtime.sendMessage({ type: 'STASH_PREVIEW' }).catch(() => undefined)
+    void safeSend({ type: 'STASH_PREVIEW' }).catch(() => undefined)
     hidePreview()
   })
   const sendBtn = document.createElement('button')
@@ -238,7 +247,7 @@ function showPreview(dataUrl: string, widthPx?: number): void {
   sendBtn.className = 'gv-preview-btn gv-preview-send'
   sendBtn.textContent = '发送'
   sendBtn.addEventListener('click', () => {
-    void chrome.runtime.sendMessage({ type: 'SEND_SINGLE' }).then((response) => {
+    void safeSend({ type: 'SEND_SINGLE' }).then((response) => {
       const result = response as { ok?: boolean; message?: string }
       hidePreview()
       showToast(result?.message || '发送结果未知', result?.ok === true)
@@ -257,7 +266,7 @@ function showPreview(dataUrl: string, widthPx?: number): void {
 
   const onKey = (event: KeyboardEvent) => {
     if (event.key === 'Escape') {
-      void chrome.runtime.sendMessage({ type: 'DISCARD_PREVIEW' }).catch(() => undefined)
+      void safeSend({ type: 'DISCARD_PREVIEW' }).catch(() => undefined)
       hidePreview()
     }
   }
