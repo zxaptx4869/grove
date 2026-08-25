@@ -5,6 +5,7 @@ const DB_VERSION = 1
 const IMAGE_STORE = 'images'
 const META_STORE = 'meta'
 const BATCH_KEY = 'currentBatch'
+const PENDING_KEY = 'pendingPreview'
 
 export interface BatchImage {
   id: number
@@ -119,6 +120,54 @@ export async function clearBatch(): Promise<void> {
     const tx = db.transaction([IMAGE_STORE, META_STORE], 'readwrite')
     tx.objectStore(META_STORE).put([], BATCH_KEY)
     tx.objectStore(IMAGE_STORE).clear()
+    tx.oncomplete = () => {
+      db.close()
+      resolve()
+    }
+    tx.onerror = () => {
+      db.close()
+      reject(tx.error)
+    }
+  })
+}
+
+export async function savePendingBlob(blob: Blob): Promise<void> {
+  const db = await openDb()
+  return new Promise<void>((resolve, reject) => {
+    const tx = db.transaction(META_STORE, 'readwrite')
+    tx.objectStore(META_STORE).put(blob, PENDING_KEY)
+    tx.oncomplete = () => {
+      db.close()
+      resolve()
+    }
+    tx.onerror = () => {
+      db.close()
+      reject(tx.error)
+    }
+  })
+}
+
+export async function getPendingBlob(): Promise<Blob | null> {
+  const db = await openDb()
+  return new Promise<Blob | null>((resolve, reject) => {
+    const tx = db.transaction(META_STORE, 'readonly')
+    const get = tx.objectStore(META_STORE).get(PENDING_KEY)
+    tx.oncomplete = () => {
+      db.close()
+      resolve((get.result as Blob | undefined) ?? null)
+    }
+    tx.onerror = () => {
+      db.close()
+      reject(tx.error)
+    }
+  })
+}
+
+export async function clearPendingBlob(): Promise<void> {
+  const db = await openDb()
+  return new Promise<void>((resolve, reject) => {
+    const tx = db.transaction(META_STORE, 'readwrite')
+    tx.objectStore(META_STORE).delete(PENDING_KEY)
     tx.oncomplete = () => {
       db.close()
       resolve()

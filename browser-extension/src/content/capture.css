@@ -28,25 +28,65 @@
 
 .gv-bar {
   position: fixed;
-  left: 50%;
+  right: 16px;
   bottom: 16px;
-  transform: translateX(-50%);
   z-index: 2147483647;
   display: flex;
   align-items: center;
   gap: 10px;
   max-width: 70vw;
   padding: 8px 12px;
-  background: #17201c;
-  color: #fff;
-  border-radius: 8px;
-  box-shadow: 0 6px 24px rgba(0, 0, 0, 0.25);
+  background: #fff;
+  color: #17201c;
+  border: 1px solid #dde3df;
+  border-radius: 10px;
+  box-shadow: 0 8px 28px rgba(23, 32, 28, 0.18);
   font-family: -apple-system, "PingFang SC", "Microsoft YaHei", sans-serif;
   font-size: 13px;
+  cursor: grab;
+  user-select: none;
+}
+
+.gv-bar-dragging {
+  cursor: grabbing;
+  opacity: 0.95;
 }
 
 .gv-bar-label {
   white-space: nowrap;
+  color: #236748;
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.gv-bar-close {
+  position: absolute;
+  top: -8px;
+  right: -8px;
+  width: 20px;
+  height: 20px;
+  padding: 0;
+  border: none;
+  border-radius: 50%;
+  background: #fff;
+  border: 1px solid #dde3df;
+  color: #66716b;
+  box-shadow: 0 2px 8px rgba(23, 32, 28, 0.18);
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity 0.12s ease;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.gv-bar:hover .gv-bar-close {
+  opacity: 1;
+}
+
+.gv-bar-close:hover {
+  background: #fceded;
+  color: #b43c3c;
 }
 
 .gv-bar-list {
@@ -58,39 +98,56 @@
 .gv-bar-item {
   position: relative;
   flex: 0 0 auto;
+  width: 48px;
+  height: 48px;
+  border-radius: 6px;
+  overflow: hidden;
 }
 
 .gv-bar-item img {
   display: block;
-  height: 44px;
-  border-radius: 4px;
+  width: 48px;
+  height: 48px;
+  object-fit: cover;
+  outline: 2px solid #236748;
+  outline-offset: -2px;
 }
 
 .gv-bar-remove {
   position: absolute;
-  top: -6px;
-  right: -6px;
-  width: 18px;
-  height: 18px;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  margin: 0;
   padding: 0;
   border: none;
-  border-radius: 50%;
-  background: #b43c3c;
+  border-radius: inherit;
+  background: rgba(23, 32, 28, 0.55);
   color: #fff;
-  font-size: 11px;
-  line-height: 18px;
+  font-size: 16px;
+  line-height: 1;
   cursor: pointer;
+  opacity: 0;
+  transition: opacity 0.12s ease;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.gv-bar-item:hover .gv-bar-remove {
+  opacity: 1;
 }
 
 .gv-bar-send {
   flex: 0 0 auto;
   height: 30px;
-  padding: 0 14px;
+  padding: 0 16px;
   border: none;
   border-radius: 6px;
   background: #236748;
   color: #fff;
   font-size: 13px;
+  font-weight: 600;
   cursor: pointer;
 }
 
@@ -119,4 +176,127 @@
 .gv-toast-error {
   background: #fceded;
   color: #b43c3c;
+}
+
+.gv-preview {
+  position: fixed;
+  inset: 0;
+  z-index: 2147483647;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 14px;
+  background: rgba(23, 32, 28, 0.45);
+  padding: 24px;
+}
+
+.gv-preview img {
+  display: block;
+  max-width: 85vw;
+  max-height: 75vh;
+  object-fit: contain;
+  border-radius: 8px;
+  box-shadow: 0 8px 28px rgba(23, 32, 28, 0.25);
+  background: #fff;
+}
+
+.gv-preview-stage {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 16px;
+}
+
+.gv-preview-frame {
+  position: relative;
+  display: inline-block;
+}
+
+.gv-preview-close {
+  position: absolute;
+  top: -12px;
+  right: -12px;
+  width: 26px;
+  height: 26px;
+  padding: 0;
+  border: none;
+  border-radius: 50%;
+  background: rgba(23, 32, 28, 0.65);
+  color: #fff;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.gv-preview-close:hover {
+  background: #b43c3c;
+}
+
+.gv-preview-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 8px;
+  background: #fff;
+  border-radius: 8px;
+  box-shadow: 0 6px 20px rgba(23, 32, 28, 0.22);
+}
+
+.gv-preview-btn {
+  height: 30px;
+  padding: 0 14px;
+  border: 1px solid #dde3df;
+  border-radius: 5px;
+  background: #fff;
+  color: #17201c;
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.gv-preview-btn:hover {
+  background: #f1f4f2;
+}
+
+.gv-preview-send {
+  margin-left: 4px;
+  border: none;
+  background: #236748;
+  color: #fff;
+  font-weight: 600;
+}
+
+.gv-preview-send:hover {
+  background: #1d5a3f;
+}
+
+/* 自定义 tooltip：悬停立即出现，不用等浏览器默认延迟 */
+.gv-preview-btn[data-tooltip] {
+  position: relative;
+}
+
+.gv-preview-close[data-tooltip] {
+  position: absolute;
+}
+
+.gv-preview-btn[data-tooltip]:hover::after,
+.gv-preview-close[data-tooltip]:hover::after {
+  content: attr(data-tooltip);
+  position: absolute;
+  top: 50%;
+  bottom: auto;
+  right: calc(100% + 8px);
+  transform: translateY(-50%);
+  width: 300px;
+  padding: 8px 10px;
+  background: #17201c;
+  color: #fff;
+  border-radius: 6px;
+  font-size: 12px;
+  line-height: 1.6;
+  white-space: normal;
+  box-shadow: 0 4px 16px rgba(23, 32, 28, 0.25);
+  z-index: 2147483647;
+  pointer-events: none;
 }

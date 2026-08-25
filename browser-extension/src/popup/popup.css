@@ -59,6 +59,18 @@ h2 {
   line-height: 1.6;
 }
 
+.capture-btn {
+  width: 100%;
+  height: 32px;
+  margin-top: 8px;
+  border: none;
+  border-radius: 6px;
+  background: #236748;
+  color: #fff;
+  font-size: 13px;
+  cursor: pointer;
+}
+
 kbd {
   padding: 1px 5px;
   border: 1px solid #dde3df;

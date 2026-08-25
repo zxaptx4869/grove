@@ -25,7 +25,7 @@ export default defineManifest({
   host_permissions: ['http://localhost/*', 'http://127.0.0.1/*'],
   commands: {
     capture: {
-      suggested_key: { default: 'Ctrl+S', mac: 'Command+S' },
+      suggested_key: { default: 'Ctrl+Shift+S', mac: 'Command+Shift+S' },
       description: '框选截图发送到 Grove',
     },
   },

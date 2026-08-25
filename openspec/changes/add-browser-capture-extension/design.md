@@ -38,7 +38,7 @@ background 用 `fetch` 以 multipart 直传 Grove `POST /api/sources`（host_per
 
 ### D5：快捷键
 
-按用户确认使用 `Cmd+S`（macOS）注册 `chrome.commands`；实施时验证浏览器默认「保存网页」的占用，若无法注册则退 `Cmd+Shift+S` 并在引导中同步说明。
+按用户确认使用 `Cmd+S`（macOS）注册 `chrome.commands`；实测（2026-08-25）被浏览器「保存网页」占用，已退为 `Cmd+Shift+S`（macOS）/ `Ctrl+Shift+S`（Windows），并在弹窗引导与 README 中同步说明。
 
 ### D6：popup 与引导
 

@@ -12,6 +12,7 @@ const resultEl = document.querySelector<HTMLElement>('#result')!
 const baseUrlInput = document.querySelector<HTMLInputElement>('#base-url')!
 const saveBtn = document.querySelector<HTMLButtonElement>('#save-btn')!
 const openGroveBtn = document.querySelector<HTMLButtonElement>('#open-grove-btn')!
+const captureBtn = document.querySelector<HTMLButtonElement>('#capture-btn')!
 
 let currentBaseUrl = ''
 
@@ -28,7 +29,7 @@ async function refresh(): Promise<void> {
   if (images.length === 0) {
     const empty = document.createElement('p')
     empty.className = 'empty'
-    empty.textContent = '还没有截图，按 ⌘S / Ctrl+S 开始'
+    empty.textContent = '还没有截图，按 ⌘⇧S / Ctrl+Shift+S 开始'
     batchList.appendChild(empty)
   }
   for (const image of images) {
@@ -38,11 +39,12 @@ async function refresh(): Promise<void> {
     img.alt = `批次图片 ${image.id}`
     void getImageBlob(image.id).then((blob) => {
       img.src = URL.createObjectURL(blob)
-    })
+    }).catch(() => item.remove())
     const remove = document.createElement('button')
     remove.type = 'button'
-    remove.textContent = '✕'
     remove.title = '从批次移除'
+    remove.innerHTML =
+      '<svg viewBox="0 0 24 24" width="10" height="10" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><path d="M18 6 6 18M6 6l12 12"/></svg>'
     remove.addEventListener('click', () => {
       void removeBatchImage(image.id).then(refresh)
     })
@@ -63,6 +65,14 @@ async function handleSend(): Promise<void> {
   const result = await sendSource(currentBaseUrl, blobs)
   if (result.ok) {
     await clearBatch()
+    const [tab] = await chrome.tabs.query({ active: true, currentWindow: true })
+    if (tab?.id) {
+      try {
+        await chrome.tabs.sendMessage(tab.id, { type: 'BATCH_UPDATED', images: [] })
+      } catch {
+        // 页面未注入 content script 时忽略
+      }
+    }
     resultEl.textContent = '已发送到收集箱 ✓'
   } else {
     resultEl.className = 'result error'
@@ -88,6 +98,19 @@ saveBtn.addEventListener('click', async () => {
 
 openGroveBtn.addEventListener('click', () => {
   void chrome.tabs.create({ url: currentBaseUrl })
+})
+
+captureBtn.addEventListener('click', async () => {
+  const [tab] = await chrome.tabs.query({ active: true, currentWindow: true })
+  if (!tab?.id) return
+  try {
+    await chrome.tabs.sendMessage(tab.id, { type: 'START_CAPTURE' })
+    window.close()
+  } catch {
+    // 页面尚未注入 content script（如内置页或旧页面），提示重新加载页面
+    resultEl.className = 'result error'
+    resultEl.textContent = '当前页面无法截图，请刷新页面后重试（浏览器内置页不支持）'
+  }
 })
 
 void refresh()
