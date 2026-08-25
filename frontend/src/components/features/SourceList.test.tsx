@@ -51,7 +51,7 @@ describe('SourceList', () => {
 
     expect(screen.getByText('提取完成')).toBeInTheDocument()
     expect(screen.getByText('待确认 2 条')).toBeInTheDocument()
-    expect(screen.getByRole('button', { name: '候选' })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: '查看' })).toBeInTheDocument()
     await userEvent.click(screen.getByRole('button', { name: '删除 测试来源' }))
 
     expect(await screen.findByText('删除来源？')).toBeInTheDocument()
@@ -72,7 +72,7 @@ describe('SourceList', () => {
     )
 
     expect(screen.getByText('1 条正式知识')).toBeInTheDocument()
-    expect(screen.getByRole('button', { name: '候选' })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: '查看' })).toBeInTheDocument()
     expect(screen.queryByLabelText('测试来源 所属项目')).not.toBeInTheDocument()
     expect(screen.queryByRole('button', { name: '删除 测试来源' })).not.toBeInTheDocument()
   })
@@ -89,7 +89,7 @@ describe('SourceList', () => {
     )
 
     expect(screen.getByText('部分确认')).toBeInTheDocument()
-    expect(screen.getByRole('button', { name: '候选' })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: '查看' })).toBeInTheDocument()
     expect(screen.queryByRole('button', { name: '删除 测试来源' })).not.toBeInTheDocument()
   })
 
@@ -106,12 +106,12 @@ describe('SourceList', () => {
     )
 
     expect(screen.getByText('已处理')).toBeInTheDocument()
-    expect(screen.getByRole('button', { name: '候选' })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: '查看' })).toBeInTheDocument()
     await userEvent.click(screen.getByRole('button', { name: '删除 测试来源' }))
     expect(onDelete).toHaveBeenCalledWith(1)
   })
 
-  it('无候选的虚拟来源（如 AI 修订）不显示候选按钮', () => {
+  it('无候选的来源仍可查看详情', () => {
     renderList(
       baseSource({
         status: 'done',
@@ -123,7 +123,7 @@ describe('SourceList', () => {
     )
 
     expect(screen.getByText('1 条正式知识')).toBeInTheDocument()
-    expect(screen.queryByRole('button', { name: '候选' })).not.toBeInTheDocument()
+    expect(screen.getByRole('button', { name: '查看' })).toBeInTheDocument()
   })
 
   it('处理中的来源不展示改归属与删除', () => {

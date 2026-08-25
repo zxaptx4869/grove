@@ -2,7 +2,7 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { render, screen } from '@testing-library/react'
 import { describe, expect, it, vi } from 'vitest'
 
-import { SourceCandidatesDialog } from './SourceCandidatesDialog'
+import { SourceDetailDialog } from './SourceDetailDialog'
 
 function ok(data: unknown) {
   return Promise.resolve({ ok: true, json: async () => data })
@@ -12,7 +12,7 @@ function renderDialog() {
   const queryClient = new QueryClient()
   render(
     <QueryClientProvider client={queryClient}>
-      <SourceCandidatesDialog
+      <SourceDetailDialog
         sourceId={1}
         open
         onOpenChange={vi.fn()}
@@ -47,7 +47,7 @@ const BASE = {
   revision_draft: null,
 }
 
-describe('SourceCandidatesDialog', () => {
+describe('SourceDetailDialog', () => {
   it('展示候选的决策状态徽标', async () => {
     vi.stubGlobal(
       'fetch',

@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { FileText, ImageIcon, RotateCw, Trash2 } from 'lucide-react'
+import { Eye, FileText, ImageIcon, RotateCw, Trash2 } from 'lucide-react'
 
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -12,7 +12,7 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog'
 import type { SourcePayload, SourceStatus } from '@/lib/api'
-import { SourceCandidatesDialog } from '@/components/features/SourceCandidatesDialog'
+import { SourceDetailDialog } from '@/components/features/SourceDetailDialog'
 
 interface ProjectOption {
   id: number
@@ -67,7 +67,7 @@ export function SourceList({
   onTrigger,
   onDelete,
 }: SourceListProps) {
-  const [candidateSourceId, setCandidateSourceId] = useState<number | null>(null)
+  const [detailSourceId, setDetailSourceId] = useState<number | null>(null)
   const [deleteTarget, setDeleteTarget] = useState<SourcePayload | null>(null)
 
   if (sources.length === 0) {
@@ -90,7 +90,13 @@ export function SourceList({
               )}
             </span>
             <div className="min-w-0 flex-1">
-              <p className="truncate text-body font-medium">{source.title}</p>
+              <button
+                type="button"
+                className="block w-full truncate text-left text-body font-medium hover:text-brand"
+                onClick={() => setDetailSourceId(source.id)}
+              >
+                {source.title}
+              </button>
               <p className="mt-[3px] truncate text-caption text-muted-foreground">
                 {source.note || '无采集说明'}
                 {attachmentSummary(source)}
@@ -123,16 +129,14 @@ export function SourceList({
                 {reviewLabel(source)}
               </Badge>
             ) : null}
-            {source.candidate_count > 0 ? (
-              <Button
-                size="sm"
-                variant="outline"
-                onClick={() => setCandidateSourceId(source.id)}
-              >
-                <FileText className="size-3.5" />
-                候选
-              </Button>
-            ) : null}
+            <Button
+              size="sm"
+              variant="outline"
+              onClick={() => setDetailSourceId(source.id)}
+            >
+              <Eye className="size-3.5" />
+              查看
+            </Button>
             {source.status === 'failed' ? (
               <Button
                 size="sm"
@@ -163,11 +167,12 @@ export function SourceList({
         )
         })}
       </ul>
-      <SourceCandidatesDialog
-        sourceId={candidateSourceId}
-        open={candidateSourceId !== null}
+      <SourceDetailDialog
+        sourceId={detailSourceId}
+        open={detailSourceId !== null}
+        projects={projects}
         onOpenChange={(open) => {
-          if (!open) setCandidateSourceId(null)
+          if (!open) setDetailSourceId(null)
         }}
       />
       <Dialog
