@@ -1,0 +1,196 @@
+* {
+  box-sizing: border-box;
+}
+
+body {
+  width: 320px;
+  margin: 0;
+  padding: 14px;
+  background: #fff;
+  color: #17201c;
+  font-family: -apple-system, "PingFang SC", "Microsoft YaHei", sans-serif;
+  font-size: 13px;
+}
+
+.wrap {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+h1 {
+  margin: 0;
+  font-size: 16px;
+}
+
+h2 {
+  margin: 0;
+  font-size: 13px;
+}
+
+.status {
+  font-size: 12px;
+  color: #66716b;
+}
+
+.status.ok {
+  color: #2f7d4d;
+}
+
+.status.bad {
+  color: #b43c3c;
+}
+
+.hint {
+  padding: 8px 10px;
+  background: #f1f4f2;
+  border-radius: 6px;
+  color: #66716b;
+}
+
+.hint p {
+  margin: 0;
+  line-height: 1.6;
+}
+
+kbd {
+  padding: 1px 5px;
+  border: 1px solid #dde3df;
+  border-radius: 4px;
+  background: #fff;
+  font-size: 12px;
+}
+
+.batch-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 8px;
+}
+
+.batch-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  min-height: 54px;
+  margin-bottom: 10px;
+}
+
+.batch-item {
+  position: relative;
+}
+
+.batch-item img {
+  display: block;
+  width: 56px;
+  height: 56px;
+  object-fit: cover;
+  border-radius: 4px;
+  border: 1px solid #dde3df;
+}
+
+.batch-item button {
+  position: absolute;
+  top: -6px;
+  right: -6px;
+  width: 18px;
+  height: 18px;
+  padding: 0;
+  border: none;
+  border-radius: 50%;
+  background: #b43c3c;
+  color: #fff;
+  font-size: 11px;
+  line-height: 18px;
+  cursor: pointer;
+}
+
+.empty {
+  color: #66716b;
+  font-size: 12px;
+  line-height: 54px;
+}
+
+.primary-btn {
+  width: 100%;
+  height: 34px;
+  border: none;
+  border-radius: 6px;
+  background: #236748;
+  color: #fff;
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.primary-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.result {
+  min-height: 18px;
+  margin: 6px 0 0;
+  font-size: 12px;
+  color: #66716b;
+}
+
+.result.error {
+  color: #b43c3c;
+}
+
+.settings {
+  padding-top: 12px;
+  border-top: 1px solid #dde3df;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.settings label {
+  font-size: 12px;
+  color: #66716b;
+}
+
+.row {
+  display: flex;
+  gap: 6px;
+}
+
+.row input {
+  flex: 1;
+  min-width: 0;
+  height: 30px;
+  padding: 0 8px;
+  border: 1px solid #dde3df;
+  border-radius: 6px;
+  font-size: 12px;
+}
+
+.ghost-btn {
+  height: 30px;
+  padding: 0 12px;
+  border: 1px solid #dde3df;
+  border-radius: 6px;
+  background: #fff;
+  color: #17201c;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.ghost-btn.full {
+  width: 100%;
+}
+
+.link-btn {
+  border: none;
+  background: none;
+  color: #236748;
+  font-size: 12px;
+  cursor: pointer;
+}

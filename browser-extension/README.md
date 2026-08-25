@@ -1,0 +1,34 @@
+# Grove 快采（浏览器扩展）
+
+框选截图，一键发送到知林 Grove 收集箱。当前为本地开发者模式加载，不上应用商店。
+
+## 功能
+
+- 快捷键 `⌘S`（macOS）/ `Ctrl+S`（Windows/Linux）或点击扩展图标进入框选模式；
+- 在任意普通网页内拖框截图：框满视口即整页，拖局部即局部截图；
+- 连续截图加入同一批次（页面底部预览条可见），可移除单张；
+- 点击「发送到收集箱」：整批作为**一个 Source 的多个图片附件**直进收集箱，归属由 AI 推荐；
+- 发送前校验 Grove 登录态，未登录时提示并可在弹窗中打开 Grove；
+- 弹窗内可管理批次、配置 Grove 服务器地址（默认 `http://localhost:5173`）。
+
+## 本地加载
+
+1. `npm install`
+2. `npm run build`（产物在 `dist/`）
+3. Chrome 打开 `chrome://extensions` → 开启「开发者模式」→「加载已解压的扩展程序」→ 选择 `dist/` 目录
+
+## 开发
+
+```bash
+npm run dev        # Vite 开发（改动热更新，需重新加载扩展）
+npm run build      # 类型检查 + 构建
+npm run typecheck  # 仅类型检查
+npm run icons      # 重新生成占位图标
+```
+
+## 已知限制
+
+- 仅支持 Chromium 系浏览器（Chrome / Edge）；不支持 Firefox / Safari；
+- 浏览器内置页（`chrome://`、扩展商店）与 Chrome 内置 PDF 查看器无法框选；
+- 不做长截图（滚动拼接），长内容请分段截图后作为同一批次发送；
+- 无痕模式默认禁用扩展。

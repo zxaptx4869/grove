@@ -1,0 +1,122 @@
+/* Grove 快采：框选遮罩与批次预览条样式 */
+
+.gv-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 2147483646;
+  background: rgba(23, 32, 28, 0.35);
+  cursor: crosshair;
+}
+
+.gv-selection {
+  position: fixed;
+  border: 2px solid #236748;
+  background: rgba(35, 103, 72, 0.12);
+  pointer-events: none;
+}
+
+.gv-size-hint {
+  position: fixed;
+  padding: 2px 6px;
+  background: #17201c;
+  color: #fff;
+  font-size: 12px;
+  line-height: 18px;
+  border-radius: 4px;
+  pointer-events: none;
+}
+
+.gv-bar {
+  position: fixed;
+  left: 50%;
+  bottom: 16px;
+  transform: translateX(-50%);
+  z-index: 2147483647;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  max-width: 70vw;
+  padding: 8px 12px;
+  background: #17201c;
+  color: #fff;
+  border-radius: 8px;
+  box-shadow: 0 6px 24px rgba(0, 0, 0, 0.25);
+  font-family: -apple-system, "PingFang SC", "Microsoft YaHei", sans-serif;
+  font-size: 13px;
+}
+
+.gv-bar-label {
+  white-space: nowrap;
+}
+
+.gv-bar-list {
+  display: flex;
+  gap: 6px;
+  overflow-x: auto;
+}
+
+.gv-bar-item {
+  position: relative;
+  flex: 0 0 auto;
+}
+
+.gv-bar-item img {
+  display: block;
+  height: 44px;
+  border-radius: 4px;
+}
+
+.gv-bar-remove {
+  position: absolute;
+  top: -6px;
+  right: -6px;
+  width: 18px;
+  height: 18px;
+  padding: 0;
+  border: none;
+  border-radius: 50%;
+  background: #b43c3c;
+  color: #fff;
+  font-size: 11px;
+  line-height: 18px;
+  cursor: pointer;
+}
+
+.gv-bar-send {
+  flex: 0 0 auto;
+  height: 30px;
+  padding: 0 14px;
+  border: none;
+  border-radius: 6px;
+  background: #236748;
+  color: #fff;
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.gv-bar-send:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.gv-toast {
+  position: fixed;
+  top: 18px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 2147483647;
+  padding: 8px 16px;
+  border-radius: 6px;
+  font-size: 13px;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.2);
+}
+
+.gv-toast-ok {
+  background: #eaf5ed;
+  color: #2f7d4d;
+}
+
+.gv-toast-error {
+  background: #fceded;
+  color: #b43c3c;
+}

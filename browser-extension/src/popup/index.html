@@ -1,0 +1,42 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Grove 快采</title>
+    <link rel="stylesheet" href="./popup.css" />
+  </head>
+  <body>
+    <main class="wrap">
+      <header class="head">
+        <h1>Grove 快采</h1>
+        <span id="login-status" class="status"></span>
+      </header>
+
+      <section class="hint">
+        <p><kbd>⌘S</kbd> / <kbd>Ctrl+S</kbd> 进入框选截图，连续截图加入同一批次，一次发送。</p>
+      </section>
+
+      <section class="batch">
+        <div class="batch-head">
+          <h2>当前批次</h2>
+          <button id="clear-btn" class="link-btn" type="button">清空</button>
+        </div>
+        <div id="batch-list" class="batch-list"></div>
+        <button id="send-btn" class="primary-btn" type="button">发送到收集箱</button>
+        <p id="result" class="result" role="status"></p>
+      </section>
+
+      <section class="settings">
+        <h2>设置</h2>
+        <label for="base-url">Grove 服务器地址</label>
+        <div class="row">
+          <input id="base-url" type="url" placeholder="http://localhost:5173" />
+          <button id="save-btn" class="ghost-btn" type="button">保存</button>
+        </div>
+        <button id="open-grove-btn" class="ghost-btn full" type="button">打开 Grove</button>
+      </section>
+    </main>
+    <script type="module" src="./popup.ts"></script>
+  </body>
+</html>
