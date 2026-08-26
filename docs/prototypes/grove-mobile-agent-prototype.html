@@ -1,0 +1,774 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover" />
+  <title>知林 Grove · 对话式知识 Agent 移动端原型</title>
+  <style>
+    :root {
+      color-scheme: light;
+      --g-bg: #f7f8f7;
+      --g-surface: #ffffff;
+      --g-soft: #f1f4f2;
+      --g-border: #dde3df;
+      --g-ink: #17201c;
+      --g-muted: #66716b;
+      --g-green: #236748;
+      --g-green-soft: #e8f3ed;
+      --g-ai: #7251a5;
+      --g-ai-soft: #f2edf8;
+      --g-confirmed: #187c72;
+      --g-confirmed-soft: #e7f5f2;
+      --g-risk: #9a6419;
+      --g-risk-soft: #fff5df;
+      --g-error: #b43c3c;
+      --g-error-soft: #fceded;
+      --shadow-card: 0 1px 2px rgb(20 40 30 / 4%), 0 2px 8px rgb(20 40 30 / 5%);
+      --shadow-pop: 0 18px 50px rgb(16 28 22 / 18%);
+      --safe-top: env(safe-area-inset-top, 0px);
+      --safe-bottom: env(safe-area-inset-bottom, 0px);
+    }
+
+    * { box-sizing: border-box; }
+    html, body { margin: 0; min-height: 100%; }
+    body {
+      background: #e9eeeb;
+      color: var(--g-ink);
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "PingFang SC", "Microsoft YaHei", sans-serif;
+      font-size: 14px;
+      font-weight: 430;
+      line-height: 1.5;
+      -webkit-font-smoothing: antialiased;
+    }
+    button, input, textarea { font: inherit; color: inherit; }
+    button { cursor: pointer; }
+    button:focus-visible, input:focus-visible, textarea:focus-visible {
+      outline: 2px solid var(--g-ai);
+      outline-offset: 2px;
+    }
+    h1, h2, h3, p { margin: 0; }
+    svg.icon { width: 20px; height: 20px; fill: none; stroke: currentColor; stroke-width: 1.9; stroke-linecap: round; stroke-linejoin: round; }
+
+    .prototype-stage { min-height: 100dvh; display: grid; place-items: center; padding: 24px; }
+    .app {
+      position: relative;
+      width: min(100%, 430px);
+      height: min(844px, calc(100dvh - 48px));
+      min-height: 640px;
+      overflow: hidden;
+      display: flex;
+      flex-direction: column;
+      background: var(--g-bg);
+      border: 1px solid #cfd8d2;
+      border-radius: 28px;
+      box-shadow: 0 28px 80px rgb(28 49 38 / 18%);
+    }
+
+    .app-header {
+      position: relative;
+      z-index: 8;
+      min-height: calc(58px + var(--safe-top));
+      padding: calc(9px + var(--safe-top)) 14px 9px;
+      display: grid;
+      grid-template-columns: 44px minmax(0, 1fr) 44px;
+      align-items: center;
+      gap: 8px;
+      border-bottom: 1px solid var(--g-border);
+      background: color-mix(in srgb, var(--g-surface) 94%, transparent);
+      backdrop-filter: blur(18px);
+    }
+    .brand-mark {
+      width: 34px;
+      height: 34px;
+      display: grid;
+      place-items: center;
+      border-radius: 8px;
+      background: var(--g-green);
+      color: white;
+      font-size: 14px;
+      font-weight: 750;
+    }
+    .header-icon {
+      width: 44px;
+      height: 44px;
+      display: grid;
+      place-items: center;
+      padding: 0;
+      border: 0;
+      border-radius: 9px;
+      background: transparent;
+      color: var(--g-muted);
+    }
+    .header-icon:hover { background: var(--g-soft); color: var(--g-ink); }
+    .scope-button {
+      min-width: 0;
+      min-height: 40px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 5px;
+      padding: 0 10px;
+      border: 1px solid var(--g-border);
+      border-radius: 9px;
+      background: var(--g-surface);
+    }
+    .scope-copy { min-width: 0; text-align: left; }
+    .scope-copy strong { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 13px; line-height: 17px; }
+    .scope-copy span { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--g-muted); font-size: 10px; line-height: 14px; }
+    .page-title { display: none; text-align: center; font-size: 17px; font-weight: 700; }
+    .app:not([data-page="conversation"]) .scope-button { display: none; }
+    .app:not([data-page="conversation"]) .page-title { display: block; }
+
+    .screens { min-height: 0; flex: 1; position: relative; }
+    .screen { position: absolute; inset: 0; display: none; min-height: 0; }
+    .screen.active { display: flex; flex-direction: column; }
+    .scroll-page { min-height: 0; flex: 1; overflow-y: auto; padding: 18px 16px 118px; overscroll-behavior: contain; }
+
+    .thread { min-height: 0; flex: 1; overflow-y: auto; padding: 18px 16px 154px; scroll-behavior: smooth; }
+    .intro { padding: 44px 2px 0; }
+    .intro-mark { width: 38px; height: 38px; display: grid; place-items: center; margin-bottom: 20px; border-radius: 9px; background: var(--g-green-soft); color: var(--g-green); }
+    .intro h1 { font-size: 23px; line-height: 1.35; font-weight: 720; letter-spacing: -.02em; }
+    .intro p { margin-top: 8px; max-width: 315px; color: var(--g-muted); font-size: 13px; line-height: 21px; }
+    .suggestions { display: grid; gap: 9px; margin-top: 28px; }
+    .suggestion {
+      width: 100%; min-height: 52px; display: flex; align-items: center; gap: 11px; padding: 10px 12px;
+      border: 1px solid var(--g-border); border-radius: 10px; background: var(--g-surface); text-align: left; box-shadow: var(--shadow-card);
+    }
+    .suggestion:hover { border-color: #c7d4cc; background: #fbfcfb; }
+    .suggestion .icon-wrap { width: 30px; height: 30px; display: grid; place-items: center; flex: 0 0 auto; border-radius: 7px; background: var(--g-green-soft); color: var(--g-green); }
+    .suggestion span { min-width: 0; flex: 1; font-size: 13px; font-weight: 600; }
+
+    .message { display: flex; margin: 0 0 14px; }
+    .message.user { justify-content: flex-end; }
+    .user-bubble { max-width: 84%; padding: 9px 12px; border-radius: 14px 14px 4px 14px; background: var(--g-green); color: white; font-size: 14px; line-height: 21px; }
+    .agent-label { display: flex; align-items: center; gap: 6px; margin: 20px 0 8px; color: var(--g-muted); font-size: 11px; font-weight: 650; }
+    .agent-dot { width: 18px; height: 18px; display: grid; place-items: center; border-radius: 5px; background: var(--g-green-soft); color: var(--g-green); font-size: 10px; font-weight: 750; }
+
+    .card { margin-bottom: 12px; overflow: hidden; border: 1px solid var(--g-border); border-radius: 10px; background: var(--g-surface); box-shadow: var(--shadow-card); }
+    .card-body { padding: 13px; }
+    .card-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 10px; }
+    .card-head > div { min-width: 0; }
+    .eyebrow { display: flex; align-items: center; gap: 5px; color: var(--g-muted); font-size: 11px; line-height: 16px; }
+    .card h2 { margin-top: 4px; font-size: 16px; line-height: 23px; font-weight: 700; }
+    .card h3 { font-size: 14px; line-height: 21px; font-weight: 680; }
+    .muted { color: var(--g-muted); }
+    .caption { font-size: 11px; line-height: 17px; }
+    .badge { min-height: 21px; display: inline-flex; align-items: center; gap: 4px; padding: 2px 6px; border-radius: 4px; font-size: 10px; line-height: 16px; font-weight: 650; white-space: nowrap; }
+    .badge.ai { color: var(--g-ai); background: var(--g-ai-soft); }
+    .badge.confirmed { color: var(--g-confirmed); background: var(--g-confirmed-soft); }
+    .badge.risk { color: var(--g-risk); background: var(--g-risk-soft); }
+    .badge.error { color: var(--g-error); background: var(--g-error-soft); }
+    .badge.neutral { color: var(--g-muted); background: var(--g-soft); }
+
+    .process-list { display: grid; gap: 9px; margin-top: 12px; }
+    .process-step { display: grid; grid-template-columns: 20px minmax(0, 1fr); gap: 8px; align-items: start; color: var(--g-muted); font-size: 12px; line-height: 19px; }
+    .step-mark { width: 18px; height: 18px; display: grid; place-items: center; border: 1px solid var(--g-border); border-radius: 50%; background: var(--g-surface); color: transparent; }
+    .process-step.current { color: var(--g-ink); }
+    .process-step.current .step-mark { border-color: var(--g-green); box-shadow: inset 0 0 0 4px var(--g-green-soft); }
+    .process-step.done .step-mark { border-color: var(--g-confirmed); background: var(--g-confirmed); color: white; }
+    .process-summary { display: none; align-items: center; gap: 7px; color: var(--g-muted); font-size: 11px; }
+    .process-card.complete .process-list { display: none; }
+    .process-card.complete .process-summary { display: flex; }
+
+    .answer-intro { margin-top: 10px; font-size: 14px; line-height: 23px; }
+    .answer-points { display: grid; gap: 12px; margin: 14px 0 0; }
+    .answer-point { display: grid; grid-template-columns: 22px minmax(0, 1fr); gap: 8px; }
+    .point-number { width: 21px; height: 21px; display: grid; place-items: center; border-radius: 6px; background: var(--g-green-soft); color: var(--g-green); font-size: 11px; font-weight: 750; }
+    .answer-point p { font-size: 13px; line-height: 21px; }
+    .citation { display: inline-flex; align-items: center; min-height: 30px; margin-left: 3px; padding: 1px 7px; border: 1px solid var(--g-border); border-radius: 5px; background: var(--g-soft); color: var(--g-green); font-size: 10px; font-weight: 650; vertical-align: middle; }
+    .citation:hover { border-color: var(--g-green); }
+    .source-strip { display: flex; gap: 6px; margin-top: 14px; padding-top: 12px; overflow-x: auto; border-top: 1px solid var(--g-border); scrollbar-width: none; }
+    .source-strip::-webkit-scrollbar { display: none; }
+    .source-chip { min-height: 40px; flex: 0 0 auto; display: inline-flex; align-items: center; gap: 5px; padding: 0 10px; border: 1px solid var(--g-border); border-radius: 7px; background: var(--g-surface); color: var(--g-muted); font-size: 11px; }
+
+    .conflict { border-left: 3px solid var(--g-risk); }
+    .conflict-side { margin-top: 10px; padding: 9px 10px; border: 1px solid #f0dfba; border-radius: 7px; background: #fffaf0; }
+    .conflict-side strong { display: block; font-size: 12px; line-height: 18px; }
+    .conflict-side p { margin-top: 3px; color: var(--g-muted); font-size: 11px; line-height: 18px; }
+    .conflict-summary { margin-top: 10px; color: var(--g-risk); font-size: 12px; line-height: 20px; }
+    .insufficient { border-left: 3px solid var(--g-risk); background: var(--g-risk-soft); }
+    .insufficient p { margin-top: 5px; color: #76501c; font-size: 12px; line-height: 20px; }
+
+    .inline-actions { display: flex; align-items: center; gap: 8px; margin-top: 12px; flex-wrap: wrap; }
+    .button { min-height: 44px; display: inline-flex; align-items: center; justify-content: center; gap: 7px; padding: 0 13px; border: 1px solid var(--g-border); border-radius: 8px; background: var(--g-surface); font-size: 13px; font-weight: 650; }
+    .button:hover { filter: brightness(.985); }
+    .button.primary { border-color: var(--g-green); background: var(--g-green); color: white; }
+    .button.ai { border-color: #dacced; background: var(--g-ai-soft); color: var(--g-ai); }
+    .button.danger { border-color: #efcaca; background: var(--g-error-soft); color: var(--g-error); }
+    .button.ghost { border-color: transparent; background: transparent; color: var(--g-muted); }
+    .button.block { width: 100%; }
+    .choice-grid { display: grid; grid-template-columns: 1fr; gap: 8px; margin-top: 12px; }
+    .choice { min-height: 48px; padding: 9px 11px; border: 1px solid var(--g-border); border-radius: 8px; background: var(--g-surface); text-align: left; }
+    .choice strong { display: block; font-size: 13px; }
+    .choice span { display: block; margin-top: 2px; color: var(--g-muted); font-size: 11px; }
+    .choice.recommended { border-color: #bad5c5; background: var(--g-green-soft); }
+
+    .draft-fields { display: grid; gap: 9px; margin-top: 12px; }
+    .field-label { display: block; margin-bottom: 5px; color: var(--g-muted); font-size: 10px; font-weight: 650; }
+    .draft-input, .draft-textarea { width: 100%; border: 1px solid var(--g-border); border-radius: 7px; background: var(--g-bg); }
+    .draft-input { height: 40px; padding: 0 10px; font-weight: 650; }
+    .draft-textarea { min-height: 104px; padding: 9px 10px; resize: vertical; font-size: 12px; line-height: 19px; }
+    .impact-row { display: flex; align-items: center; gap: 7px; margin-top: 11px; padding-top: 10px; border-top: 1px solid var(--g-border); color: var(--g-muted); font-size: 11px; }
+    .impact-row span + span::before { content: "·"; margin-right: 7px; }
+
+    .receipt { border-color: #bddbd2; }
+    .receipt-icon { width: 34px; height: 34px; display: grid; place-items: center; flex: 0 0 auto; border-radius: 8px; background: var(--g-confirmed-soft); color: var(--g-confirmed); }
+    .receipt-top { display: flex; align-items: flex-start; gap: 10px; }
+    .receipt-top > div { min-width: 0; flex: 1; }
+    .receipt-list { margin-top: 12px; border-top: 1px solid var(--g-border); }
+    .receipt-row { min-height: 40px; display: flex; align-items: center; justify-content: space-between; gap: 8px; border-bottom: 1px solid var(--g-border); font-size: 12px; }
+    .receipt-row span:last-child { color: var(--g-muted); text-align: right; }
+    .receipt.undone { border-color: var(--g-border); }
+    .receipt.undone .receipt-icon { background: var(--g-soft); color: var(--g-muted); }
+
+    .composer-wrap {
+      position: absolute; right: 0; bottom: calc(62px + var(--safe-bottom)); left: 0; z-index: 7;
+      padding: 9px 12px; background: linear-gradient(to bottom, transparent, var(--g-bg) 18%, var(--g-bg));
+    }
+    .composer { min-height: 50px; display: grid; grid-template-columns: 40px minmax(0, 1fr) 40px; gap: 4px; align-items: end; padding: 5px; border: 1px solid var(--g-border); border-radius: 13px; background: var(--g-surface); box-shadow: 0 8px 24px rgb(22 43 32 / 9%); }
+    .composer-button { width: 40px; height: 40px; display: grid; place-items: center; padding: 0; border: 0; border-radius: 9px; background: transparent; color: var(--g-muted); }
+    .composer-button.send { background: var(--g-green); color: white; }
+    .composer textarea { width: 100%; height: 40px; max-height: 96px; resize: none; padding: 9px 5px; border: 0; outline: 0; background: transparent; line-height: 20px; }
+    .keyboard-open .composer-wrap { bottom: var(--safe-bottom); background: var(--g-bg); }
+    .keyboard-open .bottom-nav { transform: translateY(110%); }
+    .keyboard-open .thread { padding-bottom: 90px; }
+
+    .bottom-nav {
+      position: absolute; right: 0; bottom: 0; left: 0; z-index: 8;
+      min-height: calc(62px + var(--safe-bottom)); display: grid; grid-template-columns: repeat(4, 1fr); padding: 5px 7px var(--safe-bottom);
+      border-top: 1px solid var(--g-border); background: color-mix(in srgb, var(--g-surface) 95%, transparent); backdrop-filter: blur(18px); transition: transform .18s ease;
+    }
+    .nav-item { position: relative; min-height: 52px; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 2px; padding: 0; border: 0; border-radius: 9px; background: transparent; color: #7a8680; font-size: 10px; }
+    .nav-item.active { color: var(--g-green); font-weight: 680; }
+    .nav-item.active::before { content: ""; position: absolute; top: 1px; width: 24px; height: 3px; border-radius: 2px; background: var(--g-green); }
+    .nav-badge { position: absolute; top: 6px; left: calc(50% + 7px); min-width: 16px; height: 16px; display: grid; place-items: center; padding: 0 4px; border: 2px solid var(--g-surface); border-radius: 8px; background: var(--g-ai); color: white; font-size: 8px; }
+
+    .page-heading { margin-bottom: 16px; }
+    .page-heading h1 { font-size: 22px; line-height: 30px; font-weight: 720; }
+    .page-heading p { margin-top: 4px; color: var(--g-muted); font-size: 12px; line-height: 19px; }
+    .quick-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+    .quick-action { min-height: 112px; display: flex; flex-direction: column; align-items: flex-start; justify-content: space-between; padding: 13px; border: 1px solid var(--g-border); border-radius: 10px; background: var(--g-surface); text-align: left; box-shadow: var(--shadow-card); }
+    .quick-icon { width: 34px; height: 34px; display: grid; place-items: center; border-radius: 8px; background: var(--g-green-soft); color: var(--g-green); }
+    .quick-action strong { font-size: 14px; }
+    .quick-action span { color: var(--g-muted); font-size: 10px; }
+    .section-title { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin: 22px 0 8px; }
+    .section-title h2 { font-size: 15px; font-weight: 700; }
+    .section-title span { color: var(--g-muted); font-size: 10px; }
+    .list-card { border-top: 1px solid var(--g-border); }
+    .list-row { min-height: 66px; display: grid; grid-template-columns: 36px minmax(0, 1fr) auto; gap: 10px; align-items: center; padding: 9px 2px; border-bottom: 1px solid var(--g-border); }
+    .row-icon { width: 34px; height: 34px; display: grid; place-items: center; border-radius: 8px; background: var(--g-soft); color: var(--g-muted); }
+    .row-main { min-width: 0; }
+    .row-main strong { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 13px; }
+    .row-main p { margin-top: 3px; color: var(--g-muted); font-size: 10px; line-height: 16px; }
+    .row-action { min-height: 40px; padding: 0 9px; border: 1px solid var(--g-border); border-radius: 7px; background: var(--g-surface); font-size: 11px; font-weight: 650; }
+    .progress { width: 100%; height: 4px; margin-top: 7px; overflow: hidden; border-radius: 3px; background: var(--g-border); }
+    .progress span { display: block; width: 68%; height: 100%; background: var(--g-green); }
+    .search-box { min-height: 46px; display: grid; grid-template-columns: 30px minmax(0, 1fr); align-items: center; padding: 0 8px; border: 1px solid var(--g-border); border-radius: 9px; background: var(--g-surface); }
+    .search-box input { width: 100%; height: 44px; border: 0; outline: 0; background: transparent; }
+    .filter-chip { min-height: 40px; display: inline-flex; align-items: center; gap: 5px; margin-top: 10px; padding: 0 10px; border: 1px solid var(--g-border); border-radius: 7px; background: var(--g-surface); font-size: 11px; }
+    .knowledge-card { width: 100%; display: block; padding: 13px 2px; border: 0; border-bottom: 1px solid var(--g-border); background: transparent; text-align: left; }
+    .knowledge-card .top { display: flex; align-items: center; gap: 7px; }
+    .knowledge-card h3 { margin-top: 7px; font-size: 14px; line-height: 21px; }
+    .knowledge-card p { margin-top: 4px; color: var(--g-muted); font-size: 11px; line-height: 18px; }
+
+    .overlay { position: absolute; inset: 0; z-index: 20; display: none; flex-direction: column; background: var(--g-bg); }
+    .overlay.open { display: flex; }
+    .overlay-header { min-height: calc(58px + var(--safe-top)); display: grid; grid-template-columns: 44px minmax(0, 1fr) 44px; align-items: center; gap: 6px; padding: calc(8px + var(--safe-top)) 10px 8px; border-bottom: 1px solid var(--g-border); background: var(--g-surface); }
+    .overlay-header h1 { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; text-align: center; font-size: 16px; }
+    .overlay-scroll { min-height: 0; flex: 1; overflow-y: auto; padding: 16px 16px calc(92px + var(--safe-bottom)); }
+    .overlay-footer { position: absolute; right: 0; bottom: 0; left: 0; padding: 10px 14px calc(10px + var(--safe-bottom)); border-top: 1px solid var(--g-border); background: color-mix(in srgb, var(--g-surface) 96%, transparent); backdrop-filter: blur(16px); }
+    .diff-summary { padding: 12px; border: 1px solid #d7c6e9; border-radius: 9px; background: var(--g-ai-soft); }
+    .diff-summary h2 { font-size: 15px; }
+    .diff-summary p { margin-top: 4px; color: var(--g-muted); font-size: 11px; }
+    .diff-tabs { display: grid; grid-template-columns: 1fr 1fr; gap: 4px; margin-top: 14px; padding: 3px; border: 1px solid var(--g-border); border-radius: 8px; background: var(--g-soft); }
+    .diff-tab { min-height: 40px; border: 0; border-radius: 6px; background: transparent; color: var(--g-muted); font-size: 12px; }
+    .diff-tab.active { background: var(--g-surface); color: var(--g-ink); box-shadow: var(--shadow-card); font-weight: 650; }
+    .diff-panel { display: none; }
+    .diff-panel.active { display: block; }
+    .diff-block { margin-top: 14px; border: 1px solid var(--g-border); border-radius: 9px; background: var(--g-surface); }
+    .diff-block-head { min-height: 42px; display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 0 11px; border-bottom: 1px solid var(--g-border); }
+    .diff-block-head strong { font-size: 12px; }
+    .diff-line { padding: 10px 11px; border-bottom: 1px solid var(--g-border); font-size: 12px; line-height: 20px; }
+    .diff-line:last-child { border-bottom: 0; }
+    .diff-line.add { border-left: 3px solid var(--g-confirmed); background: #f7fcfa; }
+    .diff-line.replace { border-left: 3px solid var(--g-ai); background: #fbf9fd; }
+    .diff-old { display: block; margin-bottom: 4px; color: var(--g-error); text-decoration: line-through; }
+    .diff-new { display: block; color: var(--g-confirmed); }
+    .impact-object { min-height: 62px; display: grid; grid-template-columns: 30px minmax(0, 1fr) auto; gap: 9px; align-items: center; padding: 8px 0; border-bottom: 1px solid var(--g-border); }
+    .impact-object:last-child { border-bottom: 0; }
+    .impact-object strong { display: block; font-size: 12px; }
+    .impact-object p { margin-top: 3px; color: var(--g-muted); font-size: 10px; }
+
+    .scrim { position: absolute; inset: 0; z-index: 29; display: none; background: rgb(15 24 19 / 36%); }
+    .scrim.open { display: block; }
+    .sheet { position: absolute; right: 0; bottom: 0; left: 0; z-index: 30; display: none; max-height: 84%; overflow: hidden; border-radius: 18px 18px 0 0; background: var(--g-surface); box-shadow: var(--shadow-pop); }
+    .sheet.open { display: block; animation: rise .2s ease-out; }
+    @keyframes rise { from { transform: translateY(30px); opacity: 0; } }
+    .sheet-handle { width: 36px; height: 4px; margin: 8px auto 2px; border-radius: 2px; background: #cad2cd; }
+    .sheet-head { min-height: 52px; display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 4px 14px 0; }
+    .sheet-head h2 { font-size: 17px; }
+    .sheet-close { width: 40px; height: 40px; display: grid; place-items: center; padding: 0; border: 0; border-radius: 8px; background: var(--g-soft); color: var(--g-muted); }
+    .sheet-body { max-height: calc(84dvh - 64px); overflow-y: auto; padding: 8px 16px calc(18px + var(--safe-bottom)); }
+    .scope-option { width: 100%; min-height: 58px; display: grid; grid-template-columns: 30px minmax(0, 1fr) 20px; gap: 8px; align-items: center; padding: 8px 0; border: 0; border-bottom: 1px solid var(--g-border); background: transparent; text-align: left; }
+    .scope-option strong { display: block; font-size: 13px; }
+    .scope-option span { display: block; margin-top: 2px; color: var(--g-muted); font-size: 10px; }
+    .scope-option.active { color: var(--g-green); }
+    .scope-option.child { padding-left: 24px; }
+    .source-quote { margin-top: 12px; padding: 12px; border-left: 3px solid var(--g-ai); background: var(--g-ai-soft); font-size: 13px; line-height: 22px; }
+    .source-meta { display: grid; gap: 7px; margin-top: 13px; padding-top: 12px; border-top: 1px solid var(--g-border); color: var(--g-muted); font-size: 11px; }
+    .confirm-box { padding: 11px; border: 1px solid var(--g-border); border-radius: 9px; background: var(--g-bg); }
+    .confirm-box strong { display: block; font-size: 13px; }
+    .confirm-box p { margin-top: 4px; color: var(--g-muted); font-size: 11px; line-height: 18px; }
+    .sheet-actions { display: grid; grid-template-columns: 1fr 1.4fr; gap: 8px; margin-top: 14px; }
+    .toast { position: absolute; right: 14px; bottom: calc(78px + var(--safe-bottom)); left: 14px; z-index: 50; padding: 11px 12px; border: 1px solid var(--g-border); border-radius: 9px; background: #26342d; color: white; box-shadow: var(--shadow-pop); opacity: 0; transform: translateY(8px); pointer-events: none; transition: .18s ease; font-size: 12px; text-align: center; }
+    .toast.show { opacity: 1; transform: translateY(0); }
+
+    @media (max-width: 430px) {
+      .prototype-stage { padding: 0; display: block; }
+      .app { width: 100%; height: 100dvh; min-height: 100dvh; border: 0; border-radius: 0; box-shadow: none; }
+    }
+    @media (max-width: 370px) {
+      .thread, .scroll-page, .overlay-scroll { padding-right: 13px; padding-left: 13px; }
+      .quick-grid { gap: 8px; }
+      .quick-action { min-height: 106px; padding: 11px; }
+      .user-bubble { max-width: 88%; }
+      .answer-point { grid-template-columns: 20px minmax(0, 1fr); gap: 7px; }
+    }
+    @media (prefers-reduced-motion: reduce) {
+      *, *::before, *::after { scroll-behavior: auto !important; animation-duration: .01ms !important; transition-duration: .01ms !important; }
+    }
+  </style>
+</head>
+<body>
+  <svg aria-hidden="true" width="0" height="0" style="position:absolute">
+    <symbol id="i-message" viewBox="0 0 24 24"><path d="M21 15a4 4 0 0 1-4 4H8l-5 3V7a4 4 0 0 1 4-4h10a4 4 0 0 1 4 4z"/></symbol>
+    <symbol id="i-inbox" viewBox="0 0 24 24"><path d="M4 4h16l2 10v6H2v-6z"/><path d="M2 14h5l2 3h6l2-3h5"/></symbol>
+    <symbol id="i-checks" viewBox="0 0 24 24"><path d="m3 6 2 2 4-4"/><path d="M11 6h10"/><path d="m3 14 2 2 4-4"/><path d="M11 14h10"/><path d="M3 22h18"/></symbol>
+    <symbol id="i-book" viewBox="0 0 24 24"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20V4H6.5A2.5 2.5 0 0 0 4 6.5z"/><path d="M4 6.5v13A2.5 2.5 0 0 0 6.5 22H20"/></symbol>
+    <symbol id="i-history" viewBox="0 0 24 24"><path d="M3 12a9 9 0 1 0 3-6.7L3 8"/><path d="M3 3v5h5"/><path d="M12 7v5l3 2"/></symbol>
+    <symbol id="i-chevron" viewBox="0 0 24 24"><path d="m9 18 6-6-6-6"/></symbol>
+    <symbol id="i-down" viewBox="0 0 24 24"><path d="m6 9 6 6 6-6"/></symbol>
+    <symbol id="i-plus" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></symbol>
+    <symbol id="i-send" viewBox="0 0 24 24"><path d="m22 2-7 20-4-9-9-4z"/><path d="M22 2 11 13"/></symbol>
+    <symbol id="i-search" viewBox="0 0 24 24"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></symbol>
+    <symbol id="i-mic" viewBox="0 0 24 24"><rect x="9" y="2" width="6" height="12" rx="3"/><path d="M5 10a7 7 0 0 0 14 0M12 19v3"/></symbol>
+    <symbol id="i-paperclip" viewBox="0 0 24 24"><path d="m21.4 11.6-8.9 8.9a6 6 0 0 1-8.5-8.5l9.6-9.6a4 4 0 0 1 5.7 5.7l-9.6 9.6a2 2 0 1 1-2.8-2.8l8.9-8.9"/></symbol>
+    <symbol id="i-check" viewBox="0 0 24 24"><path d="m5 12 4 4L19 6"/></symbol>
+    <symbol id="i-alert" viewBox="0 0 24 24"><path d="M10.3 3.2 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.2a2 2 0 0 0-3.4 0z"/><path d="M12 9v4M12 17h.01"/></symbol>
+    <symbol id="i-file" viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/></symbol>
+    <symbol id="i-quote" viewBox="0 0 24 24"><path d="M3 21c3 0 7-1 7-8V5H4v8h3c0 4-2 5-4 5zM14 21c3 0 7-1 7-8V5h-6v8h3c0 4-2 5-4 5z"/></symbol>
+    <symbol id="i-edit" viewBox="0 0 24 24"><path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L8 18l-4 1 1-4z"/></symbol>
+    <symbol id="i-merge" viewBox="0 0 24 24"><circle cx="18" cy="18" r="3"/><circle cx="6" cy="6" r="3"/><path d="M6 21V9a9 9 0 0 0 9 9"/></symbol>
+    <symbol id="i-undo" viewBox="0 0 24 24"><path d="M9 7 4 12l5 5"/><path d="M20 17a7 7 0 0 0-7-7H4"/></symbol>
+    <symbol id="i-close" viewBox="0 0 24 24"><path d="M18 6 6 18M6 6l12 12"/></symbol>
+    <symbol id="i-camera" viewBox="0 0 24 24"><path d="M14.5 4 16 7h4a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V9a2 2 0 0 1 2-2h4l1.5-3z"/><circle cx="12" cy="14" r="3"/></symbol>
+    <symbol id="i-type" viewBox="0 0 24 24"><path d="M4 7V4h16v3M9 20h6M12 4v16"/></symbol>
+    <symbol id="i-link" viewBox="0 0 24 24"><path d="M10 13a5 5 0 0 0 7.5.5l3-3a5 5 0 0 0-7-7l-1.7 1.7"/><path d="M14 11a5 5 0 0 0-7.5-.5l-3 3a5 5 0 0 0 7 7l1.7-1.7"/></symbol>
+    <symbol id="i-retry" viewBox="0 0 24 24"><path d="M21 12a9 9 0 1 1-2.6-6.4L21 8"/><path d="M21 3v5h-5"/></symbol>
+    <symbol id="i-folder" viewBox="0 0 24 24"><path d="M3 5h6l2 2h10v12H3z"/></symbol>
+    <symbol id="i-circle-check" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="m8 12 3 3 5-6"/></symbol>
+    <symbol id="i-more" viewBox="0 0 24 24"><circle cx="5" cy="12" r="1" fill="currentColor" stroke="none"/><circle cx="12" cy="12" r="1" fill="currentColor" stroke="none"/><circle cx="19" cy="12" r="1" fill="currentColor" stroke="none"/></symbol>
+  </svg>
+
+  <div class="prototype-stage">
+    <div class="app" id="app" data-page="conversation">
+      <header class="app-header">
+        <span class="brand-mark" aria-hidden="true">G</span>
+        <button class="scope-button" data-open-sheet="scope" aria-label="修改当前知识范围">
+          <div class="scope-copy"><strong data-scope-name>新房装修</strong><span data-scope-detail>项目 · 全部知识</span></div>
+          <svg class="icon" style="width:15px;height:15px"><use href="#i-down"/></svg>
+        </button>
+        <h1 class="page-title" data-page-title>收集</h1>
+        <button class="header-icon" data-open-overlay="history" aria-label="查看对话历史"><svg class="icon"><use href="#i-history"/></svg></button>
+      </header>
+
+      <main class="screens">
+        <section class="screen active" data-screen="conversation" aria-label="知识 Agent 对话">
+          <div class="thread" id="thread" role="log" aria-live="polite">
+            <div class="intro" id="intro">
+              <div class="intro-mark"><svg class="icon"><use href="#i-message"/></svg></div>
+              <h1>和你的知识一起想</h1>
+              <p>当前只读取“新房装修”的正式知识。查询会自动执行，涉及修改时会明确展示目标和差异。</p>
+              <div class="suggestions">
+                <button class="suggestion" data-start-question>
+                  <span class="icon-wrap"><svg class="icon"><use href="#i-search"/></svg></span>
+                  <span>帮我看看卫生间防水有哪些关键知识，有没有互相冲突的地方？</span>
+                  <svg class="icon muted"><use href="#i-chevron"/></svg>
+                </button>
+              </div>
+            </div>
+          </div>
+          <div class="composer-wrap">
+            <form class="composer" id="composer">
+              <button type="button" class="composer-button" data-open-sheet="capture" aria-label="添加材料"><svg class="icon"><use href="#i-plus"/></svg></button>
+              <textarea id="messageInput" rows="1" placeholder="问知识，或说出要做的事" aria-label="对话输入"></textarea>
+              <button type="submit" class="composer-button send" aria-label="发送"><svg class="icon"><use href="#i-send"/></svg></button>
+            </form>
+          </div>
+        </section>
+
+        <section class="screen" data-screen="capture" aria-label="收集">
+          <div class="scroll-page">
+            <div class="page-heading"><h1>收集</h1><p>先把材料放进 Grove。AI 的项目和目录建议仍需你确认。</p></div>
+            <div class="quick-grid">
+              <button class="quick-action" data-demo-toast="相机采集将在原生 App 中调用系统相机"><span class="quick-icon"><svg class="icon"><use href="#i-camera"/></svg></span><strong>相机</strong><span>拍照与连续扫描</span></button>
+              <button class="quick-action" data-demo-toast="语音采集已开始模拟"><span class="quick-icon"><svg class="icon"><use href="#i-mic"/></svg></span><strong>语音</strong><span>边说边记录想法</span></button>
+              <button class="quick-action" data-demo-toast="已打开文本采集编辑器"><span class="quick-icon"><svg class="icon"><use href="#i-type"/></svg></span><strong>文本</strong><span>粘贴或直接输入</span></button>
+              <button class="quick-action" data-demo-toast="网页分享入口会接收系统分享内容"><span class="quick-icon"><svg class="icon"><use href="#i-link"/></svg></span><strong>网页分享</strong><span>从浏览器发送到 Grove</span></button>
+            </div>
+            <div class="section-title"><h2>最近收集</h2><span>今天</span></div>
+            <div class="list-card">
+              <div class="list-row"><span class="row-icon"><svg class="icon"><use href="#i-camera"/></svg></span><div class="row-main"><strong>防水验收现场照片（4 张）</strong><p>正在识别材料 · 新房装修</p><div class="progress"><span></span></div></div><span class="badge neutral">处理中</span></div>
+              <div class="list-row"><span class="row-icon"><svg class="icon"><use href="#i-link"/></svg></span><div class="row-main"><strong>防水施工注意事项</strong><p>网页 · 项目归属待确认</p></div><span class="badge ai">AI 建议</span></div>
+            </div>
+          </div>
+        </section>
+
+        <section class="screen" data-screen="pending" aria-label="待处理">
+          <div class="scroll-page">
+            <div class="page-heading"><h1>待处理</h1><p>集中查看需要决定、正在运行和失败的 Agent 工作。</p></div>
+            <div class="section-title"><h2>需要你决定</h2><span>2 项</span></div>
+            <div class="list-card">
+              <div class="list-row"><span class="row-icon" style="color:var(--g-ai);background:var(--g-ai-soft)"><svg class="icon"><use href="#i-merge"/></svg></span><div class="row-main"><strong>合并卫生间防水知识</strong><p>新房装修 · 影响 3 条正式知识</p></div><button class="row-action" data-demo-toast="已返回对话中的差异确认卡">审阅</button></div>
+              <div class="list-row"><span class="row-icon"><svg class="icon"><use href="#i-file"/></svg></span><div class="row-main"><strong>确认网页采集的所属项目</strong><p>1 条 Source · 推荐“新房装修”</p></div><button class="row-action" data-demo-toast="已打开项目确认">处理</button></div>
+            </div>
+            <div class="section-title"><h2>运行与失败</h2><span>2 项</span></div>
+            <div class="list-card">
+              <div class="list-row"><span class="row-icon"><svg class="icon"><use href="#i-search"/></svg></span><div class="row-main"><strong>比较全屋照明参数</strong><p>已检查 8 / 12 条知识</p><div class="progress"><span style="width:66%"></span></div></div><span class="badge neutral">进行中</span></div>
+              <div class="list-row" id="failedTask"><span class="row-icon" style="color:var(--g-error);background:var(--g-error-soft)"><svg class="icon"><use href="#i-alert"/></svg></span><div class="row-main"><strong>解析防水验收长图</strong><p>图片文字区域清晰度不足，原图已保留</p></div><button class="row-action" data-retry-task>重试</button></div>
+            </div>
+            <div class="section-title"><h2>最近完成</h2><span>可审计</span></div>
+            <div class="list-card"><div class="list-row"><span class="row-icon" style="color:var(--g-confirmed);background:var(--g-confirmed-soft)"><svg class="icon"><use href="#i-circle-check"/></svg></span><div class="row-main"><strong>补充“插座预留位置”来源</strong><p>昨天 21:42 · 可查看版本和来源</p></div><button class="row-action" data-demo-toast="已打开操作记录">查看</button></div></div>
+          </div>
+        </section>
+
+        <section class="screen" data-screen="knowledge" aria-label="知识">
+          <div class="scroll-page">
+            <div class="page-heading"><h1>知识</h1><p>轻量浏览正式知识；复杂目录整理仍在桌面工作台完成。</p></div>
+            <label class="search-box"><svg class="icon muted"><use href="#i-search"/></svg><input id="knowledgeSearch" placeholder="搜索标题、内容、目录或来源" /></label>
+            <button class="filter-chip" data-open-sheet="scope"><svg class="icon" style="width:16px;height:16px"><use href="#i-folder"/></svg><span data-knowledge-scope>新房装修 · 全部知识</span><svg class="icon" style="width:14px;height:14px"><use href="#i-down"/></svg></button>
+            <div class="section-title"><h2>相关知识</h2><span id="knowledgeCount">3 条</span></div>
+            <div id="knowledgeList">
+              <button class="knowledge-card" data-entry="waterproof"><div class="top"><span class="badge confirmed">正式知识</span><span class="caption muted">施工 / 防水</span></div><h3>卫生间防水施工与验收要点</h3><p>基层处理、涂刷范围、闭水试验与交付验收的综合记录。</p></button>
+              <button class="knowledge-card" data-entry="closewater"><div class="top"><span class="badge confirmed">正式知识</span><span class="caption muted">施工 / 防水</span></div><h3>闭水试验完成后再验收防水层</h3><p>闭水期间观察水位与楼下顶面，异常时先排查再交付。</p></button>
+              <button class="knowledge-card" data-entry="height"><div class="top"><span class="badge confirmed">正式知识</span><span class="caption muted">施工 / 防水</span></div><h3>淋浴区防水高度需结合墙面系统确认</h3><p>当前记录存在不同高度口径，需结合材料和施工方案判断。</p></button>
+            </div>
+          </div>
+        </section>
+      </main>
+
+      <nav class="bottom-nav" aria-label="主要导航">
+        <button class="nav-item active" data-nav="conversation"><svg class="icon"><use href="#i-message"/></svg><span>对话</span></button>
+        <button class="nav-item" data-nav="capture"><svg class="icon"><use href="#i-inbox"/></svg><span>收集</span></button>
+        <button class="nav-item" data-nav="pending"><span class="nav-badge">2</span><svg class="icon"><use href="#i-checks"/></svg><span>待处理</span></button>
+        <button class="nav-item" data-nav="knowledge"><svg class="icon"><use href="#i-book"/></svg><span>知识</span></button>
+      </nav>
+
+      <section class="overlay" id="diffOverlay" aria-label="审阅完整差异">
+        <header class="overlay-header"><button class="header-icon" data-close-overlay aria-label="返回对话"><svg class="icon" style="transform:rotate(180deg)"><use href="#i-chevron"/></svg></button><h1>审阅完整差异</h1><span></span></header>
+        <div class="overlay-scroll">
+          <div class="diff-summary"><span class="badge ai">AI 建议 · 待确认</span><h2>卫生间防水施工与验收要点</h2><p>目标：新房装修 / 施工 / 防水 · 汇总 5 条 Entry、7 个 Source</p></div>
+          <div class="diff-tabs" role="tablist"><button class="diff-tab active" data-diff-tab="content" role="tab" aria-selected="true">内容变化</button><button class="diff-tab" data-diff-tab="impact" role="tab" aria-selected="false">影响对象</button></div>
+          <div class="diff-panel active" data-diff-panel="content">
+            <div class="diff-block"><div class="diff-block-head"><strong>保留</strong><span class="badge neutral">2 段</span></div><div class="diff-line">基层应平整、坚实并清理浮灰；阴阳角和管根先做加强处理。</div><div class="diff-line">防水层完成后进行闭水试验，并检查水位和楼下顶面。</div></div>
+            <div class="diff-block"><div class="diff-block-head"><strong>补充</strong><span class="badge confirmed">3 段</span></div><div class="diff-line add">补充门槛石、地漏和管根等易渗漏位置的检查说明。</div><div class="diff-line add">补充“试验时长应结合材料说明、施工方案和现场条件”的适用条件。</div><div class="diff-line add">保留 24 小时与 48 小时两种来源口径，不把其中一种写成唯一结论。</div></div>
+            <div class="diff-block"><div class="diff-block-head"><strong>替换</strong><span class="badge ai">1 段</span></div><div class="diff-line replace"><span class="diff-old">闭水 24 小时后即可验收。</span><span class="diff-new">闭水试验时间存在 24 小时与 48 小时两种记录；当前来源未覆盖材料和现场条件，应按施工方案与材料要求确认。</span></div></div>
+          </div>
+          <div class="diff-panel" data-diff-panel="impact">
+            <div class="diff-block"><div class="diff-block-head"><strong>正式知识</strong><span class="badge neutral">5 条</span></div><div style="padding:0 11px">
+              <div class="impact-object"><span class="row-icon"><svg class="icon"><use href="#i-edit"/></svg></span><div><strong>卫生间防水施工与验收要点</strong><p>作为合并后的主 Entry · 新增版本</p></div><span class="badge confirmed">更新</span></div>
+              <div class="impact-object"><span class="row-icon"><svg class="icon"><use href="#i-merge"/></svg></span><div><strong>闭水试验至少 24 小时</strong><p>保留来源并指向主 Entry</p></div><span class="badge ai">已合并</span></div>
+              <div class="impact-object"><span class="row-icon"><svg class="icon"><use href="#i-merge"/></svg></span><div><strong>卫生间防水验收清单</strong><p>保留来源并指向主 Entry</p></div><span class="badge ai">已合并</span></div>
+              <div class="impact-object"><span class="row-icon"><svg class="icon"><use href="#i-alert"/></svg></span><div><strong>闭水试验建议保持 48 小时</strong><p>存在条件冲突，不参与合并</p></div><span class="badge risk">保留</span></div>
+            </div></div>
+            <div class="diff-block"><div class="diff-block-head"><strong>来源证据</strong><span class="badge confirmed">7 个保留</span></div><div class="diff-line">没有 Source 被删除；每条关键结论继续关联原始证据片段。</div></div>
+          </div>
+        </div>
+        <footer class="overlay-footer"><button class="button primary block" data-open-sheet="confirm">确认合并并标记 2 条重复知识</button></footer>
+      </section>
+
+      <section class="overlay" id="historyOverlay" aria-label="对话历史">
+        <header class="overlay-header"><button class="header-icon" data-close-overlay aria-label="关闭历史"><svg class="icon" style="transform:rotate(180deg)"><use href="#i-chevron"/></svg></button><h1>对话历史</h1><button class="header-icon" data-demo-toast="已创建一个新对话" aria-label="新建对话"><svg class="icon"><use href="#i-plus"/></svg></button></header>
+        <div class="overlay-scroll" style="padding-bottom:24px">
+          <div class="section-title" style="margin-top:0"><h2>今天</h2><span>同一个知识 Agent</span></div>
+          <button class="knowledge-card" data-close-overlay><div class="top"><span class="badge confirmed">新房装修</span><span class="caption muted">刚刚</span></div><h3>卫生间防水关键知识与冲突</h3><p>项目范围 · 已生成合并建议</p></button>
+          <button class="knowledge-card" data-demo-toast="已切换到“全屋照明参数比较”"><div class="top"><span class="badge neutral">新房装修</span><span class="caption muted">18:20</span></div><h3>全屋照明参数比较</h3><p>项目范围 · 长任务进行中</p></button>
+          <div class="section-title"><h2>昨天</h2><span>1 个对话</span></div>
+          <button class="knowledge-card" data-demo-toast="已切换到“跨项目找旅行清单”"><div class="top"><span class="badge neutral">全部知识</span><span class="caption muted">昨天</span></div><h3>跨项目找旅行清单</h3><p>Workspace 范围 · 命中 2 个项目</p></button>
+        </div>
+      </section>
+
+      <div class="scrim" id="scrim" data-close-sheet></div>
+
+      <section class="sheet" id="scopeSheet" role="dialog" aria-modal="true" aria-label="选择知识范围">
+        <div class="sheet-handle"></div><div class="sheet-head"><h2>当前知识范围</h2><button class="sheet-close" data-close-sheet aria-label="关闭"><svg class="icon"><use href="#i-close"/></svg></button></div>
+        <div class="sheet-body">
+          <button class="scope-option" data-scope="全部知识" data-detail="Workspace · 所有项目"><span class="row-icon"><svg class="icon"><use href="#i-book"/></svg></span><div><strong>全部知识</strong><span>当前 Workspace 的所有正式知识</span></div><svg class="icon scope-check"><use href="#i-check"/></svg></button>
+          <button class="scope-option active" data-scope="新房装修" data-detail="项目 · 全部知识"><span class="row-icon"><svg class="icon"><use href="#i-folder"/></svg></span><div><strong>新房装修</strong><span>项目内 38 条正式知识</span></div><svg class="icon scope-check"><use href="#i-check"/></svg></button>
+          <button class="scope-option child" data-scope="新房装修" data-detail="目录 · 施工 / 防水"><span class="row-icon"><svg class="icon"><use href="#i-folder"/></svg></span><div><strong>施工 / 防水</strong><span>当前节点及子树 · 8 条知识</span></div><svg class="icon scope-check"><use href="#i-check"/></svg></button>
+          <button class="scope-option" data-scope="个人健康" data-detail="项目 · 全部知识"><span class="row-icon"><svg class="icon"><use href="#i-folder"/></svg></span><div><strong>个人健康</strong><span>项目内 12 条正式知识</span></div><svg class="icon scope-check"><use href="#i-check"/></svg></button>
+        </div>
+      </section>
+
+      <section class="sheet" id="captureSheet" role="dialog" aria-modal="true" aria-label="添加材料">
+        <div class="sheet-handle"></div><div class="sheet-head"><h2>添加到对话</h2><button class="sheet-close" data-close-sheet aria-label="关闭"><svg class="icon"><use href="#i-close"/></svg></button></div>
+        <div class="sheet-body"><div class="quick-grid"><button class="quick-action" data-demo-toast="将调用系统相机"><span class="quick-icon"><svg class="icon"><use href="#i-camera"/></svg></span><strong>拍照</strong><span>保留原始 Source</span></button><button class="quick-action" data-demo-toast="按住说话，松开发送"><span class="quick-icon"><svg class="icon"><use href="#i-mic"/></svg></span><strong>语音</strong><span>转写后可编辑</span></button><button class="quick-action" data-demo-toast="已打开系统文件选择"><span class="quick-icon"><svg class="icon"><use href="#i-paperclip"/></svg></span><strong>文件</strong><span>图片、PDF、文档</span></button><button class="quick-action" data-demo-toast="已打开文本粘贴"><span class="quick-icon"><svg class="icon"><use href="#i-type"/></svg></span><strong>粘贴文本</strong><span>先采集再处理</span></button></div></div>
+      </section>
+
+      <section class="sheet" id="sourceSheet" role="dialog" aria-modal="true" aria-label="引用与来源">
+        <div class="sheet-handle"></div><div class="sheet-head"><h2 id="sourceTitle">引用与来源</h2><button class="sheet-close" data-close-sheet aria-label="关闭"><svg class="icon"><use href="#i-close"/></svg></button></div>
+        <div class="sheet-body"><span class="badge confirmed">正式知识</span><h3 id="sourceEntry" style="margin-top:8px;font-size:16px">闭水试验完成后再验收防水层</h3><p id="sourcePath" class="muted caption" style="margin-top:4px">新房装修 / 施工 / 防水</p><div class="source-quote" id="sourceQuote">“闭水期间应持续观察水位变化，并到楼下检查顶面是否出现渗漏。”</div><div class="source-meta"><span id="sourceFile">Source：防水验收记录.md</span><span>证据关系已由应用层校验 · 不包含待确认候选</span></div><div class="inline-actions"><button class="button" data-demo-toast="已打开完整 Entry">查看完整知识</button><button class="button ghost" data-close-sheet>关闭</button></div></div>
+      </section>
+
+      <section class="sheet" id="confirmSheet" role="dialog" aria-modal="true" aria-label="确认知识修改">
+        <div class="sheet-handle"></div><div class="sheet-head"><h2>确认知识修改</h2><button class="sheet-close" data-close-sheet aria-label="关闭"><svg class="icon"><use href="#i-close"/></svg></button></div>
+        <div class="sheet-body"><div class="confirm-box"><strong>新房装修 · 施工 / 防水</strong><p>将更新 1 条正式知识，标记 2 条重复知识为“已合并”，并保留 7 个来源和全部版本记录。</p></div><div class="insufficient card" style="margin-top:10px;margin-bottom:0"><div class="card-body"><h3>冲突知识不会被修改</h3><p>关于闭水试验时长的两种条件口径继续保留。</p></div></div><div class="sheet-actions"><button class="button" data-close-sheet>返回检查</button><button class="button primary" data-confirm-execute>确认执行</button></div></div>
+      </section>
+
+      <section class="sheet" id="undoSheet" role="dialog" aria-modal="true" aria-label="确认撤销">
+        <div class="sheet-handle"></div><div class="sheet-head"><h2>撤销此次操作？</h2><button class="sheet-close" data-close-sheet aria-label="关闭"><svg class="icon"><use href="#i-close"/></svg></button></div>
+        <div class="sheet-body"><div class="confirm-box"><strong>恢复操作前状态</strong><p>目标 Entry 将恢复到上一版本，2 条“已合并”知识恢复为独立状态。审计记录不会删除。</p></div><div class="sheet-actions"><button class="button" data-close-sheet>取消</button><button class="button danger" data-confirm-undo>撤销操作</button></div></div>
+      </section>
+
+      <section class="sheet" id="entrySheet" role="dialog" aria-modal="true" aria-label="正式知识详情">
+        <div class="sheet-handle"></div><div class="sheet-head"><h2>正式知识</h2><button class="sheet-close" data-close-sheet aria-label="关闭"><svg class="icon"><use href="#i-close"/></svg></button></div>
+        <div class="sheet-body"><span class="badge confirmed">正式知识</span><h3 id="entrySheetTitle" style="margin-top:8px;font-size:17px;line-height:24px">卫生间防水施工与验收要点</h3><p class="muted caption" style="margin-top:4px">新房装修 / 施工 / 防水</p><p id="entrySheetContent" style="margin-top:13px;font-size:13px;line-height:22px">基层处理、重点部位加强、防水层施工和闭水试验应形成连续的检查记录。</p><div class="source-meta"><span>7 个来源证据</span><span>版本 4 · 今天更新</span></div><div class="inline-actions"><button class="button" data-demo-toast="已打开来源证据列表"><svg class="icon"><use href="#i-quote"/></svg>查看来源</button><button class="button" data-demo-toast="已打开版本历史"><svg class="icon"><use href="#i-history"/></svg>版本</button></div></div>
+      </section>
+
+      <div class="toast" id="toast" role="status"></div>
+    </div>
+  </div>
+
+  <script>
+    const app = document.getElementById('app')
+    const thread = document.getElementById('thread')
+    const input = document.getElementById('messageInput')
+    const composer = document.getElementById('composer')
+    const toastEl = document.getElementById('toast')
+    const scrim = document.getElementById('scrim')
+    let stage = 'start'
+    let toastTimer
+
+    const icon = (name, extra = '') => `<svg class="icon ${extra}"><use href="#i-${name}"/></svg>`
+    const scrollThread = () => requestAnimationFrame(() => { thread.scrollTop = thread.scrollHeight })
+    const wait = (ms) => new Promise(resolve => setTimeout(resolve, ms))
+    const showToast = (message) => {
+      toastEl.textContent = message
+      toastEl.classList.add('show')
+      clearTimeout(toastTimer)
+      toastTimer = setTimeout(() => toastEl.classList.remove('show'), 2200)
+    }
+    const add = (html) => { thread.insertAdjacentHTML('beforeend', html); scrollThread() }
+    const userMessage = (text) => `<div class="message user"><div class="user-bubble">${text}</div></div>`
+    const agentLabel = () => `<div class="agent-label"><span class="agent-dot">G</span><span>知识 Agent</span></div>`
+
+    function closeSheets() {
+      document.querySelectorAll('.sheet.open').forEach(sheet => sheet.classList.remove('open'))
+      scrim.classList.remove('open')
+    }
+
+    function openSheet(name) {
+      closeSheets()
+      const sheet = document.getElementById(`${name}Sheet`)
+      if (!sheet) return
+      scrim.classList.add('open')
+      sheet.classList.add('open')
+      sheet.querySelector('button, input, textarea')?.focus({ preventScroll: true })
+    }
+
+    function openOverlay(name) {
+      document.querySelectorAll('.overlay.open').forEach(overlay => overlay.classList.remove('open'))
+      const overlay = document.getElementById(`${name}Overlay`)
+      if (overlay) overlay.classList.add('open')
+    }
+
+    function closeOverlays() { document.querySelectorAll('.overlay.open').forEach(overlay => overlay.classList.remove('open')) }
+
+    async function runSearch() {
+      if (stage !== 'start') return
+      stage = 'searching'
+      document.getElementById('intro')?.remove()
+      add(userMessage('帮我看看卫生间防水有哪些关键知识，有没有互相冲突的地方？'))
+      add(`${agentLabel()}<article class="card process-card" id="searchProcess"><div class="card-body"><div class="card-head"><div><div class="eyebrow">${icon('search')}检索项目知识</div><h2>正在检查“施工 / 防水”</h2></div><span class="badge neutral">进行中</span></div><div class="process-list"><div class="process-step current" data-step="1"><span class="step-mark">${icon('check')}</span><span>在“新房装修”中检索卫生间防水相关 Entry</span></div><div class="process-step" data-step="2"><span class="step-mark">${icon('check')}</span><span>打开来源证据并核对关键结论</span></div><div class="process-step" data-step="3"><span class="step-mark">${icon('check')}</span><span>比较相似与可能冲突的观点</span></div></div><div class="process-summary">${icon('circle-check')}已检索 6 条正式知识和 9 个来源</div></div></article>`)
+      const card = document.getElementById('searchProcess')
+      await wait(650)
+      card.querySelector('[data-step="1"]').className = 'process-step done'
+      card.querySelector('[data-step="2"]').className = 'process-step current'
+      await wait(650)
+      card.querySelector('[data-step="2"]').className = 'process-step done'
+      card.querySelector('[data-step="3"]').className = 'process-step current'
+      await wait(650)
+      card.querySelector('[data-step="3"]').className = 'process-step done'
+      card.classList.add('complete')
+      card.querySelector('.badge').textContent = '已完成'
+      showAnswer()
+    }
+
+    function showAnswer() {
+      stage = 'answered'
+      add(`${agentLabel()}
+        <article class="card"><div class="card-body"><div class="card-head"><div><div class="eyebrow">${icon('book')}带证据的综合回答</div><h2>卫生间防水目前能确认 4 个要点</h2></div><span class="badge confirmed">正式知识</span></div><p class="answer-intro">现有知识覆盖了施工准备、重点部位、闭水试验和验收记录；但“闭水多久”存在两种口径。</p><div class="answer-points">
+          <div class="answer-point"><span class="point-number">1</span><p>基层应平整、坚实并清理浮灰，阴阳角和管根需要先做加强处理。<button class="citation" data-source="base">Entry ① · 来源 2</button></p></div>
+          <div class="answer-point"><span class="point-number">2</span><p>地漏、管根、门槛石附近是验收时需要重点复查的位置。<button class="citation" data-source="detail">Entry ② · 来源 2</button></p></div>
+          <div class="answer-point"><span class="point-number">3</span><p>防水层完成后应进行闭水试验，同时观察水位和楼下顶面。<button class="citation" data-source="close">Entry ③ · 来源 3</button></p></div>
+          <div class="answer-point"><span class="point-number">4</span><p>施工照片、试验时间和异常处理结果应留在验收记录中。<button class="citation" data-source="record">Entry ④ · 来源 2</button></p></div>
+        </div><div class="source-strip"><button class="source-chip" data-source="close">${icon('quote')}防水验收记录</button><button class="source-chip" data-source="base">${icon('file')}施工交底截图</button><button class="source-chip" data-source="detail">${icon('file')}监理检查清单</button></div></div></article>
+        <article class="card conflict"><div class="card-body"><div class="card-head"><div><div class="eyebrow">${icon('alert')}冲突观点</div><h2>闭水试验时长记录不一致</h2></div><span class="badge risk">需要判断</span></div><div class="conflict-side"><strong>观点 A：至少保持 24 小时</strong><p>来自施工交底截图与一条验收记录。</p></div><div class="conflict-side"><strong>观点 B：建议保持 48 小时再观察</strong><p>来自监理检查清单，未说明材料和现场条件。</p></div><p class="conflict-summary">当前来源缺少防水材料、施工方案和现场条件，不能直接判定其中一种适用于所有情况。</p></div></article>
+        <article class="card insufficient"><div class="card-body"><div class="card-head"><div><div class="eyebrow">${icon('alert')}知识不足</div><h3>还缺少适用条件</h3></div></div><p>现有知识没有覆盖不同防水材料或厂家对闭水时长的要求。我没有用模型常识补齐。</p><div class="inline-actions"><button class="button" data-open-sheet="scope">查看或扩大范围</button></div></div></article>
+        <div class="inline-actions" style="margin:14px 0 22px"><button class="button ai block" data-followup>${icon('merge')}把能确定的部分整理成一条更完整的知识，旧的重复内容也处理一下</button></div>`)
+    }
+
+    async function runFollowup() {
+      if (stage !== 'answered') return
+      stage = 'clarifying'
+      add(userMessage('把能确定的部分整理成一条更完整的知识，旧的重复内容也处理一下'))
+      add(`${agentLabel()}<article class="card process-card" id="mergeProcess"><div class="card-body"><div class="process-summary" style="display:flex">${icon('search')}正在定位重复 Entry 与来源关系…</div></div></article>`)
+      await wait(750)
+      document.getElementById('mergeProcess').outerHTML = `${agentLabel()}<article class="card"><div class="card-body"><div class="card-head"><div><div class="eyebrow">${icon('alert')}需要消除一个歧义</div><h2>冲突内容不能作为重复项处理</h2></div><span class="badge risk">请确认</span></div><p class="answer-intro">我找到 3 条可以合并的重复知识，以及 2 条包含条件冲突的知识。建议只合并确定部分，保留冲突双方。</p><div class="choice-grid"><button class="choice recommended" data-clarify="recommended"><strong>按建议处理</strong><span>合并 3 条重复知识，保留 2 条冲突知识</span></button><button class="choice" data-clarify="manual"><strong>重新选择影响对象</strong><span>逐条决定哪些知识参与合并</span></button></div></div></article>`
+      scrollThread()
+    }
+
+    function showDraft() {
+      if (stage !== 'clarifying') return
+      stage = 'draft'
+      add(`${agentLabel()}<article class="card"><div class="card-body"><div class="card-head"><div><div class="eyebrow">${icon('edit')}可编辑知识草稿</div><h2>合并方案已准备好</h2></div><span class="badge ai">AI 建议 · 待确认</span></div><div class="draft-fields"><label><span class="field-label">标题</span><input class="draft-input" id="draftTitle" value="卫生间防水施工与验收要点"></label><label><span class="field-label">核心内容</span><textarea class="draft-textarea" id="draftContent">卫生间防水施工应先完成基层清理和重点部位加强，再按施工方案形成连续防水层。完成后进行闭水试验，同时观察水位和楼下顶面。闭水时长存在 24 小时与 48 小时两种记录，应结合材料说明、施工方案与现场条件确认。</textarea></label></div><div class="impact-row"><span>保留 2</span><span>补充 3</span><span>替换 1</span><span>已合并 2</span></div><div class="inline-actions"><button class="button primary block" data-open-overlay="diff">审阅完整差异与影响对象${icon('chevron')}</button></div></div></article>`)
+    }
+
+    async function executeChange() {
+      closeSheets()
+      closeOverlays()
+      stage = 'executing'
+      add(`${agentLabel()}<article class="card process-card" id="executeProcess"><div class="card-body"><div class="card-head"><div><div class="eyebrow">${icon('merge')}执行知识修改</div><h2>正在更新“新房装修”</h2></div><span class="badge neutral">进行中</span></div><div class="process-list"><div class="process-step current" data-exec="1"><span class="step-mark">${icon('check')}</span><span>更新主 Entry 并追加版本</span></div><div class="process-step" data-exec="2"><span class="step-mark">${icon('check')}</span><span>合并并校验 7 个来源证据</span></div><div class="process-step" data-exec="3"><span class="step-mark">${icon('check')}</span><span>标记 2 条重复知识为“已合并”</span></div></div></div></article>`)
+      const card = document.getElementById('executeProcess')
+      for (let n = 1; n <= 3; n++) {
+        await wait(520)
+        card.querySelector(`[data-exec="${n}"]`).className = 'process-step done'
+        if (n < 3) card.querySelector(`[data-exec="${n + 1}"]`).className = 'process-step current'
+      }
+      card.remove()
+      showReceipt()
+    }
+
+    function showReceipt() {
+      stage = 'complete'
+      add(`<article class="card receipt" id="receipt"><div class="card-body"><div class="receipt-top"><span class="receipt-icon">${icon('circle-check')}</span><div><div class="eyebrow">执行完成 · 可撤销</div><h2>防水知识已合并</h2><p class="muted caption" style="margin-top:4px">今天 21:48 · 操作记录 #A-0248</p></div></div><div class="receipt-list"><div class="receipt-row"><span>主 Entry</span><span>已更新至版本 4</span></div><div class="receipt-row"><span>来源证据</span><span>7 个，全部保留</span></div><div class="receipt-row"><span>重复知识</span><span>2 条标记为已合并</span></div><div class="receipt-row"><span>冲突知识</span><span>2 条保持不变</span></div></div><div class="inline-actions"><button class="button" data-entry="waterproof">查看知识</button><button class="button" data-open-overlay="diff" data-impact-first>影响对象</button><button class="button ghost" data-open-sheet="undo">${icon('undo')}撤销</button></div></div></article>`)
+    }
+
+    function confirmUndo() {
+      closeSheets()
+      stage = 'undone'
+      const receipt = document.getElementById('receipt')
+      receipt.classList.add('undone')
+      receipt.querySelector('.receipt-icon').innerHTML = icon('undo')
+      receipt.querySelector('.eyebrow').textContent = '操作已撤销 · 审计记录保留'
+      receipt.querySelector('h2').textContent = '已恢复到合并前状态'
+      receipt.querySelector('.receipt-list').innerHTML = '<div class="receipt-row"><span>主 Entry</span><span>已恢复版本 3</span></div><div class="receipt-row"><span>重复知识</span><span>2 条恢复为独立状态</span></div><div class="receipt-row"><span>操作记录</span><span>保留撤销记录</span></div>'
+      receipt.querySelector('.inline-actions').innerHTML = '<button class="button" data-entry="waterproof">查看恢复结果</button>'
+      showToast('操作已撤销，审计记录仍可查看')
+    }
+
+    function setPage(page) {
+      app.dataset.page = page
+      document.querySelectorAll('.screen').forEach(screen => screen.classList.toggle('active', screen.dataset.screen === page))
+      document.querySelectorAll('.nav-item').forEach(item => item.classList.toggle('active', item.dataset.nav === page))
+      const titles = { capture: '收集', pending: '待处理', knowledge: '知识' }
+      document.querySelector('[data-page-title]').textContent = titles[page] || ''
+      if (page === 'conversation') scrollThread()
+    }
+
+    const sourceData = {
+      base: ['基层处理与重点部位', '施工交底截图', '“基层清理完成后，阴阳角、管根等位置先做加强处理，再进行大面施工。”'],
+      detail: ['易渗漏位置检查', '监理检查清单', '“地漏、管根和门槛石周边应逐项检查，发现空鼓、破损时先修补。”'],
+      close: ['闭水试验完成后再验收防水层', '防水验收记录.md', '“闭水期间应持续观察水位变化，并到楼下检查顶面是否出现渗漏。”'],
+      record: ['保留防水施工与验收记录', '项目验收备忘', '“施工照片、闭水起止时间、检查结果和异常处理应保留在项目记录中。”']
+    }
+
+    function showSource(key) {
+      const data = sourceData[key] || sourceData.close
+      document.getElementById('sourceEntry').textContent = data[0]
+      document.getElementById('sourceFile').textContent = `Source：${data[1]}`
+      document.getElementById('sourceQuote').textContent = data[2]
+      openSheet('source')
+    }
+
+    function showEntry(key) {
+      const entries = {
+        waterproof: ['卫生间防水施工与验收要点', '基层处理、重点部位加强、防水层施工和闭水试验应形成连续的检查记录。闭水时长需结合材料说明、施工方案与现场条件确认。'],
+        closewater: ['闭水试验完成后再验收防水层', '闭水期间观察水位变化，并到楼下检查顶面；发现异常时先排查原因再进入交付验收。'],
+        height: ['淋浴区防水高度需结合墙面系统确认', '现有来源存在不同高度口径，应结合墙面材料、施工方案和使用区域判断，不能直接套用单一数值。']
+      }
+      const data = entries[key] || entries.waterproof
+      document.getElementById('entrySheetTitle').textContent = data[0]
+      document.getElementById('entrySheetContent').textContent = data[1]
+      openSheet('entry')
+    }
+
+    document.addEventListener('click', event => {
+      const target = event.target.closest('button, [data-close-sheet]')
+      if (!target) return
+      if (target.matches('[data-start-question]')) runSearch()
+      if (target.matches('[data-followup]')) runFollowup()
+      if (target.dataset.clarify === 'recommended') showDraft()
+      if (target.dataset.clarify === 'manual') showToast('第一版原型保留逐条选择入口，核心流程按建议方案继续')
+      if (target.dataset.nav) setPage(target.dataset.nav)
+      if (target.dataset.openSheet) openSheet(target.dataset.openSheet)
+      if (target.matches('[data-close-sheet]')) closeSheets()
+      if (target.dataset.openOverlay) {
+        openOverlay(target.dataset.openOverlay)
+        if (target.hasAttribute('data-impact-first')) document.querySelector('[data-diff-tab="impact"]').click()
+      }
+      if (target.matches('[data-close-overlay]')) closeOverlays()
+      if (target.dataset.source) showSource(target.dataset.source)
+      if (target.dataset.entry) showEntry(target.dataset.entry)
+      if (target.matches('[data-confirm-execute]')) executeChange()
+      if (target.matches('[data-confirm-undo]')) confirmUndo()
+      if (target.dataset.demoToast) showToast(target.dataset.demoToast)
+      if (target.matches('[data-retry-task]')) {
+        const row = document.getElementById('failedTask')
+        row.querySelector('.row-main p').textContent = '已从失败步骤重新开始，原图未复制'
+        target.outerHTML = '<span class="badge neutral">重试中</span>'
+        showToast('已重新开始处理失败步骤')
+      }
+      if (target.dataset.scope) {
+        document.querySelectorAll('.scope-option').forEach(option => option.classList.toggle('active', option === target))
+        document.querySelector('[data-scope-name]').textContent = target.dataset.scope
+        document.querySelector('[data-scope-detail]').textContent = target.dataset.detail
+        document.querySelector('[data-knowledge-scope]').textContent = `${target.dataset.scope} · ${target.dataset.detail.replace('项目 · ', '').replace('目录 · ', '')}`
+        closeSheets()
+        showToast(`当前范围已切换为“${target.dataset.scope}”`)
+      }
+      if (target.dataset.diffTab) {
+        document.querySelectorAll('.diff-tab').forEach(tab => { const active = tab === target; tab.classList.toggle('active', active); tab.setAttribute('aria-selected', String(active)) })
+        document.querySelectorAll('.diff-panel').forEach(panel => panel.classList.toggle('active', panel.dataset.diffPanel === target.dataset.diffTab))
+      }
+    })
+
+    composer.addEventListener('submit', event => {
+      event.preventDefault()
+      const text = input.value.trim()
+      if (!text) return
+      input.value = ''
+      input.blur()
+      if (stage === 'start') runSearch()
+      else if (stage === 'answered') runFollowup()
+      else showToast('原型已记录这条消息；请继续使用场景卡片完成主流程')
+    })
+
+    input.addEventListener('focus', () => app.classList.add('keyboard-open'))
+    input.addEventListener('blur', () => setTimeout(() => app.classList.remove('keyboard-open'), 100))
+    input.addEventListener('input', () => { input.style.height = '40px'; input.style.height = `${Math.min(input.scrollHeight, 96)}px` })
+
+    document.getElementById('knowledgeSearch').addEventListener('input', event => {
+      const query = event.target.value.trim().toLowerCase()
+      const items = [...document.querySelectorAll('#knowledgeList .knowledge-card')]
+      let visible = 0
+      items.forEach(item => { const show = !query || item.textContent.toLowerCase().includes(query); item.hidden = !show; if (show) visible++ })
+      document.getElementById('knowledgeCount').textContent = `${visible} 条`
+    })
+
+    document.addEventListener('keydown', event => {
+      if (event.key === 'Escape') { closeSheets(); closeOverlays() }
+    })
+  </script>
+</body>
+</html>
