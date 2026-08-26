@@ -5,16 +5,26 @@ import {
   CircleX,
   KeyRound,
   Loader2,
+  Pencil,
   PlugZap,
   RefreshCw,
   Save,
   Sparkles,
   Trash2,
+  X,
 } from 'lucide-react'
 import { toast } from 'sonner'
 
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog'
 import { Input } from '@/components/ui/input'
 import { useGroveMutation } from '@/hooks/useGroveMutation'
 import { useEmbeddingIndexStatus } from '@/hooks/useEmbeddingIndexStatus'
@@ -70,8 +80,15 @@ function ProviderForm({
 
   const [apiKey, setApiKey] = useState('')
   const [modelValue, setModelValue] = useState(model)
+  const [editing, setEditing] = useState(false)
 
   const canSave = apiKey.trim().length > 0
+
+  function cancelEdit() {
+    setEditing(false)
+    setApiKey('')
+    setModelValue(model)
+  }
 
   return (
     <section className="rounded-lg border bg-card p-5">
@@ -93,58 +110,76 @@ function ProviderForm({
         <KeyRound className="size-5 text-muted-foreground" />
       </div>
 
-      <div className="mt-4 space-y-3">
-        <div className="space-y-1.5">
-          <label htmlFor={`${kind}-api-key`} className="text-body-sm font-medium">
-            API Key
-          </label>
-          <Input
-            id={`${kind}-api-key`}
-            type="password"
-            value={apiKey}
-            onChange={(event) => setApiKey(event.target.value)}
-            placeholder={configured ? '留空则不修改，粘贴新 key 可更换' : '粘贴你的 API Key'}
-            autoComplete="off"
-          />
-        </div>
-        <div className="space-y-1.5">
-          <label htmlFor={`${kind}-model`} className="text-body-sm font-medium">
-            模型名（可选）
-          </label>
-          <Input
-            id={`${kind}-model`}
-            value={modelValue}
-            onChange={(event) => setModelValue(event.target.value)}
-            placeholder={model}
-          />
-        </div>
-      </div>
+      {editing ? (
+        <>
+          <div className="mt-4 space-y-3">
+            <div className="space-y-1.5">
+              <label htmlFor={`${kind}-api-key`} className="text-body-sm font-medium">
+                API Key
+              </label>
+              <Input
+                id={`${kind}-api-key`}
+                type="password"
+                value={apiKey}
+                onChange={(event) => setApiKey(event.target.value)}
+                placeholder={
+                  configured ? '留空则不修改，粘贴新 key 可更换' : '粘贴你的 API Key'
+                }
+                autoComplete="off"
+              />
+            </div>
+            <div className="space-y-1.5">
+              <label htmlFor={`${kind}-model`} className="text-body-sm font-medium">
+                模型名（可选）
+              </label>
+              <Input
+                id={`${kind}-model`}
+                value={modelValue}
+                onChange={(event) => setModelValue(event.target.value)}
+                placeholder={model}
+              />
+            </div>
+          </div>
 
-      <div className="mt-4 flex flex-wrap items-center gap-2">
-        <Button
-          size="sm"
-          disabled={!canSave}
-          onClick={() =>
-            onSave({
-              api_key: apiKey.trim(),
-              model: modelValue.trim() || null,
-            })
-          }
-        >
-          <Save />
-          保存
-        </Button>
-        <Button size="sm" variant="outline" onClick={onTest}>
-          <PlugZap />
-          测试连接
-        </Button>
-        {configured ? (
-          <Button size="sm" variant="ghost" onClick={onClear}>
-            <Trash2 />
-            清除
+          <div className="mt-4 flex flex-wrap items-center gap-2">
+            <Button
+              size="sm"
+              disabled={!canSave}
+              onClick={() => {
+                onSave({
+                  api_key: apiKey.trim(),
+                  model: modelValue.trim() || null,
+                })
+                setEditing(false)
+              }}
+            >
+              <Save />
+              保存
+            </Button>
+            <Button size="sm" variant="ghost" onClick={cancelEdit}>
+              <X />
+              取消
+            </Button>
+          </div>
+        </>
+      ) : (
+        <div className="mt-4 flex flex-wrap items-center gap-2">
+          <Button size="sm" variant="outline" onClick={() => setEditing(true)}>
+            <Pencil />
+            编辑
           </Button>
-        ) : null}
-      </div>
+          <Button size="sm" variant="outline" onClick={onTest}>
+            <PlugZap />
+            测试连接
+          </Button>
+          {configured ? (
+            <Button size="sm" variant="ghost" onClick={onClear}>
+              <Trash2 />
+              清除
+            </Button>
+          ) : null}
+        </div>
+      )}
     </section>
   )
 }
@@ -160,7 +195,35 @@ function EmbeddingForm({
   onTest: () => void
   onClear: () => void
 }) {
+  const [editing, setEditing] = useState(false)
   const [modelValue, setModelValue] = useState(data.embedding_model)
+  const [pendingModel, setPendingModel] = useState<string | null>(null)
+  const status = useEmbeddingIndexStatus()
+  const total =
+    status.data && typeof status.data.total === 'number' ? status.data.total : null
+
+  function requestSave() {
+    const next = modelValue.trim() || data.embedding_model
+    if (next !== data.embedding_model) {
+      setPendingModel(next)
+      return
+    }
+    onSave({ model: next })
+    setEditing(false)
+  }
+
+  function confirmSave() {
+    if (pendingModel) {
+      onSave({ model: pendingModel })
+    }
+    setPendingModel(null)
+    setEditing(false)
+  }
+
+  function cancelEdit() {
+    setEditing(false)
+    setModelValue(data.embedding_model)
+  }
 
   return (
     <section className="rounded-lg border bg-card p-5">
@@ -190,43 +253,78 @@ function EmbeddingForm({
         <Sparkles className="size-5 text-muted-foreground" />
       </div>
 
-      <div className="mt-4 space-y-3">
-        <div className="space-y-1.5">
-          <label htmlFor="embedding-model" className="text-body-sm font-medium">
-            模型名（可选）
-          </label>
-          <Input
-            id="embedding-model"
-            value={modelValue}
-            onChange={(event) => setModelValue(event.target.value)}
-            placeholder={data.embedding_model}
-          />
-          <p className="text-caption text-muted-foreground">
-            密钥复用视觉模型（豆包方舟）同一把 API Key；停用后语义功能退回确定性检索。
-          </p>
-        </div>
-      </div>
+      {editing ? (
+        <>
+          <div className="mt-4 space-y-3">
+            <div className="space-y-1.5">
+              <label htmlFor="embedding-model" className="text-body-sm font-medium">
+                模型名（可选）
+              </label>
+              <Input
+                id="embedding-model"
+                value={modelValue}
+                onChange={(event) => setModelValue(event.target.value)}
+                placeholder={data.embedding_model}
+              />
+              <p className="text-caption text-muted-foreground">
+                密钥复用视觉模型（豆包方舟）同一把 API Key；停用后语义功能退回确定性检索。
+              </p>
+            </div>
+          </div>
 
-      <div className="mt-4 flex flex-wrap items-center gap-2">
-        <Button
-          size="sm"
-          onClick={() => onSave({ model: modelValue.trim() || null })}
-        >
-          <Save />
-          保存
-        </Button>
-        <Button size="sm" variant="outline" onClick={onTest}>
-          <PlugZap />
-          测试连接
-        </Button>
-        {data.embedding_configured ? (
-          <Button size="sm" variant="ghost" onClick={onClear}>
-            <Trash2 />
-            停用
+          <div className="mt-4 flex flex-wrap items-center gap-2">
+            <Button size="sm" onClick={requestSave}>
+              <Save />
+              保存
+            </Button>
+            <Button size="sm" variant="ghost" onClick={cancelEdit}>
+              <X />
+              取消
+            </Button>
+          </div>
+        </>
+      ) : (
+        <div className="mt-4 flex flex-wrap items-center gap-2">
+          <Button size="sm" variant="outline" onClick={() => setEditing(true)}>
+            <Pencil />
+            编辑
           </Button>
-        ) : null}
-      </div>
+          <Button size="sm" variant="outline" onClick={onTest}>
+            <PlugZap />
+            测试连接
+          </Button>
+          {data.embedding_configured ? (
+            <Button size="sm" variant="ghost" onClick={onClear}>
+              <Trash2 />
+              停用
+            </Button>
+          ) : null}
+        </div>
+      )}
       <EmbeddingIndexStatusBlock />
+      <Dialog
+        open={pendingModel !== null}
+        onOpenChange={(open) => !open && setPendingModel(null)}
+      >
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>切换语义模型将全量重建</DialogTitle>
+            <DialogDescription>
+              不同模型生成的向量无法混用。保存后系统会删除现有向量，并按新模型重新编码
+              {total !== null
+                ? `当前工作区全部 ${total} 条知识`
+                : '当前工作区全部知识'}
+              ，期间语义搜索与相关知识会短暂降级，关键词搜索不受影响。确定继续吗？
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button variant="ghost" onClick={() => setPendingModel(null)}>
+              取消
+            </Button>
+            <Button onClick={confirmSave}>确认保存并重建</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </section>
   )
 }

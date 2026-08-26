@@ -5,7 +5,7 @@ import logging
 
 import httpx
 from pydantic import BaseModel
-from sqlalchemy import func, select, update
+from sqlalchemy import delete, func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import get_settings
@@ -232,13 +232,31 @@ async def rebuild_all_embeddings(
     workspace_id: int,
     project_id: int | None = None,
 ) -> int:
-    """把当前 Workspace 全部向量标记为待重建（换模型或全量重试用，覆盖旧模型名行）。"""
-    stmt = update(EntryEmbedding).where(
-        EntryEmbedding.workspace_id == workspace_id,
+    """全量重建（含去重）：删除范围内全部向量行，并按当前模型为每条 Entry 重建 pending 行。"""
+    row = await get_settings_row(db, workspace_id)
+    model = row.embedding_model
+    del_stmt = delete(EntryEmbedding).where(EntryEmbedding.workspace_id == workspace_id)
+    if project_id is not None:
+        del_stmt = del_stmt.where(EntryEmbedding.project_id == project_id)
+    await db.execute(del_stmt)
+
+    entries_stmt = (
+        select(Entry.id, Entry.project_id)
+        .join(Project, Entry.project_id == Project.id)
+        .where(Project.workspace_id == workspace_id)
     )
     if project_id is not None:
-        stmt = stmt.where(EntryEmbedding.project_id == project_id)
-    result = await db.execute(
-        stmt.values(status=EMBEDDING_PENDING, error=None, retry_count=0)
-    )
-    return result.rowcount or 0
+        entries_stmt = entries_stmt.where(Entry.project_id == project_id)
+    entries = (await db.execute(entries_stmt)).all()
+    for entry_id, entry_project_id in entries:
+        db.add(
+            EntryEmbedding(
+                workspace_id=workspace_id,
+                project_id=entry_project_id,
+                entry_id=entry_id,
+                model=model,
+                dimension=0,
+                status=EMBEDDING_PENDING,
+            )
+        )
+    return len(entries)

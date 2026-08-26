@@ -10,7 +10,17 @@ from sqlalchemy import delete, select
 from app.db.session import async_session_factory
 from app.embedding_worker import backfill_missing_embedding_rows
 from app.main import create_app
-from app.models import Candidate, Entry, EntryEmbedding, Node, Project, Source, Workspace
+from app.models import (
+    Candidate,
+    Entry,
+    EntryEmbedding,
+    Node,
+    Project,
+    Source,
+    User,
+    Workspace,
+    WorkspaceMember,
+)
 from app.models.entry_embedding import (
     EMBEDDING_FAILED,
     EMBEDDING_PENDING,
@@ -28,7 +38,12 @@ from app.services.embedding import (
 )
 from app.services.entry_relation import route_relations
 from app.services.secret_store import get_secret_store, secret_key
-from app.services.vector_store import cosine_similarity, deserialize_vector, serialize_vector
+from app.services.vector_store import (
+    cosine_similarity,
+    deserialize_vector,
+    mark_entry_embedding_pending,
+    serialize_vector,
+)
 
 
 @pytest.fixture
@@ -514,11 +529,128 @@ async def test_index_status_counts_and_retry_flows() -> None:
         await rebuild_all_embeddings(db, workspace.id, project.id)
         status = await get_embedding_index_status(db, workspace.id, project.id)
         assert status.ready == 0
-        assert status.pending == 2
-        assert status.missing == 1
+        assert status.pending == 3
+        assert status.missing == 0
 
+
+@pytest.mark.asyncio
+async def test_mark_pending_dedups_other_model_rows() -> None:
+    """标记待重建时只保留当前模型一行，删除旧模型残留行。"""
+    async with async_session_factory() as db:
+        workspace = Workspace(name="去重空间")
+        db.add(workspace)
+        await db.flush()
+        project = Project(name="去重项目", workspace_id=workspace.id)
+        db.add(project)
+        await db.flush()
+        node = Node(name="根", project_id=project.id, position=0)
+        db.add(node)
+        await db.flush()
+        entry = Entry(
+            project_id=project.id,
+            node_id=node.id,
+            title="知识",
+            content="内容",
+            main_type="knowledge",
+        )
+        db.add(entry)
+        await db.flush()
+        db.add(
+            EntryEmbedding(
+                workspace_id=workspace.id,
+                project_id=project.id,
+                entry_id=entry.id,
+                model="旧模型",
+                dimension=1,
+                embedding=serialize_vector([1.0]),
+                status=EMBEDDING_READY,
+            )
+        )
+        await db.flush()
+
+        await mark_entry_embedding_pending(db, entry)
+        await db.commit()
+
+        rows = (
+            await db.execute(
+                select(EntryEmbedding).where(EntryEmbedding.workspace_id == workspace.id)
+            )
+        ).scalars().all()
+        assert len(rows) == 1
+        assert rows[0].model == "doubao-embedding-vision-251215"
+        assert rows[0].status == EMBEDDING_PENDING
         await db.execute(
             delete(EntryEmbedding).where(EntryEmbedding.workspace_id == workspace.id)
+        )
+        await db.execute(delete(Entry).where(Entry.project_id == project.id))
+        await db.commit()
+
+
+@pytest.mark.asyncio
+async def test_model_change_triggers_full_rebuild(client: httpx.AsyncClient) -> None:
+    """保存变更后的模型名应自动全量重建：旧向量删除，按新模型重建 pending。"""
+    username = await _register(client)
+    async with async_session_factory() as db:
+        user = (
+            await db.execute(select(User).where(User.username == username))
+        ).scalar_one()
+        member = (
+            await db.execute(
+                select(WorkspaceMember).where(WorkspaceMember.user_id == user.id)
+            )
+        ).scalar_one()
+        workspace_id = member.workspace_id
+        project = Project(name="重建项目", workspace_id=workspace_id)
+        db.add(project)
+        await db.flush()
+        node = Node(name="根", project_id=project.id, position=0)
+        db.add(node)
+        await db.flush()
+        entry = Entry(
+            project_id=project.id,
+            node_id=node.id,
+            title="知识",
+            content="内容",
+            main_type="knowledge",
+        )
+        db.add(entry)
+        await db.flush()
+        db.add(
+            EntryEmbedding(
+                workspace_id=workspace_id,
+                project_id=project.id,
+                entry_id=entry.id,
+                model="doubao-embedding-vision-251215",
+                dimension=1,
+                embedding=serialize_vector([1.0]),
+                status=EMBEDDING_READY,
+            )
+        )
+        await db.commit()
+
+    response = await client.put(
+        "/api/settings/ai/embedding",
+        json={"model": "doubao-embedding-vision-999999"},
+    )
+    assert response.status_code == 200
+
+    data = (await client.get("/api/settings/ai/embedding/index-status")).json()
+    assert data["total"] == 1
+    assert data["ready"] == 0
+    assert data["pending"] == 1
+
+    async with async_session_factory() as db:
+        row = (
+            await db.execute(
+                select(EntryEmbedding).where(
+                    EntryEmbedding.workspace_id == workspace_id
+                )
+            )
+        ).scalar_one()
+        assert row.model == "doubao-embedding-vision-999999"
+        assert row.status == EMBEDDING_PENDING
+        await db.execute(
+            delete(EntryEmbedding).where(EntryEmbedding.workspace_id == workspace_id)
         )
         await db.execute(delete(Entry).where(Entry.project_id == project.id))
         await db.commit()

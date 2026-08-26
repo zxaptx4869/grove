@@ -3,7 +3,7 @@
 import math
 import struct
 
-from sqlalchemy import select
+from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models import Entry, EntryEmbedding, Project
@@ -54,6 +54,13 @@ async def mark_entry_embedding_pending(db: AsyncSession, entry: Entry) -> None:
         return
     settings_row = await get_settings_row(db, project.workspace_id)
     model = settings_row.embedding_model
+    # 同一条目只保留当前模型一行：删除旧模型残留行，避免唯一约束冲突与重复行
+    await db.execute(
+        delete(EntryEmbedding).where(
+            EntryEmbedding.entry_id == entry.id,
+            EntryEmbedding.model != model,
+        )
+    )
     existing = (
         await db.execute(
             select(EntryEmbedding).where(

@@ -137,12 +137,17 @@ async def save_embedding_settings(
 ) -> AIProviderSettingsOut:
     """保存 embedding 模型名；密钥复用豆包视觉密钥，不接收新密钥。"""
     row = await get_settings_row(db, workspace.id)
+    model_changed = False
     if payload.model is not None:
+        model_changed = payload.model != row.embedding_model
         row.embedding_model = payload.model
     # 复用豆包视觉密钥尾号作为已配置标记；视觉未配置时 embedding 保持未配置
     row.embedding_key_tail = row.vision_key_tail
     row.embedding_available = False
     row.embedding_tested = False
+    if model_changed:
+        # 换模型后向量空间不同：删除旧向量并按新模型全量重建，避免混用与重复行
+        await rebuild_all_embeddings(db, workspace.id)
     await db.commit()
     return _masked_out(row)
 

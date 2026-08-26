@@ -95,10 +95,81 @@ describe('AISettingsPage', () => {
 
     renderPage()
     await screen.findByRole('heading', { name: '模型设置' })
-    const modelInputs = await screen.findAllByLabelText('模型名（可选）')
-    await userEvent.clear(modelInputs[2])
-    await userEvent.type(modelInputs[2], 'doubao-embedding-vision-251215')
-    await userEvent.click(screen.getAllByRole('button', { name: '保存' })[2])
+    const editButtons = await screen.findAllByRole('button', { name: '编辑' })
+    await userEvent.click(editButtons[2])
+    const modelInput = await screen.findByLabelText('模型名（可选）')
+    await userEvent.clear(modelInput)
+    await userEvent.type(modelInput, 'doubao-embedding-vision-251215')
+    await userEvent.click(screen.getAllByRole('button', { name: '保存' })[0])
+
+    expect(
+      calls.some(
+        (call) =>
+          call.method === 'PUT' && call.path === '/api/settings/ai/embedding',
+      ),
+    ).toBe(true)
+  })
+
+  it('修改模型名会弹全量重建确认框，取消不保存', async () => {
+    const calls: Array<{ method: string; path: string }> = []
+    vi.stubGlobal(
+      'fetch',
+      vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
+        const url = new URL(String(input), 'http://localhost')
+        calls.push({ method: init?.method ?? 'GET', path: url.pathname })
+        return Promise.resolve({ ok: true, json: async () => settingsPayload() })
+      }),
+    )
+
+    renderPage()
+    await screen.findByRole('heading', { name: '模型设置' })
+    const editButtons = await screen.findAllByRole('button', { name: '编辑' })
+    await userEvent.click(editButtons[2])
+    const modelInput = await screen.findByLabelText('模型名（可选）')
+    await userEvent.clear(modelInput)
+    await userEvent.type(modelInput, 'doubao-embedding-vision-999999')
+    await userEvent.click(screen.getAllByRole('button', { name: '保存' })[0])
+
+    expect(await screen.findByText('切换语义模型将全量重建')).toBeInTheDocument()
+    expect(
+      calls.some(
+        (call) =>
+          call.method === 'PUT' && call.path === '/api/settings/ai/embedding',
+      ),
+    ).toBe(false)
+
+    const cancels = screen.getAllByRole('button', { name: '取消' })
+    await userEvent.click(cancels[cancels.length - 1])
+    expect(
+      calls.some(
+        (call) =>
+          call.method === 'PUT' && call.path === '/api/settings/ai/embedding',
+      ),
+    ).toBe(false)
+  })
+
+  it('确认模型变更后调用保存接口', async () => {
+    const calls: Array<{ method: string; path: string }> = []
+    vi.stubGlobal(
+      'fetch',
+      vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
+        const url = new URL(String(input), 'http://localhost')
+        calls.push({ method: init?.method ?? 'GET', path: url.pathname })
+        return Promise.resolve({ ok: true, json: async () => settingsPayload() })
+      }),
+    )
+
+    renderPage()
+    await screen.findByRole('heading', { name: '模型设置' })
+    const editButtons = await screen.findAllByRole('button', { name: '编辑' })
+    await userEvent.click(editButtons[2])
+    const modelInput = await screen.findByLabelText('模型名（可选）')
+    await userEvent.clear(modelInput)
+    await userEvent.type(modelInput, 'doubao-embedding-vision-999999')
+    await userEvent.click(screen.getAllByRole('button', { name: '保存' })[0])
+    await screen.findByText('切换语义模型将全量重建')
+
+    await userEvent.click(screen.getByRole('button', { name: '确认保存并重建' }))
 
     expect(
       calls.some(
@@ -169,6 +240,8 @@ describe('AISettingsPage', () => {
 
     renderPage()
     await screen.findByRole('heading', { name: '模型设置' })
+    const editButtons = await screen.findAllByRole('button', { name: '编辑' })
+    await userEvent.click(editButtons[0])
     const keyInputs = await screen.findAllByLabelText('API Key')
     await userEvent.type(keyInputs[0], 'sk-abcdefgh')
     await userEvent.click(screen.getAllByRole('button', { name: '保存' })[0])
