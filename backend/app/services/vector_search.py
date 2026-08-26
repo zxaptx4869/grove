@@ -103,11 +103,16 @@ async def hybrid_recall_by_query(
     entries: list[Entry],
     query: str,
     top_k: int,
-) -> list[Entry]:
+    *,
+    return_scores: bool = False,
+) -> list[Entry] | tuple[list[Entry], dict[int, float]]:
     """语义搜索混合召回：确定性 ∪ embedding，embedding 不可用时降级纯确定性。"""
     deterministic = _deterministic_by_query(entries, query)
-    embedding, _cosine = await _embedding_scores(db, workspace_id, entries, query)
-    return _rrf_merge(deterministic, embedding, top_k=top_k)
+    embedding, cosine = await _embedding_scores(db, workspace_id, entries, query)
+    merged = _rrf_merge(deterministic, embedding, top_k=top_k)
+    if return_scores:
+        return merged, cosine
+    return merged
 
 
 async def hybrid_recall_by_target(
@@ -116,16 +121,21 @@ async def hybrid_recall_by_target(
     target: Entry,
     others: list[Entry],
     top_k: int,
-) -> list[Entry]:
+    *,
+    return_scores: bool = False,
+) -> list[Entry] | tuple[list[Entry], dict[int, float]]:
     """相似推荐混合召回：锚点 Entry 对比同项目其他 Entry。"""
     deterministic = _deterministic_by_target(target, others)
-    embedding, _cosine = await _embedding_scores(
+    embedding, cosine = await _embedding_scores(
         db,
         workspace_id,
         others,
         entry_text(target),
     )
-    return _rrf_merge(deterministic, embedding, top_k=top_k)
+    merged = _rrf_merge(deterministic, embedding, top_k=top_k)
+    if return_scores:
+        return merged, cosine
+    return merged
 
 
 async def hybrid_recall_for_candidate(

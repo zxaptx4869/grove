@@ -107,6 +107,31 @@ def test_vector_store_roundtrip_and_cosine() -> None:
     assert cosine_similarity([], [0.0, 1.0]) == 0.0
 
 
+def test_result_cosine_floor_filters_weak_entries() -> None:
+    """最终结果过滤：余弦低于下限的条目被剔除，余弦未知的条目保留。"""
+    from app.services.semantic_search import _filter_by_cosine
+
+    def _entry(entry_id: int) -> Entry:
+        return Entry(
+            id=entry_id,
+            project_id=1,
+            node_id=10,
+            title="t",
+            content="c",
+            main_type="knowledge",
+        )
+
+    ordered = [
+        (_entry(1), "r", "llm", "m", False, None),
+        (_entry(2), "r", "llm", "m", False, None),
+        (_entry(3), "r", "llm", "m", False, None),
+    ]
+
+    filtered = _filter_by_cosine(ordered, {1: 0.35, 2: 0.25})
+
+    assert [item[0].id for item in filtered] == [1, 3]
+
+
 @pytest.mark.asyncio
 async def test_backfill_creates_missing_rows() -> None:
     """启动回填应为没有向量记录的 Entry 创建待重建行。"""

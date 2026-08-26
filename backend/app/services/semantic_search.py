@@ -15,6 +15,8 @@ logger = logging.getLogger(__name__)
 
 _RECALL_LIMIT = 20
 _RESULT_LIMIT = 10
+# 用户可见结果的最低余弦下限：低于该值的弱相关条目不展示；无向量（余弦未知）时保留
+_MIN_RESULT_COSINE = 0.3
 
 
 async def _load_entries(
@@ -56,6 +58,19 @@ def _order_by_ranking(
     return ordered
 
 
+def _filter_by_cosine(
+    ordered: list[tuple[Entry, str, str, str | None, bool, str | None]],
+    cosine_by_id: dict[int, float],
+) -> list[tuple[Entry, str, str, str | None, bool, str | None]]:
+    """剔除最终结果中余弦低于下限的弱相关条目；余弦未知的条目保留。"""
+    return [
+        item
+        for item in ordered
+        if cosine_by_id.get(item[0].id) is None
+        or cosine_by_id[item[0].id] >= _MIN_RESULT_COSINE
+    ]
+
+
 async def semantic_search_entries(
     db: AsyncSession,
     workspace_id: int,
@@ -66,7 +81,9 @@ async def semantic_search_entries(
     if not query.strip():
         return []
     entries = await _load_entries(db, workspace_id, project_id)
-    candidates = await hybrid_recall_by_query(db, workspace_id, entries, query, _RECALL_LIMIT)
+    candidates, cosine_by_id = await hybrid_recall_by_query(
+        db, workspace_id, entries, query, _RECALL_LIMIT, return_scores=True
+    )
     if not candidates:
         return []
     draft, provider, model, is_fallback, error = await run_semantic_agent(
@@ -74,9 +91,10 @@ async def semantic_search_entries(
     )
     if is_fallback:
         logger.warning("语义搜索降级：provider=%s model=%s error=%s", provider, model, error)
-    return _order_by_ranking(
+    ordered = _order_by_ranking(
         candidates, draft, provider, model, is_fallback, error, _RESULT_LIMIT
     )
+    return _filter_by_cosine(ordered, cosine_by_id)
 
 
 async def recommend_similar_entries(
@@ -89,7 +107,9 @@ async def recommend_similar_entries(
     others = [entry for entry in entries if entry.id != target.id]
     if not others:
         return []
-    candidates = await hybrid_recall_by_target(db, workspace_id, target, others, _RECALL_LIMIT)
+    candidates, cosine_by_id = await hybrid_recall_by_target(
+        db, workspace_id, target, others, _RECALL_LIMIT, return_scores=True
+    )
     if not candidates:
         return []
     query = f"{target.title}\n{target.content[:300]}"
@@ -98,6 +118,7 @@ async def recommend_similar_entries(
     )
     if is_fallback:
         logger.warning("相似推荐降级：provider=%s model=%s error=%s", provider, model, error)
-    return _order_by_ranking(
+    ordered = _order_by_ranking(
         candidates, draft, provider, model, is_fallback, error, _RESULT_LIMIT
     )
+    return _filter_by_cosine(ordered, cosine_by_id)
