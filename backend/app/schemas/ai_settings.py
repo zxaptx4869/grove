@@ -1,5 +1,7 @@
 """模型设置请求/响应模型。"""
 
+from typing import Literal
+
 from pydantic import BaseModel, Field
 
 
@@ -49,3 +51,29 @@ class ConnectionTestOut(BaseModel):
 
     ok: bool
     message: str
+
+
+class EmbeddingIndexStatusItem(BaseModel):
+    """单条失败向量明细。"""
+
+    entry_id: int
+    title: str
+    error: str | None
+
+
+class EmbeddingIndexStatusOut(BaseModel):
+    """当前 Workspace（或项目）的语义索引状态统计。"""
+
+    total: int
+    ready: int
+    pending: int
+    failed: int
+    missing: int
+    failed_items: list[EmbeddingIndexStatusItem] = []
+
+
+class EmbeddingRebuildRequest(BaseModel):
+    """重建请求：failed 只重试失败项，all 全量重建。"""
+
+    mode: Literal["failed", "all"] = "failed"
+    project_id: int | None = Field(default=None, gt=0)

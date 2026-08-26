@@ -51,6 +51,7 @@ class EntryEmbedding(Base):
     embedding: Mapped[bytes | None] = mapped_column(LargeBinary, nullable=True)
     status: Mapped[str] = mapped_column(String(16), default=EMBEDDING_PENDING, nullable=False)
     error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    retry_count: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )

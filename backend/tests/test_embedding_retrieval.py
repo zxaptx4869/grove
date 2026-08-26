@@ -1,6 +1,7 @@
 """embedding 检索增强：编码降级、向量存储、阈值规则与配置 API。"""
 
 import uuid
+from datetime import UTC, datetime, timedelta
 
 import httpx
 import pytest
@@ -10,11 +11,21 @@ from app.db.session import async_session_factory
 from app.embedding_worker import backfill_missing_embedding_rows
 from app.main import create_app
 from app.models import Candidate, Entry, EntryEmbedding, Node, Project, Source, Workspace
-from app.models.entry_embedding import EMBEDDING_PENDING, EMBEDDING_READY
+from app.models.entry_embedding import (
+    EMBEDDING_FAILED,
+    EMBEDDING_PENDING,
+    EMBEDDING_READY,
+)
 from app.processing import worker
 from app.schemas.ai_settings import ConnectionTestOut
 from app.services.ai_models import get_settings_row
-from app.services.embedding import _demo_vector, encode_text
+from app.services.embedding import (
+    _demo_vector,
+    encode_text,
+    get_embedding_index_status,
+    rebuild_all_embeddings,
+    retry_failed_embeddings,
+)
 from app.services.entry_relation import route_relations
 from app.services.secret_store import get_secret_store, secret_key
 from app.services.vector_store import cosine_similarity, deserialize_vector, serialize_vector
@@ -369,6 +380,188 @@ async def test_embedding_failed_test_marks_tested(
     data = (await client.get("/api/settings/ai")).json()
     assert data["embedding_available"] is False
     assert data["embedding_tested"] is True
+
+
+@pytest.mark.asyncio
+async def test_index_status_counts_and_retry_flows() -> None:
+    """索引状态统计与失败重试/全量重建的状态流转。"""
+    async with async_session_factory() as db:
+        workspace = Workspace(name="索引状态空间")
+        db.add(workspace)
+        await db.flush()
+        project = Project(name="索引项目", workspace_id=workspace.id)
+        db.add(project)
+        await db.flush()
+        node = Node(name="根", project_id=project.id, position=0)
+        db.add(node)
+        await db.flush()
+        first = Entry(
+            project_id=project.id,
+            node_id=node.id,
+            title="已索引知识",
+            content="内容",
+            main_type="knowledge",
+        )
+        second = Entry(
+            project_id=project.id,
+            node_id=node.id,
+            title="失败知识",
+            content="内容",
+            main_type="knowledge",
+        )
+        db.add_all([first, second])
+        await db.flush()
+        db.add(
+            EntryEmbedding(
+                workspace_id=workspace.id,
+                project_id=project.id,
+                entry_id=first.id,
+                model="doubao-embedding-vision-251215",
+                dimension=1,
+                embedding=serialize_vector([1.0]),
+                status=EMBEDDING_READY,
+            )
+        )
+        db.add(
+            EntryEmbedding(
+                workspace_id=workspace.id,
+                project_id=project.id,
+                entry_id=second.id,
+                model="doubao-embedding-vision-251215",
+                dimension=0,
+                status=EMBEDDING_FAILED,
+                error="超时",
+                retry_count=2,
+            )
+        )
+        await db.flush()
+
+        status = await get_embedding_index_status(db, workspace.id, project.id)
+        assert status.total == 2
+        assert status.ready == 1
+        assert status.failed == 1
+        assert status.pending == 0
+        assert status.missing == 0
+        assert len(status.failed_items) == 1
+        assert status.failed_items[0].title == "失败知识"
+        assert status.failed_items[0].error == "超时"
+
+        affected = await retry_failed_embeddings(db, workspace.id, project.id)
+        assert affected == 1
+        status = await get_embedding_index_status(db, workspace.id, project.id)
+        assert status.ready == 1
+        assert status.pending == 1
+        assert status.failed == 0
+
+        await rebuild_all_embeddings(db, workspace.id, project.id)
+        status = await get_embedding_index_status(db, workspace.id, project.id)
+        assert status.ready == 0
+        assert status.pending == 2
+
+        await db.execute(
+            delete(EntryEmbedding).where(EntryEmbedding.workspace_id == workspace.id)
+        )
+        await db.execute(delete(Entry).where(Entry.project_id == project.id))
+        await db.commit()
+
+
+@pytest.mark.asyncio
+async def test_auto_retry_caps_after_max_attempts() -> None:
+    """连续失败达到上限后不再自动重试，等待手动处理。"""
+    from app.embedding_worker import MAX_AUTO_RETRIES, _promote_stale_failed
+
+    async with async_session_factory() as db:
+        workspace = Workspace(name="重试上限空间")
+        db.add(workspace)
+        await db.flush()
+        project = Project(name="重试项目", workspace_id=workspace.id)
+        db.add(project)
+        await db.flush()
+        node = Node(name="根", project_id=project.id, position=0)
+        db.add(node)
+        await db.flush()
+        stale_time = datetime.now(UTC).replace(tzinfo=None) - timedelta(minutes=5)
+        entries = [
+            Entry(
+                project_id=project.id,
+                node_id=node.id,
+                title=f"知识{index}",
+                content="内容",
+                main_type="knowledge",
+            )
+            for index in range(2)
+        ]
+        db.add_all(entries)
+        await db.flush()
+        db.add(
+            EntryEmbedding(
+                workspace_id=workspace.id,
+                project_id=project.id,
+                entry_id=entries[0].id,
+                model="doubao-embedding-vision-251215",
+                dimension=0,
+                status=EMBEDDING_FAILED,
+                error="模型未开通",
+                retry_count=MAX_AUTO_RETRIES,
+                updated_at=stale_time,
+            )
+        )
+        db.add(
+            EntryEmbedding(
+                workspace_id=workspace.id,
+                project_id=project.id,
+                entry_id=entries[1].id,
+                model="doubao-embedding-vision-251215",
+                dimension=0,
+                status=EMBEDDING_FAILED,
+                error="模型未开通",
+                retry_count=MAX_AUTO_RETRIES - 1,
+                updated_at=stale_time,
+            )
+        )
+        await db.flush()
+
+        promoted = await _promote_stale_failed(db)
+
+        assert promoted == 1
+        rows = (
+            await db.execute(
+                select(EntryEmbedding).where(EntryEmbedding.workspace_id == workspace.id)
+            )
+        ).scalars().all()
+        status_by_retry = {row.retry_count: row.status for row in rows}
+        assert status_by_retry[MAX_AUTO_RETRIES] == EMBEDDING_FAILED
+        assert status_by_retry[MAX_AUTO_RETRIES - 1] == EMBEDDING_PENDING
+        await db.execute(
+            delete(EntryEmbedding).where(EntryEmbedding.workspace_id == workspace.id)
+        )
+        await db.execute(delete(Entry).where(Entry.project_id == project.id))
+        await db.commit()
+
+
+@pytest.mark.asyncio
+async def test_index_status_api_and_rebuild_guard(client: httpx.AsyncClient) -> None:
+    """索引状态接口返回统计，越权项目重建返回 404。"""
+    await _register(client)
+
+    response = await client.get("/api/settings/ai/embedding/index-status")
+    assert response.status_code == 200
+    data = response.json()
+    assert data["total"] == 0
+    assert data["ready"] == 0
+
+    guarded = await client.post(
+        "/api/settings/ai/embedding/rebuild",
+        json={"mode": "failed", "project_id": 99999},
+    )
+    assert guarded.status_code == 404
+
+    rebuilt = await client.post(
+        "/api/settings/ai/embedding/rebuild",
+        json={"mode": "failed"},
+    )
+    assert rebuilt.status_code == 200
+    assert rebuilt.json()["total"] == 0
 
 
 @pytest.mark.asyncio

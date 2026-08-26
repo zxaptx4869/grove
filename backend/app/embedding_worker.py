@@ -22,6 +22,7 @@ logger = logging.getLogger(__name__)
 POLL_INTERVAL_SECONDS = 0.5
 BATCH_LIMIT = 10
 STALE_RETRY_SECONDS = 60
+MAX_AUTO_RETRIES = 3
 
 
 async def _promote_stale_failed(db) -> int:
@@ -34,7 +35,10 @@ async def _promote_stale_failed(db) -> int:
     )
     promoted = 0
     for row in rows:
-        if row.updated_at is None or row.updated_at < threshold:
+        if (
+            row.retry_count < MAX_AUTO_RETRIES
+            and (row.updated_at is None or row.updated_at < threshold)
+        ):
             row.status = EMBEDDING_PENDING
             row.error = None
             promoted += 1
@@ -113,9 +117,11 @@ async def process_pending_embeddings() -> int:
                 row.model = result.model
                 row.status = EMBEDDING_READY
                 row.error = None
+                row.retry_count = 0
             else:
                 row.status = EMBEDDING_FAILED
                 row.error = result.error
+                row.retry_count += 1
         await db.commit()
     return len(rows)
 

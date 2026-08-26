@@ -443,6 +443,39 @@ export const testVisionAISettings = () =>
 export const testEmbeddingAISettings = () =>
   request<ConnectionTestPayload>('/api/settings/ai/embedding/test', { method: 'POST' })
 
+export interface EmbeddingIndexStatusItemPayload {
+  entry_id: number
+  title: string
+  error: string | null
+}
+
+export interface EmbeddingIndexStatusPayload {
+  total: number
+  ready: number
+  pending: number
+  failed: number
+  missing: number
+  failed_items: EmbeddingIndexStatusItemPayload[]
+}
+
+export interface EmbeddingRebuildPayload {
+  mode: 'failed' | 'all'
+  project_id?: number | null
+}
+
+export const fetchEmbeddingIndexStatus = (projectId?: number) =>
+  request<EmbeddingIndexStatusPayload>(
+    `/api/settings/ai/embedding/index-status${
+      projectId ? `?project_id=${projectId}` : ''
+    }`,
+  )
+
+export const rebuildEmbedding = (payload: EmbeddingRebuildPayload) =>
+  request<EmbeddingIndexStatusPayload>('/api/settings/ai/embedding/rebuild', {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  })
+
 export interface CandidateEvidencePayload {
   attachment_id: number
   quote: string

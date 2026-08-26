@@ -7,6 +7,10 @@ export const queryKeys = {
   directoryDraft: (projectId: number) => ['directory-draft', projectId],
   projectContext: (projectId: number) => ['project-context', projectId],
   aiSettings: ['ai-settings'],
+  embeddingIndexStatus: (projectId?: number) => [
+    'embedding-index-status',
+    projectId ?? 'all',
+  ],
   sourceCandidates: (sourceId: number) => ['source-candidates', sourceId],
   reviewSources: (projectId: number) => ['review-sources', projectId],
   reviewCandidates: (projectId: number) => ['review-candidates', projectId],

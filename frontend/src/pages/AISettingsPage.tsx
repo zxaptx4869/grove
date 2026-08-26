@@ -6,6 +6,7 @@ import {
   KeyRound,
   Loader2,
   PlugZap,
+  RefreshCw,
   Save,
   Sparkles,
   Trash2,
@@ -16,11 +17,13 @@ import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { useGroveMutation } from '@/hooks/useGroveMutation'
+import { useEmbeddingIndexStatus } from '@/hooks/useEmbeddingIndexStatus'
 import {
   clearTextAISettings,
   clearVisionAISettings,
   clearEmbeddingAISettings,
   fetchAISettings,
+  rebuildEmbedding,
   saveEmbeddingAISettings,
   saveTextAISettings,
   saveVisionAISettings,
@@ -223,7 +226,73 @@ function EmbeddingForm({
           </Button>
         ) : null}
       </div>
+      <EmbeddingIndexStatusBlock />
     </section>
+  )
+}
+
+function EmbeddingIndexStatusBlock() {
+  const status = useEmbeddingIndexStatus()
+  const retryFailed = useGroveMutation({
+    mutationFn: () => rebuildEmbedding({ mode: 'failed' }),
+    invalidates: [queryKeys.embeddingIndexStatus()],
+    onSuccess: () => toast.success('已重新提交失败项的语义索引'),
+    onError: (error) =>
+      toast.error(error instanceof Error ? error.message : '重试失败，请稍后再试'),
+  })
+  const rebuildAll = useGroveMutation({
+    mutationFn: () => rebuildEmbedding({ mode: 'all' }),
+    invalidates: [queryKeys.embeddingIndexStatus()],
+    onSuccess: () => toast.success('已发起全量重建'),
+    onError: (error) =>
+      toast.error(error instanceof Error ? error.message : '重建失败，请稍后再试'),
+  })
+
+  const data = status.data
+  if (!data || typeof data.total !== 'number' || data.total === 0) return null
+  const pendingCount = data.pending + data.missing
+
+  return (
+    <div className="mt-4 space-y-2 rounded-md border bg-muted/30 p-3">
+      <div className="flex flex-wrap items-center gap-2 text-body-sm">
+        <span>
+          语义索引：已索引 {data.ready}/{data.total}
+        </span>
+        {pendingCount > 0 ? <span>· 待索引 {pendingCount}</span> : null}
+        {data.failed > 0 ? <span className="text-destructive">· 失败 {data.failed}</span> : null}
+      </div>
+      <div className="flex flex-wrap items-center gap-2">
+        {data.failed > 0 ? (
+          <Button
+            size="sm"
+            variant="outline"
+            disabled={retryFailed.isPending}
+            onClick={() => retryFailed.mutate()}
+          >
+            <RefreshCw />
+            重试失败项
+          </Button>
+        ) : null}
+        <Button
+          size="sm"
+          variant="ghost"
+          disabled={rebuildAll.isPending}
+          onClick={() => rebuildAll.mutate()}
+        >
+          <RefreshCw />
+          全部重建
+        </Button>
+      </div>
+      {data.failed_items.length > 0 ? (
+        <ul className="max-h-32 space-y-1 overflow-auto text-caption text-muted-foreground">
+          {data.failed_items.map((item) => (
+            <li key={item.entry_id}>
+              「{item.title}」：{item.error}
+            </li>
+          ))}
+        </ul>
+      ) : null}
+    </div>
   )
 }
 

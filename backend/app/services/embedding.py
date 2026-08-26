@@ -5,10 +5,21 @@ import logging
 
 import httpx
 from pydantic import BaseModel
+from sqlalchemy import func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import get_settings
-from app.schemas.ai_settings import ConnectionTestOut
+from app.models import Entry, EntryEmbedding, Project
+from app.models.entry_embedding import (
+    EMBEDDING_FAILED,
+    EMBEDDING_PENDING,
+    EMBEDDING_READY,
+)
+from app.schemas.ai_settings import (
+    ConnectionTestOut,
+    EmbeddingIndexStatusItem,
+    EmbeddingIndexStatusOut,
+)
 from app.services.ai_models import get_settings_row
 from app.services.secret_store import get_secret_store, secret_key
 
@@ -117,3 +128,103 @@ async def test_embedding_connection(db: AsyncSession, workspace_id: int) -> Conn
             message=f"embedding 可用（{result.model}，{len(result.vector)} 维）",
         )
     return ConnectionTestOut(ok=False, message=result.error or "embedding 不可用")
+
+
+async def get_embedding_index_status(
+    db: AsyncSession,
+    workspace_id: int,
+    project_id: int | None = None,
+) -> EmbeddingIndexStatusOut:
+    """统计当前 Workspace（或指定项目）的语义索引状态。"""
+    row = await get_settings_row(db, workspace_id)
+    model = row.embedding_model
+
+    total_stmt = (
+        select(func.count(Entry.id))
+        .join(Project, Entry.project_id == Project.id)
+        .where(Project.workspace_id == workspace_id)
+    )
+    if project_id is not None:
+        total_stmt = total_stmt.where(Entry.project_id == project_id)
+    total = (await db.execute(total_stmt)).scalar_one()
+
+    count_stmt = (
+        select(EntryEmbedding.status, func.count())
+        .where(
+            EntryEmbedding.workspace_id == workspace_id,
+            EntryEmbedding.model == model,
+        )
+        .group_by(EntryEmbedding.status)
+    )
+    if project_id is not None:
+        count_stmt = count_stmt.where(EntryEmbedding.project_id == project_id)
+    counts = {status: count for status, count in (await db.execute(count_stmt)).all()}
+    ready = counts.get(EMBEDDING_READY, 0)
+    pending = counts.get(EMBEDDING_PENDING, 0)
+    failed = counts.get(EMBEDDING_FAILED, 0)
+    missing = max(0, total - ready - pending - failed)
+
+    items_stmt = (
+        select(EntryEmbedding, Entry.title)
+        .join(Entry, EntryEmbedding.entry_id == Entry.id)
+        .where(
+            EntryEmbedding.workspace_id == workspace_id,
+            EntryEmbedding.model == model,
+            EntryEmbedding.status == EMBEDDING_FAILED,
+        )
+        .order_by(EntryEmbedding.updated_at.desc())
+        .limit(20)
+    )
+    if project_id is not None:
+        items_stmt = items_stmt.where(EntryEmbedding.project_id == project_id)
+    failed_items = [
+        EmbeddingIndexStatusItem(entry_id=embedding.entry_id, title=title, error=embedding.error)
+        for embedding, title in (await db.execute(items_stmt)).all()
+    ]
+    return EmbeddingIndexStatusOut(
+        total=total,
+        ready=ready,
+        pending=pending,
+        failed=failed,
+        missing=missing,
+        failed_items=failed_items,
+    )
+
+
+async def retry_failed_embeddings(
+    db: AsyncSession,
+    workspace_id: int,
+    project_id: int | None = None,
+) -> int:
+    """把失败向量标记为待重建并清零重试计数，返回受影响行数。"""
+    row = await get_settings_row(db, workspace_id)
+    stmt = update(EntryEmbedding).where(
+        EntryEmbedding.workspace_id == workspace_id,
+        EntryEmbedding.model == row.embedding_model,
+        EntryEmbedding.status == EMBEDDING_FAILED,
+    )
+    if project_id is not None:
+        stmt = stmt.where(EntryEmbedding.project_id == project_id)
+    result = await db.execute(
+        stmt.values(status=EMBEDDING_PENDING, error=None, retry_count=0)
+    )
+    return result.rowcount or 0
+
+
+async def rebuild_all_embeddings(
+    db: AsyncSession,
+    workspace_id: int,
+    project_id: int | None = None,
+) -> int:
+    """把当前模型全部向量标记为待重建（换模型或全量重试用）。"""
+    row = await get_settings_row(db, workspace_id)
+    stmt = update(EntryEmbedding).where(
+        EntryEmbedding.workspace_id == workspace_id,
+        EntryEmbedding.model == row.embedding_model,
+    )
+    if project_id is not None:
+        stmt = stmt.where(EntryEmbedding.project_id == project_id)
+    result = await db.execute(
+        stmt.values(status=EMBEDDING_PENDING, error=None, retry_count=0)
+    )
+    return result.rowcount or 0

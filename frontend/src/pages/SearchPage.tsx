@@ -5,6 +5,7 @@ import { useNavigate } from 'react-router-dom'
 
 import { EmptyState } from '@/components/features/EmptyState'
 import { EntryCard, EntryList } from '@/components/features/EntryViews'
+import { EmbeddingIndexNotice } from '@/components/features/EmbeddingIndexStatus'
 import { Input } from '@/components/ui/input'
 import {
   searchEntries,
@@ -57,6 +58,7 @@ export function SearchPage() {
         <p className="mt-0.5 text-body text-muted-foreground">
           跨项目查找已确认的正式知识，不改变知识归属。
         </p>
+        <EmbeddingIndexNotice />
       </header>
 
       <div className="mb-5 flex flex-wrap items-center gap-2">

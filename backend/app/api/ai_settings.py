@@ -2,14 +2,16 @@
 
 from typing import Annotated
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException, status
 
 from app.api.deps import DbSession, get_current_workspace
-from app.models import Workspace
+from app.models import Project, Workspace
 from app.schemas.ai_settings import (
     AIProviderSettingsOut,
     ConnectionTestOut,
+    EmbeddingIndexStatusOut,
     EmbeddingProviderUpdate,
+    EmbeddingRebuildRequest,
     TextProviderUpdate,
     VisionProviderUpdate,
 )
@@ -18,7 +20,12 @@ from app.services.ai_models import (
     test_text_connection,
     test_vision_connection,
 )
-from app.services.embedding import test_embedding_connection
+from app.services.embedding import (
+    get_embedding_index_status,
+    rebuild_all_embeddings,
+    retry_failed_embeddings,
+    test_embedding_connection,
+)
 from app.services.secret_store import get_secret_store, secret_key
 
 router = APIRouter(prefix="/api/settings/ai", tags=["ai-settings"])
@@ -168,6 +175,49 @@ async def clear_embedding_settings(
     row.embedding_tested = False
     await db.commit()
     return _masked_out(row)
+
+
+async def _owned_project_or_404(
+    db: DbSession,
+    workspace: Workspace,
+    project_id: int,
+) -> Project:
+    """校验项目属于当前 Workspace，否则 404。"""
+    project = await db.get(Project, project_id)
+    if project is None or project.workspace_id != workspace.id:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="项目不存在")
+    return project
+
+
+@router.get("/embedding/index-status", response_model=EmbeddingIndexStatusOut)
+async def embedding_index_status_endpoint(
+    db: DbSession,
+    workspace: CurrentWorkspace,
+    project_id: int | None = None,
+) -> EmbeddingIndexStatusOut:
+    """返回当前 Workspace 或指定项目的语义索引状态。"""
+    if project_id is not None:
+        await _owned_project_or_404(db, workspace, project_id)
+    result = await get_embedding_index_status(db, workspace.id, project_id)
+    await db.commit()
+    return result
+
+
+@router.post("/embedding/rebuild", response_model=EmbeddingIndexStatusOut)
+async def embedding_rebuild_endpoint(
+    payload: EmbeddingRebuildRequest,
+    db: DbSession,
+    workspace: CurrentWorkspace,
+) -> EmbeddingIndexStatusOut:
+    """重试失败项或全量重建向量。"""
+    if payload.project_id is not None:
+        await _owned_project_or_404(db, workspace, payload.project_id)
+    if payload.mode == "all":
+        await rebuild_all_embeddings(db, workspace.id, payload.project_id)
+    else:
+        await retry_failed_embeddings(db, workspace.id, payload.project_id)
+    await db.commit()
+    return await get_embedding_index_status(db, workspace.id, payload.project_id)
 
 
 @router.post("/text/test", response_model=ConnectionTestOut)

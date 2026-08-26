@@ -47,6 +47,7 @@ import { Input } from '@/components/ui/input'
 import { Textarea } from '@/components/ui/textarea'
 import { CaptureDialog } from '@/components/features/CaptureDialog'
 import { DirectoryDraftDialog } from '@/components/features/DirectoryDraftDialog'
+import { EmbeddingIndexLine } from '@/components/features/EmbeddingIndexStatus'
 import { ProjectContextPanel } from '@/components/features/ProjectContextPanel'
 import { ReaderView } from '@/components/features/ReaderView'
 import { KnowledgeOverviewView } from '@/components/features/KnowledgeOverviewView'
@@ -1056,6 +1057,9 @@ export function ProjectPage() {
                   <ArrowRight className="size-4 shrink-0 text-muted-foreground transition-transform group-hover:translate-x-0.5" />
                 </Link>
               </div>
+            </section>
+            <section className="mt-4">
+              <EmbeddingIndexLine projectId={id} />
             </section>
             <section className="mt-7 border-t pt-5">
               <h2 className="text-[16px] font-[650] leading-6">项目目标与背景</h2>
