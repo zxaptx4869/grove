@@ -221,15 +221,14 @@ function EmbeddingForm({
   }
 
   async function confirmSave() {
-    if (pendingModel) {
-      try {
-        await onSave({ model: pendingModel })
-      } catch {
-        // 保存失败关闭弹窗并保持编辑态，错误提示由父级 toast 展示
-      }
+    if (!pendingModel) return
+    try {
+      await onSave({ model: pendingModel })
+      setEditing(false)
+    } catch {
+      // 保存失败：关闭弹窗但保持编辑态，便于修改或重试
     }
     setPendingModel(null)
-    setEditing(false)
   }
 
   function cancelEdit() {
