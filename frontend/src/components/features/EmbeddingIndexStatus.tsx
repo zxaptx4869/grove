@@ -1,4 +1,4 @@
-import { RefreshCw } from 'lucide-react'
+import { Loader2, RefreshCw } from 'lucide-react'
 import { toast } from 'sonner'
 
 import { Button } from '@/components/ui/button'
@@ -29,12 +29,15 @@ export function EmbeddingIndexLine({ projectId }: { projectId: number }) {
   const data = status.data
   if (!validStatus(data) || data.total === 0) return null
   const pendingCount = data.pending + data.missing
+  const indexing = pendingCount > 0
 
   return (
     <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-body-sm text-muted-foreground">
-      <span>
-        语义索引：已索引 {data.ready}/{data.total}
+      <span className="inline-flex items-center gap-1.5">
+        {indexing ? <Loader2 className="size-3.5 animate-spin" /> : null}
+        {indexing ? '语义索引：正在索引…' : `语义索引：已索引 ${data.ready}/${data.total}`}
       </span>
+      {indexing ? <span>· 已索引 {data.ready}/{data.total}</span> : null}
       {pendingCount > 0 ? <span>· 待索引 {pendingCount}</span> : null}
       {data.failed > 0 ? (
         <>
@@ -66,8 +69,9 @@ export function EmbeddingIndexNotice() {
   if (pendingCount > 0) parts.push(`${pendingCount} 条知识仍在建立语义索引`)
   if (data.failed > 0) parts.push(`${data.failed} 条知识语义索引失败`)
   return (
-    <p className="mt-1 text-body-sm text-muted-foreground">
-      {parts.join('，')}，关键词搜索不受影响。
-    </p>
+    <div className="mt-1 flex items-center gap-1.5 text-body-sm text-muted-foreground">
+      {pendingCount > 0 ? <Loader2 className="size-3.5 animate-spin" /> : null}
+      <p>{parts.join('，')}，关键词搜索不受影响。</p>
+    </div>
   )
 }

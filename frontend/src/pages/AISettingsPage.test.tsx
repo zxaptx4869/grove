@@ -78,6 +78,35 @@ describe('AISettingsPage', () => {
     expect(screen.getByText(/无需单独填写 API Key/)).toBeInTheDocument()
   })
 
+  it('索引进行中显示正在索引提示与进度', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn((input: RequestInfo | URL) => {
+        const url = String(input)
+        if (url.includes('/embedding/index-status')) {
+          return Promise.resolve({
+            ok: true,
+            json: async () => ({
+              total: 92,
+              ready: 12,
+              pending: 80,
+              failed: 0,
+              missing: 0,
+              failed_items: [],
+            }),
+          })
+        }
+        return Promise.resolve({ ok: true, json: async () => settingsPayload() })
+      }),
+    )
+
+    renderPage()
+
+    expect(await screen.findByText(/正在索引/)).toBeInTheDocument()
+    expect(screen.getByText(/已索引 12\/92/)).toBeInTheDocument()
+    expect(screen.getByText(/待索引 80/)).toBeInTheDocument()
+  })
+
   it('保存语义模型会调用 PUT /embedding', async () => {
     const calls: Array<{ method: string; path: string; body?: string }> = []
     vi.stubGlobal(

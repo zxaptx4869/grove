@@ -349,16 +349,33 @@ function EmbeddingIndexStatusBlock() {
   const data = status.data
   if (!data || typeof data.total !== 'number' || data.total === 0) return null
   const pendingCount = data.pending + data.missing
+  const indexing = pendingCount > 0
+  const progress = data.total > 0 ? Math.round((data.ready / data.total) * 100) : 0
 
   return (
     <div className="mt-4 space-y-2 rounded-md border bg-muted/30 p-3">
       <div className="flex flex-wrap items-center gap-2 text-body-sm">
-        <span>
-          语义索引：已索引 {data.ready}/{data.total}
+        <span className="inline-flex items-center gap-1.5">
+          {indexing ? <Loader2 className="size-3.5 animate-spin" /> : null}
+          {indexing ? '正在索引…' : '语义索引'}
         </span>
+        {!indexing ? <span>：已索引 {data.ready}/{data.total}</span> : null}
+        {indexing ? (
+          <span>
+            ：已索引 {data.ready}/{data.total}（{progress}%）
+          </span>
+        ) : null}
         {pendingCount > 0 ? <span>· 待索引 {pendingCount}</span> : null}
         {data.failed > 0 ? <span className="text-destructive">· 失败 {data.failed}</span> : null}
       </div>
+      {indexing ? (
+        <div className="h-1 overflow-hidden rounded-full bg-muted">
+          <div
+            className="h-full rounded-full bg-brand transition-all duration-500"
+            style={{ width: `${progress}%` }}
+          />
+        </div>
+      ) : null}
       <div className="flex flex-wrap items-center gap-2">
         {data.failed > 0 ? (
           <Button
