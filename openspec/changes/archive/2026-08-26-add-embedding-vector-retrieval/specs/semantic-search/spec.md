@@ -8,7 +8,7 @@
 ### Requirement: 混合候选召回
 系统 MUST 在语义重排前，基于查询与 Entry 标题、核心内容、目录节点名称及来源标题的关键词与字符重叠做确定性召回，并合并当前 Workspace 与所选范围内已确认 Entry 的 embedding 向量召回，形成候选集；候选集 MUST 限定在当前 Workspace 与所选范围内；embedding 未配置、调用失败或无可用向量时 MUST 降级为仅确定性召回并明确标记，不得静默中断。
 
-#### Scenario: 生成混合候选集
+#### Scenario: 生成候选集
 - **WHEN** 用户输入自然语言查询且 embedding 可用
 - **THEN** 系统返回确定性召回与 embedding 召回去重合并后的候选 Entry 集合，供语义重排使用
 
