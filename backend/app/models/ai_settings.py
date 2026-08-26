@@ -13,7 +13,7 @@ if TYPE_CHECKING:
 
 
 class AIProviderSettings(Base):
-    """当前 Workspace 的文本与视觉模型配置。"""
+    """当前 Workspace 的文本、视觉与 embedding 模型配置。"""
 
     __tablename__ = "ai_provider_settings"
 
@@ -37,6 +37,12 @@ class AIProviderSettings(Base):
     )
     vision_key_tail: Mapped[str | None] = mapped_column(String(8), nullable=True)
     vision_available: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    embedding_provider: Mapped[str] = mapped_column(String(32), default="doubao", nullable=False)
+    embedding_model: Mapped[str] = mapped_column(
+        String(128), default="doubao-embedding-vision-251215", nullable=False
+    )
+    embedding_key_tail: Mapped[str | None] = mapped_column(String(8), nullable=True)
+    embedding_available: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )

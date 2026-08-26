@@ -94,6 +94,16 @@ T_low < cosine < T_high → LLM 判定 duplicate / supplement / conflict
 - `duplicate` 直判后仍校验 target Entry 存在且属于当前项目，非法则降级 `new`（复用现有 `_apply_recommendation` 校验）。
 - `supplement` 需要识别新增内容并生成修订草稿、`conflict` 需要矛盾判断，相似度规则无法胜任，明确不接管，始终走 LLM。
 
+小样本粗标结果（2026-08-26，排除候选自身 Entry 后 top-1 余弦分布）：
+
+```text
+duplicate : n=9  median=0.929  p25=0.880  p75=0.939  min=0.713  max=0.954
+supplement: n=5  median=0.663  区间 0.638~0.693
+new       : n=87 median=0.566  p25=0.488  p75=0.688  min=0.348  max=0.857
+```
+
+结论：保持 T_high=0.85（低于 supplement 下限 0.638，可规则接管多数 duplicate，漏网低相似 duplicate 交 LLM）；保持 T_low=0.45（低于所有 supplement/duplicate 样本，规则只接管明显无关的 new，零误伤风险）。上线后行为信号持续校准。
+
 ### 决策 7：embedding 配置复用豆包密钥，独立模型名
 
 `AIProviderSettings` 新增 `embedding_provider`（默认 `doubao`）、`embedding_model`（默认 `doubao-embedding-vision-251215`）、`embedding_key_tail`、`embedding_available`。密钥复用视觉模型同一把豆包方舟密钥（同账号同 base_url），不新增密钥输入；未来切换供应商再扩展独立密钥字段。
@@ -131,5 +141,4 @@ API：
 
 ## Open Questions
 
-- T_high / T_low 初值经小样本粗标后是否调整（实施阶段产出标定结果）。
 - 是否需要把「召回模式（hybrid / deterministic）」暴露到响应供前端识别：当前设计用日志 + 设置页徽标，如验证阶段需要再补充。

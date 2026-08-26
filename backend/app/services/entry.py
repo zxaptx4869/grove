@@ -47,6 +47,7 @@ from app.schemas.entry import (
 )
 from app.services.behavior_signal import acceptance, record_behavior_signal
 from app.services.project_context import schedule_refresh
+from app.services.vector_store import mark_entry_embedding_pending
 
 logger = logging.getLogger(__name__)
 
@@ -234,6 +235,7 @@ async def archive_candidate(
     )
     await db.flush()
     await schedule_refresh(db, source.project_id, "entry_archived")
+    await mark_entry_embedding_pending(db, entry)
     return (
         await db.execute(
             select(Entry).options(*entry_eager_options()).where(Entry.id == entry.id)
@@ -338,6 +340,7 @@ async def apply_revision_to_entry(
     if changed:
         await _snapshot_entry_version(db, entry, VERSION_AI_REVISION, payload.change_summary)
     await schedule_refresh(db, source.project_id, "entry_edited")
+    await mark_entry_embedding_pending(db, entry)
     return (
         await db.execute(
             select(Entry).options(*entry_eager_options()).where(Entry.id == entry.id)
@@ -486,6 +489,7 @@ async def edit_entry(
     if changed:
         await _snapshot_entry_version(db, entry, VERSION_EDITED)
         await schedule_refresh(db, entry.project_id, "entry_edited")
+        await mark_entry_embedding_pending(db, entry)
     return entry
 
 
@@ -619,6 +623,7 @@ async def restore_entry_version(
             f"恢复到版本 {version.version_number}",
         )
         await schedule_refresh(db, entry.project_id, "entry_restored")
+        await mark_entry_embedding_pending(db, entry)
     return entry
 
 
@@ -710,6 +715,7 @@ async def apply_ai_revision_to_entry(
     if changed:
         await _snapshot_entry_version(db, entry, VERSION_AI_REVISION, payload.change_summary)
         await schedule_refresh(db, entry.project_id, "entry_edited")
+        await mark_entry_embedding_pending(db, entry)
         if payload.external_supplemented:
             await _create_revision_source(db, entry, payload)
     return entry

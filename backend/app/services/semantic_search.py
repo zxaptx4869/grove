@@ -9,50 +9,12 @@ from sqlalchemy.orm import selectinload
 from app.agents.semantic import SemanticRankingDraft, run_semantic_agent
 from app.models import Entry, Node, Project
 from app.services.entry import entry_eager_options
-from app.services.similarity import text_pair_similarity
+from app.services.vector_search import hybrid_recall_by_query, hybrid_recall_by_target
 
 logger = logging.getLogger(__name__)
 
 _RECALL_LIMIT = 20
 _RESULT_LIMIT = 10
-_KEYWORD_BONUS = 60.0
-
-
-def _keyword_hit(query: str, entry: Entry) -> bool:
-    """判断查询是否作为子串命中 Entry 的关键字段（含目录与来源标题）。"""
-    q = query.strip().casefold()
-    if not q:
-        return False
-    fields = [entry.title, entry.content, entry.node.name, entry.node.description or ""]
-    for evidence in entry.evidences:
-        fields.append(evidence.source.title if evidence.source else "")
-    return any(q in (field or "").casefold() for field in fields)
-
-
-def _recall_by_query(entries: list[Entry], query: str, top_k: int) -> list[Entry]:
-    """按查询与 Entry 的确定性相似度召回 top-K 候选。"""
-    scored: list[tuple[float, Entry]] = []
-    for entry in entries:
-        score = text_pair_similarity(query, "", entry.title, entry.content)
-        if _keyword_hit(query, entry):
-            score += _KEYWORD_BONUS
-        if score > 0:
-            scored.append((score, entry))
-    scored.sort(key=lambda item: item[0], reverse=True)
-    return [entry for _, entry in scored[:top_k]]
-
-
-def _recall_by_target(target: Entry, others: list[Entry], top_k: int) -> list[Entry]:
-    """按锚点 Entry 与候选 Entry 的确定性相似度召回 top-K 候选。"""
-    scored: list[tuple[float, Entry]] = []
-    for entry in others:
-        score = text_pair_similarity(
-            target.title, target.content, entry.title, entry.content
-        )
-        if score > 0:
-            scored.append((score, entry))
-    scored.sort(key=lambda item: item[0], reverse=True)
-    return [entry for _, entry in scored[:top_k]]
 
 
 async def _load_entries(
@@ -104,7 +66,7 @@ async def semantic_search_entries(
     if not query.strip():
         return []
     entries = await _load_entries(db, workspace_id, project_id)
-    candidates = _recall_by_query(entries, query, _RECALL_LIMIT)
+    candidates = await hybrid_recall_by_query(db, workspace_id, entries, query, _RECALL_LIMIT)
     if not candidates:
         return []
     draft, provider, model, is_fallback, error = await run_semantic_agent(
@@ -127,7 +89,7 @@ async def recommend_similar_entries(
     others = [entry for entry in entries if entry.id != target.id]
     if not others:
         return []
-    candidates = _recall_by_target(target, others, _RECALL_LIMIT)
+    candidates = await hybrid_recall_by_target(db, workspace_id, target, others, _RECALL_LIMIT)
     if not candidates:
         return []
     query = f"{target.title}\n{target.content[:300]}"

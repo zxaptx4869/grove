@@ -6,7 +6,12 @@ import logging
 from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.agents.relation import EntryRevisionDraft, run_relation_agent
+from app.agents.relation import (
+    EntryRevisionDraft,
+    RelationDraft,
+    RelationRecommendationDraft,
+    run_relation_agent,
+)
 from app.models import Candidate, Entry, Node, Source
 from app.models.extraction import (
     RELATION_CONFLICT,
@@ -17,8 +22,13 @@ from app.models.extraction import (
 )
 from app.services.extraction import get_active_candidates
 from app.services.similarity import text_pair_similarity
+from app.services.vector_search import hybrid_recall_for_candidate
 
 logger = logging.getLogger(__name__)
+
+# 关系判断阈值初值（保守区间，中间带交给 LLM）；待小样本标定后调整
+RELATION_HIGH_SIMILARITY = 0.85
+RELATION_LOW_SIMILARITY = 0.45
 
 
 def retrieve_similar_entries(
@@ -118,11 +128,53 @@ async def route_relations(db: AsyncSession, source_id: int) -> None:
             candidate.revision_draft = None
         return
 
-    similar = {
-        candidate.id: retrieve_similar_entries(entries, candidate)
-        for candidate in candidates
-    }
-    draft = await run_relation_agent(db, source.workspace_id, candidates, similar)
+    similar: dict[int, list[Entry]] = {}
+    rule_decisions: list[RelationRecommendationDraft] = []
+    llm_candidates: list[Candidate] = []
+    for candidate in candidates:
+        ranked = await hybrid_recall_for_candidate(
+            db, source.workspace_id, candidate, entries, top_k=5
+        )
+        similar[candidate.id] = [entry for entry, _ in ranked]
+        top_entry, top_cosine = ranked[0] if ranked else (None, None)
+        if top_cosine is not None and top_entry is not None:
+            if top_cosine >= RELATION_HIGH_SIMILARITY:
+                rule_decisions.append(
+                    RelationRecommendationDraft(
+                        candidate_id=candidate.id,
+                        relation_status=RELATION_DUPLICATE,
+                        target_entry_id=top_entry.id,
+                        reason=(
+                            f"向量相似度 {top_cosine:.2f} ≥ 阈值"
+                            f" {RELATION_HIGH_SIMILARITY}，规则判定重复"
+                        ),
+                    )
+                )
+                continue
+            if top_cosine <= RELATION_LOW_SIMILARITY:
+                rule_decisions.append(
+                    RelationRecommendationDraft(
+                        candidate_id=candidate.id,
+                        relation_status=RELATION_NEW,
+                        reason=(
+                            f"向量相似度 {top_cosine:.2f} ≤ 阈值"
+                            f" {RELATION_LOW_SIMILARITY}，规则判定新知识"
+                        ),
+                    )
+                )
+                continue
+        llm_candidates.append(candidate)
+
+    draft = RelationDraft(recommendations=list(rule_decisions))
+    if llm_candidates:
+        llm_similar = {
+            candidate.id: similar.get(candidate.id, []) for candidate in llm_candidates
+        }
+        llm_draft = await run_relation_agent(
+            db, source.workspace_id, llm_candidates, llm_similar
+        )
+        draft.recommendations.extend(llm_draft.recommendations)
+
     valid_entry_ids = {entry.id for entry in entries}
     by_id = {candidate.id: candidate for candidate in candidates}
     for recommendation in draft.recommendations:

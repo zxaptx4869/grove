@@ -28,6 +28,7 @@ from app.api.sources import router as sources_router
 from app.context.worker import run_context_worker
 from app.core.config import get_settings
 from app.directory_worker import run_directory_draft_worker
+from app.embedding_worker import run_embedding_worker
 from app.processing.worker import run_worker
 
 logger = logging.getLogger(__name__)
@@ -49,6 +50,8 @@ async def lifespan(app: FastAPI):
         tasks.append(asyncio.create_task(run_context_worker(stop_event)))
     if settings.directory_draft_worker_enabled:
         tasks.append(asyncio.create_task(run_directory_draft_worker(stop_event)))
+    if settings.embedding_worker_enabled:
+        tasks.append(asyncio.create_task(run_embedding_worker(stop_event)))
     yield
     stop_event.set()
     for task in tasks:

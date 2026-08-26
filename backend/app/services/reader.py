@@ -29,7 +29,7 @@ from app.services.entry_relation import route_relations
 from app.services.extraction import candidate_out
 from app.services.project_context import get_project_context_out
 from app.services.routing import route_source
-from app.services.semantic_search import _recall_by_query
+from app.services.vector_search import hybrid_recall_by_query
 
 logger = logging.getLogger(__name__)
 
@@ -146,7 +146,9 @@ async def ask_reader(
             insufficient_note="范围内没有已确认 Entry",
         )
 
-    candidates = _recall_by_query(entries, request.message, _RECALL_LIMIT)
+    candidates = await hybrid_recall_by_query(
+        db, workspace_id, entries, request.message, _RECALL_LIMIT
+    )
     if not candidates:
         return ReaderAnswerOut(
             answer="当前问答范围内没有与问题相关的已确认知识。",

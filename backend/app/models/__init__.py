@@ -8,6 +8,7 @@ from app.models.directory_draft import (
     DirectoryDraftNode,
 )
 from app.models.entry import Entry, EntrySourceEvidence, EntryVersion
+from app.models.entry_embedding import EntryEmbedding
 from app.models.extraction import Candidate, Extraction
 from app.models.processing import ProcessingTask
 from app.models.project import Node, Project
@@ -26,6 +27,7 @@ __all__ = [
     "DirectoryDraftMessage",
     "DirectoryDraftNode",
     "Entry",
+    "EntryEmbedding",
     "EntrySourceEvidence",
     "EntryVersion",
     "Extraction",

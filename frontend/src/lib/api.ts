@@ -382,6 +382,11 @@ export interface AIProviderSettingsPayload {
   vision_configured: boolean
   vision_key_tail: string | null
   vision_available: boolean
+  embedding_provider: string
+  embedding_model: string
+  embedding_configured: boolean
+  embedding_key_tail: string | null
+  embedding_available: boolean
 }
 
 export interface ConnectionTestPayload {
@@ -391,6 +396,10 @@ export interface ConnectionTestPayload {
 
 export interface ProviderSettingsSavePayload {
   api_key: string
+  model?: string | null
+}
+
+export interface EmbeddingSettingsSavePayload {
   model?: string | null
 }
 
@@ -409,17 +418,29 @@ export const saveVisionAISettings = (payload: ProviderSettingsSavePayload) =>
     body: JSON.stringify(payload),
   })
 
+export const saveEmbeddingAISettings = (payload: EmbeddingSettingsSavePayload) =>
+  request<AIProviderSettingsPayload>('/api/settings/ai/embedding', {
+    method: 'PUT',
+    body: JSON.stringify(payload),
+  })
+
 export const clearTextAISettings = () =>
   request<AIProviderSettingsPayload>('/api/settings/ai/text', { method: 'DELETE' })
 
 export const clearVisionAISettings = () =>
   request<AIProviderSettingsPayload>('/api/settings/ai/vision', { method: 'DELETE' })
 
+export const clearEmbeddingAISettings = () =>
+  request<AIProviderSettingsPayload>('/api/settings/ai/embedding', { method: 'DELETE' })
+
 export const testTextAISettings = () =>
   request<ConnectionTestPayload>('/api/settings/ai/text/test', { method: 'POST' })
 
 export const testVisionAISettings = () =>
   request<ConnectionTestPayload>('/api/settings/ai/vision/test', { method: 'POST' })
+
+export const testEmbeddingAISettings = () =>
+  request<ConnectionTestPayload>('/api/settings/ai/embedding/test', { method: 'POST' })
 
 export interface CandidateEvidencePayload {
   attachment_id: number

@@ -1,6 +1,15 @@
 import { useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
-import { CircleCheck, CircleX, KeyRound, Loader2, PlugZap, Save, Trash2 } from 'lucide-react'
+import {
+  CircleCheck,
+  CircleX,
+  KeyRound,
+  Loader2,
+  PlugZap,
+  Save,
+  Sparkles,
+  Trash2,
+} from 'lucide-react'
 import { toast } from 'sonner'
 
 import { Badge } from '@/components/ui/badge'
@@ -10,9 +19,12 @@ import { useGroveMutation } from '@/hooks/useGroveMutation'
 import {
   clearTextAISettings,
   clearVisionAISettings,
+  clearEmbeddingAISettings,
   fetchAISettings,
+  saveEmbeddingAISettings,
   saveTextAISettings,
   saveVisionAISettings,
+  testEmbeddingAISettings,
   testTextAISettings,
   testVisionAISettings,
   type AIProviderSettingsPayload,
@@ -127,6 +139,83 @@ function ProviderForm({
   )
 }
 
+function EmbeddingForm({
+  data,
+  onSave,
+  onTest,
+  onClear,
+}: {
+  data: AIProviderSettingsPayload
+  onSave: (payload: { model: string | null }) => void
+  onTest: () => void
+  onClear: () => void
+}) {
+  const [modelValue, setModelValue] = useState(data.embedding_model)
+
+  return (
+    <section className="rounded-lg border bg-card p-5">
+      <div className="flex items-start justify-between gap-4">
+        <div>
+          <div className="flex items-center gap-2">
+            <h2 className="text-[16px] font-[650] leading-6">语义模型（Embedding）</h2>
+            {availableBadge(data.embedding_configured, data.embedding_available)}
+          </div>
+          <p className="mt-1 text-body-sm text-muted-foreground">
+            {data.embedding_provider} · {data.embedding_model}
+          </p>
+          {data.embedding_configured ? (
+            <p className="mt-1 text-caption text-confirmed">
+              已配置 · 复用视觉模型密钥（尾号 ••••{data.embedding_key_tail}）
+            </p>
+          ) : (
+            <p className="mt-1 text-caption text-muted-foreground">
+              配置视觉模型密钥后即可复用，无需单独填写 API Key
+            </p>
+          )}
+        </div>
+        <Sparkles className="size-5 text-muted-foreground" />
+      </div>
+
+      <div className="mt-4 space-y-3">
+        <div className="space-y-1.5">
+          <label htmlFor="embedding-model" className="text-body-sm font-medium">
+            模型名（可选）
+          </label>
+          <Input
+            id="embedding-model"
+            value={modelValue}
+            onChange={(event) => setModelValue(event.target.value)}
+            placeholder={data.embedding_model}
+          />
+          <p className="text-caption text-muted-foreground">
+            密钥复用视觉模型（豆包方舟）同一把 API Key；停用后语义功能退回确定性检索。
+          </p>
+        </div>
+      </div>
+
+      <div className="mt-4 flex flex-wrap items-center gap-2">
+        <Button
+          size="sm"
+          onClick={() => onSave({ model: modelValue.trim() || null })}
+        >
+          <Save />
+          保存
+        </Button>
+        <Button size="sm" variant="outline" onClick={onTest}>
+          <PlugZap />
+          测试连接
+        </Button>
+        {data.embedding_configured ? (
+          <Button size="sm" variant="ghost" onClick={onClear}>
+            <Trash2 />
+            停用
+          </Button>
+        ) : null}
+      </div>
+    </section>
+  )
+}
+
 /** 模型设置页：用户自带密钥（BYOK），产品不提供模型。 */
 export function AISettingsPage() {
   const settings = useQuery({
@@ -148,6 +237,13 @@ export function AISettingsPage() {
     onError: (error) =>
       toast.error(error instanceof Error ? error.message : '保存失败，请重试'),
   })
+  const saveEmbedding = useGroveMutation({
+    mutationFn: saveEmbeddingAISettings,
+    invalidates: [queryKeys.aiSettings],
+    onSuccess: () => toast.success('语义模型配置已保存'),
+    onError: (error) =>
+      toast.error(error instanceof Error ? error.message : '保存失败，请重试'),
+  })
   const clearText = useGroveMutation({
     mutationFn: clearTextAISettings,
     invalidates: [queryKeys.aiSettings],
@@ -161,6 +257,13 @@ export function AISettingsPage() {
     onSuccess: () => toast.success('视觉模型密钥已清除'),
     onError: (error) =>
       toast.error(error instanceof Error ? error.message : '清除失败，请重试'),
+  })
+  const clearEmbedding = useGroveMutation({
+    mutationFn: clearEmbeddingAISettings,
+    invalidates: [queryKeys.aiSettings],
+    onSuccess: () => toast.success('语义模型已停用'),
+    onError: (error) =>
+      toast.error(error instanceof Error ? error.message : '停用失败，请重试'),
   })
   const testText = useGroveMutation({
     mutationFn: testTextAISettings,
@@ -179,6 +282,16 @@ export function AISettingsPage() {
       result.ok
         ? toast.success('视觉模型连接正常')
         : toast.error(result.message || '视觉模型连接失败'),
+    onError: (error) =>
+      toast.error(error instanceof Error ? error.message : '测试连接失败'),
+  })
+  const testEmbedding = useGroveMutation({
+    mutationFn: testEmbeddingAISettings,
+    invalidates: [queryKeys.aiSettings],
+    onSuccess: (result) =>
+      result.ok
+        ? toast.success('语义模型连接正常')
+        : toast.error(result.message || '语义模型连接失败'),
     onError: (error) =>
       toast.error(error instanceof Error ? error.message : '测试连接失败'),
   })
@@ -222,6 +335,13 @@ export function AISettingsPage() {
             onSave={(payload) => saveVision.mutate(payload)}
             onTest={() => testVision.mutate()}
             onClear={() => clearVision.mutate()}
+          />
+          <EmbeddingForm
+            key={`embedding-${settings.data.embedding_configured}-${settings.data.embedding_model}`}
+            data={settings.data}
+            onSave={(payload) => saveEmbedding.mutate(payload)}
+            onTest={() => testEmbedding.mutate()}
+            onClear={() => clearEmbedding.mutate()}
           />
         </div>
       )}

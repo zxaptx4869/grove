@@ -59,6 +59,11 @@ class Settings(BaseSettings):
         default=True, description="是否启用目录起草 Worker"
     )
 
+    # 进程内 embedding 向量重建 Worker（测试环境可置 false）
+    embedding_worker_enabled: bool = Field(
+        default=True, description="是否启用 embedding 向量重建 Worker"
+    )
+
     # 模型密钥存储：keychain（默认）/ memory（测试）
     secret_store: str = Field(default="keychain", description="密钥安全存储实现")
 

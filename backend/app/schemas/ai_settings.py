@@ -16,6 +16,11 @@ class AIProviderSettingsOut(BaseModel):
     vision_configured: bool
     vision_key_tail: str | None
     vision_available: bool
+    embedding_provider: str
+    embedding_model: str
+    embedding_configured: bool
+    embedding_key_tail: str | None
+    embedding_available: bool
 
 
 class TextProviderUpdate(BaseModel):
@@ -29,6 +34,12 @@ class VisionProviderUpdate(BaseModel):
     """保存视觉模型密钥；模型名可选覆盖。"""
 
     api_key: str = Field(min_length=1, max_length=512)
+    model: str | None = Field(default=None, min_length=1, max_length=128)
+
+
+class EmbeddingProviderUpdate(BaseModel):
+    """保存 embedding 模型名；密钥复用豆包视觉密钥。"""
+
     model: str | None = Field(default=None, min_length=1, max_length=128)
 
 
