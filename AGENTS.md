@@ -17,6 +17,7 @@
 - **推送与合并必须经用户确认**：完成实现后先停留在本地分支（可提交、可 push 前待命），用户验证无问题并明确确认后，再推送远端或合并分支。
 - **本地提交及时化**：每次完成一段可验证的代码修改（功能、修复、测试、文档或配置）后，立即在本地提交一次，避免改动长期滞留工作区导致丢失或难以回溯；推送与合并仍须经用户确认。
 - **分支策略**：开发新功能（OpenSpec change）时，自 proposal 阶段起新建 `codex/<change>` 特性分支，不在 main 上直接开发；小 bug 修复、文档与配置调整不强制新分支。推送与合并前仍须经用户确认。
+- **收尾遗留登记**：每次功能变更或任务收尾（归档 / 最终提交前）时，若发现遗留问题或后续优化项，先询问用户是否需要记录；用户同意后，将优化项写入 `docs/discussions/Grove后续优化清单.md`，注明来源 change（或任务）与日期，确保后续优化时有据可查。
 - CLI 可用命令：`openspec list`、`openspec status --change <name>`、`openspec instructions <artifact> --change <name>`、`openspec validate --all --strict`、`openspec archive <change>`。
 
 ## 3. 工程约定
