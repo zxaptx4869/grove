@@ -587,8 +587,17 @@ async def test_mark_pending_dedups_other_model_rows() -> None:
 
 
 @pytest.mark.asyncio
-async def test_model_change_triggers_full_rebuild(client: httpx.AsyncClient) -> None:
+async def test_model_change_triggers_full_rebuild(
+    client: httpx.AsyncClient,
+    monkeypatch,
+) -> None:
     """保存变更后的模型名应自动全量重建：旧向量删除，按新模型重建 pending。"""
+    async def _fake_probe(db, workspace_id, model):
+        del db, workspace_id, model
+        return ConnectionTestOut(ok=True, message="ok")
+
+    monkeypatch.setattr("app.api.ai_settings.probe_embedding_model", _fake_probe)
+
     username = await _register(client)
     async with async_session_factory() as db:
         user = (
@@ -633,6 +642,8 @@ async def test_model_change_triggers_full_rebuild(client: httpx.AsyncClient) -> 
         json={"model": "doubao-embedding-vision-999999"},
     )
     assert response.status_code == 200
+    assert response.json()["embedding_model"] == "doubao-embedding-vision-999999"
+    assert response.json()["embedding_tested"] is True
 
     data = (await client.get("/api/settings/ai/embedding/index-status")).json()
     assert data["total"] == 1
@@ -651,6 +662,159 @@ async def test_model_change_triggers_full_rebuild(client: httpx.AsyncClient) -> 
         assert row.status == EMBEDDING_PENDING
         await db.execute(
             delete(EntryEmbedding).where(EntryEmbedding.workspace_id == workspace_id)
+        )
+        await db.execute(delete(Entry).where(Entry.project_id == project.id))
+        await db.commit()
+
+
+@pytest.mark.asyncio
+async def test_model_change_aborts_when_probe_fails(
+    client: httpx.AsyncClient,
+    monkeypatch,
+) -> None:
+    """新模型探针失败时拒绝切换：模型名不变，旧索引保留。"""
+
+    async def _fake_probe(db, workspace_id, model):
+        del db, workspace_id, model
+        return ConnectionTestOut(ok=False, message="模型未开通")
+
+    monkeypatch.setattr("app.api.ai_settings.probe_embedding_model", _fake_probe)
+
+    username = await _register(client)
+    async with async_session_factory() as db:
+        user = (
+            await db.execute(select(User).where(User.username == username))
+        ).scalar_one()
+        member = (
+            await db.execute(
+                select(WorkspaceMember).where(WorkspaceMember.user_id == user.id)
+            )
+        ).scalar_one()
+        workspace_id = member.workspace_id
+        project = Project(name="探针项目", workspace_id=workspace_id)
+        db.add(project)
+        await db.flush()
+        node = Node(name="根", project_id=project.id, position=0)
+        db.add(node)
+        await db.flush()
+        entry = Entry(
+            project_id=project.id,
+            node_id=node.id,
+            title="知识",
+            content="内容",
+            main_type="knowledge",
+        )
+        db.add(entry)
+        await db.flush()
+        db.add(
+            EntryEmbedding(
+                workspace_id=workspace_id,
+                project_id=project.id,
+                entry_id=entry.id,
+                model="doubao-embedding-vision-251215",
+                dimension=1,
+                embedding=serialize_vector([1.0]),
+                status=EMBEDDING_READY,
+            )
+        )
+        await db.commit()
+
+    response = await client.put(
+        "/api/settings/ai/embedding",
+        json={"model": "doubao-embedding-vision-999999"},
+    )
+
+    assert response.status_code == 400
+    assert "未切换" in response.json()["detail"]
+    data = (await client.get("/api/settings/ai")).json()
+    assert data["embedding_model"] == "doubao-embedding-vision-251215"
+    status = (await client.get("/api/settings/ai/embedding/index-status")).json()
+    assert status["ready"] == 1
+    assert status["pending"] == 0
+
+    async with async_session_factory() as db:
+        await db.execute(
+            delete(EntryEmbedding).where(EntryEmbedding.workspace_id == workspace_id)
+        )
+        await db.execute(delete(Entry).where(Entry.project_id == project.id))
+        await db.commit()
+
+
+@pytest.mark.asyncio
+async def test_rebuild_all_aborts_when_probe_fails(
+    client: httpx.AsyncClient,
+    monkeypatch,
+) -> None:
+    """全量重建前探针失败时拒绝清空旧索引。"""
+
+    async def _fake_probe(db, workspace_id, model):
+        del db, workspace_id, model
+        return ConnectionTestOut(ok=False, message="模型未开通")
+
+    monkeypatch.setattr("app.api.ai_settings.probe_embedding_model", _fake_probe)
+    await _register(client)
+
+    response = await client.post(
+        "/api/settings/ai/embedding/rebuild",
+        json={"mode": "all"},
+    )
+
+    assert response.status_code == 400
+    assert "未重建" in response.json()["detail"]
+
+
+@pytest.mark.asyncio
+async def test_pause_remaining_pending_marks_failed() -> None:
+    """熔断把剩余待处理向量标记为失败并触顶重试计数。"""
+    from app.embedding_worker import MAX_AUTO_RETRIES, pause_remaining_pending
+
+    async with async_session_factory() as db:
+        workspace = Workspace(name="熔断空间")
+        db.add(workspace)
+        await db.flush()
+        project = Project(name="熔断项目", workspace_id=workspace.id)
+        db.add(project)
+        await db.flush()
+        node = Node(name="根", project_id=project.id, position=0)
+        db.add(node)
+        await db.flush()
+        entry = Entry(
+            project_id=project.id,
+            node_id=node.id,
+            title="知识",
+            content="内容",
+            main_type="knowledge",
+        )
+        db.add(entry)
+        await db.flush()
+        db.add(
+            EntryEmbedding(
+                workspace_id=workspace.id,
+                project_id=project.id,
+                entry_id=entry.id,
+                model="doubao-embedding-vision-251215",
+                dimension=0,
+                status=EMBEDDING_PENDING,
+            )
+        )
+        await db.flush()
+
+        paused = await pause_remaining_pending(db)
+        await db.commit()
+
+        assert paused >= 1
+        row = (
+            await db.execute(
+                select(EntryEmbedding).where(
+                    EntryEmbedding.workspace_id == workspace.id
+                )
+            )
+        ).scalar_one()
+        assert row.status == EMBEDDING_FAILED
+        assert row.retry_count == MAX_AUTO_RETRIES
+        assert "已停止" in row.error
+        await db.execute(
+            delete(EntryEmbedding).where(EntryEmbedding.workspace_id == workspace.id)
         )
         await db.execute(delete(Entry).where(Entry.project_id == project.id))
         await db.commit()

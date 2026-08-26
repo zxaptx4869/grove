@@ -22,6 +22,7 @@ from app.services.ai_models import (
 )
 from app.services.embedding import (
     get_embedding_index_status,
+    probe_embedding_model,
     rebuild_all_embeddings,
     retry_failed_embeddings,
     test_embedding_connection,
@@ -140,11 +141,19 @@ async def save_embedding_settings(
     model_changed = False
     if payload.model is not None:
         model_changed = payload.model != row.embedding_model
-        row.embedding_model = payload.model
+        if model_changed:
+            # 切换前先用新模型做探针：不可用则拒绝切换，保留旧配置与旧索引
+            probe = await probe_embedding_model(db, workspace.id, payload.model)
+            if not probe.ok:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail=f"新模型不可用，未切换，旧索引已保留：{probe.message}",
+                )
+            row.embedding_model = payload.model
     # 复用豆包视觉密钥尾号作为已配置标记；视觉未配置时 embedding 保持未配置
     row.embedding_key_tail = row.vision_key_tail
-    row.embedding_available = False
-    row.embedding_tested = False
+    row.embedding_available = model_changed
+    row.embedding_tested = model_changed
     if model_changed:
         # 换模型后向量空间不同：删除旧向量并按新模型全量重建，避免混用与重复行
         await rebuild_all_embeddings(db, workspace.id)
@@ -218,6 +227,14 @@ async def embedding_rebuild_endpoint(
     if payload.project_id is not None:
         await _owned_project_or_404(db, workspace, payload.project_id)
     if payload.mode == "all":
+        # 全量重建会清空旧向量，先验证当前模型可用再动手
+        settings_row = await get_settings_row(db, workspace.id)
+        probe = await probe_embedding_model(db, workspace.id, settings_row.embedding_model)
+        if not probe.ok:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"当前模型不可用，未重建，旧索引保留：{probe.message}",
+            )
         await rebuild_all_embeddings(db, workspace.id, payload.project_id)
     else:
         await retry_failed_embeddings(db, workspace.id, payload.project_id)

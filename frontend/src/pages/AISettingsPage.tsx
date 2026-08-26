@@ -418,7 +418,7 @@ export function AISettingsPage() {
   const saveEmbedding = useGroveMutation({
     mutationFn: saveEmbeddingAISettings,
     invalidates: [queryKeys.aiSettings],
-    onSuccess: () => toast.success('语义模型配置已保存，请点击测试连接确认可用'),
+    onSuccess: () => toast.success('语义模型配置已保存'),
     onError: (error) =>
       toast.error(error instanceof Error ? error.message : '保存失败，请重试'),
   })

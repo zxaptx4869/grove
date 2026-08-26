@@ -23,6 +23,9 @@ POLL_INTERVAL_SECONDS = 0.5
 BATCH_LIMIT = 10
 STALE_RETRY_SECONDS = 60
 MAX_AUTO_RETRIES = 3
+# 连续失败达到该条数即触发熔断，停止处理剩余待重建向量
+CIRCUIT_FAIL_THRESHOLD = 5
+PAUSE_ERROR = "模型不可用，已停止自动重建（请检查模型配置后手动重试）"
 
 
 async def _promote_stale_failed(db) -> int:
@@ -90,8 +93,22 @@ async def backfill_missing_embedding_rows(db) -> int:
     return created
 
 
-async def process_pending_embeddings() -> int:
-    """处理一批待重建向量，返回处理条数（含失败重试提升）。"""
+async def pause_remaining_pending(db) -> int:
+    """熔断：把剩余待处理向量标记为失败并触顶重试计数，防止继续逐条撞墙。"""
+    result = await db.execute(
+        update(EntryEmbedding)
+        .where(EntryEmbedding.status == EMBEDDING_PENDING)
+        .values(
+            status=EMBEDDING_FAILED,
+            error=PAUSE_ERROR,
+            retry_count=MAX_AUTO_RETRIES,
+        )
+    )
+    return result.rowcount or 0
+
+
+async def process_pending_embeddings() -> tuple[int, int]:
+    """处理一批待重建向量，返回 (处理条数, 本批失败条数)。"""
     async with async_session_factory() as db:
         await _promote_stale_failed(db)
         rows = (
@@ -104,7 +121,8 @@ async def process_pending_embeddings() -> int:
         ).scalars().all()
         if not rows:
             await db.commit()
-            return 0
+            return 0, 0
+        failed_in_batch = 0
         for row in rows:
             entry = await db.get(Entry, row.entry_id)
             if entry is None:
@@ -122,8 +140,9 @@ async def process_pending_embeddings() -> int:
                 row.status = EMBEDDING_FAILED
                 row.error = result.error
                 row.retry_count += 1
+                failed_in_batch += 1
         await db.commit()
-    return len(rows)
+    return len(rows), failed_in_batch
 
 
 async def run_embedding_worker(stop_event: asyncio.Event) -> None:
@@ -135,12 +154,27 @@ async def run_embedding_worker(stop_event: asyncio.Event) -> None:
                 logger.info("向量回填：为 %d 条历史 Entry 创建待重建记录", created)
     except Exception:  # noqa: BLE001
         logger.exception("向量回填失败，继续进入轮询")
+    consecutive_failures = 0
     while not stop_event.is_set():
         try:
-            handled = await process_pending_embeddings()
+            handled, failed_in_batch = await process_pending_embeddings()
+            if handled > 0 and failed_in_batch == handled:
+                consecutive_failures += handled
+            else:
+                consecutive_failures = 0
+            if consecutive_failures >= CIRCUIT_FAIL_THRESHOLD:
+                async with async_session_factory() as db:
+                    paused = await pause_remaining_pending(db)
+                    await db.commit()
+                logger.warning(
+                    "向量编码连续失败 %d 条，熔断并暂停剩余 %d 条待重建（模型不可用）",
+                    consecutive_failures,
+                    paused,
+                )
+                consecutive_failures = 0
         except Exception:  # noqa: BLE001
             logger.exception("处理待重建向量发生未预期错误")
-            handled = False
+            handled = 0
 
         if not handled:
             try:

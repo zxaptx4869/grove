@@ -84,10 +84,12 @@ async def encode_text(
     db: AsyncSession,
     workspace_id: int,
     text: str,
+    *,
+    model: str | None = None,
 ) -> EmbeddingResult:
     """把纯文本编码为稠密向量；未配置密钥或调用失败时返回降级结果。"""
     row = await get_settings_row(db, workspace_id)
-    model = row.embedding_model
+    model = model or row.embedding_model
     secret = await _get_embedding_secret(db, workspace_id)
     if not secret:
         return EmbeddingResult(
@@ -137,15 +139,22 @@ async def encode_text(
         )
 
 
-async def test_embedding_connection(db: AsyncSession, workspace_id: int) -> ConnectionTestOut:
-    """用最小纯文本编码测试 embedding 连接并返回结果。"""
-    result = await encode_text(db, workspace_id, "测试")
+async def probe_embedding_model(
+    db: AsyncSession,
+    workspace_id: int,
+    model: str,
+) -> ConnectionTestOut:
+    """用最小纯文本验证指定模型当前可用；不可用时返回失败原因。"""
+    result = await encode_text(db, workspace_id, "测试", model=model)
     if result.vector is not None:
-        return ConnectionTestOut(
-            ok=True,
-            message=f"embedding 可用（{result.model}，{len(result.vector)} 维）",
-        )
-    return ConnectionTestOut(ok=False, message=result.error or "embedding 不可用")
+        return ConnectionTestOut(ok=True, message=f"模型可用（{len(result.vector)} 维）")
+    return ConnectionTestOut(ok=False, message=result.error or "模型不可用")
+
+
+async def test_embedding_connection(db: AsyncSession, workspace_id: int) -> ConnectionTestOut:
+    """用当前配置模型做最小编码测试并返回结果。"""
+    row = await get_settings_row(db, workspace_id)
+    return await probe_embedding_model(db, workspace_id, row.embedding_model)
 
 
 async def get_embedding_index_status(
