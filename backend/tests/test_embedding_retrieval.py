@@ -4,13 +4,16 @@ import uuid
 
 import httpx
 import pytest
-from sqlalchemy import select
+from sqlalchemy import delete, select
 
 from app.db.session import async_session_factory
+from app.embedding_worker import backfill_missing_embedding_rows
 from app.main import create_app
-from app.models import Candidate, Source, Workspace
+from app.models import Candidate, Entry, EntryEmbedding, Node, Project, Source, Workspace
+from app.models.entry_embedding import EMBEDDING_PENDING, EMBEDDING_READY
 from app.processing import worker
 from app.schemas.ai_settings import ConnectionTestOut
+from app.services.ai_models import get_settings_row
 from app.services.embedding import _demo_vector, encode_text
 from app.services.entry_relation import route_relations
 from app.services.secret_store import get_secret_store, secret_key
@@ -102,6 +105,102 @@ def test_vector_store_roundtrip_and_cosine() -> None:
     assert cosine_similarity([1.0, 0.0], [1.0, 0.0]) == pytest.approx(1.0)
     assert cosine_similarity([1.0, 0.0], [0.0, 1.0]) == pytest.approx(0.0)
     assert cosine_similarity([], [0.0, 1.0]) == 0.0
+
+
+@pytest.mark.asyncio
+async def test_backfill_creates_missing_rows() -> None:
+    """启动回填应为没有向量记录的 Entry 创建待重建行。"""
+    async with async_session_factory() as db:
+        workspace = Workspace(name="测试空间")
+        db.add(workspace)
+        await db.flush()
+        project = Project(name="测试项目", workspace_id=workspace.id)
+        db.add(project)
+        await db.flush()
+        node = Node(name="根", project_id=project.id, position=0)
+        db.add(node)
+        await db.flush()
+        db.add(
+            Entry(
+                project_id=project.id,
+                node_id=node.id,
+                title="旧知识",
+                content="内容",
+                main_type="knowledge",
+            )
+        )
+        await db.flush()
+
+        created = await backfill_missing_embedding_rows(db)
+
+        assert created == 1
+        row = (
+            await db.execute(
+                select(EntryEmbedding).where(EntryEmbedding.workspace_id == workspace.id)
+            )
+        ).scalar_one()
+        assert row.status == EMBEDDING_PENDING
+        assert row.workspace_id == workspace.id
+        assert row.project_id == project.id
+        assert row.model == "doubao-embedding-vision-251215"
+        # 只清理本次测试数据，避免污染共享测试库
+        await db.execute(
+            delete(EntryEmbedding).where(EntryEmbedding.workspace_id == workspace.id)
+        )
+        await db.execute(delete(Entry).where(Entry.project_id == project.id))
+        await db.commit()
+
+
+@pytest.mark.asyncio
+async def test_backfill_marks_stale_model_pending() -> None:
+    """旧模型向量在回填时被标记为待重建，避免混用向量空间。"""
+    async with async_session_factory() as db:
+        workspace = Workspace(name="测试空间")
+        db.add(workspace)
+        await db.flush()
+        project = Project(name="测试项目", workspace_id=workspace.id)
+        db.add(project)
+        await db.flush()
+        node = Node(name="根", project_id=project.id, position=0)
+        db.add(node)
+        await db.flush()
+        entry = Entry(
+            project_id=project.id,
+            node_id=node.id,
+            title="旧知识",
+            content="内容",
+            main_type="knowledge",
+        )
+        db.add(entry)
+        await db.flush()
+        db.add(
+            EntryEmbedding(
+                workspace_id=workspace.id,
+                project_id=project.id,
+                entry_id=entry.id,
+                model="old-model",
+                dimension=1,
+                embedding=serialize_vector([1.0]),
+                status=EMBEDDING_READY,
+            )
+        )
+        await get_settings_row(db, workspace.id)
+        await db.flush()
+
+        await backfill_missing_embedding_rows(db)
+
+        row = (
+            await db.execute(
+                select(EntryEmbedding).where(EntryEmbedding.workspace_id == workspace.id)
+            )
+        ).scalar_one()
+        assert row.status == EMBEDDING_PENDING
+        assert row.model == "old-model"
+        await db.execute(
+            delete(EntryEmbedding).where(EntryEmbedding.workspace_id == workspace.id)
+        )
+        await db.execute(delete(Entry).where(Entry.project_id == project.id))
+        await db.commit()
 
 
 @pytest.mark.asyncio

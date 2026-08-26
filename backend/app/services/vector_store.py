@@ -84,6 +84,7 @@ async def load_ready_vectors(
     *,
     project_id: int | None = None,
     entry_ids: set[int] | None = None,
+    model: str | None = None,
 ) -> list[tuple[int, list[float]]]:
     """加载当前 Workspace（可限定项目/Entry）内已就绪的向量，返回 (entry_id, vector)。"""
     stmt = select(EntryEmbedding).where(
@@ -91,6 +92,8 @@ async def load_ready_vectors(
         EntryEmbedding.status == EMBEDDING_READY,
         EntryEmbedding.embedding.is_not(None),
     )
+    if model is not None:
+        stmt = stmt.where(EntryEmbedding.model == model)
     if project_id is not None:
         stmt = stmt.where(EntryEmbedding.project_id == project_id)
     if entry_ids is not None:

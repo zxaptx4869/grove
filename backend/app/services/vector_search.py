@@ -67,7 +67,9 @@ async def _embedding_scores(
         logger.info("embedding 不可用（%s），混合召回降级为确定性召回", result.error)
         return [], {}
     entry_ids = {entry.id for entry in entries}
-    vectors = await load_ready_vectors(db, workspace_id, entry_ids=entry_ids)
+    vectors = await load_ready_vectors(
+        db, workspace_id, entry_ids=entry_ids, model=result.model
+    )
     by_id = {entry.id: entry for entry in entries}
     scored: list[tuple[float, Entry]] = []
     for entry_id, vector in vectors:

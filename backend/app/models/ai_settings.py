@@ -8,6 +8,9 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db.session import Base
 
+DEFAULT_EMBEDDING_PROVIDER = "doubao"
+DEFAULT_EMBEDDING_MODEL = "doubao-embedding-vision-251215"
+
 if TYPE_CHECKING:
     from app.models.workspace import Workspace
 
@@ -37,9 +40,11 @@ class AIProviderSettings(Base):
     )
     vision_key_tail: Mapped[str | None] = mapped_column(String(8), nullable=True)
     vision_available: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
-    embedding_provider: Mapped[str] = mapped_column(String(32), default="doubao", nullable=False)
+    embedding_provider: Mapped[str] = mapped_column(
+        String(32), default=DEFAULT_EMBEDDING_PROVIDER, nullable=False
+    )
     embedding_model: Mapped[str] = mapped_column(
-        String(128), default="doubao-embedding-vision-251215", nullable=False
+        String(128), default=DEFAULT_EMBEDDING_MODEL, nullable=False
     )
     embedding_key_tail: Mapped[str | None] = mapped_column(String(8), nullable=True)
     embedding_available: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
