@@ -67,7 +67,7 @@ function ProviderForm({
 }: {
   kind: 'text' | 'vision'
   data: AIProviderSettingsPayload
-  onSave: (payload: { api_key: string; model: string | null }) => void
+  onSave: (payload: { api_key: string; model: string | null }) => Promise<unknown>
   onTest: () => void
   onClear: () => void
 }) {
@@ -145,12 +145,16 @@ function ProviderForm({
             <Button
               size="sm"
               disabled={!canSave}
-              onClick={() => {
-                onSave({
-                  api_key: apiKey.trim(),
-                  model: modelValue.trim() || null,
-                })
-                setEditing(false)
+              onClick={async () => {
+                try {
+                  await onSave({
+                    api_key: apiKey.trim(),
+                    model: modelValue.trim() || null,
+                  })
+                  setEditing(false)
+                } catch {
+                  // 保存失败保持编辑态，错误提示由父级 toast 展示
+                }
               }}
             >
               <Save />
@@ -191,7 +195,7 @@ function EmbeddingForm({
   onClear,
 }: {
   data: AIProviderSettingsPayload
-  onSave: (payload: { model: string | null }) => void
+  onSave: (payload: { model: string | null }) => Promise<unknown>
   onTest: () => void
   onClear: () => void
 }) {
@@ -202,19 +206,27 @@ function EmbeddingForm({
   const total =
     status.data && typeof status.data.total === 'number' ? status.data.total : null
 
-  function requestSave() {
+  async function requestSave() {
     const next = modelValue.trim() || data.embedding_model
     if (next !== data.embedding_model) {
       setPendingModel(next)
       return
     }
-    onSave({ model: next })
-    setEditing(false)
+    try {
+      await onSave({ model: next })
+      setEditing(false)
+    } catch {
+      // 保存失败保持编辑态
+    }
   }
 
-  function confirmSave() {
+  async function confirmSave() {
     if (pendingModel) {
-      onSave({ model: pendingModel })
+      try {
+        await onSave({ model: pendingModel })
+      } catch {
+        // 保存失败关闭弹窗并保持编辑态，错误提示由父级 toast 展示
+      }
     }
     setPendingModel(null)
     setEditing(false)
@@ -519,7 +531,7 @@ export function AISettingsPage() {
             key={`text-${settings.data.text_configured}-${settings.data.text_model}`}
             kind="text"
             data={settings.data}
-            onSave={(payload) => saveText.mutate(payload)}
+            onSave={(payload) => saveText.mutateAsync(payload)}
             onTest={() => testText.mutate()}
             onClear={() => clearText.mutate()}
           />
@@ -527,14 +539,14 @@ export function AISettingsPage() {
             key={`vision-${settings.data.vision_configured}-${settings.data.vision_model}`}
             kind="vision"
             data={settings.data}
-            onSave={(payload) => saveVision.mutate(payload)}
+            onSave={(payload) => saveVision.mutateAsync(payload)}
             onTest={() => testVision.mutate()}
             onClear={() => clearVision.mutate()}
           />
           <EmbeddingForm
             key={`embedding-${settings.data.embedding_configured}-${settings.data.embedding_model}`}
             data={settings.data}
-            onSave={(payload) => saveEmbedding.mutate(payload)}
+            onSave={(payload) => saveEmbedding.mutateAsync(payload)}
             onTest={() => testEmbedding.mutate()}
             onClear={() => clearEmbedding.mutate()}
           />

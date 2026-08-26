@@ -284,6 +284,9 @@ async def test_encode_text_parses_dict_data(monkeypatch) -> None:
         def __init__(self, timeout: float):
             self.timeout = timeout
 
+        async def aclose(self) -> None:
+            return None
+
         async def __aenter__(self):
             return self
 
@@ -318,6 +321,9 @@ async def test_encode_text_maps_http_error_to_friendly_message(monkeypatch) -> N
     class FakeClient:
         def __init__(self, timeout: float):
             self.timeout = timeout
+
+        async def aclose(self) -> None:
+            return None
 
         async def __aenter__(self):
             return self
@@ -764,8 +770,8 @@ async def test_rebuild_all_aborts_when_probe_fails(
 
 
 @pytest.mark.asyncio
-async def test_pause_remaining_pending_marks_failed() -> None:
-    """熔断把剩余待处理向量标记为失败并触顶重试计数。"""
+async def test_pause_remaining_pending_marks_failed_by_model() -> None:
+    """熔断只暂停指定模型的待处理向量，不影响其他模型。"""
     from app.embedding_worker import MAX_AUTO_RETRIES, pause_remaining_pending
 
     async with async_session_factory() as db:
@@ -797,22 +803,44 @@ async def test_pause_remaining_pending_marks_failed() -> None:
                 status=EMBEDDING_PENDING,
             )
         )
+        other = Entry(
+            project_id=project.id,
+            node_id=node.id,
+            title="其他模型知识",
+            content="内容",
+            main_type="knowledge",
+        )
+        db.add(other)
+        await db.flush()
+        db.add(
+            EntryEmbedding(
+                workspace_id=workspace.id,
+                project_id=project.id,
+                entry_id=other.id,
+                model="另一模型",
+                dimension=0,
+                status=EMBEDDING_PENDING,
+            )
+        )
         await db.flush()
 
-        paused = await pause_remaining_pending(db)
+        paused = await pause_remaining_pending(db, "doubao-embedding-vision-251215")
         await db.commit()
 
         assert paused >= 1
-        row = (
+        rows = (
             await db.execute(
                 select(EntryEmbedding).where(
                     EntryEmbedding.workspace_id == workspace.id
                 )
             )
-        ).scalar_one()
-        assert row.status == EMBEDDING_FAILED
-        assert row.retry_count == MAX_AUTO_RETRIES
-        assert "已停止" in row.error
+        ).scalars().all()
+        by_model = {row.model: row for row in rows}
+        paused_row = by_model["doubao-embedding-vision-251215"]
+        assert paused_row.status == EMBEDDING_FAILED
+        assert paused_row.retry_count == MAX_AUTO_RETRIES
+        assert "已停止" in paused_row.error
+        assert by_model["另一模型"].status == EMBEDDING_PENDING
         await db.execute(
             delete(EntryEmbedding).where(EntryEmbedding.workspace_id == workspace.id)
         )
@@ -934,7 +962,7 @@ async def test_relation_high_similarity_rule_duplicate(client, monkeypatch) -> N
 
     async def _fake_hybrid(db, workspace_id, candidate, entries, top_k):
         del db, workspace_id, candidate, top_k
-        return [(entries[0], 0.99)]
+        return ([(entries[0], 0.99)], (entries[0], 0.99))
 
     monkeypatch.setattr(
         "app.services.entry_relation.hybrid_recall_for_candidate",
@@ -969,7 +997,7 @@ async def test_relation_low_similarity_rule_new(client, monkeypatch) -> None:
 
     async def _fake_hybrid(db, workspace_id, candidate, entries, top_k):
         del db, workspace_id, candidate, top_k
-        return [(entries[0], 0.10)]
+        return ([(entries[0], 0.10)], (entries[0], 0.10))
 
     monkeypatch.setattr(
         "app.services.entry_relation.hybrid_recall_for_candidate",
@@ -1004,7 +1032,7 @@ async def test_relation_middle_similarity_goes_to_llm(client, monkeypatch) -> No
 
     async def _fake_hybrid(db, workspace_id, candidate, entries, top_k):
         del db, workspace_id, candidate, top_k
-        return [(entries[0], 0.70)]
+        return ([(entries[0], 0.70)], (entries[0], 0.70))
 
     monkeypatch.setattr(
         "app.services.entry_relation.hybrid_recall_for_candidate",

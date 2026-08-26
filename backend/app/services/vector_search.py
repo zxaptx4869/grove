@@ -64,7 +64,7 @@ async def _embedding_scores(
     """编码文本并返回范围内按余弦相似度降序的 Entry 与其相似度；embedding 不可用时为空。"""
     result = await encode_text(db, workspace_id, text)
     if result.is_fallback or result.vector is None:
-        logger.info("embedding 不可用（%s），混合召回降级为确定性召回", result.error)
+        logger.debug("embedding 不可用（%s），混合召回降级为确定性召回", result.error)
         return [], {}
     entry_ids = {entry.id for entry in entries}
     vectors = await load_ready_vectors(
@@ -144,8 +144,12 @@ async def hybrid_recall_for_candidate(
     candidate,
     entries: list[Entry],
     top_k: int,
-) -> list[tuple[Entry, float | None]]:
-    """关系判断混合召回：返回按融合排序的 (Entry, 向量相似度)；embedding 不可用时相似度为 None。"""
+) -> tuple[list[tuple[Entry, float | None]], tuple[Entry, float] | None]:
+    """关系判断混合召回：返回 (按融合排序的 (Entry, 向量相似度), 余弦最高的 Entry)。
+
+    阈值规则应基于「候选集内最大余弦」判定，而不是 RRF 融合第一名的余弦；
+    embedding 不可用时最大余弦为 None。
+    """
     deterministic = _deterministic_by_target(candidate, entries)
     embedding, cosine_by_id = await _embedding_scores(
         db,
@@ -154,4 +158,13 @@ async def hybrid_recall_for_candidate(
         f"{candidate.title or ''}\n{candidate.content or ''}",
     )
     merged = _rrf_merge(deterministic, embedding, top_k=top_k)
-    return [(entry, cosine_by_id.get(entry.id)) for entry in merged]
+    ranked = [(entry, cosine_by_id.get(entry.id)) for entry in merged]
+    by_id = {entry.id: entry for entry in entries}
+    best: tuple[Entry, float] | None = None
+    for entry_id, score in cosine_by_id.items():
+        entry = by_id.get(entry_id)
+        if entry is None:
+            continue
+        if best is None or score > best[1]:
+            best = (entry, score)
+    return ranked, best

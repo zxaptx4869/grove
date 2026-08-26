@@ -86,8 +86,13 @@ async def encode_text(
     text: str,
     *,
     model: str | None = None,
+    client: httpx.AsyncClient | None = None,
 ) -> EmbeddingResult:
-    """把纯文本编码为稠密向量；未配置密钥或调用失败时返回降级结果。"""
+    """把纯文本编码为稠密向量。
+
+    未配置密钥或网络/接口失败时返回降级结果；响应结构异常（解析错误）直接抛出，
+    避免把实现缺陷伪装成「模型不可用」。
+    """
     row = await get_settings_row(db, workspace_id)
     model = model or row.embedding_model
     secret = await _get_embedding_secret(db, workspace_id)
@@ -100,43 +105,63 @@ async def encode_text(
             error="未配置豆包密钥",
         )
     settings = get_settings()
+    http = client if client is not None else httpx.AsyncClient(timeout=30)
     try:
-        async with httpx.AsyncClient(timeout=30) as client:
-            response = await client.post(
+        try:
+            response = await http.post(
                 f"{settings.doubao_base_url}/embeddings/multimodal",
                 headers={"Authorization": f"Bearer {secret}"},
                 json={"model": model, "input": [{"type": "text", "text": text}]},
             )
             response.raise_for_status()
-            payload = response.json()
-        data = payload.get("data") or {}
-        if isinstance(data, dict):
-            items = [data]
-        elif isinstance(data, list):
-            items = data
-        else:
-            items = []
-        if not items or "embedding" not in items[0]:
-            raise RuntimeError("embedding 响应缺少向量数据")
+        except httpx.HTTPStatusError as exc:
+            logger.warning("embedding 接口返回错误：%s", exc)
+            return EmbeddingResult(
+                vector=None,
+                provider=EMBEDDING_PROVIDER,
+                model=model,
+                is_fallback=True,
+                error=_friendly_error(exc),
+            )
+        except httpx.TransportError as exc:
+            logger.warning("embedding 网络请求失败：%s", exc)
+            return EmbeddingResult(
+                vector=None,
+                provider=EMBEDDING_PROVIDER,
+                model=model,
+                is_fallback=True,
+                error="语义模型网络请求失败",
+            )
+    finally:
+        if client is None:
+            await http.aclose()
+
+    try:
+        payload = response.json()
+    except ValueError as exc:
+        raise RuntimeError("embedding 响应不是合法 JSON") from exc
+    data = payload.get("data") or {}
+    if isinstance(data, dict):
+        items = [data]
+    elif isinstance(data, list):
+        items = data
+    else:
+        items = []
+    if not items or "embedding" not in items[0]:
+        raise RuntimeError("embedding 响应缺少向量数据")
+    try:
         vector = [float(value) for value in items[0]["embedding"]]
-        if not vector:
-            raise RuntimeError("embedding 向量为空")
-        return EmbeddingResult(
-            vector=vector,
-            provider=EMBEDDING_PROVIDER,
-            model=model,
-            is_fallback=False,
-            error=None,
-        )
-    except Exception as exc:  # noqa: BLE001
-        logger.warning("embedding 编码失败，降级确定性召回：%s", exc)
-        return EmbeddingResult(
-            vector=None,
-            provider=EMBEDDING_PROVIDER,
-            model=model,
-            is_fallback=True,
-            error=_friendly_error(exc),
-        )
+    except (TypeError, ValueError) as exc:
+        raise RuntimeError("embedding 响应向量格式异常") from exc
+    if not vector:
+        raise RuntimeError("embedding 向量为空")
+    return EmbeddingResult(
+        vector=vector,
+        provider=EMBEDDING_PROVIDER,
+        model=model,
+        is_fallback=False,
+        error=None,
+    )
 
 
 async def probe_embedding_model(

@@ -132,12 +132,12 @@ async def route_relations(db: AsyncSession, source_id: int) -> None:
     rule_decisions: list[RelationRecommendationDraft] = []
     llm_candidates: list[Candidate] = []
     for candidate in candidates:
-        ranked = await hybrid_recall_for_candidate(
+        ranked, best = await hybrid_recall_for_candidate(
             db, source.workspace_id, candidate, entries, top_k=5
         )
         similar[candidate.id] = [entry for entry, _ in ranked]
-        top_entry, top_cosine = ranked[0] if ranked else (None, None)
-        if top_cosine is not None and top_entry is not None:
+        if best is not None:
+            top_entry, top_cosine = best
             if top_cosine >= RELATION_HIGH_SIMILARITY:
                 rule_decisions.append(
                     RelationRecommendationDraft(
@@ -145,7 +145,7 @@ async def route_relations(db: AsyncSession, source_id: int) -> None:
                         relation_status=RELATION_DUPLICATE,
                         target_entry_id=top_entry.id,
                         reason=(
-                            f"向量相似度 {top_cosine:.2f} ≥ 阈值"
+                            f"最大向量相似度 {top_cosine:.2f} ≥ 阈值"
                             f" {RELATION_HIGH_SIMILARITY}，规则判定重复"
                         ),
                     )
@@ -157,7 +157,7 @@ async def route_relations(db: AsyncSession, source_id: int) -> None:
                         candidate_id=candidate.id,
                         relation_status=RELATION_NEW,
                         reason=(
-                            f"向量相似度 {top_cosine:.2f} ≤ 阈值"
+                            f"最大向量相似度 {top_cosine:.2f} ≤ 阈值"
                             f" {RELATION_LOW_SIMILARITY}，规则判定新知识"
                         ),
                     )
