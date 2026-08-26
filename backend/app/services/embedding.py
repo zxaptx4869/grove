@@ -57,6 +57,24 @@ def _demo_vector(text: str) -> list[float]:
     return vector
 
 
+def _friendly_error(exc: Exception) -> str:
+    """把编码异常转换为用户可理解的短提示；完整错误保留在日志。"""
+    status_code = getattr(exc, "response", None)
+    if status_code is not None:
+        code = getattr(status_code, "status_code", None)
+        if code == 401:
+            return "语义模型密钥无效，请在模型设置中检查密钥"
+        if code == 404:
+            return "语义模型不存在或未开通，请检查模型名"
+        if code == 429:
+            return "语义模型调用过于频繁，将自动重试"
+        if code is not None and code >= 500:
+            return "语义模型服务暂时不可用，将自动重试"
+        if code is not None:
+            return f"语义模型接口返回错误（{code}）"
+    return "语义模型网络请求失败"
+
+
 async def _get_embedding_secret(db: AsyncSession, workspace_id: int) -> str | None:
     """读取豆包密钥（与视觉模型共用）。"""
     return get_secret_store().get(secret_key(workspace_id, EMBEDDING_PROVIDER))
@@ -115,7 +133,7 @@ async def encode_text(
             provider=EMBEDDING_PROVIDER,
             model=model,
             is_fallback=True,
-            error=f"编码失败：{exc}",
+            error=_friendly_error(exc),
         )
 
 
@@ -196,11 +214,9 @@ async def retry_failed_embeddings(
     workspace_id: int,
     project_id: int | None = None,
 ) -> int:
-    """把失败向量标记为待重建并清零重试计数，返回受影响行数。"""
-    row = await get_settings_row(db, workspace_id)
+    """把失败向量标记为待重建并清零重试计数（不限定模型，覆盖旧模型名行），返回受影响行数。"""
     stmt = update(EntryEmbedding).where(
         EntryEmbedding.workspace_id == workspace_id,
-        EntryEmbedding.model == row.embedding_model,
         EntryEmbedding.status == EMBEDDING_FAILED,
     )
     if project_id is not None:
@@ -216,11 +232,9 @@ async def rebuild_all_embeddings(
     workspace_id: int,
     project_id: int | None = None,
 ) -> int:
-    """把当前模型全部向量标记为待重建（换模型或全量重试用）。"""
-    row = await get_settings_row(db, workspace_id)
+    """把当前 Workspace 全部向量标记为待重建（换模型或全量重试用，覆盖旧模型名行）。"""
     stmt = update(EntryEmbedding).where(
         EntryEmbedding.workspace_id == workspace_id,
-        EntryEmbedding.model == row.embedding_model,
     )
     if project_id is not None:
         stmt = stmt.where(EntryEmbedding.project_id == project_id)

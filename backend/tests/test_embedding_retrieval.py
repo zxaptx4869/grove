@@ -297,6 +297,45 @@ async def test_encode_text_parses_dict_data(monkeypatch) -> None:
 
 
 @pytest.mark.asyncio
+async def test_encode_text_maps_http_error_to_friendly_message(monkeypatch) -> None:
+    """HTTP 错误应转换为用户可理解的短提示，而不是原始异常文本。"""
+
+    class FakeClient:
+        def __init__(self, timeout: float):
+            self.timeout = timeout
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *args) -> None:
+            return None
+
+        async def post(self, url, headers=None, json=None):
+            del url, headers, json
+            request = httpx.Request("POST", "http://test/embeddings/multimodal")
+            response = httpx.Response(404, request=request)
+            raise httpx.HTTPStatusError("404 Not Found", request=request, response=response)
+
+    monkeypatch.setattr(
+        "app.services.embedding.httpx.AsyncClient",
+        lambda timeout: FakeClient(timeout),
+    )
+
+    async with async_session_factory() as db:
+        workspace = Workspace(name="测试空间")
+        db.add(workspace)
+        await db.flush()
+        get_secret_store().set(secret_key(workspace.id, "doubao"), "ark-test-key")
+        result = await encode_text(db, workspace.id, "测试")
+
+    assert result.is_fallback is True
+    assert result.vector is None
+    assert "未开通" in result.error
+    assert "404 Not Found" not in result.error
+    assert "ark.cn-beijing" not in result.error
+
+
+@pytest.mark.asyncio
 async def test_embedding_config_reuses_vision_key(client: httpx.AsyncClient) -> None:
     """embedding 配置复用豆包视觉密钥，无需单独填写密钥。"""
     await _register(client)
@@ -409,7 +448,14 @@ async def test_index_status_counts_and_retry_flows() -> None:
             content="内容",
             main_type="knowledge",
         )
-        db.add_all([first, second])
+        third = Entry(
+            project_id=project.id,
+            node_id=node.id,
+            title="旧模型知识",
+            content="内容",
+            main_type="knowledge",
+        )
+        db.add_all([first, second, third])
         await db.flush()
         db.add(
             EntryEmbedding(
@@ -434,29 +480,42 @@ async def test_index_status_counts_and_retry_flows() -> None:
                 retry_count=2,
             )
         )
+        db.add(
+            EntryEmbedding(
+                workspace_id=workspace.id,
+                project_id=project.id,
+                entry_id=third.id,
+                model="旧模型名",
+                dimension=0,
+                status=EMBEDDING_FAILED,
+                error="旧模型失败",
+            )
+        )
         await db.flush()
 
         status = await get_embedding_index_status(db, workspace.id, project.id)
-        assert status.total == 2
+        assert status.total == 3
         assert status.ready == 1
         assert status.failed == 1
         assert status.pending == 0
-        assert status.missing == 0
+        assert status.missing == 1
         assert len(status.failed_items) == 1
         assert status.failed_items[0].title == "失败知识"
         assert status.failed_items[0].error == "超时"
 
         affected = await retry_failed_embeddings(db, workspace.id, project.id)
-        assert affected == 1
+        assert affected == 2
         status = await get_embedding_index_status(db, workspace.id, project.id)
         assert status.ready == 1
         assert status.pending == 1
         assert status.failed == 0
+        assert status.missing == 1
 
         await rebuild_all_embeddings(db, workspace.id, project.id)
         status = await get_embedding_index_status(db, workspace.id, project.id)
         assert status.ready == 0
         assert status.pending == 2
+        assert status.missing == 1
 
         await db.execute(
             delete(EntryEmbedding).where(EntryEmbedding.workspace_id == workspace.id)
