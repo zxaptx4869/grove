@@ -43,6 +43,7 @@ class AIProviderSettings(Base):
     )
     embedding_key_tail: Mapped[str | None] = mapped_column(String(8), nullable=True)
     embedding_available: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    embedding_tested: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )

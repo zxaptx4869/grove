@@ -181,6 +181,7 @@ async def test_embedding_config_reuses_vision_key(client: httpx.AsyncClient) -> 
     assert data["embedding_configured"] is True
     assert data["embedding_key_tail"] == "wxyz"
     assert data["embedding_available"] is False
+    assert data["embedding_tested"] is False
 
 
 @pytest.mark.asyncio
@@ -195,6 +196,7 @@ async def test_clear_embedding_disables(client: httpx.AsyncClient) -> None:
     assert response.status_code == 200
     assert response.json()["embedding_configured"] is False
     assert response.json()["embedding_key_tail"] is None
+    assert response.json()["embedding_tested"] is False
 
 
 @pytest.mark.asyncio
@@ -218,6 +220,31 @@ async def test_embedding_test_connection_updates_available(
     assert response.json()["ok"] is True
     data = (await client.get("/api/settings/ai")).json()
     assert data["embedding_available"] is True
+    assert data["embedding_tested"] is True
+
+
+@pytest.mark.asyncio
+async def test_embedding_failed_test_marks_tested(
+    client: httpx.AsyncClient,
+    monkeypatch,
+) -> None:
+    """连接测试失败也应记录已测试，徽标可区分「未测试」与「连接失败」。"""
+    await _register(client)
+    await client.put("/api/settings/ai/vision", json={"api_key": "ark-1234567890wxyz"})
+    await client.put("/api/settings/ai/embedding", json={})
+
+    async def _fake_test(db, workspace_id):
+        del db, workspace_id
+        return ConnectionTestOut(ok=False, message="模型未开通")
+
+    monkeypatch.setattr("app.api.ai_settings.test_embedding_connection", _fake_test)
+    response = await client.post("/api/settings/ai/embedding/test")
+
+    assert response.status_code == 200
+    assert response.json()["ok"] is False
+    data = (await client.get("/api/settings/ai")).json()
+    assert data["embedding_available"] is False
+    assert data["embedding_tested"] is True
 
 
 @pytest.mark.asyncio

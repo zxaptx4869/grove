@@ -43,6 +43,7 @@ def _masked_out(row) -> AIProviderSettingsOut:
         embedding_configured=row.embedding_key_tail is not None,
         embedding_key_tail=row.embedding_key_tail,
         embedding_available=row.embedding_available,
+        embedding_tested=row.embedding_tested,
     )
 
 
@@ -134,6 +135,7 @@ async def save_embedding_settings(
     # 复用豆包视觉密钥尾号作为已配置标记；视觉未配置时 embedding 保持未配置
     row.embedding_key_tail = row.vision_key_tail
     row.embedding_available = False
+    row.embedding_tested = False
     await db.commit()
     return _masked_out(row)
 
@@ -147,6 +149,7 @@ async def test_embedding_settings(
     result = await test_embedding_connection(db, workspace.id)
     row = await get_settings_row(db, workspace.id)
     row.embedding_available = result.ok
+    row.embedding_tested = True
     if result.ok and row.embedding_key_tail is None:
         row.embedding_key_tail = row.vision_key_tail
     await db.commit()
@@ -162,6 +165,7 @@ async def clear_embedding_settings(
     row = await get_settings_row(db, workspace.id)
     row.embedding_key_tail = None
     row.embedding_available = False
+    row.embedding_tested = False
     await db.commit()
     return _masked_out(row)
 

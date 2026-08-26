@@ -33,6 +33,7 @@ function settingsPayload() {
     embedding_configured: false,
     embedding_key_tail: null,
     embedding_available: false,
+    embedding_tested: false,
   }
 }
 
@@ -105,6 +106,50 @@ describe('AISettingsPage', () => {
           call.method === 'PUT' && call.path === '/api/settings/ai/embedding',
       ),
     ).toBe(true)
+  })
+
+  it('已配置未测试时展示未测试状态', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(() =>
+        Promise.resolve({
+          ok: true,
+          json: async () => ({
+            ...settingsPayload(),
+            embedding_configured: true,
+            embedding_key_tail: 'wxyz',
+            embedding_tested: false,
+          }),
+        }),
+      ),
+    )
+
+    renderPage()
+
+    expect(await screen.findByText('未测试')).toBeInTheDocument()
+    expect(screen.queryByText('连接失败')).not.toBeInTheDocument()
+  })
+
+  it('测试失败后展示连接失败状态', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(() =>
+        Promise.resolve({
+          ok: true,
+          json: async () => ({
+            ...settingsPayload(),
+            embedding_configured: true,
+            embedding_key_tail: 'wxyz',
+            embedding_available: false,
+            embedding_tested: true,
+          }),
+        }),
+      ),
+    )
+
+    renderPage()
+
+    expect(await screen.findByText('连接失败')).toBeInTheDocument()
   })
 
   it('保存文本密钥会调用 PUT 接口', async () => {

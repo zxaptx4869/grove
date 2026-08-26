@@ -38,6 +38,13 @@ function availableBadge(configured: boolean, available: boolean) {
   return <Badge className="bg-error-soft text-destructive">未测试或连接失败</Badge>
 }
 
+function embeddingBadge(configured: boolean, available: boolean, tested: boolean) {
+  if (!configured) return <Badge className="bg-muted text-muted-foreground">未配置</Badge>
+  if (available) return <Badge className="bg-confirmed-soft text-confirmed">连接正常</Badge>
+  if (tested) return <Badge className="bg-error-soft text-destructive">连接失败</Badge>
+  return <Badge className="bg-warning-soft text-warning">未测试</Badge>
+}
+
 function ProviderForm({
   kind,
   data,
@@ -158,7 +165,11 @@ function EmbeddingForm({
         <div>
           <div className="flex items-center gap-2">
             <h2 className="text-[16px] font-[650] leading-6">语义模型（Embedding）</h2>
-            {availableBadge(data.embedding_configured, data.embedding_available)}
+            {embeddingBadge(
+              data.embedding_configured,
+              data.embedding_available,
+              data.embedding_tested,
+            )}
           </div>
           <p className="mt-1 text-body-sm text-muted-foreground">
             {data.embedding_provider} · {data.embedding_model}
@@ -240,7 +251,7 @@ export function AISettingsPage() {
   const saveEmbedding = useGroveMutation({
     mutationFn: saveEmbeddingAISettings,
     invalidates: [queryKeys.aiSettings],
-    onSuccess: () => toast.success('语义模型配置已保存'),
+    onSuccess: () => toast.success('语义模型配置已保存，请点击测试连接确认可用'),
     onError: (error) =>
       toast.error(error instanceof Error ? error.message : '保存失败，请重试'),
   })

@@ -21,6 +21,7 @@ class AIProviderSettingsOut(BaseModel):
     embedding_configured: bool
     embedding_key_tail: str | None
     embedding_available: bool
+    embedding_tested: bool
 
 
 class TextProviderUpdate(BaseModel):

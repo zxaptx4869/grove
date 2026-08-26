@@ -387,6 +387,7 @@ export interface AIProviderSettingsPayload {
   embedding_configured: boolean
   embedding_key_tail: string | null
   embedding_available: boolean
+  embedding_tested: boolean
 }
 
 export interface ConnectionTestPayload {
