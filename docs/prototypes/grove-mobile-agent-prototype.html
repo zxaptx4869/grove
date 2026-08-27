@@ -27,6 +27,7 @@
       --shadow-pop: 0 18px 50px rgb(16 28 22 / 18%);
       --safe-top: env(safe-area-inset-top, 0px);
       --safe-bottom: env(safe-area-inset-bottom, 0px);
+      --keyboard-height: 270px;
     }
 
     * { box-sizing: border-box; }
@@ -229,28 +230,51 @@
     .scope-divider span { flex: 0 0 auto; }
 
     .composer-wrap {
-      position: absolute; right: 0; bottom: calc(62px + var(--safe-bottom)); left: 0; z-index: 7;
+      position: absolute; right: 0; bottom: calc(66px + var(--safe-bottom)); left: 0; z-index: 7;
       padding: 9px 12px; background: linear-gradient(to bottom, transparent, var(--g-bg) 18%, var(--g-bg));
     }
     .composer { min-height: 50px; display: grid; grid-template-columns: 40px minmax(0, 1fr) 40px; gap: 4px; align-items: end; padding: 5px; border: 1px solid var(--g-border); border-radius: 13px; background: var(--g-surface); box-shadow: 0 8px 24px rgb(22 43 32 / 9%); }
     .composer-button { width: 40px; height: 40px; display: grid; place-items: center; padding: 0; border: 0; border-radius: 9px; background: transparent; color: var(--g-muted); }
     .composer-button.send { background: var(--g-green); color: white; }
     .composer textarea { width: 100%; height: 40px; max-height: 96px; resize: none; padding: 9px 5px; border: 0; outline: 0; background: transparent; line-height: 20px; }
-    .keyboard-open .composer-wrap { bottom: var(--safe-bottom); background: var(--g-bg); }
+    .keyboard-open .composer-wrap { bottom: calc(var(--keyboard-height) + var(--safe-bottom)); z-index: 10; background: var(--g-bg); }
     .keyboard-open .bottom-nav { transform: translateY(110%); }
-    .keyboard-open .thread { padding-bottom: 90px; }
+    .keyboard-open .thread { padding-bottom: calc(var(--keyboard-height) + 92px); }
+
+    .demo-keyboard {
+      position: absolute; right: 0; bottom: 0; left: 0; z-index: 9;
+      height: calc(var(--keyboard-height) + var(--safe-bottom)); display: none; padding: 5px 5px calc(7px + var(--safe-bottom));
+      background: #d9dfdc; border-top: 1px solid #cbd2ce; color: #25322c; user-select: none;
+    }
+    .keyboard-open .demo-keyboard { display: block; animation: keyboard-rise .18s ease-out; }
+    @keyframes keyboard-rise { from { transform: translateY(24px); opacity: .65; } }
+    .keyboard-toolbar { height: 31px; display: grid; grid-template-columns: 44px 1fr 44px; align-items: center; padding: 0 2px 4px; color: #66716b; }
+    .keyboard-toolbar span { text-align: center; font-size: 11px; font-weight: 650; }
+    .keyboard-tool { width: 40px; height: 28px; display: grid; place-items: center; justify-self: center; padding: 0; border: 0; border-radius: 7px; background: transparent; color: #5b6861; }
+    .keyboard-tool:last-child { justify-self: end; }
+    .keyboard-tool .icon { width: 18px; height: 18px; stroke-width: 1.7; }
+    .keyboard-row { height: 43px; display: flex; justify-content: center; gap: 5px; margin-bottom: 7px; }
+    .keyboard-row.middle { padding-inline: 14px; }
+    .key {
+      min-width: 0; flex: 1; display: grid; place-items: center; padding: 0; border: 0; border-radius: 8px;
+      background: #fff; box-shadow: 0 1px 0 #aeb8b2, 0 1px 3px rgb(28 42 35 / 8%); font-size: 17px; font-weight: 520;
+    }
+    .key.utility { max-width: 45px; background: #b9c3be; font-size: 15px; }
+    .key.space { flex: 4.2; font-size: 13px; }
+    .key.action { flex: 1.45; background: var(--g-green); color: white; font-size: 13px; font-weight: 680; }
+    .key.wide { flex: 1.35; font-size: 12px; font-weight: 650; }
+    .key .icon { width: 19px; height: 19px; }
 
     .bottom-nav {
       position: absolute; right: 0; bottom: 0; left: 0; z-index: 8;
-      min-height: calc(62px + var(--safe-bottom)); display: grid; grid-template-columns: repeat(4, 1fr); padding: 5px 7px var(--safe-bottom);
+      min-height: calc(66px + var(--safe-bottom)); display: grid; grid-template-columns: repeat(4, 1fr); padding: 4px 7px var(--safe-bottom);
       border-top: 1px solid var(--g-border); background: color-mix(in srgb, var(--g-surface) 95%, transparent); backdrop-filter: blur(18px); transition: transform .18s ease;
     }
-    .nav-item { position: relative; min-height: 52px; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 2px; padding: 0; border: 0; border-radius: 9px; background: transparent; color: #7a8680; font-size: 10px; }
-    .nav-item.active { color: var(--g-green); font-weight: 680; }
-    .nav-glyph { width: 34px; height: 28px; display: grid; place-items: center; border-radius: 8px; transition: background .16s ease, color .16s ease; }
-    .nav-glyph .icon { width: 21px; height: 21px; stroke-width: 1.75; }
-    .nav-item.active .nav-glyph { background: var(--g-green-soft); }
-    .nav-badge { position: absolute; top: 6px; left: calc(50% + 7px); min-width: 16px; height: 16px; display: grid; place-items: center; padding: 0 4px; border: 2px solid var(--g-surface); border-radius: 8px; background: var(--g-ai); color: white; font-size: 8px; }
+    .nav-item { position: relative; min-height: 56px; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 3px; padding: 0; border: 0; border-radius: 9px; background: transparent; color: #748078; font-size: 11.5px; }
+    .nav-item.active { color: var(--g-green); font-weight: 700; }
+    .nav-glyph { width: 38px; height: 29px; display: grid; place-items: center; }
+    .nav-glyph .icon { width: 24px; height: 24px; stroke-width: 1.8; }
+    .nav-badge { position: absolute; top: 3px; left: calc(50% + 8px); min-width: 16px; height: 16px; display: grid; place-items: center; padding: 0 4px; border: 2px solid var(--g-surface); border-radius: 8px; background: var(--g-ai); color: white; font-size: 8px; }
 
     .page-heading { margin-bottom: 16px; }
     .page-heading h1 { font-size: 22px; line-height: 30px; font-weight: 720; }
@@ -356,10 +380,10 @@
     <symbol id="i-book" viewBox="0 0 24 24"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20V4H6.5A2.5 2.5 0 0 0 4 6.5z"/><path d="M4 6.5v13A2.5 2.5 0 0 0 6.5 22H20"/></symbol>
     <symbol id="i-history" viewBox="0 0 24 24"><path d="M4.5 6.5h11a3 3 0 0 1 3 3v4a3 3 0 0 1-3 3h-5l-4.5 3v-3.4a3 3 0 0 1-1.5-2.6z"/><path d="M8 10h7M8 13h4"/></symbol>
     <symbol id="i-threads" viewBox="0 0 24 24"><path d="M4.5 7.5h10a3 3 0 0 1 3 3V13a3 3 0 0 1-3 3H9l-4 2.8v-3.7a3 3 0 0 1-.5-1.6z"/><path d="M7.5 4.5h9a3 3 0 0 1 3 3V12"/></symbol>
-    <symbol id="i-nav-chat" viewBox="0 0 24 24"><path d="M5 5.5h10a3.5 3.5 0 0 1 3.5 3.5v4a3.5 3.5 0 0 1-3.5 3.5H10l-4.5 3v-3.6A3.5 3.5 0 0 1 5 13.9z"/><path d="M8.5 10h6M8.5 13h3.5"/></symbol>
-    <symbol id="i-nav-collect" viewBox="0 0 24 24"><path d="M5 12.5h4l1.5 2h3l1.5-2h4v6H5z"/><path d="M12 4v7M9 8l3 3 3-3"/><path d="M6.5 7H5v5.5M17.5 7H19v5.5"/></symbol>
-    <symbol id="i-nav-pending" viewBox="0 0 24 24"><circle cx="5.5" cy="6.5" r="1.5"/><circle cx="5.5" cy="12" r="1.5"/><circle cx="5.5" cy="17.5" r="1.5"/><path d="M9 6.5h10M9 12h10M9 17.5h7"/><path d="m4.8 12 1 1 1.7-2"/></symbol>
-    <symbol id="i-nav-knowledge" viewBox="0 0 24 24"><path d="M4.5 5.5c3-1.4 5.5-1.2 7.5.8v13c-2-2-4.5-2.2-7.5-.8z"/><path d="M19.5 5.5c-3-1.4-5.5-1.2-7.5.8v13c2-2 4.5-2.2 7.5-.8z"/><path d="M12 6.3v13"/></symbol>
+    <symbol id="i-nav-chat" viewBox="0 0 24 24"><path d="M5 6h10a3.5 3.5 0 0 1 3.5 3.5v3.2a3.5 3.5 0 0 1-3.5 3.5H10l-4.5 2.9v-3.6a3.5 3.5 0 0 1-.5-1.8z"/><path d="M9 11h5"/></symbol>
+    <symbol id="i-nav-collect" viewBox="0 0 24 24"><path d="M5 12h4l1.5 2h3l1.5-2h4v6.5H5z"/><path d="m8.5 8.5 3.5 3 3.5-3"/></symbol>
+    <symbol id="i-nav-pending" viewBox="0 0 24 24"><path d="M6 6.5h13M8.5 12H19M6 17.5h10"/><path d="m4.3 11.8 1.1 1.1 2-2.3"/></symbol>
+    <symbol id="i-nav-knowledge" viewBox="0 0 24 24"><path d="M4.5 6c3-1.3 5.5-1 7.5 1v12c-2-2-4.5-2.3-7.5-1zM19.5 6c-3-1.3-5.5-1-7.5 1v12c2-2 4.5-2.3 7.5-1z"/></symbol>
     <symbol id="i-chevron" viewBox="0 0 24 24"><path d="m9 18 6-6-6-6"/></symbol>
     <symbol id="i-down" viewBox="0 0 24 24"><path d="m6 9 6 6 6-6"/></symbol>
     <symbol id="i-plus" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></symbol>
@@ -382,6 +406,8 @@
     <symbol id="i-folder" viewBox="0 0 24 24"><path d="M3 5h6l2 2h10v12H3z"/></symbol>
     <symbol id="i-circle-check" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="m8 12 3 3 5-6"/></symbol>
     <symbol id="i-more" viewBox="0 0 24 24"><circle cx="5" cy="12" r="1" fill="currentColor" stroke="none"/><circle cx="12" cy="12" r="1" fill="currentColor" stroke="none"/><circle cx="19" cy="12" r="1" fill="currentColor" stroke="none"/></symbol>
+    <symbol id="i-keyboard-down" viewBox="0 0 24 24"><rect x="3.5" y="5" width="17" height="11" rx="2"/><path d="M8 19h8M7 9h.01M10.5 9h.01M14 9h.01M17.5 9h.01M7 12h10.5"/></symbol>
+    <symbol id="i-backspace" viewBox="0 0 24 24"><path d="m3.5 12 4-5h12v10h-12z"/><path d="m12 10 4 4M16 10l-4 4"/></symbol>
   </svg>
 
   <div class="prototype-stage">
@@ -415,9 +441,28 @@
           <div class="composer-wrap">
             <form class="composer" id="composer">
               <button type="button" class="composer-button" data-open-sheet="capture" aria-label="添加材料"><svg class="icon"><use href="#i-plus"/></svg></button>
-              <textarea id="messageInput" rows="1" placeholder="问知识，或说出要做的事" aria-label="对话输入"></textarea>
+              <textarea id="messageInput" rows="1" inputmode="none" autocomplete="off" autocapitalize="none" spellcheck="false" placeholder="问知识，或说出要做的事" aria-label="对话输入"></textarea>
               <button type="submit" class="composer-button send" aria-label="发送"><svg class="icon"><use href="#i-send"/></svg></button>
             </form>
+          </div>
+          <div class="demo-keyboard" id="demoKeyboard" role="region" aria-label="移动端键盘示意">
+            <div class="keyboard-toolbar">
+              <button type="button" tabindex="-1" class="keyboard-tool" data-keyboard-mic aria-label="语音输入"><svg class="icon"><use href="#i-mic"/></svg></button>
+              <span>中文 · 拼音</span>
+              <button type="button" tabindex="-1" class="keyboard-tool" data-keyboard-dismiss aria-label="收起键盘"><svg class="icon"><use href="#i-keyboard-down"/></svg></button>
+            </div>
+            <div class="keyboard-row">
+              <button type="button" tabindex="-1" class="key" data-key="q">Q</button><button type="button" tabindex="-1" class="key" data-key="w">W</button><button type="button" tabindex="-1" class="key" data-key="e">E</button><button type="button" tabindex="-1" class="key" data-key="r">R</button><button type="button" tabindex="-1" class="key" data-key="t">T</button><button type="button" tabindex="-1" class="key" data-key="y">Y</button><button type="button" tabindex="-1" class="key" data-key="u">U</button><button type="button" tabindex="-1" class="key" data-key="i">I</button><button type="button" tabindex="-1" class="key" data-key="o">O</button><button type="button" tabindex="-1" class="key" data-key="p">P</button>
+            </div>
+            <div class="keyboard-row middle">
+              <button type="button" tabindex="-1" class="key" data-key="a">A</button><button type="button" tabindex="-1" class="key" data-key="s">S</button><button type="button" tabindex="-1" class="key" data-key="d">D</button><button type="button" tabindex="-1" class="key" data-key="f">F</button><button type="button" tabindex="-1" class="key" data-key="g">G</button><button type="button" tabindex="-1" class="key" data-key="h">H</button><button type="button" tabindex="-1" class="key" data-key="j">J</button><button type="button" tabindex="-1" class="key" data-key="k">K</button><button type="button" tabindex="-1" class="key" data-key="l">L</button>
+            </div>
+            <div class="keyboard-row">
+              <button type="button" tabindex="-1" class="key utility" data-demo-toast="原型键盘保持小写输入">⇧</button><button type="button" tabindex="-1" class="key" data-key="z">Z</button><button type="button" tabindex="-1" class="key" data-key="x">X</button><button type="button" tabindex="-1" class="key" data-key="c">C</button><button type="button" tabindex="-1" class="key" data-key="v">V</button><button type="button" tabindex="-1" class="key" data-key="b">B</button><button type="button" tabindex="-1" class="key" data-key="n">N</button><button type="button" tabindex="-1" class="key" data-key="m">M</button><button type="button" tabindex="-1" class="key utility" data-keyboard-backspace aria-label="退格"><svg class="icon"><use href="#i-backspace"/></svg></button>
+            </div>
+            <div class="keyboard-row" style="margin-bottom:0">
+              <button type="button" tabindex="-1" class="key wide">123</button><button type="button" tabindex="-1" class="key" data-key="，">，</button><button type="button" tabindex="-1" class="key space" data-key=" ">空格</button><button type="button" tabindex="-1" class="key" data-key="。">。</button><button type="button" tabindex="-1" class="key action" data-keyboard-send>发送</button>
+            </div>
           </div>
         </section>
 
@@ -563,6 +608,7 @@
     const scrim = document.getElementById('scrim')
     let stage = 'start'
     let toastTimer
+    let keyboardTimer
 
     const icon = (name, extra = '') => `<svg class="icon ${extra}"><use href="#i-${name}"/></svg>`
     const scrollThread = () => requestAnimationFrame(() => { thread.scrollTop = thread.scrollHeight })
@@ -762,6 +808,20 @@
         document.querySelectorAll('.diff-tab').forEach(tab => { const active = tab === target; tab.classList.toggle('active', active); tab.setAttribute('aria-selected', String(active)) })
         document.querySelectorAll('.diff-panel').forEach(panel => panel.classList.toggle('active', panel.dataset.diffPanel === target.dataset.diffTab))
       }
+      if (target.dataset.key !== undefined) {
+        input.setRangeText(target.dataset.key, input.selectionStart, input.selectionEnd, 'end')
+        input.dispatchEvent(new Event('input', { bubbles: true }))
+      }
+      if (target.hasAttribute('data-keyboard-backspace')) {
+        const start = input.selectionStart
+        const end = input.selectionEnd
+        if (start !== end) input.setRangeText('', start, end, 'end')
+        else if (start > 0) input.setRangeText('', start - 1, start, 'end')
+        input.dispatchEvent(new Event('input', { bubbles: true }))
+      }
+      if (target.hasAttribute('data-keyboard-send')) composer.requestSubmit()
+      if (target.hasAttribute('data-keyboard-dismiss')) input.blur()
+      if (target.hasAttribute('data-keyboard-mic')) showToast('语音输入会调用系统听写；这里保留键盘示意')
     })
 
     composer.addEventListener('submit', event => {
@@ -776,12 +836,22 @@
       else showToast('原型已记录这条消息；请继续使用场景卡片完成主流程')
     })
 
-    input.addEventListener('focus', () => app.classList.add('keyboard-open'))
-    input.addEventListener('blur', () => setTimeout(() => {
-      if (document.activeElement !== input) app.classList.remove('keyboard-open')
-    }, 100))
+    input.addEventListener('focus', () => {
+      clearTimeout(keyboardTimer)
+      keyboardTimer = setTimeout(() => {
+        if (document.activeElement === input) app.classList.add('keyboard-open')
+      }, 80)
+    })
+    input.addEventListener('blur', () => {
+      clearTimeout(keyboardTimer)
+      setTimeout(() => {
+        if (document.activeElement !== input) app.classList.remove('keyboard-open')
+      }, 100)
+    })
     input.addEventListener('input', () => { input.style.height = '40px'; input.style.height = `${Math.min(input.scrollHeight, 96)}px` })
+    document.getElementById('demoKeyboard').addEventListener('pointerdown', event => event.preventDefault())
     document.addEventListener('pointerdown', event => {
+      if (event.target.closest('.demo-keyboard')) return
       if (document.activeElement === input && !event.target.closest('.composer')) input.blur()
     })
 
