@@ -1,6 +1,6 @@
 ---
 name: grove-ui-conventions
-description: 知林 Grove 产品前端实现与验收规范。Use when implementing, adjusting, prototyping, or reviewing Grove pages and React components; reproducing a Grove prototype or design, aligning visual fidelity, polishing UI details, or validating screenshots; handling AI candidates, confirmation, entries, sources, directory trees, task states, search, or AI reading; or validating desktop workbench layouts, small-screen boundaries, accessibility, copy, and interaction states with Tailwind 4 and shadcn/ui.
+description: 知林 Grove Web 与原生 App 界面实现、原型和验收规范。Use when implementing, adjusting, prototyping, or reviewing Grove pages and React components; designing or validating native-mobile and conversational Agent prototypes; reproducing a Grove design, aligning visual fidelity, polishing UI details, or validating screenshots; handling AI candidates, confirmation, entries, sources, directory trees, task states, search, or AI reading; or validating desktop workbench layouts, mobile interaction boundaries, accessibility, copy, and interaction states.
 ---
 
 # Grove UI 实现规范
@@ -11,10 +11,10 @@ description: 知林 Grove 产品前端实现与验收规范。Use when implement
 
 1. `docs/产品蓝图.md`：先确认稳定基线和任务路由。
 2. 索引路由到的 1 至 2 份产品专题：只读取当前页面和交互需要的详细决策。
-3. 当前 OpenSpec change 与 `openspec/specs/`：本次必须实现和明确不做的行为。
+3. 当前 OpenSpec change 与 `openspec/specs/`：正式功能任务用来确认必须实现和明确不做的行为；探索性原型没有 change 时不得伪造正式范围。
 4. `frontend/src/index.css`：颜色、字号、圆角、阴影和动效令牌。
 5. 相关页面与组件代码：现有接口和交互模式。
-6. `docs/prototypes/README.md` 与对应原型页面：仅在当前 change 涉及的页面需要视觉或信息层级参考时读取。
+6. `docs/prototypes/README.md` 与对应原型页面：仅在当前任务需要视觉、信息层级或产品形态参考时读取。
 
 常见 UI 任务路由：
 
@@ -22,6 +22,7 @@ description: 知林 Grove 产品前端实现与验收规范。Use when implement
 - Entry、目录、知识空间、搜索和 AI 阅读：`核心对象与关系.md` + `目录与知识空间.md`。
 - 目录 Agent 或其他 AI 行为：`目录与知识空间.md` + `Agent架构与AI边界.md`。
 - 桌面布局和小屏边界：`技术与端侧边界.md`，必要时再读页面所属专题。
+- 原生 App 或对话式知识 Agent 原型：`技术与端侧边界.md` + 当前能力所属专题；涉及 Agent 行为时再读 `Agent架构与AI边界.md`，并读取对应原型说明。
 
 除跨页面产品审计或调整蓝图结构外，不读取全部产品专题。
 
@@ -33,9 +34,10 @@ description: 知林 Grove 产品前端实现与验收规范。Use when implement
 
 开始实现前按风险选择流程：
 
-- **完整视觉流程**：新页面、页面重建、原型还原、设计稿精确对齐、应用壳或全局令牌修改。必须读取 [视觉对齐流程](references/visual-fidelity-workflow.md) 并执行全部门禁。
+- **完整视觉流程**：正式页面实现、页面重建、原型还原、设计稿精确对齐、应用壳或全局令牌修改。必须读取 [视觉对齐流程](references/visual-fidelity-workflow.md) 并执行全部门禁。
 - **局部视觉流程**：单个组件或局部样式精修。只提取受影响的视觉基线，至少在主视口检查相邻布局与计算样式；涉及响应式、壳层或全局令牌时升级为完整流程。
 - **常规功能流程**：纯文案、数据逻辑、API 接入、状态逻辑或不可见重构。不加载视觉对齐 reference，不生成完整截图矩阵，但仍执行相关功能和可访问性验证。
+- **探索性原型流程**：尚未进入 OpenSpec 的产品形态探索或独立可点击原型。不得宣称为正式能力；没有 change 时把基线、偏离和验收记录到原型说明与 `artifacts/`，不伪造 `design.md`。原生 App、移动端或对话 Agent 原型必须读取 [原生移动端与对话 Agent 原型流程](references/native-mobile-agent-prototype-workflow.md)。
 
 如果用户明确要求“跟原型一致”“对齐设计稿”“还原页面”“检查颜色、间距、字体”或同义目标，至少进入局部视觉流程；涉及整个页面时进入完整视觉流程。
 
@@ -65,6 +67,8 @@ description: 知林 Grove 产品前端实现与验收规范。Use when implement
 
 - **AI Candidate**：始终标识为“AI 候选”“AI 建议”或“待确认”；不得使用“已归档”“正式记录”等文案。可使用 `ai-candidate` 语义色，但不能只靠颜色区分。
 - **Entry**：使用“已确认”“正式知识”等明确措辞，并提供到 Source 证据的可达入口。正式状态可使用 `confirmed` 语义色。
+- **AI 即时回答**：不是 Candidate 或正式 Entry。综合正式 Entry 得出的回答使用“基于正式知识”“已确认知识来源”等措辞，不得把回答本身标成“正式知识”；引用原文与 AI 总结必须可辨识。
+- **Agent 范围与上下文**：知识范围、当前页面上下文和用户主动引用的对象是不同状态，不得隐式互相替代。范围变化必须可见；当会话允许切换范围时，每次回答或 Agent Run 保留生成时的范围来源。
 - **人工决定**：AI 推荐的内容、类型、项目和目录可以预填，但按钮与结果必须表达这是用户确认。确认决定作用于 Candidate，Source 只负责分组和上下文。
 - **推荐状态**：使用“推荐明确”“需要确认”“暂无合适位置”等可解释状态，不展示模型自报的伪精确百分比。
 - **来源**：精审时证据与 Candidate 保持可见或一键可达；列表和批量视图至少显示来源标识并能展开原文。
@@ -88,12 +92,13 @@ description: 知林 Grove 产品前端实现与验收规范。Use when implement
 - error：说明问题和下一步，不展示堆栈；任务失败允许从失败步骤重试。
 - partial：逐项显示成功与失败，只重试失败项。
 - toast 只反馈短暂结果；需要用户处理的错误保留在对应内容附近。
+- Agent 过程只展示用户可验证的检索、读取、核验、等待确认、执行与降级状态，不展示隐藏推理或伪造的“思考过程”；完成态文案不得继续使用“正在处理”。
 
 ## 视觉与可访问性
 
 - 使用 `frontend/src/index.css` 的 Tailwind 语义令牌，避免硬编码业务颜色和魔法值。
 - 正文对比度至少 4.5:1；状态同时使用文字、图标或边框表达。
-- 按钮使用 Lucide 图标；不熟悉的纯图标按钮提供 `aria-label`、`title` 或 Tooltip。
+- Grove Web 正式前端默认使用 Lucide 图标；已有品牌图标系统、原生 App 原型或产品明确要求原创图标时按对应图标基线执行。不熟悉的纯图标按钮提供 `aria-label`、`title` 或 Tooltip。
 - 保证键盘顺序、可见 `focus-visible`、对话框焦点归还、拖拽入口的文件选择替代方案。
 - 固定格式元素使用稳定尺寸与响应式约束；动态文字、徽标和加载态不能导致工具栏或列表跳动。
 - 避免过度圆角、单一紫色主题、渐变装饰和无功能的大面积留白。
@@ -110,12 +115,12 @@ description: 知林 Grove 产品前端实现与验收规范。Use when implement
 
 ## 验收
 
-完成前至少检查：
+完成前按任务端侧至少检查：
 
-1. 在 1280px、1440px 和 1600px 检查桌面主流程，无非预期横向滚动、遮挡或文字溢出；窄桌面窗口与浏览器缩放仍应有清晰反馈。
+1. Grove Web 在 1280px、1440px 和 1600px 检查桌面主流程，无非预期横向滚动、遮挡或文字溢出；窄桌面窗口与浏览器缩放仍应有清晰反馈。原生 App 与移动端原型按移动端 reference 的设备矩阵验收，不套用桌面视口。
 2. 若当前 change 包含端侧边界实现，检查低于 1024px 的访问不会进入业务工作台；阻断页实现前不得宣称手机 Web 可用。
 3. Candidate、Entry、Source 和 AI 推荐在文案与操作上没有混淆。
 4. loading、empty、error、partial、retry 和破坏性操作状态完整。
 5. 键盘、焦点、对比度和图标标签可用。
-6. 运行相关前端测试、`npm run lint` 和 `npm run build`；关键界面通过浏览器截图检查。
-7. 若当前 change 对应产品原型页面，按任务分流执行视觉验收；完整页面先在主视口完成截图与计算样式核对，再检查 1280px、1440px 和 1600px，并确认只实现了本次规格范围内的行为。
+6. 正式前端运行相关测试、`npm run lint` 和 `npm run build`；独立原型至少走通确定性交互、检查控制台与关键截图。
+7. 若当前 change 对应产品原型页面，按任务分流执行视觉验收；正式 Web 完整页面先在主视口完成截图与计算样式核对，再检查 1280px、1440px 和 1600px，并确认只实现了本次规格范围内的行为。
