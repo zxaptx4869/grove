@@ -107,14 +107,17 @@
       align-items: center;
       justify-content: center;
       gap: 5px;
-      padding: 0 10px;
-      border: 1px solid var(--g-border);
-      border-radius: 9px;
-      background: var(--g-surface);
+      max-width: 220px;
+      margin: 0 auto;
+      padding: 0 5px;
+      border: 0;
+      border-radius: 8px;
+      background: transparent;
     }
+    .scope-button:hover { background: var(--g-soft); }
     .scope-copy { min-width: 0; text-align: left; }
-    .scope-copy strong { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 13px; line-height: 17px; }
-    .scope-copy span { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--g-muted); font-size: 10px; line-height: 14px; }
+    .scope-copy strong { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 15px; line-height: 21px; font-weight: 680; }
+    .scope-copy span { display: none; }
     .page-title { display: none; text-align: center; font-size: 17px; font-weight: 700; }
     .app:not([data-page="conversation"]) .scope-button { display: none; }
     .app:not([data-page="conversation"]) .page-title { display: block; }
@@ -221,6 +224,10 @@
     .receipt.undone { border-color: var(--g-border); }
     .receipt.undone .receipt-icon { background: var(--g-soft); color: var(--g-muted); }
 
+    .scope-divider { display: flex; align-items: center; gap: 9px; margin: 13px 0; color: var(--g-muted); font-size: 10px; }
+    .scope-divider::before, .scope-divider::after { content: ""; height: 1px; flex: 1; background: var(--g-border); }
+    .scope-divider span { flex: 0 0 auto; }
+
     .composer-wrap {
       position: absolute; right: 0; bottom: calc(62px + var(--safe-bottom)); left: 0; z-index: 7;
       padding: 9px 12px; background: linear-gradient(to bottom, transparent, var(--g-bg) 18%, var(--g-bg));
@@ -240,7 +247,9 @@
     }
     .nav-item { position: relative; min-height: 52px; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 2px; padding: 0; border: 0; border-radius: 9px; background: transparent; color: #7a8680; font-size: 10px; }
     .nav-item.active { color: var(--g-green); font-weight: 680; }
-    .nav-item.active::before { content: ""; position: absolute; top: 1px; width: 24px; height: 3px; border-radius: 2px; background: var(--g-green); }
+    .nav-glyph { width: 34px; height: 28px; display: grid; place-items: center; border-radius: 8px; transition: background .16s ease, color .16s ease; }
+    .nav-glyph .icon { width: 21px; height: 21px; stroke-width: 1.75; }
+    .nav-item.active .nav-glyph { background: var(--g-green-soft); }
     .nav-badge { position: absolute; top: 6px; left: calc(50% + 7px); min-width: 16px; height: 16px; display: grid; place-items: center; padding: 0 4px; border: 2px solid var(--g-surface); border-radius: 8px; background: var(--g-ai); color: white; font-size: 8px; }
 
     .page-heading { margin-bottom: 16px; }
@@ -345,7 +354,12 @@
     <symbol id="i-inbox" viewBox="0 0 24 24"><path d="M4 4h16l2 10v6H2v-6z"/><path d="M2 14h5l2 3h6l2-3h5"/></symbol>
     <symbol id="i-checks" viewBox="0 0 24 24"><path d="m3 6 2 2 4-4"/><path d="M11 6h10"/><path d="m3 14 2 2 4-4"/><path d="M11 14h10"/><path d="M3 22h18"/></symbol>
     <symbol id="i-book" viewBox="0 0 24 24"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20V4H6.5A2.5 2.5 0 0 0 4 6.5z"/><path d="M4 6.5v13A2.5 2.5 0 0 0 6.5 22H20"/></symbol>
-    <symbol id="i-history" viewBox="0 0 24 24"><path d="M3 12a9 9 0 1 0 3-6.7L3 8"/><path d="M3 3v5h5"/><path d="M12 7v5l3 2"/></symbol>
+    <symbol id="i-history" viewBox="0 0 24 24"><path d="M4.5 6.5h11a3 3 0 0 1 3 3v4a3 3 0 0 1-3 3h-5l-4.5 3v-3.4a3 3 0 0 1-1.5-2.6z"/><path d="M8 10h7M8 13h4"/></symbol>
+    <symbol id="i-threads" viewBox="0 0 24 24"><path d="M4.5 7.5h10a3 3 0 0 1 3 3V13a3 3 0 0 1-3 3H9l-4 2.8v-3.7a3 3 0 0 1-.5-1.6z"/><path d="M7.5 4.5h9a3 3 0 0 1 3 3V12"/></symbol>
+    <symbol id="i-nav-chat" viewBox="0 0 24 24"><path d="M5 5.5h10a3.5 3.5 0 0 1 3.5 3.5v4a3.5 3.5 0 0 1-3.5 3.5H10l-4.5 3v-3.6A3.5 3.5 0 0 1 5 13.9z"/><path d="M8.5 10h6M8.5 13h3.5"/></symbol>
+    <symbol id="i-nav-collect" viewBox="0 0 24 24"><path d="M5 12.5h4l1.5 2h3l1.5-2h4v6H5z"/><path d="M12 4v7M9 8l3 3 3-3"/><path d="M6.5 7H5v5.5M17.5 7H19v5.5"/></symbol>
+    <symbol id="i-nav-pending" viewBox="0 0 24 24"><circle cx="5.5" cy="6.5" r="1.5"/><circle cx="5.5" cy="12" r="1.5"/><circle cx="5.5" cy="17.5" r="1.5"/><path d="M9 6.5h10M9 12h10M9 17.5h7"/><path d="m4.8 12 1 1 1.7-2"/></symbol>
+    <symbol id="i-nav-knowledge" viewBox="0 0 24 24"><path d="M4.5 5.5c3-1.4 5.5-1.2 7.5.8v13c-2-2-4.5-2.2-7.5-.8z"/><path d="M19.5 5.5c-3-1.4-5.5-1.2-7.5.8v13c2-2 4.5-2.2 7.5-.8z"/><path d="M12 6.3v13"/></symbol>
     <symbol id="i-chevron" viewBox="0 0 24 24"><path d="m9 18 6-6-6-6"/></symbol>
     <symbol id="i-down" viewBox="0 0 24 24"><path d="m6 9 6 6 6-6"/></symbol>
     <symbol id="i-plus" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></symbol>
@@ -379,7 +393,7 @@
           <svg class="icon" style="width:15px;height:15px"><use href="#i-down"/></svg>
         </button>
         <h1 class="page-title" data-page-title>收集</h1>
-        <button class="header-icon" data-open-overlay="history" aria-label="查看对话历史"><svg class="icon"><use href="#i-history"/></svg></button>
+        <button class="header-icon" data-open-overlay="history" aria-label="查看对话历史"><svg class="icon" style="width:22px;height:22px"><use href="#i-threads"/></svg></button>
       </header>
 
       <main class="screens">
@@ -458,10 +472,10 @@
       </main>
 
       <nav class="bottom-nav" aria-label="主要导航">
-        <button class="nav-item active" data-nav="conversation"><svg class="icon"><use href="#i-message"/></svg><span>对话</span></button>
-        <button class="nav-item" data-nav="capture"><svg class="icon"><use href="#i-inbox"/></svg><span>收集</span></button>
-        <button class="nav-item" data-nav="pending"><span class="nav-badge">2</span><svg class="icon"><use href="#i-checks"/></svg><span>待处理</span></button>
-        <button class="nav-item" data-nav="knowledge"><svg class="icon"><use href="#i-book"/></svg><span>知识</span></button>
+        <button class="nav-item active" data-nav="conversation"><span class="nav-glyph"><svg class="icon"><use href="#i-nav-chat"/></svg></span><span>对话</span></button>
+        <button class="nav-item" data-nav="capture"><span class="nav-glyph"><svg class="icon"><use href="#i-nav-collect"/></svg></span><span>收集</span></button>
+        <button class="nav-item" data-nav="pending"><span class="nav-badge">2</span><span class="nav-glyph"><svg class="icon"><use href="#i-nav-pending"/></svg></span><span>待处理</span></button>
+        <button class="nav-item" data-nav="knowledge"><span class="nav-glyph"><svg class="icon"><use href="#i-nav-knowledge"/></svg></span><span>知识</span></button>
       </nav>
 
       <section class="overlay" id="diffOverlay" aria-label="审阅完整差异">
@@ -505,8 +519,9 @@
         <div class="sheet-body">
           <button class="scope-option" data-scope="全部知识" data-detail="Workspace · 所有项目"><span class="row-icon"><svg class="icon"><use href="#i-book"/></svg></span><div><strong>全部知识</strong><span>当前 Workspace 的所有正式知识</span></div><svg class="icon scope-check"><use href="#i-check"/></svg></button>
           <button class="scope-option active" data-scope="新房装修" data-detail="项目 · 全部知识"><span class="row-icon"><svg class="icon"><use href="#i-folder"/></svg></span><div><strong>新房装修</strong><span>项目内 38 条正式知识</span></div><svg class="icon scope-check"><use href="#i-check"/></svg></button>
-          <button class="scope-option child" data-scope="新房装修" data-detail="目录 · 施工 / 防水"><span class="row-icon"><svg class="icon"><use href="#i-folder"/></svg></span><div><strong>施工 / 防水</strong><span>当前节点及子树 · 8 条知识</span></div><svg class="icon scope-check"><use href="#i-check"/></svg></button>
           <button class="scope-option" data-scope="个人健康" data-detail="项目 · 全部知识"><span class="row-icon"><svg class="icon"><use href="#i-folder"/></svg></span><div><strong>个人健康</strong><span>项目内 12 条正式知识</span></div><svg class="icon scope-check"><use href="#i-check"/></svg></button>
+          <button class="scope-option" data-scope="新疆旅行" data-detail="项目 · 全部知识"><span class="row-icon"><svg class="icon"><use href="#i-folder"/></svg></span><div><strong>新疆旅行</strong><span>项目内 21 条正式知识</span></div><svg class="icon scope-check"><use href="#i-check"/></svg></button>
+          <button class="scope-option" data-scope="找工作" data-detail="项目 · 全部知识"><span class="row-icon"><svg class="icon"><use href="#i-folder"/></svg></span><div><strong>找工作</strong><span>项目内 16 条正式知识</span></div><svg class="icon scope-check"><use href="#i-check"/></svg></button>
         </div>
       </section>
 
@@ -730,10 +745,16 @@
         showToast('已重新开始处理失败步骤')
       }
       if (target.dataset.scope) {
+        const previousScope = document.querySelector('[data-scope-name]').textContent
         document.querySelectorAll('.scope-option').forEach(option => option.classList.toggle('active', option === target))
         document.querySelector('[data-scope-name]').textContent = target.dataset.scope
         document.querySelector('[data-scope-detail]').textContent = target.dataset.detail
-        document.querySelector('[data-knowledge-scope]').textContent = `${target.dataset.scope} · ${target.dataset.detail.replace('项目 · ', '').replace('目录 · ', '')}`
+        document.querySelector('[data-knowledge-scope]').textContent = target.dataset.scope
+        const introCopy = document.querySelector('#intro p')
+        if (introCopy) introCopy.textContent = `当前只读取“${target.dataset.scope}”的正式知识。查询会自动执行，涉及修改时会明确展示目标和差异。`
+        if (previousScope !== target.dataset.scope && stage !== 'start' && app.dataset.page === 'conversation') {
+          add(`<div class="scope-divider"><span>范围已切换到“${target.dataset.scope}”</span></div>`)
+        }
         closeSheets()
         showToast(`当前范围已切换为“${target.dataset.scope}”`)
       }
@@ -748,15 +769,21 @@
       const text = input.value.trim()
       if (!text) return
       input.value = ''
-      input.blur()
+      input.style.height = '40px'
+      input.focus({ preventScroll: true })
       if (stage === 'start') runSearch()
       else if (stage === 'answered') runFollowup()
       else showToast('原型已记录这条消息；请继续使用场景卡片完成主流程')
     })
 
     input.addEventListener('focus', () => app.classList.add('keyboard-open'))
-    input.addEventListener('blur', () => setTimeout(() => app.classList.remove('keyboard-open'), 100))
+    input.addEventListener('blur', () => setTimeout(() => {
+      if (document.activeElement !== input) app.classList.remove('keyboard-open')
+    }, 100))
     input.addEventListener('input', () => { input.style.height = '40px'; input.style.height = `${Math.min(input.scrollHeight, 96)}px` })
+    document.addEventListener('pointerdown', event => {
+      if (document.activeElement === input && !event.target.closest('.composer')) input.blur()
+    })
 
     document.getElementById('knowledgeSearch').addEventListener('input', event => {
       const query = event.target.value.trim().toLowerCase()

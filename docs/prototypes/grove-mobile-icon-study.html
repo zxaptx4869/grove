@@ -1,0 +1,172 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <title>Grove 移动端原创图标方向</title>
+  <style>
+    :root {
+      --bg: #f5f7f4;
+      --surface: #ffffff;
+      --text: #203129;
+      --muted: #748078;
+      --border: #dfe6e1;
+      --green: #26765a;
+      --green-soft: #e5f2eb;
+      --shadow: 0 16px 50px rgb(31 54 42 / 10%);
+    }
+    * { box-sizing: border-box; }
+    body { margin: 0; background: var(--bg); color: var(--text); font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
+    button { color: inherit; font: inherit; cursor: pointer; }
+    .icon { width: 24px; height: 24px; fill: none; stroke: currentColor; stroke-width: 1.7; stroke-linecap: round; stroke-linejoin: round; }
+    .page { width: min(1080px, 100%); margin: 0 auto; padding: 48px 24px 72px; }
+    .intro { max-width: 650px; }
+    .eyebrow { color: var(--green); font-size: 12px; font-weight: 750; letter-spacing: .08em; }
+    h1 { margin: 8px 0 10px; font-size: clamp(28px, 5vw, 42px); letter-spacing: -.035em; }
+    .intro p { margin: 0; color: var(--muted); font-size: 14px; line-height: 1.75; }
+    .workspace { display: grid; grid-template-columns: minmax(0, 1fr) 330px; gap: 32px; align-items: start; margin-top: 34px; }
+    .sets { display: grid; gap: 14px; }
+    .set-card { width: 100%; padding: 18px; border: 1px solid var(--border); border-radius: 16px; background: color-mix(in srgb, var(--surface) 90%, transparent); text-align: left; transition: border-color .16s, box-shadow .16s, transform .16s; }
+    .set-card:hover { transform: translateY(-1px); box-shadow: 0 8px 25px rgb(31 54 42 / 6%); }
+    .set-card.active { border-color: #91b9a7; box-shadow: 0 0 0 3px var(--green-soft); }
+    .set-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 14px; }
+    .set-title { display: flex; align-items: center; gap: 9px; }
+    .set-index { width: 28px; height: 28px; display: grid; place-items: center; border-radius: 8px; background: var(--green-soft); color: var(--green); font-size: 12px; font-weight: 750; }
+    .set-head h2 { margin: 0; font-size: 17px; }
+    .set-head p { margin: 4px 0 0; color: var(--muted); font-size: 11px; line-height: 17px; }
+    .recommended { padding: 4px 7px; border-radius: 6px; background: var(--green-soft); color: var(--green); font-size: 10px; font-weight: 700; white-space: nowrap; }
+    .icon-row { display: grid; grid-template-columns: repeat(5, 1fr); gap: 6px; margin-top: 16px; }
+    .icon-cell { min-width: 0; display: grid; justify-items: center; gap: 6px; padding: 10px 4px 8px; border-radius: 10px; background: var(--bg); color: #53625a; }
+    .icon-cell span { color: var(--muted); font-size: 10px; white-space: nowrap; }
+    .preview-wrap { position: sticky; top: 24px; }
+    .preview-label { margin: 0 0 9px; color: var(--muted); font-size: 11px; text-align: center; }
+    .phone { height: 620px; overflow: hidden; border: 1px solid #cfd8d2; border-radius: 34px; background: var(--surface); box-shadow: var(--shadow); }
+    .status { height: 28px; display: flex; align-items: center; justify-content: space-between; padding: 0 20px; font-size: 10px; font-weight: 700; }
+    .header { height: 54px; display: grid; grid-template-columns: 40px 1fr 40px; align-items: center; padding: 0 10px; border-bottom: 1px solid var(--border); }
+    .mark { width: 30px; height: 30px; display: grid; place-items: center; border-radius: 9px; background: var(--green); color: white; font-family: Georgia, serif; font-weight: 700; }
+    .scope { justify-self: center; font-size: 14px; font-weight: 700; }
+    .history { width: 40px; height: 40px; display: grid; place-items: center; border: 0; background: transparent; color: #526158; }
+    .history .icon { width: 22px; height: 22px; }
+    .conversation { height: calc(100% - 146px); padding: 44px 18px 100px; background: linear-gradient(#fbfcfb, var(--bg)); }
+    .agent-mark { width: 42px; height: 42px; display: grid; place-items: center; margin: 0 auto; border: 1px solid #bed7cb; border-radius: 13px; background: var(--green-soft); color: var(--green); font-family: Georgia, serif; font-size: 20px; font-weight: 700; }
+    .conversation h3 { margin: 14px 0 6px; font-size: 20px; text-align: center; }
+    .conversation p { margin: 0; color: var(--muted); font-size: 11px; line-height: 18px; text-align: center; }
+    .prompt { margin-top: 28px; padding: 14px; border: 1px solid var(--border); border-radius: 12px; background: white; font-size: 12px; line-height: 19px; }
+    .nav { height: 64px; display: grid; grid-template-columns: repeat(4, 1fr); padding: 4px 6px; border-top: 1px solid var(--border); background: white; }
+    .nav-item { position: relative; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 2px; border: 0; border-radius: 9px; background: transparent; color: #7a8680; font-size: 9px; }
+    .nav-glyph { width: 34px; height: 28px; display: grid; place-items: center; border-radius: 8px; }
+    .nav-item.active { color: var(--green); font-weight: 700; }
+    .nav-item.active .nav-glyph { background: var(--green-soft); }
+    .nav .icon { width: 21px; height: 21px; }
+    .note { margin-top: 16px; padding: 13px 14px; border-left: 3px solid var(--green); background: var(--surface); color: var(--muted); font-size: 11px; line-height: 18px; }
+    @media (max-width: 760px) {
+      .page { padding: 28px 16px 46px; }
+      .workspace { grid-template-columns: 1fr; }
+      .preview-wrap { position: static; width: min(100%, 390px); margin: 0 auto; }
+      .sets { order: 2; }
+      .preview-wrap { order: 1; }
+    }
+    @media (max-width: 390px) {
+      .page { padding: 24px 12px 40px; }
+      .set-card { padding: 14px 10px; }
+      .icon-cell { padding-inline: 1px; }
+      .phone { height: 600px; border-radius: 28px; }
+    }
+  </style>
+</head>
+<body>
+  <svg width="0" height="0" aria-hidden="true" style="position:absolute">
+    <!-- A：林间线稿。圆角、留白和轻微生长感。 -->
+    <symbol id="a-history" viewBox="0 0 24 24"><path d="M4.5 7.5h10a3 3 0 0 1 3 3V13a3 3 0 0 1-3 3H9l-4 2.8v-3.7a3 3 0 0 1-.5-1.6z"/><path d="M7.5 4.5h9a3 3 0 0 1 3 3V12"/></symbol>
+    <symbol id="a-chat" viewBox="0 0 24 24"><path d="M5 5.5h10a3.5 3.5 0 0 1 3.5 3.5v4a3.5 3.5 0 0 1-3.5 3.5H10l-4.5 3v-3.6A3.5 3.5 0 0 1 5 13.9z"/><path d="M8.5 10h6M8.5 13h3.5"/></symbol>
+    <symbol id="a-collect" viewBox="0 0 24 24"><path d="M5 12.5h4l1.5 2h3l1.5-2h4v6H5z"/><path d="M12 4v7M9 8l3 3 3-3"/><path d="M6.5 7H5v5.5M17.5 7H19v5.5"/></symbol>
+    <symbol id="a-pending" viewBox="0 0 24 24"><circle cx="5.5" cy="6.5" r="1.5"/><circle cx="5.5" cy="12" r="1.5"/><circle cx="5.5" cy="17.5" r="1.5"/><path d="M9 6.5h10M9 12h10M9 17.5h7"/><path d="m4.8 12 1 1 1.7-2"/></symbol>
+    <symbol id="a-knowledge" viewBox="0 0 24 24"><path d="M4.5 5.5c3-1.4 5.5-1.2 7.5.8v13c-2-2-4.5-2.2-7.5-.8z"/><path d="M19.5 5.5c-3-1.4-5.5-1.2-7.5.8v13c2-2 4.5-2.2 7.5-.8z"/><path d="M12 6.3v13"/></symbol>
+
+    <!-- B：节点线稿。用连接关系表达知识网络与 Agent 工作流。 -->
+    <symbol id="b-history" viewBox="0 0 24 24"><circle cx="7" cy="7" r="2.2"/><circle cx="17" cy="7" r="2.2"/><circle cx="12" cy="17" r="2.2"/><path d="M9.2 7h5.6M8.2 8.9l2.7 6M15.8 8.9l-2.7 6"/></symbol>
+    <symbol id="b-chat" viewBox="0 0 24 24"><path d="M4.5 6.5h15v10h-8l-4.5 3v-3H4.5z"/><circle cx="8" cy="11.5" r=".8" fill="currentColor" stroke="none"/><circle cx="12" cy="11.5" r=".8" fill="currentColor" stroke="none"/><circle cx="16" cy="11.5" r=".8" fill="currentColor" stroke="none"/></symbol>
+    <symbol id="b-collect" viewBox="0 0 24 24"><circle cx="12" cy="12" r="2.2"/><circle cx="5" cy="6" r="1.7"/><circle cx="19" cy="6" r="1.7"/><circle cx="12" cy="20" r="1.7"/><path d="m6.4 7.2 4 3.4M17.6 7.2l-4 3.4M12 14.2V18"/></symbol>
+    <symbol id="b-pending" viewBox="0 0 24 24"><circle cx="6" cy="6" r="2"/><circle cx="6" cy="18" r="2"/><circle cx="18" cy="12" r="2"/><path d="M8 6h3a3 3 0 0 1 3 3v0M8 18h3a3 3 0 0 0 3-3v0M14 9v6"/></symbol>
+    <symbol id="b-knowledge" viewBox="0 0 24 24"><circle cx="12" cy="5" r="2"/><circle cx="6" cy="17" r="2"/><circle cx="18" cy="17" r="2"/><path d="M11 7 7 15M13 7l4 8M8 17h8"/><circle cx="12" cy="12" r="1.2"/></symbol>
+
+    <!-- C：纸页线稿。更像安静的资料工具，强调记录、归档与阅读。 -->
+    <symbol id="c-history" viewBox="0 0 24 24"><path d="M6 4.5h9l3 3V19.5H6z"/><path d="M15 4.5v3h3M9 11h6M9 14h4"/><path d="M3.5 7.5v14h11"/></symbol>
+    <symbol id="c-chat" viewBox="0 0 24 24"><path d="M6 4.5h12v14H10l-4 2.5z"/><path d="M9 9h6M9 12h6M9 15h3"/></symbol>
+    <symbol id="c-collect" viewBox="0 0 24 24"><path d="M5 5.5h8l3 3v10H5z"/><path d="M13 5.5v3h3M9 11v5M6.5 13.5h5"/><path d="M16 11h3v9H8v-1.5"/></symbol>
+    <symbol id="c-pending" viewBox="0 0 24 24"><path d="M6 4.5h12v15H6z"/><path d="M9 9h6M9 13h6M9 17h3"/><circle cx="17.5" cy="17.5" r="3.5" fill="white"/><path d="M17.5 15.5v2.2l1.3.8"/></symbol>
+    <symbol id="c-knowledge" viewBox="0 0 24 24"><path d="M5 4.5h11a3 3 0 0 1 3 3v12H8a3 3 0 0 1-3-3z"/><path d="M5 16.5a3 3 0 0 1 3-3h11M9 8h6"/></symbol>
+  </svg>
+
+  <main class="page">
+    <section class="intro">
+      <div class="eyebrow">GROVE MOBILE · ICON STUDY</div>
+      <h1>三组原创图标方向</h1>
+      <p>全部使用项目内联 SVG 绘制，不依赖现有图标库。点击任一方向可切换右侧实际尺寸预览；选中态仅使用浅绿色底，不再出现短横线。</p>
+    </section>
+
+    <div class="workspace">
+      <section class="sets" aria-label="图标方向">
+        <button class="set-card active" data-set="a">
+          <div class="set-head"><div class="set-title"><span class="set-index">01</span><div><h2>林间线稿</h2><p>圆润、安静、有呼吸感，贴近 Grove 的知识工作台气质。</p></div></div><span class="recommended">推荐</span></div>
+          <div class="icon-row">
+            <span class="icon-cell"><svg class="icon"><use href="#a-history"/></svg><span>历史</span></span>
+            <span class="icon-cell"><svg class="icon"><use href="#a-chat"/></svg><span>对话</span></span>
+            <span class="icon-cell"><svg class="icon"><use href="#a-collect"/></svg><span>收集</span></span>
+            <span class="icon-cell"><svg class="icon"><use href="#a-pending"/></svg><span>待处理</span></span>
+            <span class="icon-cell"><svg class="icon"><use href="#a-knowledge"/></svg><span>知识</span></span>
+          </div>
+        </button>
+
+        <button class="set-card" data-set="b">
+          <div class="set-head"><div class="set-title"><span class="set-index">02</span><div><h2>节点线稿</h2><p>连接感更强，突出知识关系和 Agent 的连续工作过程。</p></div></div></div>
+          <div class="icon-row">
+            <span class="icon-cell"><svg class="icon"><use href="#b-history"/></svg><span>历史</span></span>
+            <span class="icon-cell"><svg class="icon"><use href="#b-chat"/></svg><span>对话</span></span>
+            <span class="icon-cell"><svg class="icon"><use href="#b-collect"/></svg><span>收集</span></span>
+            <span class="icon-cell"><svg class="icon"><use href="#b-pending"/></svg><span>待处理</span></span>
+            <span class="icon-cell"><svg class="icon"><use href="#b-knowledge"/></svg><span>知识</span></span>
+          </div>
+        </button>
+
+        <button class="set-card" data-set="c">
+          <div class="set-head"><div class="set-title"><span class="set-index">03</span><div><h2>纸页线稿</h2><p>更克制、更工具化，强调资料、记录和版本管理。</p></div></div></div>
+          <div class="icon-row">
+            <span class="icon-cell"><svg class="icon"><use href="#c-history"/></svg><span>历史</span></span>
+            <span class="icon-cell"><svg class="icon"><use href="#c-chat"/></svg><span>对话</span></span>
+            <span class="icon-cell"><svg class="icon"><use href="#c-collect"/></svg><span>收集</span></span>
+            <span class="icon-cell"><svg class="icon"><use href="#c-pending"/></svg><span>待处理</span></span>
+            <span class="icon-cell"><svg class="icon"><use href="#c-knowledge"/></svg><span>知识</span></span>
+          </div>
+        </button>
+        <div class="note">主原型暂时采用「林间线稿」。它对“对话、采集、任务、知识”四类对象的区分最清楚，同时不会让 Grove 看起来像社交 IM 或通用 AI 助手。</div>
+      </section>
+
+      <aside class="preview-wrap">
+        <p class="preview-label">390px 原生移动端实际尺寸预览</p>
+        <div class="phone">
+          <div class="status"><span>9:41</span><span>● ● ▰</span></div>
+          <header class="header"><span class="mark">G</span><span class="scope">新房装修⌄</span><button class="history" aria-label="历史对话"><svg class="icon"><use data-preview="history" href="#a-history"/></svg></button></header>
+          <div class="conversation"><span class="agent-mark">G</span><h3>和你的知识一起想</h3><p>当前只读取“新房装修”的正式知识</p><div class="prompt">帮我看看卫生间防水有哪些关键知识，有没有互相冲突的地方？</div></div>
+          <nav class="nav">
+            <button class="nav-item active"><span class="nav-glyph"><svg class="icon"><use data-preview="chat" href="#a-chat"/></svg></span><span>对话</span></button>
+            <button class="nav-item"><span class="nav-glyph"><svg class="icon"><use data-preview="collect" href="#a-collect"/></svg></span><span>收集</span></button>
+            <button class="nav-item"><span class="nav-glyph"><svg class="icon"><use data-preview="pending" href="#a-pending"/></svg></span><span>待处理</span></button>
+            <button class="nav-item"><span class="nav-glyph"><svg class="icon"><use data-preview="knowledge" href="#a-knowledge"/></svg></span><span>知识</span></button>
+          </nav>
+        </div>
+      </aside>
+    </div>
+  </main>
+
+  <script>
+    document.addEventListener('click', event => {
+      const card = event.target.closest('[data-set]')
+      if (!card) return
+      const set = card.dataset.set
+      document.querySelectorAll('[data-set]').forEach(item => item.classList.toggle('active', item === card))
+      document.querySelectorAll('[data-preview]').forEach(icon => icon.setAttribute('href', `#${set}-${icon.dataset.preview}`))
+    })
+  </script>
+</body>
+</html>

@@ -5,12 +5,22 @@
 - 文件：[grove-mobile-agent-prototype.html](grove-mobile-agent-prototype.html)
 - 确认日期：2026-08-26
 - 定位：以对话为默认首页的原生移动端产品原型，不是 Grove Web 的手机适配版。
-- 导航：对话 / 收集 / 待处理 / 知识；项目和目录作为同一个 Workspace 知识 Agent 的工作范围。
+- 导航：对话 / 收集 / 待处理 / 知识；范围只在 Workspace 全部知识与项目之间切换。
 - 目标视口：以 390 × 844 为主，同时覆盖 360 × 800 与 412 × 915，采用平台中性布局兼容 iOS 与 Android 安全区。
 
 核心可点击场景从「对话」页的建议问题开始，覆盖项目范围、知识检索、Entry 与 Source 引用、冲突与知识不足、歧义澄清、可编辑草稿、完整差异、操作确认、执行回执与撤销。其余三个栏目提供轻量可点击状态，用于验证采集、长任务恢复、失败重试、审计和对象查看。
 
 访问：`http://127.0.0.1:8899/docs/prototypes/grove-mobile-agent-prototype.html`
+
+交互约定：键盘展开时隐藏四栏底部导航；发送消息后保持键盘态，只有用户明确收起键盘或点击输入区外部时恢复底栏。弹层和全屏审阅页覆盖底栏，返回栏目根页面后恢复。
+
+### 移动端原创图标方向
+
+- 对比文件：[grove-mobile-icon-study.html](grove-mobile-icon-study.html)
+- 三组方向：林间线稿 / 节点线稿 / 纸页线稿。
+- 当前采用：林间线稿；图标均为项目内原创内联 SVG，不依赖图标库。
+
+访问：`http://127.0.0.1:8899/docs/prototypes/grove-mobile-icon-study.html`
 
 该文件是产品形态与关键交互的确定性模拟，不接真实后端，不代表原生 App 技术栈或正式能力已经确定。它不会替代低于 1024px 时 Grove Web 的电脑访问提示。
 
