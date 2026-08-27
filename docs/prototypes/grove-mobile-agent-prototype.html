@@ -184,6 +184,18 @@
     .source-strip { display: flex; gap: 6px; margin-top: 14px; padding-top: 12px; overflow-x: auto; border-top: 1px solid var(--g-border); scrollbar-width: none; }
     .source-strip::-webkit-scrollbar { display: none; }
     .source-chip { min-height: 40px; flex: 0 0 auto; display: inline-flex; align-items: center; gap: 5px; padding: 0 10px; border: 1px solid var(--g-border); border-radius: 7px; background: var(--g-surface); color: var(--g-muted); font-size: 11px; }
+    .answer-scope { display: flex; align-items: center; gap: 6px; margin-top: 12px; padding-top: 10px; border-top: 1px solid var(--g-border); color: var(--g-muted); font-size: 10px; line-height: 16px; }
+    .answer-scope .icon { width: 14px; height: 14px; flex: 0 0 auto; }
+    .followup-group { margin: 14px 0 22px; }
+    .followup-title { margin-bottom: 8px; color: var(--g-muted); font-size: 11px; font-weight: 650; }
+    .followup-grid { display: grid; gap: 7px; }
+    .followup-button { width: 100%; min-height: 44px; display: grid; grid-template-columns: minmax(0, 1fr) 18px; gap: 8px; align-items: center; padding: 9px 11px; border: 1px solid var(--g-border); border-radius: 9px; background: var(--g-surface); color: var(--g-ink); text-align: left; font-size: 12px; font-weight: 600; }
+    .followup-button:hover { border-color: #c7d4cc; background: #fbfcfb; }
+    .followup-button .icon { width: 16px; height: 16px; color: var(--g-muted); }
+    .followup-button.operation { border-color: #dacced; background: var(--g-ai-soft); color: var(--g-ai); }
+    .project-hit { margin-top: 10px; padding: 9px 10px; border: 1px solid var(--g-border); border-radius: 7px; background: var(--g-bg); }
+    .project-hit strong { display: block; font-size: 12px; }
+    .project-hit p { margin-top: 3px; color: var(--g-muted); font-size: 11px; line-height: 18px; }
 
     .conflict { border-left: 3px solid var(--g-risk); }
     .conflict-side { margin-top: 10px; padding: 9px 10px; border: 1px solid #f0dfba; border-radius: 7px; background: #fffaf0; }
@@ -196,6 +208,7 @@
     .inline-actions { display: flex; align-items: center; gap: 8px; margin-top: 12px; flex-wrap: wrap; }
     .button { min-height: 44px; display: inline-flex; align-items: center; justify-content: center; gap: 7px; padding: 0 13px; border: 1px solid var(--g-border); border-radius: 8px; background: var(--g-surface); font-size: 13px; font-weight: 650; }
     .button:hover { filter: brightness(.985); }
+    button:disabled { cursor: not-allowed; opacity: .48; }
     .button.primary { border-color: var(--g-green); background: var(--g-green); color: white; }
     .button.ai { border-color: #dacced; background: var(--g-ai-soft); color: var(--g-ai); }
     .button.danger { border-color: #efcaca; background: var(--g-error-soft); color: var(--g-error); }
@@ -346,8 +359,14 @@
     .scope-option strong { display: block; font-size: 13px; }
     .scope-option span { display: block; margin-top: 2px; color: var(--g-muted); font-size: 10px; }
     .scope-option.active { color: var(--g-green); }
+    .scope-check { visibility: hidden; }
+    .scope-option.active .scope-check { visibility: visible; }
     .scope-option.child { padding-left: 24px; }
     .source-quote { margin-top: 12px; padding: 12px; border-left: 3px solid var(--g-ai); background: var(--g-ai-soft); font-size: 13px; line-height: 22px; }
+    .source-section { margin-top: 13px; }
+    .source-section-label { display: block; margin-bottom: 5px; color: var(--g-muted); font-size: 10px; font-weight: 700; letter-spacing: .02em; }
+    .entry-summary { padding: 10px 11px; border: 1px solid var(--g-border); border-radius: 8px; background: var(--g-bg); font-size: 12px; line-height: 20px; }
+    .source-context { margin-top: 8px; color: var(--g-muted); font-size: 11px; line-height: 18px; }
     .source-meta { display: grid; gap: 7px; margin-top: 13px; padding-top: 12px; border-top: 1px solid var(--g-border); color: var(--g-muted); font-size: 11px; }
     .confirm-box { padding: 11px; border: 1px solid var(--g-border); border-radius: 9px; background: var(--g-bg); }
     .confirm-box strong { display: block; font-size: 13px; }
@@ -550,7 +569,7 @@
         <header class="overlay-header"><button class="header-icon" data-close-overlay aria-label="关闭历史"><svg class="icon" style="transform:rotate(180deg)"><use href="#i-chevron"/></svg></button><h1>对话历史</h1><button class="header-icon" data-demo-toast="已创建一个新对话" aria-label="新建对话"><svg class="icon"><use href="#i-plus"/></svg></button></header>
         <div class="overlay-scroll" style="padding-bottom:24px">
           <div class="section-title" style="margin-top:0"><h2>今天</h2><span>同一个知识 Agent</span></div>
-          <button class="knowledge-card" data-close-overlay><div class="top"><span class="badge confirmed">新房装修</span><span class="caption muted">刚刚</span></div><h3>卫生间防水关键知识与冲突</h3><p>项目范围 · 已生成合并建议</p></button>
+          <button class="knowledge-card" data-close-overlay><div class="top"><span class="badge confirmed" id="currentHistoryScope">新房装修</span><span class="caption muted">刚刚</span></div><h3>卫生间防水关键知识与冲突</h3><p id="currentHistoryStatus">项目范围 · 已回答</p></button>
           <button class="knowledge-card" data-demo-toast="已切换到“全屋照明参数比较”"><div class="top"><span class="badge neutral">新房装修</span><span class="caption muted">18:20</span></div><h3>全屋照明参数比较</h3><p>项目范围 · 长任务进行中</p></button>
           <div class="section-title"><h2>昨天</h2><span>1 个对话</span></div>
           <button class="knowledge-card" data-demo-toast="已切换到“跨项目找旅行清单”"><div class="top"><span class="badge neutral">全部知识</span><span class="caption muted">昨天</span></div><h3>跨项目找旅行清单</h3><p>Workspace 范围 · 命中 2 个项目</p></button>
@@ -562,11 +581,13 @@
       <section class="sheet" id="scopeSheet" role="dialog" aria-modal="true" aria-label="选择知识范围">
         <div class="sheet-handle"></div><div class="sheet-head"><h2>当前知识范围</h2><button class="sheet-close" data-close-sheet aria-label="关闭"><svg class="icon"><use href="#i-close"/></svg></button></div>
         <div class="sheet-body">
-          <button class="scope-option" data-scope="全部知识" data-detail="Workspace · 所有项目"><span class="row-icon"><svg class="icon"><use href="#i-book"/></svg></span><div><strong>全部知识</strong><span>当前 Workspace 的所有正式知识</span></div><svg class="icon scope-check"><use href="#i-check"/></svg></button>
-          <button class="scope-option active" data-scope="新房装修" data-detail="项目 · 全部知识"><span class="row-icon"><svg class="icon"><use href="#i-folder"/></svg></span><div><strong>新房装修</strong><span>项目内 38 条正式知识</span></div><svg class="icon scope-check"><use href="#i-check"/></svg></button>
-          <button class="scope-option" data-scope="个人健康" data-detail="项目 · 全部知识"><span class="row-icon"><svg class="icon"><use href="#i-folder"/></svg></span><div><strong>个人健康</strong><span>项目内 12 条正式知识</span></div><svg class="icon scope-check"><use href="#i-check"/></svg></button>
-          <button class="scope-option" data-scope="新疆旅行" data-detail="项目 · 全部知识"><span class="row-icon"><svg class="icon"><use href="#i-folder"/></svg></span><div><strong>新疆旅行</strong><span>项目内 21 条正式知识</span></div><svg class="icon scope-check"><use href="#i-check"/></svg></button>
-          <button class="scope-option" data-scope="找工作" data-detail="项目 · 全部知识"><span class="row-icon"><svg class="icon"><use href="#i-folder"/></svg></span><div><strong>找工作</strong><span>项目内 16 条正式知识</span></div><svg class="icon scope-check"><use href="#i-check"/></svg></button>
+          <div role="radiogroup" aria-label="Workspace 或项目范围">
+            <button class="scope-option" role="radio" aria-checked="false" data-scope="全部知识" data-detail="Workspace · 所有项目"><span class="row-icon"><svg class="icon"><use href="#i-book"/></svg></span><div><strong>全部知识</strong><span>当前 Workspace 的所有正式知识</span></div><svg class="icon scope-check" aria-hidden="true"><use href="#i-check"/></svg></button>
+            <button class="scope-option active" role="radio" aria-checked="true" data-scope="新房装修" data-detail="项目 · 全部知识"><span class="row-icon"><svg class="icon"><use href="#i-folder"/></svg></span><div><strong>新房装修</strong><span>项目内 38 条正式知识</span></div><svg class="icon scope-check" aria-hidden="true"><use href="#i-check"/></svg></button>
+            <button class="scope-option" role="radio" aria-checked="false" data-scope="个人健康" data-detail="项目 · 全部知识"><span class="row-icon"><svg class="icon"><use href="#i-folder"/></svg></span><div><strong>个人健康</strong><span>项目内 12 条正式知识</span></div><svg class="icon scope-check" aria-hidden="true"><use href="#i-check"/></svg></button>
+            <button class="scope-option" role="radio" aria-checked="false" data-scope="新疆旅行" data-detail="项目 · 全部知识"><span class="row-icon"><svg class="icon"><use href="#i-folder"/></svg></span><div><strong>新疆旅行</strong><span>项目内 21 条正式知识</span></div><svg class="icon scope-check" aria-hidden="true"><use href="#i-check"/></svg></button>
+            <button class="scope-option" role="radio" aria-checked="false" data-scope="找工作" data-detail="项目 · 全部知识"><span class="row-icon"><svg class="icon"><use href="#i-folder"/></svg></span><div><strong>找工作</strong><span>项目内 16 条正式知识</span></div><svg class="icon scope-check" aria-hidden="true"><use href="#i-check"/></svg></button>
+          </div>
         </div>
       </section>
 
@@ -577,7 +598,7 @@
 
       <section class="sheet" id="sourceSheet" role="dialog" aria-modal="true" aria-label="引用与来源">
         <div class="sheet-handle"></div><div class="sheet-head"><h2 id="sourceTitle">引用与来源</h2><button class="sheet-close" data-close-sheet aria-label="关闭"><svg class="icon"><use href="#i-close"/></svg></button></div>
-        <div class="sheet-body"><span class="badge confirmed">正式知识</span><h3 id="sourceEntry" style="margin-top:8px;font-size:16px">闭水试验完成后再验收防水层</h3><p id="sourcePath" class="muted caption" style="margin-top:4px">新房装修 / 施工 / 防水</p><div class="source-quote" id="sourceQuote">“闭水期间应持续观察水位变化，并到楼下检查顶面是否出现渗漏。”</div><div class="source-meta"><span id="sourceFile">Source：防水验收记录.md</span><span>证据关系已由应用层校验 · 不包含待确认候选</span></div><div class="inline-actions"><button class="button" data-demo-toast="已打开完整 Entry">查看完整知识</button><button class="button ghost" data-close-sheet>关闭</button></div></div>
+        <div class="sheet-body"><span class="badge confirmed">对应正式 Entry</span><h3 id="sourceEntry" style="margin-top:8px;font-size:16px">闭水试验完成后再验收防水层</h3><p id="sourcePath" class="muted caption" style="margin-top:4px">新房装修 / 施工 / 防水</p><div class="source-section"><span class="source-section-label">ENTRY 总结</span><div class="entry-summary" id="sourceSummary">闭水期间同时观察水位和楼下顶面，再进入验收。</div></div><div class="source-section"><span class="source-section-label">SOURCE 原文</span><div class="source-quote" id="sourceQuote">“闭水期间应持续观察水位变化，并到楼下检查顶面是否出现渗漏。”</div><p class="source-context" id="sourceContext">上下文：该段位于“闭水验收”小节，前文记录了试验开始时间。</p></div><div class="source-meta"><span id="sourceFile">Source：防水验收记录.md</span><span>证据关系已由应用层校验 · 不包含 Agent 回答</span></div><div class="inline-actions"><button class="button" data-demo-toast="已打开完整 Entry">查看完整知识</button><button class="button ghost" data-close-sheet>关闭</button></div></div>
       </section>
 
       <section class="sheet" id="confirmSheet" role="dialog" aria-modal="true" aria-label="确认知识修改">
@@ -607,6 +628,10 @@
     const toastEl = document.getElementById('toast')
     const scrim = document.getElementById('scrim')
     let stage = 'start'
+    let currentScope = '新房装修'
+    let worksetScope = null
+    let worksetValid = false
+    let busy = false
     let toastTimer
     let keyboardTimer
 
@@ -620,8 +645,19 @@
       toastTimer = setTimeout(() => toastEl.classList.remove('show'), 2200)
     }
     const add = (html) => { thread.insertAdjacentHTML('beforeend', html); scrollThread() }
-    const userMessage = (text) => `<div class="message user"><div class="user-bubble">${text}</div></div>`
+    const escapeHTML = (text) => text.replace(/[&<>"']/g, character => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#039;' })[character])
+    const userMessage = (text) => `<div class="message user"><div class="user-bubble">${escapeHTML(text)}</div></div>`
     const agentLabel = () => `<div class="agent-label"><span class="agent-dot">G</span><span>知识 Agent</span></div>`
+    const scopeStamp = (scope = currentScope, detail = '') => `<div class="answer-scope">${icon('folder')}<span>检索范围：${scope}${detail ? ` · ${detail}` : ''}</span></div>`
+    const projectAttribution = () => currentScope === '全部知识' ? '<div class="project-hit"><strong>命中项目：新房装修</strong><p>当前结论的主要证据来源</p></div><div class="project-hit"><strong>命中项目：出租房翻新</strong><p>补充工期受限或潮湿环境的记录</p></div>' : ''
+    const updateHistory = (status) => { document.getElementById('currentHistoryStatus').textContent = `${currentScope === '全部知识' ? 'Workspace' : '项目'}范围 · ${status}` }
+    const followupActions = () => `<div class="followup-group"><p class="followup-title">可以继续问</p><div class="followup-grid">
+      <button class="followup-button" data-prompt="为什么闭水时长不一致？"><span>为什么闭水时长不一致？</span>${icon('chevron')}</button>
+      <button class="followup-button" data-prompt="查看第二条的来源原文"><span>查看第二条的来源原文</span>${icon('chevron')}</button>
+      <button class="followup-button" data-prompt="如果是在南方潮湿地区呢？"><span>如果是在南方潮湿地区呢？</span>${icon('chevron')}</button>
+      <button class="followup-button" data-prompt="有没有相反的经验？"><span>有没有相反的经验？</span>${icon('chevron')}</button>
+      <button class="followup-button operation" data-prompt="把能确定的部分整理成一条更完整的知识，旧的重复内容也处理一下"><span>把确定部分整理成知识，并处理重复内容</span>${icon('merge')}</button>
+    </div></div>`
 
     function closeSheets() {
       document.querySelectorAll('.sheet.open').forEach(sheet => sheet.classList.remove('open'))
@@ -645,57 +681,181 @@
 
     function closeOverlays() { document.querySelectorAll('.overlay.open').forEach(overlay => overlay.classList.remove('open')) }
 
-    async function runSearch() {
-      if (stage !== 'start') return
-      stage = 'searching'
-      document.getElementById('intro')?.remove()
-      add(userMessage('帮我看看卫生间防水有哪些关键知识，有没有互相冲突的地方？'))
-      add(`${agentLabel()}<article class="card process-card" id="searchProcess"><div class="card-body"><div class="card-head"><div><div class="eyebrow">${icon('search')}检索项目知识</div><h2>正在检查“施工 / 防水”</h2></div><span class="badge neutral">进行中</span></div><div class="process-list"><div class="process-step current" data-step="1"><span class="step-mark">${icon('check')}</span><span>在“新房装修”中检索卫生间防水相关 Entry</span></div><div class="process-step" data-step="2"><span class="step-mark">${icon('check')}</span><span>打开来源证据并核对关键结论</span></div><div class="process-step" data-step="3"><span class="step-mark">${icon('check')}</span><span>比较相似与可能冲突的观点</span></div></div><div class="process-summary">${icon('circle-check')}已检索 6 条正式知识和 9 个来源</div></div></article>`)
-      const card = document.getElementById('searchProcess')
-      await wait(650)
-      card.querySelector('[data-step="1"]').className = 'process-step done'
-      card.querySelector('[data-step="2"]').className = 'process-step current'
-      await wait(650)
-      card.querySelector('[data-step="2"]').className = 'process-step done'
-      card.querySelector('[data-step="3"]').className = 'process-step current'
-      await wait(650)
-      card.querySelector('[data-step="3"]').className = 'process-step done'
+    async function runProcess({ id, eyebrow, title, completeTitle, steps, summary }) {
+      add(`${agentLabel()}<article class="card process-card" id="${id}"><div class="card-body"><div class="card-head"><div><div class="eyebrow">${icon('search')}${eyebrow}</div><h2>${title}</h2></div><span class="badge neutral">进行中</span></div><div class="process-list">${steps.map((step, index) => `<div class="process-step ${index === 0 ? 'current' : ''}" data-process-step="${index}"><span class="step-mark">${icon('check')}</span><span>${step}</span></div>`).join('')}</div><div class="process-summary">${icon('circle-check')}${summary}</div>${scopeStamp()}</div></article>`)
+      const card = document.getElementById(id)
+      for (let index = 0; index < steps.length; index++) {
+        await wait(460)
+        const current = card?.querySelector(`[data-process-step="${index}"]`)
+        if (!current) return null
+        current.className = 'process-step done'
+        card.querySelector(`[data-process-step="${index + 1}"]`)?.classList.add('current')
+      }
       card.classList.add('complete')
       card.querySelector('.badge').textContent = '已完成'
+      card.querySelector('h2').textContent = completeTitle
+      return card
+    }
+
+    async function runSearch(question = '帮我看看卫生间防水有哪些关键知识，有没有互相冲突的地方？') {
+      if (busy || stage !== 'start') return
+      busy = true
+      stage = 'searching'
+      document.getElementById('intro')?.remove()
+      add(userMessage(question))
+      await runProcess({
+        id: 'searchProcess', eyebrow: currentScope === '全部知识' ? '检索 Workspace 知识' : '检索项目知识',
+        title: '正在检查“施工 / 防水”', completeTitle: '已检查“施工 / 防水”',
+        steps: [`在“${currentScope}”中检索卫生间防水相关 Entry`, '打开来源证据并核对关键结论', '比较相似与可能冲突的观点'],
+        summary: currentScope === '全部知识' ? '已检索 8 条正式知识，命中 2 个项目' : '已检索 6 条正式知识和 9 个来源'
+      })
+      worksetScope = currentScope
+      worksetValid = true
       showAnswer()
+      busy = false
     }
 
     function showAnswer() {
       stage = 'answered'
       add(`${agentLabel()}
-        <article class="card"><div class="card-body"><div class="card-head"><div><div class="eyebrow">${icon('book')}带证据的综合回答</div><h2>卫生间防水目前能确认 4 个要点</h2></div><span class="badge confirmed">正式知识</span></div><p class="answer-intro">现有知识覆盖了施工准备、重点部位、闭水试验和验收记录；但“闭水多久”存在两种口径。</p><div class="answer-points">
+        <article class="card"><div class="card-body"><div class="card-head"><div><div class="eyebrow">${icon('book')}基于正式知识的综合回答</div><h2>卫生间防水目前能确认 4 个要点</h2></div><span class="badge confirmed">基于 ${currentScope === '全部知识' ? '8' : '6'} 条正式知识</span></div><p class="answer-intro">现有知识覆盖了施工准备、重点部位、闭水试验和验收记录；但“闭水多久”存在两种口径。</p><div class="answer-points">
           <div class="answer-point"><span class="point-number">1</span><p>基层应平整、坚实并清理浮灰，阴阳角和管根需要先做加强处理。<button class="citation" data-source="base">Entry ① · 来源 2</button></p></div>
           <div class="answer-point"><span class="point-number">2</span><p>地漏、管根、门槛石附近是验收时需要重点复查的位置。<button class="citation" data-source="detail">Entry ② · 来源 2</button></p></div>
           <div class="answer-point"><span class="point-number">3</span><p>防水层完成后应进行闭水试验，同时观察水位和楼下顶面。<button class="citation" data-source="close">Entry ③ · 来源 3</button></p></div>
           <div class="answer-point"><span class="point-number">4</span><p>施工照片、试验时间和异常处理结果应留在验收记录中。<button class="citation" data-source="record">Entry ④ · 来源 2</button></p></div>
-        </div><div class="source-strip"><button class="source-chip" data-source="close">${icon('quote')}防水验收记录</button><button class="source-chip" data-source="base">${icon('file')}施工交底截图</button><button class="source-chip" data-source="detail">${icon('file')}监理检查清单</button></div></div></article>
+        </div>${currentScope === '全部知识' ? '<div class="project-hit"><strong>命中项目：新房装修</strong><p>6 条正式知识 · 主要结论来源</p></div><div class="project-hit"><strong>命中项目：出租房翻新</strong><p>2 条正式知识 · 补充工期受限场景</p></div>' : ''}<div class="source-strip"><button class="source-chip" data-source="close">${icon('quote')}防水验收记录</button><button class="source-chip" data-source="base">${icon('file')}施工交底截图</button><button class="source-chip" data-source="detail">${icon('file')}监理检查清单</button></div>${scopeStamp()}</div></article>
         <article class="card conflict"><div class="card-body"><div class="card-head"><div><div class="eyebrow">${icon('alert')}冲突观点</div><h2>闭水试验时长记录不一致</h2></div><span class="badge risk">需要判断</span></div><div class="conflict-side"><strong>观点 A：至少保持 24 小时</strong><p>来自施工交底截图与一条验收记录。</p></div><div class="conflict-side"><strong>观点 B：建议保持 48 小时再观察</strong><p>来自监理检查清单，未说明材料和现场条件。</p></div><p class="conflict-summary">当前来源缺少防水材料、施工方案和现场条件，不能直接判定其中一种适用于所有情况。</p></div></article>
         <article class="card insufficient"><div class="card-body"><div class="card-head"><div><div class="eyebrow">${icon('alert')}知识不足</div><h3>还缺少适用条件</h3></div></div><p>现有知识没有覆盖不同防水材料或厂家对闭水时长的要求。我没有用模型常识补齐。</p><div class="inline-actions"><button class="button" data-open-sheet="scope">查看或扩大范围</button></div></div></article>
-        <div class="inline-actions" style="margin:14px 0 22px"><button class="button ai block" data-followup>${icon('merge')}把能确定的部分整理成一条更完整的知识，旧的重复内容也处理一下</button></div>`)
+        ${followupActions()}`)
+      updateHistory('已回答')
     }
 
-    async function runFollowup() {
-      if (stage !== 'answered') return
+    async function ensureCurrentWorkset(question, mode = '继续提问') {
+      if (worksetValid && worksetScope === currentScope) return true
+      await runProcess({
+        id: `refreshProcess${Date.now()}`, eyebrow: '范围变更后重新检索',
+        title: `正在“${currentScope}”中重新建立工作集`, completeTitle: `已在“${currentScope}”中完成重新检索`,
+        steps: [`按新范围重新检索与“${escapeHTML(question)}”相关的 Entry`, '重新打开 Source 证据，不复用旧范围工作集'],
+        summary: `已按“${currentScope}”范围为${mode}建立新工作集`
+      })
+      worksetScope = currentScope
+      worksetValid = true
+      return true
+    }
+
+    async function runFollowup(text = '把能确定的部分整理成一条更完整的知识，旧的重复内容也处理一下') {
+      if (busy || stage === 'start' || stage === 'searching') return
+      busy = true
+      add(userMessage(text))
+      if (currentScope === '全部知识') {
+        add(`${agentLabel()}<article class="card insufficient"><div class="card-body"><div class="card-head"><div><div class="eyebrow">${icon('alert')}写入目标不明确</div><h2>全部知识可以阅读，但不能直接作为修改目标</h2></div><span class="badge risk">请选择项目</span></div><p>当前工作集命中了多个项目。我不会把它们合并写入，也不会使用切换范围前的“新房装修”工作集。</p><div class="inline-actions"><button class="button" data-open-sheet="scope">选择目标项目</button></div></div></article>`)
+        busy = false
+        return
+      }
+      if (!worksetValid || worksetScope !== currentScope) {
+        add(`${agentLabel()}<article class="card insufficient"><div class="card-body"><div class="card-head"><div><div class="eyebrow">${icon('alert')}操作上下文已失效</div><h2>不会使用切换范围前的工作集</h2></div><span class="badge risk">需重新检索</span></div><p>上一轮回答基于“${worksetScope || '旧范围'}”，当前范围是“${currentScope}”。我会先在当前项目重新检索。</p></div></article>`)
+        await ensureCurrentWorkset(text, '修改')
+      }
       stage = 'clarifying'
-      add(userMessage('把能确定的部分整理成一条更完整的知识，旧的重复内容也处理一下'))
-      add(`${agentLabel()}<article class="card process-card" id="mergeProcess"><div class="card-body"><div class="process-summary" style="display:flex">${icon('search')}正在定位重复 Entry 与来源关系…</div></div></article>`)
+      add(`${agentLabel()}<article class="card process-card" id="mergeProcess"><div class="card-body"><div class="process-summary" style="display:flex">${icon('search')}正在“${currentScope}”中定位重复 Entry 与来源关系…</div>${scopeStamp()}</div></article>`)
       await wait(750)
-      document.getElementById('mergeProcess').outerHTML = `${agentLabel()}<article class="card"><div class="card-body"><div class="card-head"><div><div class="eyebrow">${icon('alert')}需要消除一个歧义</div><h2>冲突内容不能作为重复项处理</h2></div><span class="badge risk">请确认</span></div><p class="answer-intro">我找到 3 条可以合并的重复知识，以及 2 条包含条件冲突的知识。建议只合并确定部分，保留冲突双方。</p><div class="choice-grid"><button class="choice recommended" data-clarify="recommended"><strong>按建议处理</strong><span>合并 3 条重复知识，保留 2 条冲突知识</span></button><button class="choice" data-clarify="manual"><strong>重新选择影响对象</strong><span>逐条决定哪些知识参与合并</span></button></div></div></article>`
+      document.getElementById('mergeProcess').outerHTML = `<article class="card"><div class="card-body"><div class="card-head"><div><div class="eyebrow">${icon('alert')}需要消除一个歧义</div><h2>冲突内容不能作为重复项处理</h2></div><span class="badge risk">请确认</span></div><p class="answer-intro">我找到 3 条可以合并的重复知识，以及 2 条包含条件冲突的知识。建议只合并确定部分，保留冲突双方。</p>${scopeStamp()}<div class="choice-grid"><button class="choice recommended" data-clarify="recommended"><strong>按建议处理</strong><span>合并 3 条重复知识，保留 2 条冲突知识</span></button><button class="choice" data-clarify="manual"><strong>重新选择影响对象</strong><span>逐条决定哪些知识参与合并</span></button></div></div></article>`
       scrollThread()
+      busy = false
+    }
+
+    async function runExplanation(text) {
+      if (busy) return
+      busy = true
+      add(userMessage(text))
+      await ensureCurrentWorkset(text, '解释')
+      add(`${agentLabel()}<article class="card"><div class="card-body"><div class="card-head"><div><div class="eyebrow">${icon('book')}复用已读取的 Entry</div><h2>24 小时和 48 小时记录的用途不完全相同</h2></div><span class="badge confirmed">基于 3 条正式知识</span></div><div class="answer-points"><div class="answer-point"><span class="point-number">24</span><p><strong>24 小时</strong>的记录更像最低观察门槛：记录了水位与楼下顶面无异常后进入下一步。<button class="citation" data-source="close24">Entry ③ · 来源 1</button></p></div><div class="answer-point"><span class="point-number">48</span><p><strong>48 小时</strong>来自监理复查清单，表达的是延长观察建议，但原文没有写明材料、环境或项目规范。<button class="citation" data-source="close48">Entry ⑤ · 来源 1</button></p></div></div><p class="answer-intro">因此，这不是已被证明的“24 小时对 48 小时”通用规则之争，而是两条记录缺少共同的适用条件。当前资料不足以裁决一个统一时长。</p>${projectAttribution()}${scopeStamp()}</div></article>`)
+      stage = 'answered'
+      updateHistory('已回答')
+      busy = false
+    }
+
+    function runSourcePrompt(text) {
+      if (busy) return
+      add(userMessage(text))
+      add(`${agentLabel()}<article class="card"><div class="card-body"><div class="card-head"><div><div class="eyebrow">${icon('quote')}正在查看证据</div><h2>已打开 Entry ② 对应的 Source 原文</h2></div><span class="badge confirmed">可溯源</span></div><p class="answer-intro">下方 Sheet 将 Entry 总结与 Source 原文分开展示；原文不来自 Agent 上一轮回答。</p>${scopeStamp(worksetScope || '新房装修', '该引用生成时的范围')}</div></article>`)
+      showSource('detail')
+    }
+
+    async function runHumidity(text) {
+      if (busy) return
+      busy = true
+      add(userMessage(text))
+      await runProcess({
+        id: `humidityProcess${Date.now()}`, eyebrow: '补查新条件',
+        title: '正在补查“潮湿、返潮、沿海环境”相关知识', completeTitle: '已补查“潮湿、返潮、沿海环境”相关知识',
+        steps: [`在“${currentScope}”中搜索潮湿、返潮与沿海施工记录`, '核对新命中的 Entry 与 Source 原文', '将新环境条件与原问题的闭水验收相关联'],
+        summary: currentScope === '全部知识' ? '新命中 3 条正式知识，来自 2 个项目' : '新命中 2 条正式知识和 3 个来源'
+      })
+      worksetScope = currentScope
+      worksetValid = true
+      add(`${agentLabel()}<article class="card"><div class="card-body"><div class="card-head"><div><div class="eyebrow">${icon('book')}原问题 + 南方潮湿条件</div><h2>新资料补充的重点是基层状态，不是直接延长闭水时间</h2></div><span class="badge confirmed">基于新命中知识</span></div><p class="answer-intro">一条沿海施工记录要求在返潮时先确认基层含水状态，基层未达到材料施工条件时延后涂刷。<button class="citation" data-source="humidBase">Entry ⑥ · 来源 2</button></p><p class="answer-intro">另一条验收备忘提到，潮湿环境下要完整记录施工与闭水起止时间，避免将表面凝露直接当成渗漏。<button class="citation" data-source="humidRecord">Entry ⑦ · 来源 1</button></p><div class="insufficient card" style="margin-top:12px;margin-bottom:0"><div class="card-body"><h3>仍不能确定统一闭水时长</h3><p>新命中的知识没有证明南方潮湿地区必须从 24 小时改为 48 小时。</p></div></div>${projectAttribution()}${scopeStamp()}</div></article>`)
+      stage = 'answered'
+      updateHistory('已回答')
+      busy = false
+    }
+
+    async function runCounterexample(text) {
+      if (busy) return
+      busy = true
+      add(userMessage(text))
+      await runProcess({
+        id: `counterProcess${Date.now()}`, eyebrow: '寻找反例与不同观点',
+        title: '正在寻找“不适用、例外、失败经验和不同观点”', completeTitle: '已检查不适用、例外和失败经验',
+        steps: [`在“${currentScope}”中搜索否定词、异常记录与复盘`, '检查是否有与现有结论相反的 Source 证据'],
+        summary: currentScope === '新房装修' ? '已检查 6 条正式知识，找到 1 条限定性反例' : '已检查当前范围并核对反例证据'
+      })
+      worksetScope = currentScope
+      worksetValid = true
+      add(`${agentLabel()}<article class="card conflict"><div class="card-body"><div class="card-head"><div><div class="eyebrow">${icon('alert')}限定性反例</div><h2>“闭水无异常”不代表后续一定不会渗漏</h2></div><span class="badge risk">不适用条件</span></div><p class="answer-intro">一条现场复盘记录：24 小时闭水时未见异常，但门槛石安装后的二次施工破坏了局部防水层。<button class="citation" data-source="counter">复盘 Entry · 来源 1</button></p><p class="conflict-summary">这个反例否定的是“一次闭水通过就能保证后续无风险”，不是否定闭水试验本身的价值。当前范围未找到“不需要做闭水试验”的可溯源观点；这不等于该观点在所有场景绝对正确。</p>${projectAttribution()}${scopeStamp()}</div></article>`)
+      stage = 'answered'
+      updateHistory('已回答')
+      busy = false
+    }
+
+    async function runGenericQuestion(text) {
+      if (busy) return
+      busy = true
+      add(userMessage(text))
+      await ensureCurrentWorkset(text)
+      add(`${agentLabel()}<article class="card insufficient"><div class="card-body"><div class="card-head"><div><div class="eyebrow">${icon('search')}已按当前范围检索</div><h2>当前知识还不足以直接回答这个问题</h2></div><span class="badge risk">知识不足</span></div><p>我已在“${currentScope}”中重新检索，但没有找到能直接支持结论的 Source 证据。我没有将旧回答改写后当作新证据。</p>${projectAttribution()}${scopeStamp()}</div></article>`)
+      stage = 'answered'
+      updateHistory('已回答')
+      busy = false
+    }
+
+    function routeQuestion(text) {
+      if (/整理|合并|重复内容|处理重复/.test(text)) return runFollowup(text)
+      if (/来源原文|第二条.*来源|原文/.test(text)) return runSourcePrompt(text)
+      if (/南方|潮湿|返潮|沿海/.test(text)) return runHumidity(text)
+      if (/相反|反例|失败经验|不同观点/.test(text)) return runCounterexample(text)
+      if (/为什么.*时长|时长不一致|24.*48|48.*24/.test(text)) return runExplanation(text)
+      return runGenericQuestion(text)
     }
 
     function showDraft() {
-      if (stage !== 'clarifying') return
+      if (stage !== 'clarifying' || !worksetValid || worksetScope !== currentScope || currentScope === '全部知识') {
+        showToast('范围已变更，请重新生成合并方案')
+        return
+      }
       stage = 'draft'
-      add(`${agentLabel()}<article class="card"><div class="card-body"><div class="card-head"><div><div class="eyebrow">${icon('edit')}可编辑知识草稿</div><h2>合并方案已准备好</h2></div><span class="badge ai">AI 建议 · 待确认</span></div><div class="draft-fields"><label><span class="field-label">标题</span><input class="draft-input" id="draftTitle" value="卫生间防水施工与验收要点"></label><label><span class="field-label">核心内容</span><textarea class="draft-textarea" id="draftContent">卫生间防水施工应先完成基层清理和重点部位加强，再按施工方案形成连续防水层。完成后进行闭水试验，同时观察水位和楼下顶面。闭水时长存在 24 小时与 48 小时两种记录，应结合材料说明、施工方案与现场条件确认。</textarea></label></div><div class="impact-row"><span>保留 2</span><span>补充 3</span><span>替换 1</span><span>已合并 2</span></div><div class="inline-actions"><button class="button primary block" data-open-overlay="diff">审阅完整差异与影响对象${icon('chevron')}</button></div></div></article>`)
+      document.querySelector('[data-confirm-execute]').disabled = false
+      add(`${agentLabel()}<article class="card"><div class="card-body"><div class="card-head"><div><div class="eyebrow">${icon('edit')}可编辑知识草稿</div><h2>合并方案已准备好</h2></div><span class="badge ai">AI 建议 · 待确认</span></div><div class="draft-fields"><label><span class="field-label">标题</span><input class="draft-input" id="draftTitle" value="卫生间防水施工与验收要点"></label><label><span class="field-label">核心内容</span><textarea class="draft-textarea" id="draftContent">卫生间防水施工应先完成基层清理和重点部位加强，再按施工方案形成连续防水层。完成后进行闭水试验，同时观察水位和楼下顶面。闭水时长存在 24 小时与 48 小时两种记录，应结合材料说明、施工方案与现场条件确认。</textarea></label></div><div class="impact-row"><span>保留 2</span><span>补充 3</span><span>替换 1</span><span>准备合并 2</span></div>${scopeStamp()}<div class="inline-actions"><button class="button primary block" data-open-overlay="diff">审阅完整差异与影响对象${icon('chevron')}</button></div></div></article>`)
+      updateHistory('已生成合并建议')
     }
 
     async function executeChange() {
+      if (!worksetValid || worksetScope !== currentScope || currentScope === '全部知识') {
+        closeSheets()
+        closeOverlays()
+        add(`${agentLabel()}<article class="card insufficient"><div class="card-body"><h2>当前范围不能执行这个旧方案</h2><p>范围变更后工作集已失效。请选择目标项目并重新生成差异，不会直接使用旧范围的影响对象。</p><div class="inline-actions"><button class="button" data-open-sheet="scope">选择目标项目</button></div></div></article>`)
+        return
+      }
       closeSheets()
       closeOverlays()
       stage = 'executing'
@@ -738,17 +898,25 @@
     }
 
     const sourceData = {
-      base: ['基层处理与重点部位', '施工交底截图', '“基层清理完成后，阴阳角、管根等位置先做加强处理，再进行大面施工。”'],
-      detail: ['易渗漏位置检查', '监理检查清单', '“地漏、管根和门槛石周边应逐项检查，发现空鼓、破损时先修补。”'],
-      close: ['闭水试验完成后再验收防水层', '防水验收记录.md', '“闭水期间应持续观察水位变化，并到楼下检查顶面是否出现渗漏。”'],
-      record: ['保留防水施工与验收记录', '项目验收备忘', '“施工照片、闭水起止时间、检查结果和异常处理应保留在项目记录中。”']
+      base: { entry: '基层处理与重点部位', path: '新房装修 / 施工 / 防水', file: '施工交底截图', summary: '阴阳角和管根需在大面施工前先做加强处理。', quote: '“基层清理完成后，阴阳角、管根等位置先做加强处理，再进行大面施工。”', context: '上下文：截图的上一项是“基层含水状态”，下一项是“第一遍涂刷”。' },
+      detail: { entry: '易渗漏位置检查', path: '新房装修 / 施工 / 防水', file: '监理检查清单.pdf · 第 3 页', summary: '地漏、管根、门槛石附近是验收时需重点复查的位置。', quote: '“地漏、管根和门槛石周边应逐项检查，发现空鼓、破损时先修补；修补完成后再进行下一步验收。”', context: '上下文：该段位于“节点复查”小节，后文是检查记录的签字要求。' },
+      close: { entry: '闭水试验完成后再验收防水层', path: '新房装修 / 施工 / 防水', file: '防水验收记录.md', summary: '闭水期间同时观察水位和楼下顶面，再进入验收。', quote: '“闭水期间应持续观察水位变化，并到楼下检查顶面是否出现渗漏。”', context: '上下文：该段位于“闭水验收”小节，前文记录了试验开始时间。' },
+      close24: { entry: '闭水试验至少观察 24 小时', path: '新房装修 / 施工 / 防水', file: '防水验收记录.md', summary: '24 小时是该次验收记录中的最低观察时间。', quote: '“本次闭水自 6 月 18 日 10:00 开始，至少观察 24 小时，并复查楼下顶面。”', context: '上下文：这是单次项目验收记录，未标注防水材料型号。' },
+      close48: { entry: '闭水试验建议观察 48 小时', path: '新房装修 / 施工 / 防水', file: '监理复查清单.pdf · 第 5 页', summary: '监理复查清单建议将闭水观察延长至 48 小时。', quote: '“条件允许时，建议闭水保持 48 小时后再进行复查。”', context: '上下文：清单未说明“条件允许”具体指材料、工期还是环境条件。' },
+      record: { entry: '保留防水施工与验收记录', path: '新房装修 / 施工 / 防水', file: '项目验收备忘', summary: '施工照片、闭水时间和异常处理需留档。', quote: '“施工照片、闭水起止时间、检查结果和异常处理应保留在项目记录中。”', context: '上下文：该段后附现场拍摄与签字时间要求。' },
+      humidBase: { entry: '返潮期施工前检查基层状态', path: '新房装修 / 施工 / 防水', file: '沿海施工日志-03.md', summary: '返潮时先确认基层达到材料施工条件。', quote: '“返潮时段先检查基层表面和含水状态；未达到材料说明的施工条件时，延后涂刷，不用延长闭水代替前置检查。”', context: '上下文：同日日志记录了室内通风与表面状态。' },
+      humidRecord: { entry: '潮湿环境下区分凝露与渗漏', path: '新房装修 / 验收 / 异常记录', file: '潮湿天验收备忘.txt', summary: '通过起止时间和位置记录区分表面凝露与渗漏。', quote: '“返潮天楼下顶面出现水珠时，先对照闭水起止时间和出现位置，不直接将表面凝露判定为渗漏。”', context: '上下文：备忘后续要求拍照并标记时间。' },
+      counter: { entry: '门槛石二次施工后的渗漏复盘', path: '新房装修 / 验收 / 问题复盘', file: '卫生间渗漏复盘.md', summary: '闭水通过后的二次施工仍可能破坏局部防水层。', quote: '“首次闭水 24 小时楼下未见异常。门槛石安装后出现局部渗水，拆检发现二次施工破坏了门口防水层。”', context: '上下文：复盘结论要求二次施工后重新检查受影响部位。' }
     }
 
     function showSource(key) {
       const data = sourceData[key] || sourceData.close
-      document.getElementById('sourceEntry').textContent = data[0]
-      document.getElementById('sourceFile').textContent = `Source：${data[1]}`
-      document.getElementById('sourceQuote').textContent = data[2]
+      document.getElementById('sourceEntry').textContent = data.entry
+      document.getElementById('sourcePath').textContent = data.path
+      document.getElementById('sourceSummary').textContent = data.summary
+      document.getElementById('sourceFile').textContent = `Source：${data.file}`
+      document.getElementById('sourceQuote').textContent = data.quote
+      document.getElementById('sourceContext').textContent = data.context
       openSheet('source')
     }
 
@@ -764,10 +932,23 @@
       openSheet('entry')
     }
 
+    async function retryFailedTask(target) {
+      const row = document.getElementById('failedTask')
+      if (!row || target.disabled) return
+      target.disabled = true
+      row.querySelector('.row-main p').textContent = '正在从图像文字识别步骤重试，原图未复制'
+      target.textContent = '重试中'
+      await wait(900)
+      row.querySelector('.row-main p').textContent = '已完成文字区域重新识别，原图与旧失败记录已保留'
+      target.outerHTML = '<span class="badge confirmed">已完成</span>'
+      showToast('已从失败步骤完成重试')
+    }
+
     document.addEventListener('click', event => {
       const target = event.target.closest('button, [data-close-sheet]')
       if (!target) return
       if (target.matches('[data-start-question]')) runSearch()
+      if (target.dataset.prompt) routeQuestion(target.dataset.prompt)
       if (target.matches('[data-followup]')) runFollowup()
       if (target.dataset.clarify === 'recommended') showDraft()
       if (target.dataset.clarify === 'manual') showToast('第一版原型保留逐条选择入口，核心流程按建议方案继续')
@@ -784,22 +965,32 @@
       if (target.matches('[data-confirm-execute]')) executeChange()
       if (target.matches('[data-confirm-undo]')) confirmUndo()
       if (target.dataset.demoToast) showToast(target.dataset.demoToast)
-      if (target.matches('[data-retry-task]')) {
-        const row = document.getElementById('failedTask')
-        row.querySelector('.row-main p').textContent = '已从失败步骤重新开始，原图未复制'
-        target.outerHTML = '<span class="badge neutral">重试中</span>'
-        showToast('已重新开始处理失败步骤')
-      }
+      if (target.matches('[data-retry-task]')) retryFailedTask(target)
       if (target.dataset.scope) {
-        const previousScope = document.querySelector('[data-scope-name]').textContent
-        document.querySelectorAll('.scope-option').forEach(option => option.classList.toggle('active', option === target))
+        const previousScope = currentScope
+        document.querySelectorAll('.scope-option').forEach(option => {
+          const active = option === target
+          option.classList.toggle('active', active)
+          option.setAttribute('aria-checked', String(active))
+        })
+        currentScope = target.dataset.scope
         document.querySelector('[data-scope-name]').textContent = target.dataset.scope
         document.querySelector('[data-scope-detail]').textContent = target.dataset.detail
         document.querySelector('[data-knowledge-scope]').textContent = target.dataset.scope
         const introCopy = document.querySelector('#intro p')
         if (introCopy) introCopy.textContent = `当前只读取“${target.dataset.scope}”的正式知识。查询会自动执行，涉及修改时会明确展示目标和差异。`
-        if (previousScope !== target.dataset.scope && stage !== 'start' && app.dataset.page === 'conversation') {
-          add(`<div class="scope-divider"><span>范围已切换到“${target.dataset.scope}”</span></div>`)
+        if (previousScope !== currentScope) {
+          worksetValid = false
+          if (stage !== 'start') stage = 'answered'
+          document.getElementById('currentHistoryScope').textContent = '多范围'
+          closeOverlays()
+          document.querySelectorAll('[data-clarify], [data-open-overlay="diff"], [data-confirm-execute]').forEach(button => {
+            button.disabled = true
+            button.title = '范围已变更，需重新生成方案'
+          })
+        }
+        if (previousScope !== currentScope && stage !== 'start' && app.dataset.page === 'conversation') {
+          add(`<div class="scope-divider"><span>范围已从“${previousScope}”切换到“${currentScope}”</span></div><article class="card insufficient"><div class="card-body"><p>上方回答基于“${previousScope}”。当前范围已切换为“${currentScope}”，继续提问将重新检索；旧工作集不会用于修改。</p></div></article>`)
         }
         closeSheets()
         showToast(`当前范围已切换为“${target.dataset.scope}”`)
@@ -831,9 +1022,9 @@
       input.value = ''
       input.style.height = '40px'
       input.focus({ preventScroll: true })
-      if (stage === 'start') runSearch()
-      else if (stage === 'answered') runFollowup()
-      else showToast('原型已记录这条消息；请继续使用场景卡片完成主流程')
+      if (stage === 'start') runSearch(text)
+      else if (['answered', 'complete', 'undone'].includes(stage)) routeQuestion(text)
+      else showToast('当前步骤需先完成确认，或返回对话继续提问')
     })
 
     input.addEventListener('focus', () => {
