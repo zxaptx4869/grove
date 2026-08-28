@@ -35,7 +35,7 @@
 - [x] 5.1 新增 `/api/knowledge-agent` 对话创建/列表/详情、消息分页、范围切换、消息提交、Run 查询和取消路由，全部复用当前 Session/Bearer 鉴权
 - [x] 5.2 保留旧项目 Reader 与 `answer-to-candidate` 接口行为，标记兼容边界并确认新 API 不提供知识写入或保存建议字段
 - [x] 5.3 增加 API 级认证、404 隔离、409 单会话冲突、幂等重试、轮询恢复、取消、结构化回答和 Evidence 引用测试，并运行 `cd backend && .venv/bin/python -m pytest tests/test_knowledge_agent_api.py tests/test_reader.py`
-- [ ] 5.4 启动开发后端并用 `curl` 验证新端点返回预期 401/200/202/404/409 而非 404 路由缺失，记录可复现的命令与结果
+- [x] 5.4 启动开发后端并用 `curl` 验证新端点返回预期 401/200/202/404/409 而非 404 路由缺失，记录可复现的命令与结果
 
 ## 6. 验证与收尾
 
