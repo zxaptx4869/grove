@@ -94,6 +94,7 @@ class EvidenceReadItem(BaseModel):
 
     entry_id: int
     source_id: int
+    evidence_id: int | None = None
     source_title: str = ""
     attachment_id: int | None = None
     evidence_handle: str | None = None
@@ -317,6 +318,9 @@ async def read_source_evidence(
     ctx: RunToolContext,
     entry_id: int,
     source_ids: list[int],
+    *,
+    round_number: int | None = None,
+    query_sequence: int | None = None,
 ) -> EvidenceReadOutput:
     """读取已发现 Entry 的真实 Source/Attachment 并核验原文，生成可引用 Evidence。"""
     if entry_id not in ctx.discovered_entry_ids:
@@ -460,11 +464,14 @@ async def read_source_evidence(
             evidence=entry_evidence,
             attachment=attachment,
             verified=verified,
+            round_number=round_number,
+            query_sequence=query_sequence,
         )
         items.append(
             EvidenceReadItem(
                     entry_id=entry_id,
                     source_id=source_id,
+                    evidence_id=row.id,
                     source_title=source.title,
                     attachment_id=attachment.id,
                     evidence_handle=row.handle,
@@ -484,6 +491,9 @@ async def record_tool_result(
     params: dict,
     result: dict,
     duration_ms: int,
+    investigation_id: int | None = None,
+    round_number: int | None = None,
+    query_sequence: int | None = None,
 ) -> None:
     """统一记录工具调用（参数与结果只保存摘要，不复制整份内容）。"""
     sequence = await next_tool_sequence(db, run_id)
@@ -509,4 +519,7 @@ async def record_tool_result(
         result_summary=json.dumps(result, ensure_ascii=False)[:500],
         error=error,
         duration_ms=duration_ms,
+        investigation_id=investigation_id,
+        round_number=round_number,
+        query_sequence=query_sequence,
     )

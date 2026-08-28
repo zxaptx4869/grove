@@ -25,13 +25,13 @@
 
 ## 4. 实现：调查账本与可信只读工具
 
-- [ ] 4.1 实现 Run 内查询规范化/指纹和全局去重；重复查询不执行、不计实际查询数，部分重复只保留合法新查询
-- [ ] 4.2 实现跨轮次已发现集合：合并复验工作集种子、用户显式引用与各轮搜索结果，按 Entry 去重并在每次读取前重新校验用户、Workspace、项目和正式状态
-- [ ] 4.3 扩展混合搜索、Entry 读取和 Source Evidence 工具，按 round/query 记录结果归属、增量计数和 partial/empty/error；控制器文本查询不能携带或改变可信范围
-- [ ] 4.4 实现当前 Run Evidence 跨轮次幂等复用与不同 Evidence 预算，历史 Evidence、助手消息、控制器摘要和搜索片段均不得进入可引用集合
-- [ ] 4.5 实现紧凑账本重建和序列化：保存 ID、指纹、状态、短摘要、覆盖/缺口/冲突与不可用对象，不复制整份 Entry/Attachment/prompt
-- [ ] 4.6 增加跨轮发现、同 Entry 多查询命中、相同 Evidence 幂等、对象中途失效、范围越权、候选排除、长原文最小审计和账本重建测试；运行 `cd backend && .venv/bin/python -m pytest tests/test_knowledge_agent_tools.py tests/test_knowledge_agent_investigation_ledger.py`
-- [ ] 4.7 完成账本与工具本地提交，提交信息使用 `feat: 实现知识 Agent 跨轮证据账本`
+- [x] 4.1 实现 Run 内查询规范化/指纹和全局去重；重复查询不执行、不计实际查询数，部分重复只保留合法新查询
+- [x] 4.2 实现跨轮次已发现集合：合并复验工作集种子、用户显式引用与各轮搜索结果，按 Entry 去重并在每次读取前重新校验用户、Workspace、项目和正式状态
+- [x] 4.3 扩展混合搜索、Entry 读取和 Source Evidence 工具，按 round/query 记录结果归属、增量计数和 partial/empty/error；控制器文本查询不能携带或改变可信范围
+- [x] 4.4 实现当前 Run Evidence 跨轮次幂等复用与不同 Evidence 预算，历史 Evidence、助手消息、控制器摘要和搜索片段均不得进入可引用集合
+- [x] 4.5 实现紧凑账本重建和序列化：保存 ID、指纹、状态、短摘要、覆盖/缺口/冲突与不可用对象，不复制整份 Entry/Attachment/prompt
+- [x] 4.6 增加跨轮发现、同 Entry 多查询命中、相同 Evidence 幂等、对象中途失效、范围越权、候选排除、长原文最小审计和账本重建测试；运行 `cd backend && .venv/bin/python -m pytest tests/test_knowledge_agent_tools.py tests/test_knowledge_agent_investigation_ledger.py`
+- [x] 4.7 完成账本与工具本地提交，提交信息使用 `feat: 实现知识 Agent 跨轮证据账本`
 
 ## 5. 实现：有界调查编排、预算与停止
 

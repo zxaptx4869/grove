@@ -807,6 +807,9 @@ class KnowledgeInvestigationRound(Base):
     gaps_json: Mapped[str | None] = mapped_column(Text, nullable=True)
     conflicts_json: Mapped[str | None] = mapped_column(Text, nullable=True)
     reason: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # JSON：本轮新发现 Entry 的短快照与不可用/越权对象（账本重建线索）
+    entries_json: Mapped[str | None] = mapped_column(Text, nullable=True)
+    unavailable_json: Mapped[str | None] = mapped_column(Text, nullable=True)
     queries_planned: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
     queries_executed: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
     entries_added: Mapped[int] = mapped_column(Integer, default=0, nullable=False)

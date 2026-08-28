@@ -91,6 +91,8 @@ async def create_answer_evidence(
     evidence: EntrySourceEvidence,
     attachment: Attachment | None,
     verified: VerifiedQuote,
+    round_number: int | None = None,
+    query_sequence: int | None = None,
 ) -> KnowledgeAgentEvidence:
     """创建或复用本 Run 的可引用 Evidence；同来源重复读取不重复建行。"""
     text = available_attachment_text(attachment) or ""
@@ -127,6 +129,8 @@ async def create_answer_evidence(
         content_fingerprint=fingerprint,
         purpose=EVIDENCE_PURPOSE_ANSWER,
         is_citable=True,
+        round_number=round_number,
+        query_sequence=query_sequence,
     )
     db.add(row)
     await db.flush()

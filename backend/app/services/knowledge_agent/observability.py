@@ -58,6 +58,9 @@ async def record_tool_call(
     result_summary: str | None = None,
     error: str | None = None,
     duration_ms: int = 0,
+    investigation_id: int | None = None,
+    round_number: int | None = None,
+    query_sequence: int | None = None,
 ) -> None:
     """持久化一次工具调用（只保存脱敏摘要）。"""
     db.add(
@@ -70,6 +73,9 @@ async def record_tool_call(
             status=status,
             error=error,
             duration_ms=duration_ms,
+            investigation_id=investigation_id,
+            round_number=round_number,
+            query_sequence=query_sequence,
         )
     )
     await db.flush()
@@ -82,6 +88,9 @@ async def record_model_invocation(
     meta: StageMeta,
     prompt_version: str,
     usage: dict | None = None,
+    investigation_id: int | None = None,
+    round_number: int | None = None,
+    query_sequence: int | None = None,
 ) -> None:
     """持久化一次 embedding / 重排 / 回答模型调用。"""
     db.add(
@@ -95,6 +104,9 @@ async def record_model_invocation(
             error=meta.error,
             duration_ms=meta.duration_ms,
             usage_json=json.dumps(usage, ensure_ascii=False) if usage else None,
+            investigation_id=investigation_id,
+            round_number=round_number,
+            query_sequence=query_sequence,
         )
     )
     await db.flush()
