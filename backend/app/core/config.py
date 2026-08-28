@@ -85,6 +85,9 @@ class Settings(BaseSettings):
     knowledge_agent_history_message_chars: int = Field(
         default=500, description="上下文决策单条历史消息截断长度"
     )
+    knowledge_agent_working_set_limit: int = Field(
+        default=15, description="工作集版本最多保存的 Entry 线索数"
+    )
 
     # 知识 Agent Worker 租约（秒）：processing 超过该阈值可恢复重试
     knowledge_agent_lease_seconds: int = Field(

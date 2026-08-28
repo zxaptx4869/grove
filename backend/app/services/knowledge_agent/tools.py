@@ -169,8 +169,9 @@ async def search_confirmed_knowledge(
     *,
     recall_limit: int,
     context_limit: int,
+    seed_entries: list[Entry] | None = None,
 ) -> SearchToolOutput:
-    """在 Run 范围内混合召回正式 Entry，只返回已确认知识并携带项目归属。"""
+    """在 Run 范围内混合召回正式 Entry，并合并复验有效的工作集种子统一重排。"""
     text = query.strip()
     if not text:
         return SearchToolOutput()
@@ -185,14 +186,22 @@ async def search_confirmed_knowledge(
         text,
         recall_limit,
     )
+    # 合并工作集种子并去重；工作集不能阻止发现新 Entry
+    merged: list[Entry] = []
+    seen_ids: set[int] = set()
+    for entry in [*candidates, *(seed_entries or [])]:
+        if entry.id in seen_ids:
+            continue
+        seen_ids.add(entry.id)
+        merged.append(entry)
     rerank_meta: StageMeta | None = None
-    if candidates:
+    if merged:
         started = perf_counter()
         draft, provider, model, is_fallback, error = await run_semantic_agent(
             db,
             ctx.workspace_id,
             text,
-            candidates,
+            merged,
         )
         rerank_meta = StageMeta(
             purpose=PURPOSE_RERANK,
@@ -202,7 +211,7 @@ async def search_confirmed_knowledge(
             error=error,
             duration_ms=int((perf_counter() - started) * 1000),
         )
-        top_entries = _ordered_entries(candidates, draft, context_limit)
+        top_entries = _ordered_entries(merged, draft, context_limit)
     else:
         top_entries = []
 

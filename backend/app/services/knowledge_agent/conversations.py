@@ -20,7 +20,6 @@ from app.models.knowledge_agent import (
     RUN_ACTIVE_STATUSES,
     SCOPE_PROJECT,
     SCOPE_WORKSPACE,
-    KnowledgeAgentRun,
 )
 from app.schemas.knowledge_agent import (
     KnowledgeConversationCreate,

@@ -16,10 +16,18 @@ from app.models import (
     KnowledgeAgentModelInvocation,
     KnowledgeAgentRun,
     KnowledgeAgentToolCall,
+    KnowledgeContextVersion,
     KnowledgeConversation,
     KnowledgeMessage,
+    KnowledgeWorkingSetItem,
 )
 from app.models.knowledge_agent import (
+    ACTIVE_SLOT,
+    CONTEXT_DECISION_CLARIFY,
+    CONTEXT_DECISION_CONTINUE,
+    CONTEXT_DECISION_NEW_TOPIC,
+    CONTEXT_STATUS_ACTIVE,
+    CONTEXT_STATUS_SUPERSEDED,
     RUN_COMPLETED,
     RUN_PARTIAL,
     RUN_PROCESSING,
@@ -30,6 +38,7 @@ from app.models.knowledge_agent import (
     TOOL_PARTIAL,
 )
 from app.schemas.knowledge_agent import KnowledgeRunSubmitRequest
+from app.services.knowledge_agent.follow_up import ContextDecisionResult
 from app.services.knowledge_agent.observability import StageMeta, run_fallback_summary
 from app.services.knowledge_agent.runner import RunCancelled, execute_run
 from app.services.knowledge_agent.runs import (
@@ -43,6 +52,7 @@ from app.services.knowledge_agent.tools import (
     read_source_evidence,
     search_confirmed_knowledge,
 )
+from app.services.knowledge_agent.working_set import get_active_context_version
 from tests._knowledge_agent_fixtures import (
     create_child_node,
     create_entry_with_evidence,
@@ -76,6 +86,46 @@ async def _conversation_and_run(db, user, workspace, message: str = "闭水试�
 
 
 _counter = 0
+
+
+@pytest.fixture(autouse=True)
+def _default_decision(monkeypatch):
+    """默认上下文决策替身：非降级 new_topic，避免离线模型污染正常路径断言。"""
+
+    async def _decide(
+        db,
+        *,
+        workspace_id,
+        conversation_id,
+        current_message,
+        request_mode,
+        active_topic_label,
+        working_set_titles,
+        history_limit,
+        history_message_chars,
+        user_message_id=None,
+    ):
+        return ContextDecisionResult(
+            decision="new_topic",
+            standalone_query=current_message,
+            topic_label=current_message[:30],
+            clarify_question=None,
+            degraded=False,
+            history_message_ids=[],
+            meta=StageMeta(
+                purpose="context_decision",
+                provider="server",
+                model=None,
+                is_fallback=False,
+                error=None,
+                duration_ms=0,
+            ),
+        )
+
+    monkeypatch.setattr(
+        "app.services.knowledge_agent.runner.decide_context",
+        _decide,
+    )
 
 
 def run_id_counter() -> str:
@@ -538,6 +588,9 @@ async def test_runner_tool_budget_limits_evidence_reads(monkeypatch) -> None:
             knowledge_agent_recall_limit=10,
             knowledge_agent_context_limit=5,
             knowledge_agent_evidence_limit=1,
+            knowledge_agent_history_limit=8,
+            knowledge_agent_history_message_chars=500,
+            knowledge_agent_working_set_limit=15,
         )
         monkeypatch.setattr(
             "app.services.knowledge_agent.runner.get_settings",
@@ -892,6 +945,615 @@ async def test_runner_partial_references_invalid_marks_partial(monkeypatch) -> N
         assert answer["citations"][0]["evidence_handle"] == handle
         summary = json.loads(run.fallback_summary)
         assert summary["has_fallback"] is True
+
+
+def _fixed_decision(
+    decision: str,
+    standalone_query: str,
+    *,
+    topic_label: str | None = None,
+    clarify_question: str | None = None,
+):
+    """构造固定决策替身。"""
+
+    async def _fake(
+        db,
+        *,
+        workspace_id,
+        conversation_id,
+        current_message,
+        request_mode,
+        active_topic_label,
+        working_set_titles,
+        history_limit,
+        history_message_chars,
+        user_message_id=None,
+    ):
+        return ContextDecisionResult(
+            decision=decision,
+            standalone_query=standalone_query,
+            topic_label=topic_label or active_topic_label or current_message[:30],
+            clarify_question=clarify_question,
+            degraded=False,
+            history_message_ids=[],
+            meta=StageMeta(
+                purpose="context_decision",
+                provider="server",
+                model=None,
+                is_fallback=False,
+                error=None,
+                duration_ms=0,
+            ),
+        )
+
+    return _fake
+
+
+async def _make_active_version(
+    db,
+    conversation,
+    user,
+    workspace,
+    *,
+    topic_label: str = "闭水试验",
+    entry_ids=(),
+    project_name: str | None = None,
+) -> KnowledgeContextVersion:
+    """直接创建活动工作集版本（用于 runner 连续追问测试）。"""
+    version = KnowledgeContextVersion(
+        conversation_id=conversation.id,
+        workspace_id=workspace.id,
+        owner_user_id=user.id,
+        version_number=1,
+        scope_type=SCOPE_WORKSPACE,
+        topic_label=topic_label,
+        status=CONTEXT_STATUS_ACTIVE,
+        active_slot=ACTIVE_SLOT,
+    )
+    db.add(version)
+    await db.flush()
+    for order, entry_id in enumerate(entry_ids):
+        db.add(
+            KnowledgeWorkingSetItem(
+                context_version_id=version.id,
+                entry_id=entry_id,
+                entry_title=f"Entry{entry_id}",
+                project_name=project_name,
+                include_reason="cited",
+                sort_order=order,
+            )
+        )
+    await db.flush()
+    return version
+
+
+@pytest.mark.asyncio
+async def test_runner_continue_merges_seed_and_new_discovery(monkeypatch) -> None:
+    """省略追问：continue 合并复验种子与新发现 Entry，生成输出版本。"""
+    async with async_session_factory() as db:
+        user = await create_user(db, "省略追问")
+        workspace = await create_workspace(db, user)
+        project = await create_project(db, workspace, "追问项目")
+        node_a = await create_child_node(db, project, "施工")
+        node_b = await create_child_node(db, project, "验收")
+        source_a, attachment_a = await create_source_attachment(
+            db,
+            workspace,
+            project,
+            title="手册甲",
+            text_content="闭水试验通常持续 24 小时，验收前不得提前放水。",
+        )
+        source_b, attachment_b = await create_source_attachment(
+            db,
+            workspace,
+            project,
+            title="手册乙",
+            text_content="闭水试验放水前应做水位标记。",
+        )
+        entry_a = await create_entry_with_evidence(
+            db,
+            project,
+            node_a,
+            source_a,
+            attachment_a,
+            title="闭水试验",
+            content="闭水试验通常持续 24 小时。",
+            quote="闭水试验通常持续 24 小时",
+        )
+        entry_b = await create_entry_with_evidence(
+            db,
+            project,
+            node_b,
+            source_b,
+            attachment_b,
+            title="放水标记",
+            content="闭水试验放水前应做水位标记。",
+            quote="闭水试验放水前应做水位标记",
+        )
+        conversation, run = await _conversation_and_run(
+            db,
+            user,
+            workspace,
+            message="为什么不能提前放水？",
+        )
+        version = await _make_active_version(
+            db,
+            conversation,
+            user,
+            workspace,
+            entry_ids=[entry_a.id],
+            project_name="追问项目",
+        )
+        run.input_context_version_id = version.id
+        run.request_context_mode = "continue"
+        await db.commit()
+
+        # 本轮重新读取种子与新发现 Entry，生成本 Run Evidence
+        ctx = RunToolContext(
+            run_id=run.id,
+            workspace_id=workspace.id,
+            owner_user_id=user.id,
+            scope_type=SCOPE_WORKSPACE,
+            project_id=None,
+            project_name=None,
+        )
+        verified = await _evidence_for_run(db, ctx)
+        by_entry = {item.entry_id: item for item in verified}
+        await db.commit()
+        assert entry_a.id in by_entry and entry_b.id in by_entry
+
+        monkeypatch.setattr(
+            "app.services.knowledge_agent.runner.decide_context",
+            _fixed_decision(
+                CONTEXT_DECISION_CONTINUE,
+                "闭水试验为什么不能提前放水？",
+                topic_label="闭水试验",
+            ),
+        )
+        monkeypatch.setattr(
+            "app.services.knowledge_agent.runner.run_knowledge_answer_agent",
+            _fake_answer_agent(
+                KnowledgeAnswerDraft(
+                    answer="闭水试验验收前不得提前放水，放水前应做水位标记。",
+                    citations=[
+                        KnowledgeCitationDraft(
+                            evidence_handle=by_entry[entry_b.id].evidence_handle
+                        )
+                    ],
+                )
+            ),
+        )
+        run.status = RUN_PROCESSING
+        await db.commit()
+        await execute_run(db, run)
+        await db.commit()
+
+        assert run.status == RUN_COMPLETED
+        assert run.context_decision == CONTEXT_DECISION_CONTINUE
+        assert run.standalone_query == "闭水试验为什么不能提前放水？"
+        assert run.output_context_version_id is not None
+        active = await get_active_context_version(db, conversation.id)
+        assert active is not None
+        assert active.id == run.output_context_version_id
+        assert active.version_number == 2
+        assert active.parent_version_id == version.id
+        items = (
+            await db.execute(
+                select(KnowledgeWorkingSetItem)
+                .where(KnowledgeWorkingSetItem.context_version_id == active.id)
+                .order_by(KnowledgeWorkingSetItem.sort_order)
+            )
+        ).scalars().all()
+        # 本轮引用优先，旧有效项按最近使用保留
+        assert [item.entry_id for item in items] == [entry_b.id, entry_a.id]
+        assert items[0].include_reason == "cited"
+        assert items[1].include_reason == "recent"
+        seed_calls = (
+            await db.execute(
+                select(KnowledgeAgentToolCall).where(
+                    KnowledgeAgentToolCall.run_id == run.id,
+                    KnowledgeAgentToolCall.tool_name == "working_set_seed",
+                )
+            )
+        ).scalars().all()
+        assert len(seed_calls) == 1
+        assert json.loads(seed_calls[0].result_summary)["valid"] == 1
+
+
+@pytest.mark.asyncio
+async def test_runner_new_topic_replaces_working_set(monkeypatch) -> None:
+    """新话题：不使用旧工作集种子，输出版本替换旧主题。"""
+    async with async_session_factory() as db:
+        user = await create_user(db, "新话题替换")
+        workspace = await create_workspace(db, user)
+        project = await create_project(db, workspace, "替换项目")
+        node_a = await create_child_node(db, project, "施工")
+        node_b = await create_child_node(db, project, "庭院")
+        source_a, attachment_a = await create_source_attachment(
+            db,
+            workspace,
+            project,
+            title="旧手册",
+            text_content="闭水试验通常持续 24 小时。",
+        )
+        source_b, attachment_b = await create_source_attachment(
+            db,
+            workspace,
+            project,
+            title="庭院手册",
+            text_content="庭院树木冬季需要防冻保护。",
+        )
+        entry_a = await create_entry_with_evidence(
+            db,
+            project,
+            node_a,
+            source_a,
+            attachment_a,
+            title="闭水试验",
+            content="闭水试验通常持续 24 小时。",
+            quote="闭水试验通常持续 24 小时",
+        )
+        entry_b = await create_entry_with_evidence(
+            db,
+            project,
+            node_b,
+            source_b,
+            attachment_b,
+            title="树木防冻",
+            content="庭院树木冬季需要防冻保护。",
+            quote="庭院树木冬季需要防冻保护",
+        )
+        conversation, run = await _conversation_and_run(
+            db,
+            user,
+            workspace,
+            message="庭院树木冬季怎么养护？",
+        )
+        version = await _make_active_version(
+            db,
+            conversation,
+            user,
+            workspace,
+            entry_ids=[entry_a.id],
+            project_name="替换项目",
+        )
+        run.input_context_version_id = version.id
+        await db.commit()
+
+        ctx = RunToolContext(
+            run_id=run.id,
+            workspace_id=workspace.id,
+            owner_user_id=user.id,
+            scope_type=SCOPE_WORKSPACE,
+            project_id=None,
+            project_name=None,
+        )
+        verified = await _evidence_for_run(db, ctx, query="庭院")
+        by_entry = {item.entry_id: item for item in verified}
+        await db.commit()
+
+        monkeypatch.setattr(
+            "app.services.knowledge_agent.runner.decide_context",
+            _fixed_decision(
+                CONTEXT_DECISION_NEW_TOPIC,
+                "庭院树木冬季养护要点",
+                topic_label="庭院养护",
+            ),
+        )
+        monkeypatch.setattr(
+            "app.services.knowledge_agent.runner.run_knowledge_answer_agent",
+            _fake_answer_agent(
+                KnowledgeAnswerDraft(
+                    answer="庭院树木冬季需要防冻保护。",
+                    citations=[
+                        KnowledgeCitationDraft(
+                            evidence_handle=by_entry[entry_b.id].evidence_handle
+                        )
+                    ],
+                )
+            ),
+        )
+        run.status = RUN_PROCESSING
+        await db.commit()
+        await execute_run(db, run)
+        await db.commit()
+
+        assert run.status == RUN_COMPLETED
+        assert run.context_decision == CONTEXT_DECISION_NEW_TOPIC
+        active = await get_active_context_version(db, conversation.id)
+        assert active is not None
+        assert active.topic_label == "庭院养护"
+        assert active.parent_version_id == version.id
+        items = (
+            await db.execute(
+                select(KnowledgeWorkingSetItem).where(
+                    KnowledgeWorkingSetItem.context_version_id == active.id
+                )
+            )
+        ).scalars().all()
+        assert [item.entry_id for item in items] == [entry_b.id]
+        await db.refresh(version)
+        assert version.status == CONTEXT_STATUS_SUPERSEDED
+
+
+@pytest.mark.asyncio
+async def test_runner_clarify_replies_without_search_or_version(monkeypatch) -> None:
+    """澄清分支：直接回复，不检索、不生成输出工作集版本。"""
+    async with async_session_factory() as db:
+        user = await create_user(db, "澄清分支")
+        workspace = await create_workspace(db, user)
+        await create_project(db, workspace, "澄清项目")
+        conversation, run = await _conversation_and_run(
+            db,
+            user,
+            workspace,
+            message="它的验收标准是什么？",
+        )
+        version = await _make_active_version(
+            db,
+            conversation,
+            user,
+            workspace,
+            topic_label="闭水试验",
+        )
+        run.input_context_version_id = version.id
+        await db.commit()
+
+        monkeypatch.setattr(
+            "app.services.knowledge_agent.runner.decide_context",
+            _fixed_decision(
+                CONTEXT_DECISION_CLARIFY,
+                "它的验收标准是什么？",
+                clarify_question="你指的是哪个方案的验收标准？",
+            ),
+        )
+        run.status = RUN_PROCESSING
+        await db.commit()
+        await execute_run(db, run)
+        await db.commit()
+
+        assert run.status == RUN_COMPLETED
+        assert run.output_context_version_id is None
+        answer = json.loads(run.answer_json)
+        assert answer["status"] == "clarification"
+        assert answer["answer"] == "你指的是哪个方案的验收标准？"
+        assert answer["citations"] == []
+        tool_calls = (
+            await db.execute(
+                select(KnowledgeAgentToolCall).where(
+                    KnowledgeAgentToolCall.run_id == run.id
+                )
+            )
+        ).scalars().all()
+        assert tool_calls == []
+        active = await get_active_context_version(db, conversation.id)
+        assert active is not None
+        assert active.id == version.id
+
+
+@pytest.mark.asyncio
+async def test_runner_continue_seed_deleted_records_unavailable(monkeypatch) -> None:
+    """工作集种子失效：只记录不可用并继续新检索，不把删除项写入输出版本。"""
+    async with async_session_factory() as db:
+        user = await create_user(db, "种子失效")
+        workspace = await create_workspace(db, user)
+        project = await create_project(db, workspace, "失效项目")
+        node = await create_child_node(db, project, "施工")
+        source_a, attachment_a = await create_source_attachment(
+            db,
+            workspace,
+            project,
+            title="旧来源",
+            text_content="闭水试验通常持续 24 小时。",
+        )
+        source_b, attachment_b = await create_source_attachment(
+            db,
+            workspace,
+            project,
+            title="新来源",
+            text_content="闭水试验验收前不得放水。",
+        )
+        entry_a = await create_entry_with_evidence(
+            db,
+            project,
+            node,
+            source_a,
+            attachment_a,
+            title="闭水试验",
+            content="闭水试验通常持续 24 小时。",
+            quote="闭水试验通常持续 24 小时",
+        )
+        entry_b = await create_entry_with_evidence(
+            db,
+            project,
+            node,
+            source_b,
+            attachment_b,
+            title="验收规则",
+            content="闭水试验验收前不得放水。",
+            quote="闭水试验验收前不得放水",
+        )
+        conversation, run = await _conversation_and_run(
+            db,
+            user,
+            workspace,
+            message="验收前可以放水吗？",
+        )
+        version = await _make_active_version(
+            db,
+            conversation,
+            user,
+            workspace,
+            entry_ids=[entry_a.id],
+            project_name="失效项目",
+        )
+        run.input_context_version_id = version.id
+        run.request_context_mode = "continue"
+        await db.commit()
+        await db.delete(entry_a)
+        await db.commit()
+
+        ctx = RunToolContext(
+            run_id=run.id,
+            workspace_id=workspace.id,
+            owner_user_id=user.id,
+            scope_type=SCOPE_WORKSPACE,
+            project_id=None,
+            project_name=None,
+        )
+        verified = await _evidence_for_run(db, ctx, query="验收")
+        by_entry = {item.entry_id: item for item in verified}
+        await db.commit()
+
+        monkeypatch.setattr(
+            "app.services.knowledge_agent.runner.decide_context",
+            _fixed_decision(
+                CONTEXT_DECISION_CONTINUE,
+                "闭水试验验收前可以放水吗？",
+                topic_label="闭水试验",
+            ),
+        )
+        monkeypatch.setattr(
+            "app.services.knowledge_agent.runner.run_knowledge_answer_agent",
+            _fake_answer_agent(
+                KnowledgeAnswerDraft(
+                    answer="闭水试验验收前不得放水。",
+                    citations=[
+                        KnowledgeCitationDraft(
+                            evidence_handle=by_entry[entry_b.id].evidence_handle
+                        )
+                    ],
+                )
+            ),
+        )
+        run.status = RUN_PROCESSING
+        await db.commit()
+        await execute_run(db, run)
+        await db.commit()
+
+        assert run.status == RUN_COMPLETED
+        seed_calls = (
+            await db.execute(
+                select(KnowledgeAgentToolCall).where(
+                    KnowledgeAgentToolCall.run_id == run.id,
+                    KnowledgeAgentToolCall.tool_name == "working_set_seed",
+                )
+            )
+        ).scalars().all()
+        assert len(seed_calls) == 1
+        seed_result = json.loads(seed_calls[0].result_summary)
+        assert seed_result["valid"] == 0
+        assert seed_result["unavailable"] == 1
+        active = await get_active_context_version(db, conversation.id)
+        assert active is not None
+        items = (
+            await db.execute(
+                select(KnowledgeWorkingSetItem).where(
+                    KnowledgeWorkingSetItem.context_version_id == active.id
+                )
+            )
+        ).scalars().all()
+        assert [item.entry_id for item in items] == [entry_b.id]
+
+
+@pytest.mark.asyncio
+async def test_runner_historical_evidence_rejected_and_context_kept(monkeypatch) -> None:
+    """历史 Run Evidence 句柄拒绝复用；continue 无有效引用不推进工作集。"""
+    async with async_session_factory() as db:
+        user = await create_user(db, "历史证据")
+        workspace = await create_workspace(db, user)
+        project = await create_project(db, workspace, "历史项目")
+        node = await create_child_node(db, project, "施工")
+        source, attachment = await create_source_attachment(
+            db,
+            workspace,
+            project,
+            text_content="闭水试验通常持续 24 小时。",
+        )
+        await create_entry_with_evidence(
+            db,
+            project,
+            node,
+            source,
+            attachment,
+            title="闭水试验",
+            content="闭水试验通常持续 24 小时。",
+            quote="闭水试验通常持续 24 小时",
+        )
+        conversation, first_run = await _conversation_and_run(
+            db, user, workspace
+        )
+        ctx = RunToolContext(
+            run_id=first_run.id,
+            workspace_id=workspace.id,
+            owner_user_id=user.id,
+            scope_type=SCOPE_WORKSPACE,
+            project_id=None,
+            project_name=None,
+        )
+        verified = await _evidence_for_run(db, ctx)
+        old_handle = verified[0].evidence_handle
+        await db.commit()
+        monkeypatch.setattr(
+            "app.services.knowledge_agent.runner.run_knowledge_answer_agent",
+            _fake_answer_agent(
+                KnowledgeAnswerDraft(
+                    answer="闭水试验通常持续 24 小时。",
+                    citations=[KnowledgeCitationDraft(evidence_handle=old_handle)],
+                )
+            ),
+        )
+        first_run.status = RUN_PROCESSING
+        await db.commit()
+        await execute_run(db, first_run)
+        await db.commit()
+        assert first_run.status == RUN_COMPLETED
+        version = await get_active_context_version(db, conversation.id)
+        assert version is not None
+        assert version.source_run_id == first_run.id
+
+        # 第二轮继续：回答模型引用上一轮句柄 → 全部丢弃
+        _message, second_run = await submit_message(
+            db,
+            conversation,
+            KnowledgeRunSubmitRequest(
+                client_message_id=f"second-{run_id_counter()}",
+                message="为什么不能提前放水？",
+                context_mode="continue",
+            ),
+        )
+        second_run.input_context_version_id = version.id
+        await db.commit()
+        monkeypatch.setattr(
+            "app.services.knowledge_agent.runner.decide_context",
+            _fixed_decision(
+                CONTEXT_DECISION_CONTINUE,
+                "闭水试验为什么不能提前放水？",
+                topic_label="闭水试验",
+            ),
+        )
+        monkeypatch.setattr(
+            "app.services.knowledge_agent.runner.run_knowledge_answer_agent",
+            _fake_answer_agent(
+                KnowledgeAnswerDraft(
+                    answer="闭水试验为什么不能提前放水？",
+                    citations=[KnowledgeCitationDraft(evidence_handle=old_handle)],
+                )
+            ),
+        )
+        second_run.status = RUN_PROCESSING
+        await db.commit()
+        await execute_run(db, second_run)
+        await db.commit()
+
+        assert second_run.status == RUN_PARTIAL
+        answer = json.loads(second_run.answer_json)
+        assert answer["status"] == "insufficient"
+        assert answer["citations"] == []
+        assert second_run.output_context_version_id is None
+        active = await get_active_context_version(db, conversation.id)
+        assert active is not None
+        assert active.id == version.id
 
 
 @pytest.mark.asyncio

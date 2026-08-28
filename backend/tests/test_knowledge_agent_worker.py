@@ -218,6 +218,7 @@ async def test_cancel_from_other_session_during_processing(monkeypatch) -> None:
         *,
         recall_limit,
         context_limit,
+        seed_entries=None,
     ):
         """模拟 Worker 持有 run 对象期间，另一个会话提交取消请求。"""
         async with async_session_factory() as other:

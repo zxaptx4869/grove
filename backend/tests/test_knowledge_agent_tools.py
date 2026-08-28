@@ -491,3 +491,75 @@ async def test_evidence_unverified_quote() -> None:
         result = await read_source_evidence(db, ctx, entry.id, [source.id])
         assert result.items[0].citable is False
         assert result.items[0].status == TOOL_UNAVAILABLE
+
+
+@pytest.mark.asyncio
+async def test_search_merges_seed_entries_with_recall() -> None:
+    """工作集种子与新召回统一去重重排；种子不阻止新 Entry 被发现。"""
+    async with async_session_factory() as db:
+        user = await create_user(db, "种子合并")
+        workspace = await create_workspace(db, user)
+        project = await create_project(db, workspace, "合并项目")
+        node = await create_child_node(db, project, "施工")
+        source_a, attachment_a = await create_source_attachment(
+            db,
+            workspace,
+            project,
+            title="手册甲",
+            text_content="闭水试验通常持续 24 小时。",
+        )
+        source_b, attachment_b = await create_source_attachment(
+            db,
+            workspace,
+            project,
+            title="手册乙",
+            text_content="闭水试验放水前应做水位标记。",
+        )
+        entry_a = await create_entry_with_evidence(
+            db,
+            project,
+            node,
+            source_a,
+            attachment_a,
+            title="闭水试验",
+            content="闭水试验通常持续 24 小时。",
+            quote="闭水试验通常持续 24 小时",
+        )
+        entry_b = await create_entry_with_evidence(
+            db,
+            project,
+            node,
+            source_b,
+            attachment_b,
+            title="放水标记",
+            content="闭水试验放水前应做水位标记。",
+            quote="闭水试验放水前应做水位标记",
+        )
+        await db.commit()
+
+        ctx = RunToolContext(
+            run_id=1,
+            workspace_id=workspace.id,
+            owner_user_id=user.id,
+            scope_type=SCOPE_WORKSPACE,
+            project_id=None,
+            project_name=None,
+        )
+        # 种子 entry_a 已加入已发现集合；entry_b 只靠新召回
+        ctx.discovered_entry_ids.add(entry_a.id)
+        seed_entries = [entry_a]
+        result = await search_confirmed_knowledge(
+            db,
+            ctx,
+            "闭水试验放水",
+            recall_limit=10,
+            context_limit=5,
+            seed_entries=seed_entries,
+        )
+        result_ids = [item.entry_id for item in result.items]
+        assert entry_a.id in result_ids
+        assert entry_b.id in result_ids
+        # 重排后进入回答上下文的条目都进入已发现集合
+        assert entry_b.id in ctx.discovered_entry_ids
+        # 去重：种子与召回同一 Entry 只出现一次
+        assert len(result_ids) == len(set(result_ids))

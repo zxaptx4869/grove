@@ -31,11 +31,11 @@
 
 ## 5. 实现：连续追问固定执行图与可信工具
 
-- [ ] 5.1 扩展 `RunToolContext`，只把固化输入工作集中复验有效的 Entry 加入服务端已发现集合，拒绝历史 Run Evidence 与模型猜测 ID
-- [ ] 5.2 实现工作集种子与独立查询新召回的去重、统一重排与上下文截断；工作集不能阻止发现新 Entry 或无条件保留低相关项
-- [ ] 5.3 扩展 Runner 为上下文决策分支：澄清直接回复；继续/新话题进入搜索、Entry、当前 Source Evidence、回答、引用校验和工作集更新
-- [ ] 5.4 确保工作集 Entry 每轮重新读取 Attachment 并生成当前 Run Evidence，来源变化/删除时不复用历史 quote 或句柄
-- [ ] 5.5 增加省略追问、对比扩展、新话题、澄清、工作集种子失效、新发现 Entry、历史 Evidence 拒绝与工具预算测试，并运行 `cd backend && .venv/bin/python -m pytest tests/test_knowledge_agent_tools.py tests/test_knowledge_agent_runner.py`
+- [x] 5.1 扩展 `RunToolContext`，只把固化输入工作集中复验有效的 Entry 加入服务端已发现集合，拒绝历史 Run Evidence 与模型猜测 ID
+- [x] 5.2 实现工作集种子与独立查询新召回的去重、统一重排与上下文截断；工作集不能阻止发现新 Entry 或无条件保留低相关项
+- [x] 5.3 扩展 Runner 为上下文决策分支：澄清直接回复；继续/新话题进入搜索、Entry、当前 Source Evidence、回答、引用校验和工作集更新
+- [x] 5.4 确保工作集 Entry 每轮重新读取 Attachment 并生成当前 Run Evidence，来源变化/删除时不复用历史 quote 或句柄
+- [x] 5.5 增加省略追问、对比扩展、新话题、澄清、工作集种子失效、新发现 Entry、历史 Evidence 拒绝与工具预算测试，并运行 `cd backend && .venv/bin/python -m pytest tests/test_knowledge_agent_tools.py tests/test_knowledge_agent_runner.py`
 
 ## 6. 实现：API 兼容与恢复
 
