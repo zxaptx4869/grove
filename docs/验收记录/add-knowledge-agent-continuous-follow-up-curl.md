@@ -85,3 +85,32 @@ walk-7   auto | None（提交后即取消） | in: 4 | out: None
 - 修复前失败的首问 Run（walk-1）保留在开发库中作为异常记录，人工验收后可清理；
 - 未配置模型密钥时 `auto` 分类按设计显式降级为 `new_topic` 且
   `context_degraded=true`，不会静默沿用旧工作集。
+
+## MySQL 8 真实验证（7.3）
+
+环境：一次性临时 MySQL 8.0.45 实例（`mysqld --no-defaults --initialize-insecure`，
+独立数据目录与端口 33063，验证后已关闭并删除目录）。沙箱内初始化 mysqld 会触发
+signal 11，需在沙箱外运行；本机 Homebrew `mysql@8.0` 服务当前未运行，不影响验证。
+
+```bash
+/opt/homebrew/opt/mysql@8.0/bin/mysqld --no-defaults --initialize-insecure --datadir=<tmp>
+/opt/homebrew/opt/mysql@8.0/bin/mysqld --no-defaults --datadir=<tmp> \
+  --port=33063 --socket=<tmp>/mysql.sock --bind-address=127.0.0.1 --mysqlx=0
+DATABASE_URL="mysql+asyncmy://root@127.0.0.1:33063/grove_mysql_test?charset=utf8mb4" \
+  .venv/bin/alembic upgrade head
+```
+
+### 验证结果
+
+| 项目 | 结果 |
+|---|---|
+| 迁移链 `a0b1c2d3e4f5 → b1c2d3e4f5a6` | 成功；新表与 Run 新列均存在，id 为 BIGINT（MySQL 正确类型） |
+| `knowledge_context_versions` 单活动约束 | 第二个 `(conversation_id, 'active')` 报 `Duplicate entry '1-active'`（1062） |
+| 多终态 NULL | 终态置 `active_slot=NULL` 后可连续插入多个历史版本（验证库内共 4 个版本） |
+| `knowledge_agent_runs` 单活动约束 | 第二个 active 报 `Duplicate entry '1-active'`（1062） |
+| 运行中步骤可见 | 会话 B 提交 `current_step='search'` 后，新会话读到 `search` |
+| 跨事务取消 | 长事务快照与同事务重读均为 0；新短会话读到已提交的 `cancel_requested=1`（与 Runner 短会话检查一致） |
+| 崩溃恢复字段 | Run 可写 `input_context_version_id`（外键指向版本 3）并保留 `request_context_mode='continue'` |
+
+结论：MySQL 8 下迁移、单活动版本约束、多终态 NULL、运行中步骤可见与跨事务
+取消语义均符合 design 第 7 条（短会话读写）与 specs 的契约。
