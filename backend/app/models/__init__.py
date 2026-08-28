@@ -15,8 +15,10 @@ from app.models.knowledge_agent import (
     KnowledgeAgentModelInvocation,
     KnowledgeAgentRun,
     KnowledgeAgentToolCall,
+    KnowledgeContextVersion,
     KnowledgeConversation,
     KnowledgeMessage,
+    KnowledgeWorkingSetItem,
 )
 from app.models.processing import ProcessingTask
 from app.models.project import Node, Project
@@ -43,8 +45,10 @@ __all__ = [
     "KnowledgeAgentModelInvocation",
     "KnowledgeAgentRun",
     "KnowledgeAgentToolCall",
+    "KnowledgeContextVersion",
     "KnowledgeConversation",
     "KnowledgeMessage",
+    "KnowledgeWorkingSetItem",
     "Node",
     "ProcessingTask",
     "Project",

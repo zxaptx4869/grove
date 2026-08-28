@@ -158,6 +158,7 @@ async def submit_message(
         project_id=project_id,
         project_name=project_name,
         user_message_id=user_message.id,
+        request_context_mode=payload.context_mode,
         status=RUN_WAITING,
         current_step="waiting",
         active_slot=ACTIVE_SLOT,
@@ -257,6 +258,13 @@ def _parse_answer(raw: str | None) -> KnowledgeAnswerOut | None:
 
 def run_out(run: KnowledgeAgentRun) -> KnowledgeRunOut:
     """组装 Run 响应。"""
+    context_degraded = False
+    if run.context_meta_json:
+        try:
+            meta = json.loads(run.context_meta_json)
+            context_degraded = bool(meta.get("is_fallback")) or bool(meta.get("error"))
+        except (json.JSONDecodeError, TypeError):
+            context_degraded = False
     return KnowledgeRunOut(
         id=run.id,
         conversation_id=run.conversation_id,
@@ -271,6 +279,13 @@ def run_out(run: KnowledgeAgentRun) -> KnowledgeRunOut:
         retry_count=run.retry_count,
         max_retries=run.max_retries,
         error=run.error,
+        request_context_mode=run.request_context_mode,
+        context_decision=run.context_decision,
+        standalone_query=run.standalone_query,
+        topic_label=run.topic_label,
+        input_context_version_id=run.input_context_version_id,
+        output_context_version_id=run.output_context_version_id,
+        context_degraded=context_degraded,
         fallback_summary=_parse_fallback_summary(run.fallback_summary),
         answer=_parse_answer(run.answer_json),
         created_at=run.created_at,

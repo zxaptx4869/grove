@@ -8,7 +8,12 @@ from fastapi import HTTPException, status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models import KnowledgeConversation, KnowledgeMessage, Project
+from app.models import (
+    KnowledgeAgentRun,
+    KnowledgeConversation,
+    KnowledgeMessage,
+    Project,
+)
 from app.models.knowledge_agent import (
     MESSAGE_ROLE_SYSTEM,
     MESSAGE_TYPE_SCOPE_CHANGE,
@@ -23,6 +28,7 @@ from app.schemas.knowledge_agent import (
     KnowledgeMessageOut,
     KnowledgeScopeChangeRequest,
 )
+from app.services.knowledge_agent.working_set import active_context_summaries
 
 logger = logging.getLogger(__name__)
 
@@ -92,8 +98,13 @@ async def list_conversations(
         )
     ).scalars().all()
     project_names = await _project_name_map(db, workspace_id, [row.project_id for row in rows])
+    summaries = await active_context_summaries(db, [row.id for row in rows])
     return [
-        conversation_out(conversation, project_names.get(conversation.project_id))
+        conversation_out(
+            conversation,
+            project_names.get(conversation.project_id),
+            *summaries.get(conversation.id, (None, None, 0)),
+        )
         for conversation in rows
     ]
 
@@ -121,6 +132,9 @@ async def _project_name_map(
 def conversation_out(
     conversation: KnowledgeConversation,
     project_name: str | None = None,
+    active_topic_label: str | None = None,
+    active_version_id: int | None = None,
+    active_entry_count: int = 0,
 ) -> KnowledgeConversationOut:
     """组装对话响应。"""
     return KnowledgeConversationOut(
@@ -129,6 +143,9 @@ def conversation_out(
         scope_type=conversation.scope_type,
         project_id=conversation.project_id,
         project_name=project_name,
+        active_topic_label=active_topic_label,
+        active_context_version_id=active_version_id,
+        active_entry_count=active_entry_count,
         last_activity_at=conversation.last_activity_at,
         created_at=conversation.created_at,
     )
@@ -214,7 +231,10 @@ async def list_messages(
     return list(rows), next_cursor
 
 
-def message_out(message: KnowledgeMessage) -> KnowledgeMessageOut:
+def message_out(
+    message: KnowledgeMessage,
+    run: KnowledgeAgentRun | None = None,
+) -> KnowledgeMessageOut:
     """组装消息响应。"""
     return KnowledgeMessageOut(
         id=message.id,
@@ -227,6 +247,12 @@ def message_out(message: KnowledgeMessage) -> KnowledgeMessageOut:
         scope_type=message.scope_type,
         project_id=message.project_id,
         project_name=message.project_name,
+        request_context_mode=run.request_context_mode if run else None,
+        context_decision=run.context_decision if run else None,
+        standalone_query=run.standalone_query if run else None,
+        topic_label=run.topic_label if run else None,
+        input_context_version_id=run.input_context_version_id if run else None,
+        output_context_version_id=run.output_context_version_id if run else None,
         created_at=message.created_at,
     )
 

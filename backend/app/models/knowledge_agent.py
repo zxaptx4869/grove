@@ -63,14 +63,49 @@ RUN_TERMINAL_STATUSES = {RUN_COMPLETED, RUN_PARTIAL, RUN_FAILED, RUN_CANCELLED}
 # 单活动 Run 的唯一槽位值；终态置空释放槽位
 ACTIVE_SLOT = "active"
 
+# ---- 上下文模式与决策 ----
+CONTEXT_MODE_AUTO = "auto"
+CONTEXT_MODE_CONTINUE = "continue"
+CONTEXT_MODE_NEW_TOPIC = "new_topic"
+CONTEXT_MODES = (CONTEXT_MODE_AUTO, CONTEXT_MODE_CONTINUE, CONTEXT_MODE_NEW_TOPIC)
+
+CONTEXT_DECISION_CONTINUE = "continue"
+CONTEXT_DECISION_NEW_TOPIC = "new_topic"
+CONTEXT_DECISION_CLARIFY = "clarify"
+CONTEXT_DECISIONS = (
+    CONTEXT_DECISION_CONTINUE,
+    CONTEXT_DECISION_NEW_TOPIC,
+    CONTEXT_DECISION_CLARIFY,
+)
+
+# ---- 上下文版本状态与关闭原因 ----
+CONTEXT_STATUS_ACTIVE = "active"
+CONTEXT_STATUS_SUPERSEDED = "superseded"
+CONTEXT_STATUS_CLOSED = "closed"
+
+CONTEXT_CLOSE_REASON_REPLACED = "replaced"
+CONTEXT_CLOSE_REASON_NEW_TOPIC = "new_topic"
+CONTEXT_CLOSE_REASON_SCOPE_CHANGE = "scope_change"
+
+# ---- 工作集纳入原因 ----
+WORKING_SET_REASON_CITED = "cited"
+WORKING_SET_REASON_RECENT = "recent"
+
 # ---- Run 步骤（固定执行图） ----
 STEP_CLAIM = "claim"
+STEP_CONTEXT_DECISION = "context_decision"
 STEP_SEARCH = "search"
 STEP_READ_ENTRIES = "read_entries"
 STEP_READ_EVIDENCE = "read_evidence"
 STEP_ORGANIZE_ANSWER = "organize_answer"
 STEP_VALIDATE_REFERENCES = "validate_references"
 STEP_FINALIZE = "finalize"
+
+# ---- 模型调用用途 ----
+PURPOSE_CONTEXT_DECISION = "context_decision"
+PURPOSE_EMBEDDING = "embedding"
+PURPOSE_RERANK = "rerank"
+PURPOSE_ANSWER = "answer"
 
 # ---- 工具调用状态 ----
 TOOL_OK = "ok"
@@ -79,11 +114,6 @@ TOOL_PARTIAL = "partial"
 TOOL_DENIED = "denied"
 TOOL_UNAVAILABLE = "unavailable"
 TOOL_ERROR = "error"
-
-# ---- 模型调用用途 ----
-PURPOSE_EMBEDDING = "embedding"
-PURPOSE_RERANK = "rerank"
-PURPOSE_ANSWER = "answer"
 
 # ---- Evidence 用途 ----
 EVIDENCE_PURPOSE_ANSWER = "answer"
@@ -128,6 +158,9 @@ class KnowledgeConversation(Base):
         back_populates="conversation", cascade="all, delete-orphan"
     )
     runs: Mapped[list["KnowledgeAgentRun"]] = relationship(
+        back_populates="conversation", cascade="all, delete-orphan"
+    )
+    context_versions: Mapped[list["KnowledgeContextVersion"]] = relationship(
         back_populates="conversation", cascade="all, delete-orphan"
     )
 
@@ -183,6 +216,28 @@ class KnowledgeAgentRun(Base):
     claimed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     retry_count: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
     max_retries: Mapped[int] = mapped_column(Integer, default=1, nullable=False)
+    # ---- 上下文决策契约 ----
+    request_context_mode: Mapped[str | None] = mapped_column(String(8), nullable=True)
+    context_decision: Mapped[str | None] = mapped_column(String(16), nullable=True)
+    standalone_query: Mapped[str | None] = mapped_column(Text, nullable=True)
+    topic_label: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    # JSON：实际用于判断的历史消息 ID（不保存原始 prompt）
+    history_message_ids_json: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # 输入工作集在领取时固化；恢复执行不漂移到后来状态
+    input_context_version_id: Mapped[int | None] = mapped_column(
+        BigInteger,
+        ForeignKey("knowledge_context_versions.id", ondelete="SET NULL"),
+        index=True,
+        nullable=True,
+    )
+    output_context_version_id: Mapped[int | None] = mapped_column(
+        BigInteger,
+        ForeignKey("knowledge_context_versions.id", ondelete="SET NULL"),
+        index=True,
+        nullable=True,
+    )
+    # JSON：上下文决策/改写阶段降级信息（provider/model/fallback/error/耗时）
+    context_meta_json: Mapped[str | None] = mapped_column(Text, nullable=True)
     # JSON 汇总：各阶段降级摘要（不保存原始 prompt）
     fallback_summary: Mapped[str | None] = mapped_column(Text, nullable=True)
     # 结构化回答 JSON（终态一次性写入）
@@ -205,6 +260,14 @@ class KnowledgeAgentRun(Base):
     )
     evidences: Mapped[list["KnowledgeAgentEvidence"]] = relationship(
         back_populates="run", cascade="all, delete-orphan"
+    )
+    input_context_version: Mapped["KnowledgeContextVersion | None"] = relationship(
+        foreign_keys=[input_context_version_id],
+        post_update=True,
+    )
+    output_context_version: Mapped["KnowledgeContextVersion | None"] = relationship(
+        foreign_keys=[output_context_version_id],
+        post_update=True,
     )
 
 
@@ -290,7 +353,7 @@ class KnowledgeAgentModelInvocation(Base):
         index=True,
         nullable=False,
     )
-    purpose: Mapped[str] = mapped_column(String(16), nullable=False)
+    purpose: Mapped[str] = mapped_column(String(32), nullable=False)
     prompt_version: Mapped[str] = mapped_column(String(32), nullable=False)
     provider: Mapped[str] = mapped_column(String(32), nullable=False)
     model: Mapped[str | None] = mapped_column(String(128), nullable=True)
@@ -361,3 +424,138 @@ class KnowledgeAgentEvidence(Base):
     entry: Mapped["Entry"] = relationship()
     source: Mapped["Source"] = relationship()
     attachment: Mapped["Attachment"] = relationship()
+
+
+class KnowledgeContextVersion(Base):
+    """对话当前主题的不可变工作集版本。
+
+    同一对话最多一个活动版本（`active_slot='active'`）；被替换、新话题或
+    范围切换后版本进入终态并保留审计。只保存主题标签与 Entry 线索，
+    不保存助手回答或模型摘要。
+    """
+
+    __tablename__ = "knowledge_context_versions"
+    __table_args__ = (
+        UniqueConstraint(
+            "conversation_id",
+            "active_slot",
+            name="uq_knowledge_context_active_slot",
+        ),
+        Index(
+            "ix_knowledge_context_claim",
+            "conversation_id",
+            "status",
+            "created_at",
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(
+        BigInteger().with_variant(Integer, "sqlite"), primary_key=True, autoincrement=True
+    )
+    conversation_id: Mapped[int] = mapped_column(
+        BigInteger,
+        ForeignKey("knowledge_conversations.id", ondelete="CASCADE"),
+        index=True,
+        nullable=False,
+    )
+    workspace_id: Mapped[int] = mapped_column(
+        BigInteger, ForeignKey("workspaces.id", ondelete="CASCADE"), index=True, nullable=False
+    )
+    owner_user_id: Mapped[int] = mapped_column(
+        BigInteger, ForeignKey("users.id", ondelete="CASCADE"), index=True, nullable=False
+    )
+    version_number: Mapped[int] = mapped_column(Integer, nullable=False)
+    parent_version_id: Mapped[int | None] = mapped_column(
+        BigInteger,
+        ForeignKey("knowledge_context_versions.id", ondelete="SET NULL"),
+        index=True,
+        nullable=True,
+    )
+    source_run_id: Mapped[int | None] = mapped_column(
+        BigInteger,
+        ForeignKey("knowledge_agent_runs.id", ondelete="SET NULL"),
+        index=True,
+        nullable=True,
+    )
+    # 范围快照：版本生成后不随对话范围变化
+    scope_type: Mapped[str] = mapped_column(String(16), nullable=False)
+    project_id: Mapped[int | None] = mapped_column(
+        BigInteger, ForeignKey("projects.id", ondelete="SET NULL"), index=True, nullable=True
+    )
+    project_name: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    topic_label: Mapped[str] = mapped_column(String(255), nullable=False)
+    status: Mapped[str] = mapped_column(
+        String(16), default=CONTEXT_STATUS_ACTIVE, nullable=False
+    )
+    close_reason: Mapped[str | None] = mapped_column(String(16), nullable=True)
+    active_slot: Mapped[str | None] = mapped_column(String(8), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False
+    )
+
+    conversation: Mapped["KnowledgeConversation"] = relationship(
+        back_populates="context_versions"
+    )
+    parent_version: Mapped["KnowledgeContextVersion | None"] = relationship(
+        remote_side=[id],
+        post_update=True,
+    )
+    items: Mapped[list["KnowledgeWorkingSetItem"]] = relationship(
+        back_populates="context_version",
+        cascade="all, delete-orphan",
+        order_by="KnowledgeWorkingSetItem.sort_order",
+    )
+
+
+class KnowledgeWorkingSetItem(Base):
+    """工作集项：只保存正式 Entry 线索与短快照，不保存正文或回答。"""
+
+    __tablename__ = "knowledge_working_set_items"
+    __table_args__ = (
+        UniqueConstraint(
+            "context_version_id",
+            "entry_id",
+            name="uq_knowledge_working_set_entry",
+        ),
+        Index("ix_knowledge_working_set_entry_id", "entry_id"),
+    )
+
+    id: Mapped[int] = mapped_column(
+        BigInteger().with_variant(Integer, "sqlite"), primary_key=True, autoincrement=True
+    )
+    context_version_id: Mapped[int] = mapped_column(
+        BigInteger,
+        ForeignKey("knowledge_context_versions.id", ondelete="CASCADE"),
+        index=True,
+        nullable=False,
+    )
+    entry_id: Mapped[int | None] = mapped_column(
+        BigInteger, ForeignKey("entries.id", ondelete="CASCADE"), index=True, nullable=True
+    )
+    entry_title: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    project_name: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    node_path: Mapped[str | None] = mapped_column(Text, nullable=True)
+    source_run_id: Mapped[int | None] = mapped_column(
+        BigInteger,
+        ForeignKey("knowledge_agent_runs.id", ondelete="SET NULL"),
+        index=True,
+        nullable=True,
+    )
+    include_reason: Mapped[str] = mapped_column(
+        String(16), default=WORKING_SET_REASON_CITED, nullable=False
+    )
+    sort_order: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    last_used_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+
+    context_version: Mapped["KnowledgeContextVersion"] = relationship(
+        back_populates="items"
+    )
+    entry: Mapped["Entry"] = relationship()

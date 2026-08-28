@@ -20,7 +20,15 @@ RunStatus = Literal[
     "cancelled",
 ]
 
-AnswerStatus = Literal["completed", "partial", "insufficient", "failed"]
+AnswerStatus = Literal[
+    "completed",
+    "partial",
+    "insufficient",
+    "failed",
+    "clarification",
+]
+ContextMode = Literal["auto", "continue", "new_topic"]
+ContextDecision = Literal["continue", "new_topic", "clarify"]
 
 
 class KnowledgeConversationCreate(BaseModel):
@@ -31,13 +39,16 @@ class KnowledgeConversationCreate(BaseModel):
 
 
 class KnowledgeConversationOut(BaseModel):
-    """知识对话摘要。"""
+    """知识对话摘要：含活动主题与活动工作集版本摘要。"""
 
     id: int
     title: str
     scope_type: KnowledgeScopeType
     project_id: int | None
     project_name: str | None = None
+    active_topic_label: str | None = None
+    active_context_version_id: int | None = None
+    active_entry_count: int = 0
     last_activity_at: datetime
     created_at: datetime
 
@@ -62,6 +73,13 @@ class KnowledgeMessageOut(BaseModel):
     scope_type: KnowledgeScopeType
     project_id: int | None = None
     project_name: str | None = None
+    # 关联 Run 的上下文契约（消息没有 Run 时为空）
+    request_context_mode: ContextMode | None = None
+    context_decision: ContextDecision | None = None
+    standalone_query: str | None = None
+    topic_label: str | None = None
+    input_context_version_id: int | None = None
+    output_context_version_id: int | None = None
     created_at: datetime
 
 
@@ -101,7 +119,7 @@ class KnowledgeAnswerOut(BaseModel):
     """结构化回答：引用只能来自本 Run 的 Evidence 句柄。"""
 
     answer: str
-    status: AnswerStatus
+    status: AnswerStatus = "completed"
     insufficient_note: str | None = None
     citations: list[KnowledgeRunCitationOut] = []
     conflicts: list[KnowledgeConflictOut] = []
@@ -140,6 +158,14 @@ class KnowledgeRunOut(BaseModel):
     retry_count: int = 0
     max_retries: int = 1
     error: str | None = None
+    # 上下文决策契约
+    request_context_mode: ContextMode | None = None
+    context_decision: ContextDecision | None = None
+    standalone_query: str | None = None
+    topic_label: str | None = None
+    input_context_version_id: int | None = None
+    output_context_version_id: int | None = None
+    context_degraded: bool = False
     fallback_summary: FallbackSummaryOut | None = None
     answer: KnowledgeAnswerOut | None = None
     created_at: datetime
@@ -147,10 +173,11 @@ class KnowledgeRunOut(BaseModel):
 
 
 class KnowledgeRunSubmitRequest(BaseModel):
-    """提交新问题：client_message_id 用于网络重试幂等。"""
+    """提交新问题：client_message_id 用于网络重试幂等；context_mode 默认 auto。"""
 
     client_message_id: str = Field(min_length=1, max_length=64)
     message: str = Field(min_length=1, max_length=2000)
+    context_mode: ContextMode = "auto"
 
 
 class KnowledgeRunSubmitOut(BaseModel):

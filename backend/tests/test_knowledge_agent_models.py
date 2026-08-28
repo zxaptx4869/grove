@@ -15,14 +15,18 @@ from app.db.session import async_session_factory
 from app.models import (
     KnowledgeAgentEvidence,
     KnowledgeAgentRun,
+    KnowledgeContextVersion,
     KnowledgeConversation,
     KnowledgeMessage,
+    KnowledgeWorkingSetItem,
     User,
     Workspace,
     WorkspaceMember,
 )
 from app.models.knowledge_agent import (
     ACTIVE_SLOT,
+    CONTEXT_STATUS_ACTIVE,
+    CONTEXT_STATUS_CLOSED,
     RUN_ACTIVE_STATUSES,
     RUN_COMPLETED,
     RUN_FAILED,
@@ -31,6 +35,12 @@ from app.models.knowledge_agent import (
     RUN_WAITING,
     SCOPE_WORKSPACE,
 )
+from app.schemas.knowledge_agent import (
+    KnowledgeAnswerOut,
+    KnowledgeRunOut,
+    KnowledgeRunSubmitRequest,
+)
+from app.services.knowledge_agent.runs import run_out
 
 
 async def _user_and_workspace(db, prefix: str = "模型") -> tuple[User, Workspace]:
@@ -178,6 +188,143 @@ async def test_evidence_handle_unique() -> None:
         await db.rollback()
 
 
+@pytest.mark.asyncio
+async def test_context_version_active_slot_unique_and_terminal_null() -> None:
+    """同一对话最多一个活动上下文版本；终态置空后允许多个历史版本。"""
+    async with async_session_factory() as db:
+        user, workspace = await _user_and_workspace(db)
+        conversation = await _conversation(db, user, workspace)
+
+        def _version(status: str, active_slot: str | None) -> KnowledgeContextVersion:
+            return KnowledgeContextVersion(
+                conversation_id=conversation.id,
+                workspace_id=workspace.id,
+                owner_user_id=user.id,
+                version_number=1,
+                scope_type=SCOPE_WORKSPACE,
+                topic_label="闭水试验",
+                status=status,
+                active_slot=active_slot,
+            )
+
+        db.add(_version(CONTEXT_STATUS_ACTIVE, ACTIVE_SLOT))
+        await db.flush()
+        db.add(_version(CONTEXT_STATUS_ACTIVE, ACTIVE_SLOT))
+        with pytest.raises(IntegrityError):
+            await db.flush()
+        await db.rollback()
+
+        db.add(_version(CONTEXT_STATUS_CLOSED, None))
+        await db.flush()
+        db.add(_version(CONTEXT_STATUS_CLOSED, None))
+        await db.flush()
+        rows = (
+            await db.execute(
+                select(KnowledgeContextVersion).where(
+                    KnowledgeContextVersion.conversation_id == conversation.id
+                )
+            )
+        ).scalars().all()
+        assert len(rows) == 2
+        assert all(row.active_slot is None for row in rows)
+
+
+@pytest.mark.asyncio
+async def test_working_set_item_unique_per_version() -> None:
+    """同一版本内 Entry 线索不重复；entry_id 可空允许多个空版本项。"""
+    async with async_session_factory() as db:
+        user, workspace = await _user_and_workspace(db)
+        conversation = await _conversation(db, user, workspace)
+        version = KnowledgeContextVersion(
+            conversation_id=conversation.id,
+            workspace_id=workspace.id,
+            owner_user_id=user.id,
+            version_number=1,
+            scope_type=SCOPE_WORKSPACE,
+            topic_label="闭水试验",
+            status=CONTEXT_STATUS_ACTIVE,
+            active_slot=ACTIVE_SLOT,
+        )
+        db.add(version)
+        await db.flush()
+
+        def _item(entry_id: int | None) -> KnowledgeWorkingSetItem:
+            return KnowledgeWorkingSetItem(
+                context_version_id=version.id,
+                entry_id=entry_id,
+                include_reason="cited",
+                sort_order=0,
+            )
+
+        db.add(_item(100))
+        await db.flush()
+        db.add(_item(100))
+        with pytest.raises(IntegrityError):
+            await db.flush()
+        await db.rollback()
+
+        db.add(_item(None))
+        await db.flush()
+        db.add(_item(None))
+        await db.flush()
+
+
+@pytest.mark.asyncio
+async def test_run_context_fields_and_serialization() -> None:
+    """Run 上下文契约字段可空且可序列化；旧 Run 无上下文不报错。"""
+    async with async_session_factory() as db:
+        user, workspace = await _user_and_workspace(db)
+        conversation = await _conversation(db, user, workspace)
+        run = KnowledgeAgentRun(
+            conversation_id=conversation.id,
+            workspace_id=workspace.id,
+            owner_user_id=user.id,
+            scope_type=SCOPE_WORKSPACE,
+            status=RUN_PROCESSING,
+            active_slot=ACTIVE_SLOT,
+            max_retries=1,
+        )
+        db.add(run)
+        await db.flush()
+        await db.commit()
+
+        out = run_out(run)
+        assert isinstance(out, KnowledgeRunOut)
+        assert out.request_context_mode is None
+        assert out.context_decision is None
+        assert out.context_degraded is False
+
+        run.request_context_mode = "continue"
+        run.context_decision = "continue"
+        run.standalone_query = "闭水试验为什么不能提前放水？"
+        run.topic_label = "闭水试验"
+        run.context_meta_json = (
+            '{"provider":"llm","model":"fake","is_fallback":true,"error":"失败"}'
+        )
+        await db.flush()
+        await db.refresh(run)
+        out = run_out(run)
+        assert out.request_context_mode == "continue"
+        assert out.context_decision == "continue"
+        assert out.standalone_query == "闭水试验为什么不能提前放水？"
+        assert out.topic_label == "闭水试验"
+        assert out.context_degraded is True
+
+
+def test_submit_request_defaults_and_answer_status() -> None:
+    """context_mode 默认 auto；回答状态支持 clarification。"""
+    request = KnowledgeRunSubmitRequest(client_message_id="x", message="问题")
+    assert request.context_mode == "auto"
+    assert (
+        KnowledgeRunSubmitRequest(
+            client_message_id="x", message="问题", context_mode="continue"
+        ).context_mode
+        == "continue"
+    )
+    answer = KnowledgeAnswerOut(answer="请补充主题", status="clarification")
+    assert answer.status == "clarification"
+
+
 def test_migration_upgrade_and_constraints(tmp_path: Path) -> None:
     """迁移链可完整升级，且唯一约束在迁移后的库上生效。"""
     db_path = tmp_path / "migration_test.db"
@@ -204,6 +351,8 @@ def test_migration_upgrade_and_constraints(tmp_path: Path) -> None:
         assert {"knowledge_conversations", "knowledge_messages", "knowledge_agent_runs"} <= tables
         assert {"knowledge_agent_tool_calls", "knowledge_agent_model_invocations"} <= tables
         assert "knowledge_agent_evidences" in tables
+        assert "knowledge_context_versions" in tables
+        assert "knowledge_working_set_items" in tables
 
         now = "2026-08-28 00:00:00"
         conn.execute(
@@ -243,6 +392,43 @@ def test_migration_upgrade_and_constraints(tmp_path: Path) -> None:
         )
         _insert_run(2, "completed", None)
         _insert_run(3, "failed", None)
+
+        # 上下文版本单活动约束
+        conn.execute(
+            "INSERT INTO knowledge_context_versions "
+            "(id, conversation_id, workspace_id, owner_user_id, version_number, "
+            " scope_type, topic_label, status, active_slot) "
+            "VALUES (1, 1, 1, 1, 1, 'workspace', '闭水试验', 'active', 'active')"
+        )
+        with pytest.raises(sqlite3.IntegrityError):
+            conn.execute(
+                "INSERT INTO knowledge_context_versions "
+                "(id, conversation_id, workspace_id, owner_user_id, version_number, "
+                " scope_type, topic_label, status, active_slot) "
+                "VALUES (2, 1, 1, 1, 2, 'workspace', '新话题', 'active', 'active')"
+            )
+        conn.execute(
+            "UPDATE knowledge_context_versions "
+            "SET status='closed', active_slot=NULL WHERE id=1"
+        )
+        conn.execute(
+            "INSERT INTO knowledge_context_versions "
+            "(id, conversation_id, workspace_id, owner_user_id, version_number, "
+            " scope_type, topic_label, status, active_slot) "
+            "VALUES (3, 1, 1, 1, 2, 'workspace', '新话题', 'active', 'active')"
+        )
+
+        # 工作集项唯一约束与空主题版本
+        conn.execute(
+            "INSERT INTO knowledge_working_set_items "
+            "(id, context_version_id, entry_id, include_reason, sort_order) "
+            "VALUES (1, 3, NULL, 'cited', 0)"
+        )
+        conn.execute(
+            "INSERT INTO knowledge_working_set_items "
+            "(id, context_version_id, entry_id, include_reason, sort_order) "
+            "VALUES (2, 3, NULL, 'recent', 1)"
+        )
 
         conn.execute(
             "INSERT INTO knowledge_messages "

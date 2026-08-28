@@ -7,11 +7,11 @@
 
 ## 2. 骨架搭建：上下文版本与 Run 契约
 
-- [ ] 2.1 新增不可变 `KnowledgeContextVersion` 与 `KnowledgeWorkingSetItem` 模型、状态/原因枚举、单活动版本约束、范围和标题短快照
-- [ ] 2.2 扩展 Conversation/Run，保存请求模式、实际决策、独立查询、主题、历史消息 ID、输入/输出工作集版本及上下文降级信息
-- [ ] 2.3 新增 Alembic 迁移并验证 SQLite/MySQL 8 的 `(conversation_id, active_slot)` 多终态 NULL 与单活动版本语义；既有对话保持无活动工作集
-- [ ] 2.4 扩展 Pydantic schemas：`context_mode` 默认 `auto`，Run/消息返回上下文决策和工作集摘要，回答状态支持无事实引用的 `clarification`
-- [ ] 2.5 增加模型、迁移、默认值、约束与序列化测试并运行 `cd backend && .venv/bin/python -m pytest tests/test_knowledge_agent_models.py tests/test_knowledge_agent_working_set.py`
+- [x] 2.1 新增不可变 `KnowledgeContextVersion` 与 `KnowledgeWorkingSetItem` 模型、状态/原因枚举、单活动版本约束、范围和标题短快照
+- [x] 2.2 扩展 Conversation/Run，保存请求模式、实际决策、独立查询、主题、历史消息 ID、输入/输出工作集版本及上下文降级信息
+- [x] 2.3 新增 Alembic 迁移并验证 SQLite/MySQL 8 的 `(conversation_id, active_slot)` 多终态 NULL 与单活动版本语义；既有对话保持无活动工作集
+- [x] 2.4 扩展 Pydantic schemas：`context_mode` 默认 `auto`，Run/消息返回上下文决策和工作集摘要，回答状态支持无事实引用的 `clarification`
+- [x] 2.5 增加模型、迁移、默认值、约束与序列化测试并运行 `cd backend && .venv/bin/python -m pytest tests/test_knowledge_agent_models.py tests/test_knowledge_agent_working_set.py`
 
 ## 3. 实现：上下文决策与有限历史
 

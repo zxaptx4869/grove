@@ -9,6 +9,7 @@ from sqlalchemy import select
 from app.api.deps import DbSession, get_current_user, get_current_workspace
 from app.models import (
     KnowledgeAgentModelInvocation,
+    KnowledgeAgentRun,
     KnowledgeAgentToolCall,
     KnowledgeMessage,
     Project,
@@ -43,6 +44,7 @@ from app.services.knowledge_agent.runs import (
     run_out,
     submit_message,
 )
+from app.services.knowledge_agent.working_set import active_context_summary
 
 router = APIRouter(prefix="/api/knowledge-agent", tags=["knowledge-agent"])
 CurrentUser = Annotated[User, Depends(get_current_user)]
@@ -119,7 +121,16 @@ async def get_conversation_endpoint(
     """读取对话详情与当前范围。"""
     conversation = await get_owned_conversation(db, workspace.id, user.id, conversation_id)
     project_name = await _project_name(db, workspace.id, conversation.project_id)
-    return conversation_out(conversation, project_name)
+    topic_label, version_id, entry_count = await active_context_summary(
+        db, conversation.id
+    )
+    return conversation_out(
+        conversation,
+        project_name,
+        active_version_id=version_id,
+        active_topic_label=topic_label,
+        active_entry_count=entry_count,
+    )
 
 
 @router.get(
@@ -137,8 +148,20 @@ async def list_messages_endpoint(
     """游标分页读取对话消息。"""
     await get_owned_conversation(db, workspace.id, user.id, conversation_id)
     rows, next_cursor = await list_messages(db, conversation_id, cursor=cursor, limit=limit)
+    run_ids = {row.run_id for row in rows if row.run_id is not None}
+    runs_by_id: dict[int, KnowledgeAgentRun] = {}
+    if run_ids:
+        run_rows = (
+            await db.execute(
+                select(KnowledgeAgentRun).where(KnowledgeAgentRun.id.in_(run_ids))
+            )
+        ).scalars().all()
+        runs_by_id = {run.id: run for run in run_rows}
     return KnowledgeMessagePageOut(
-        items=[message_out(row) for row in rows],
+        items=[
+            message_out(row, runs_by_id.get(row.run_id) if row.run_id else None)
+            for row in rows
+        ],
         next_cursor=next_cursor,
     )
 
@@ -181,7 +204,7 @@ async def submit_message_endpoint(
     await db.commit()
     response.status_code = status.HTTP_201_CREATED if created else status.HTTP_200_OK
     return KnowledgeRunSubmitOut(
-        user_message=message_out(user_message),
+        user_message=message_out(user_message, run),
         run=run_out(run),
     )
 
