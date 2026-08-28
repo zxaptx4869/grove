@@ -31,4 +31,3 @@ TBD - created by archiving change add-native-mobile-foundation. Update Purpose a
 #### Scenario: 移动登出使 Token 失效
 - **WHEN** 移动客户端携带 Bearer 调用移动登出后再次使用原 Token 请求受保护 API
 - **THEN** 系统返回 401，且客户端清理 SecureStore 中的 Token
-

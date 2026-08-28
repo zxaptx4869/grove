@@ -38,4 +38,3 @@ TBD - created by archiving change add-native-mobile-foundation. Update Purpose a
 #### Scenario: 缺少 API 地址时有明确反馈
 - **WHEN** 未配置有效的 `EXPO_PUBLIC_API_BASE_URL`
 - **THEN** 应用显示可理解的配置错误，且不尝试向硬编码 localhost 发起请求
-
