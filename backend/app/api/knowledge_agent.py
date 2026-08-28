@@ -3,7 +3,7 @@
 import json
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, Query, Response, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
 from sqlalchemy import select
 
 from app.api.deps import DbSession, get_current_user, get_current_workspace
@@ -11,6 +11,9 @@ from app.models import (
     KnowledgeAgentModelInvocation,
     KnowledgeAgentRun,
     KnowledgeAgentToolCall,
+    KnowledgeInvestigation,
+    KnowledgeInvestigationQuery,
+    KnowledgeInvestigationRound,
     KnowledgeMessage,
     Project,
     User,
@@ -20,6 +23,9 @@ from app.models.knowledge_agent import MESSAGE_TYPE_USER
 from app.schemas.knowledge_agent import (
     KnowledgeConversationCreate,
     KnowledgeConversationOut,
+    KnowledgeInvestigationDetailOut,
+    KnowledgeInvestigationQueryOut,
+    KnowledgeInvestigationRoundOut,
     KnowledgeMessagePageOut,
     KnowledgeModelInvocationOut,
     KnowledgeRunObservabilityOut,
@@ -49,6 +55,95 @@ from app.services.knowledge_agent.working_set import active_context_summary
 router = APIRouter(prefix="/api/knowledge-agent", tags=["knowledge-agent"])
 CurrentUser = Annotated[User, Depends(get_current_user)]
 CurrentWorkspace = Annotated[Workspace, Depends(get_current_workspace)]
+
+
+def _json_list(raw: str | None) -> list:
+    """解析 JSON 列表摘要；损坏时返回空列表。"""
+    if not raw:
+        return []
+    try:
+        data = json.loads(raw)
+    except (json.JSONDecodeError, TypeError):
+        return []
+    return data if isinstance(data, list) else []
+
+
+def _investigation_detail_out(
+    investigation: KnowledgeInvestigation,
+    rounds: list[KnowledgeInvestigationRound],
+    queries: list[KnowledgeInvestigationQuery],
+) -> KnowledgeInvestigationDetailOut:
+    """组装逐轮调查详情（只读审计，不含整份原文）。"""
+    round_out = []
+    for round_row in rounds:
+        meta = {}
+        if round_row.meta_json:
+            try:
+                parsed = json.loads(round_row.meta_json)
+                if isinstance(parsed, dict):
+                    meta = parsed
+            except (json.JSONDecodeError, TypeError):
+                meta = {}
+        round_out.append(
+            KnowledgeInvestigationRoundOut(
+                id=round_row.id,
+                round_number=round_row.round_number,
+                status=round_row.status,
+                controller_action=round_row.controller_action,
+                coverage=_json_list(round_row.coverage_json),
+                gaps=_json_list(round_row.gaps_json),
+                conflicts=_json_list(round_row.conflicts_json),
+                reason=round_row.reason,
+                queries_planned=round_row.queries_planned,
+                queries_executed=round_row.queries_executed,
+                entries_added=round_row.entries_added,
+                evidence_added=round_row.evidence_added,
+                provider=meta.get("provider"),
+                model=meta.get("model"),
+                is_fallback=bool(meta.get("is_fallback")),
+                error=meta.get("error"),
+                duration_ms=int(meta.get("duration_ms", 0)),
+                created_at=round_row.created_at,
+            )
+        )
+    query_out = [
+        KnowledgeInvestigationQueryOut(
+            id=query.id,
+            round_number=query.round_number,
+            sequence=query.sequence,
+            original_query=query.original_query,
+            normalized_query_hash=query.normalized_query_hash,
+            status=query.status,
+            result_counts=json.loads(query.result_counts_json)
+            if query.result_counts_json
+            else None,
+            created_at=query.created_at,
+        )
+        for query in queries
+    ]
+    return KnowledgeInvestigationDetailOut(
+        investigation_id=investigation.id,
+        run_id=investigation.run_id,
+        status=investigation.status,
+        objective=investigation.objective,
+        requested_answer_mode=investigation.requested_answer_mode,
+        actual_answer_mode=investigation.actual_answer_mode,
+        max_rounds=investigation.max_rounds,
+        max_queries_per_round=investigation.max_queries_per_round,
+        max_total_queries=investigation.max_total_queries,
+        max_entries=investigation.max_entries,
+        max_evidence=investigation.max_evidence,
+        current_round=investigation.current_round,
+        total_queries_executed=investigation.total_queries_executed,
+        distinct_entries_found=investigation.distinct_entries_found,
+        citable_evidence_count=investigation.citable_evidence_count,
+        stop_reason=investigation.stop_reason,
+        coverage=_json_list(investigation.coverage_summary),
+        gaps=_json_list(investigation.gaps_summary),
+        conflicts=_json_list(investigation.conflicts_summary),
+        rounds=round_out,
+        queries=query_out,
+    )
 
 
 async def _project_name(
@@ -270,6 +365,9 @@ async def get_run_observability_endpoint(
                 status=item.status,
                 error=item.error,
                 duration_ms=item.duration_ms,
+                investigation_id=item.investigation_id,
+                round_number=item.round_number,
+                query_sequence=item.query_sequence,
                 created_at=item.created_at,
             )
             for item in tool_calls
@@ -285,8 +383,55 @@ async def get_run_observability_endpoint(
                 error=item.error,
                 duration_ms=item.duration_ms,
                 usage=json.loads(item.usage_json) if item.usage_json else None,
+                investigation_id=item.investigation_id,
+                round_number=item.round_number,
+                query_sequence=item.query_sequence,
                 created_at=item.created_at,
             )
             for item in invocations
         ],
     )
+
+
+@router.get(
+    "/runs/{run_id}/investigation",
+    response_model=KnowledgeInvestigationDetailOut,
+)
+async def get_run_investigation_endpoint(
+    run_id: int,
+    db: DbSession,
+    user: CurrentUser,
+    workspace: CurrentWorkspace,
+) -> KnowledgeInvestigationDetailOut:
+    """读取调查 Run 的逐轮详情（只读审计；越权一律 404）。"""
+    run = await get_owned_run(db, workspace.id, user.id, run_id)
+    investigation = (
+        await db.execute(
+            select(KnowledgeInvestigation).where(
+                KnowledgeInvestigation.run_id == run.id
+            )
+        )
+    ).scalar_one_or_none()
+    if investigation is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="调查不存在",
+        )
+    rounds = (
+        await db.execute(
+            select(KnowledgeInvestigationRound)
+            .where(KnowledgeInvestigationRound.investigation_id == investigation.id)
+            .order_by(KnowledgeInvestigationRound.round_number)
+        )
+    ).scalars().all()
+    queries = (
+        await db.execute(
+            select(KnowledgeInvestigationQuery)
+            .where(KnowledgeInvestigationQuery.investigation_id == investigation.id)
+            .order_by(
+                KnowledgeInvestigationQuery.round_number,
+                KnowledgeInvestigationQuery.sequence,
+            )
+        )
+    ).scalars().all()
+    return _investigation_detail_out(investigation, list(rounds), list(queries))

@@ -32,6 +32,7 @@ from app.models.knowledge_agent import (
 )
 from app.schemas.knowledge_agent import (
     FallbackSummaryOut,
+    InvestigationSummaryOut,
     KnowledgeAnswerOut,
     KnowledgeRunOut,
     KnowledgeRunSubmitRequest,
@@ -174,6 +175,7 @@ async def submit_message(
         project_name=project_name,
         user_message_id=user_message.id,
         request_context_mode=payload.context_mode,
+        request_answer_mode=payload.answer_mode,
         input_context_version_id=input_context_version_id,
         status=RUN_WAITING,
         current_step="waiting",
@@ -272,6 +274,21 @@ def _parse_answer(raw: str | None) -> KnowledgeAnswerOut | None:
     return KnowledgeAnswerOut.model_validate(data)
 
 
+def _parse_investigation_summary(
+    raw: str | None,
+) -> InvestigationSummaryOut | None:
+    """解析 Run 调查摘要 JSON。"""
+    if not raw:
+        return None
+    try:
+        data = json.loads(raw)
+    except (json.JSONDecodeError, TypeError):
+        return None
+    if not isinstance(data, dict):
+        return None
+    return InvestigationSummaryOut.model_validate(data)
+
+
 def run_out(run: KnowledgeAgentRun) -> KnowledgeRunOut:
     """组装 Run 响应。"""
     context_degraded = False
@@ -299,10 +316,16 @@ def run_out(run: KnowledgeAgentRun) -> KnowledgeRunOut:
         context_decision=run.context_decision,
         standalone_query=run.standalone_query,
         topic_label=run.topic_label,
+        request_answer_mode=run.request_answer_mode,
+        actual_answer_mode=run.actual_answer_mode,
+        current_round=run.current_round,
         input_context_version_id=run.input_context_version_id,
         output_context_version_id=run.output_context_version_id,
         context_degraded=context_degraded,
         fallback_summary=_parse_fallback_summary(run.fallback_summary),
+        investigation_summary=_parse_investigation_summary(
+            run.investigation_summary
+        ),
         answer=_parse_answer(run.answer_json),
         created_at=run.created_at,
         updated_at=run.updated_at,

@@ -56,13 +56,13 @@
 
 ## 7. 实现：API、进度与可观测性
 
-- [ ] 7.1 扩展消息提交 schema/API 接收默认 `auto` 的 `answer_mode`；相同 `client_message_id` 重试始终返回首次请求模式和 Run，不因新载荷改变
-- [ ] 7.2 扩展 Run/消息响应，返回请求/实际回答模式、current_step/current_round、完成轮数、查询数、停止原因、覆盖/缺口/冲突和降级摘要
-- [ ] 7.3 新增按 Run 读取逐轮调查详情的只读接口，实施用户、Workspace、对话和项目范围 404 校验、分页/数量与文本长度限制
-- [ ] 7.4 扩展 ModelInvocation/ToolCall 写入与观测接口，记录 `investigation_route`、逐轮 controller/embedding/rerank/tool、最终 synthesis 的 provider/model/fallback/error/耗时和 round/query 归属
-- [ ] 7.5 扩展 current_step 提交为 `investigation_route`、`round_plan`、`round_search`、`round_evidence`、`synthesize` 并确保其他会话可实时轮询
-- [ ] 7.6 增加旧客户端默认值、三种模式、幂等、逐轮详情、运行中进度、降级汇总、正常 empty、不足/partial、取消和跨 Workspace/用户隔离 API 测试；运行 `cd backend && .venv/bin/python -m pytest tests/test_knowledge_agent_api.py tests/test_knowledge_agent_investigation_api.py tests/test_ai_observability_api.py`
-- [ ] 7.7 完成 API 与可观测性本地提交，提交信息使用 `feat: 暴露知识 Agent 调查进度与摘要`
+- [x] 7.1 扩展消息提交 schema/API 接收默认 `auto` 的 `answer_mode`；相同 `client_message_id` 重试始终返回首次请求模式和 Run，不因新载荷改变
+- [x] 7.2 扩展 Run/消息响应，返回请求/实际回答模式、current_step/current_round、完成轮数、查询数、停止原因、覆盖/缺口/冲突和降级摘要
+- [x] 7.3 新增按 Run 读取逐轮调查详情的只读接口，实施用户、Workspace、对话和项目范围 404 校验、分页/数量与文本长度限制
+- [x] 7.4 扩展 ModelInvocation/ToolCall 写入与观测接口，记录 `investigation_route`、逐轮 controller/embedding/rerank/tool、最终 synthesis 的 provider/model/fallback/error/耗时和 round/query 归属
+- [x] 7.5 扩展 current_step 提交为 `investigation_route`、`round_plan`、`round_search`、`round_evidence`、`synthesize` 并确保其他会话可实时轮询
+- [x] 7.6 增加旧客户端默认值、三种模式、幂等、逐轮详情、运行中进度、降级汇总、正常 empty、不足/partial、取消和跨 Workspace/用户隔离 API 测试；运行 `cd backend && .venv/bin/python -m pytest tests/test_knowledge_agent_api.py tests/test_knowledge_agent_investigation_api.py tests/test_ai_observability_api.py`
+- [x] 7.7 完成 API 与可观测性本地提交，提交信息使用 `feat: 暴露知识 Agent 调查进度与摘要`
 
 ## 8. 验证：自动化、SQLite 与真实 MySQL
 

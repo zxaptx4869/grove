@@ -29,6 +29,18 @@ AnswerStatus = Literal[
 ]
 ContextMode = Literal["auto", "continue", "new_topic"]
 ContextDecision = Literal["continue", "new_topic", "clarify"]
+AnswerMode = Literal["auto", "quick", "investigate"]
+InvestigationStopReason = Literal[
+    "controller_complete",
+    "insufficient",
+    "no_progress",
+    "max_rounds",
+    "query_budget",
+    "entry_budget",
+    "evidence_budget",
+    "cancelled",
+    "failed",
+]
 
 
 class KnowledgeConversationCreate(BaseModel):
@@ -78,6 +90,9 @@ class KnowledgeMessageOut(BaseModel):
     context_decision: ContextDecision | None = None
     standalone_query: str | None = None
     topic_label: str | None = None
+    request_answer_mode: AnswerMode | None = None
+    actual_answer_mode: AnswerMode | None = None
+    current_round: int = 0
     input_context_version_id: int | None = None
     output_context_version_id: int | None = None
     created_at: datetime
@@ -142,6 +157,19 @@ class FallbackSummaryOut(BaseModel):
     stages: list[FallbackStageOut] = []
 
 
+class InvestigationSummaryOut(BaseModel):
+    """Run 上聚合的调查摘要：过程元数据，不是正式知识。"""
+
+    requested_answer_mode: AnswerMode
+    actual_answer_mode: AnswerMode | None = None
+    rounds_completed: int = 0
+    queries_executed: int = 0
+    stop_reason: InvestigationStopReason | None = None
+    coverage: list[str] = []
+    gaps: list[str] = []
+    conflicts: list[str] = []
+
+
 class KnowledgeRunOut(BaseModel):
     """一次持久化只读 Run 的查询结果。"""
 
@@ -163,21 +191,26 @@ class KnowledgeRunOut(BaseModel):
     context_decision: ContextDecision | None = None
     standalone_query: str | None = None
     topic_label: str | None = None
+    request_answer_mode: AnswerMode | None = None
+    actual_answer_mode: AnswerMode | None = None
+    current_round: int = 0
     input_context_version_id: int | None = None
     output_context_version_id: int | None = None
     context_degraded: bool = False
     fallback_summary: FallbackSummaryOut | None = None
+    investigation_summary: InvestigationSummaryOut | None = None
     answer: KnowledgeAnswerOut | None = None
     created_at: datetime
     updated_at: datetime
 
 
 class KnowledgeRunSubmitRequest(BaseModel):
-    """提交新问题：client_message_id 用于网络重试幂等；context_mode 默认 auto。"""
+    """提交新问题：client_message_id 用于网络重试幂等；模式默认 auto。"""
 
     client_message_id: str = Field(min_length=1, max_length=64)
     message: str = Field(min_length=1, max_length=2000)
     context_mode: ContextMode = "auto"
+    answer_mode: AnswerMode = "auto"
 
 
 class KnowledgeRunSubmitOut(BaseModel):
@@ -198,6 +231,9 @@ class KnowledgeToolCallOut(BaseModel):
     status: str
     error: str | None = None
     duration_ms: int
+    investigation_id: int | None = None
+    round_number: int | None = None
+    query_sequence: int | None = None
     created_at: datetime
 
 
@@ -213,6 +249,9 @@ class KnowledgeModelInvocationOut(BaseModel):
     error: str | None = None
     duration_ms: int
     usage: dict | None = None
+    investigation_id: int | None = None
+    round_number: int | None = None
+    query_sequence: int | None = None
     created_at: datetime
 
 
@@ -222,3 +261,65 @@ class KnowledgeRunObservabilityOut(BaseModel):
     run_id: int
     tool_calls: list[KnowledgeToolCallOut] = []
     model_invocations: list[KnowledgeModelInvocationOut] = []
+
+
+class KnowledgeInvestigationRoundOut(BaseModel):
+    """一轮调查的审计详情：观察摘要、增量计数与控制器调用归属。"""
+
+    id: int
+    round_number: int
+    status: str
+    controller_action: str | None = None
+    coverage: list[str] = []
+    gaps: list[str] = []
+    conflicts: list[str] = []
+    reason: str | None = None
+    queries_planned: int = 0
+    queries_executed: int = 0
+    entries_added: int = 0
+    evidence_added: int = 0
+    provider: str | None = None
+    model: str | None = None
+    is_fallback: bool = False
+    error: str | None = None
+    duration_ms: int = 0
+    created_at: datetime
+
+
+class KnowledgeInvestigationQueryOut(BaseModel):
+    """轮次内一条查询的审计详情。"""
+
+    id: int
+    round_number: int
+    sequence: int
+    original_query: str
+    normalized_query_hash: str
+    status: str
+    result_counts: dict | None = None
+    created_at: datetime
+
+
+class KnowledgeInvestigationDetailOut(BaseModel):
+    """按 Run 读取的逐轮调查详情（只读、分页/长度受限）。"""
+
+    investigation_id: int
+    run_id: int
+    status: str
+    objective: str
+    requested_answer_mode: AnswerMode
+    actual_answer_mode: AnswerMode | None = None
+    max_rounds: int
+    max_queries_per_round: int
+    max_total_queries: int
+    max_entries: int
+    max_evidence: int
+    current_round: int = 0
+    total_queries_executed: int = 0
+    distinct_entries_found: int = 0
+    citable_evidence_count: int = 0
+    stop_reason: InvestigationStopReason | None = None
+    coverage: list[str] = []
+    gaps: list[str] = []
+    conflicts: list[str] = []
+    rounds: list[KnowledgeInvestigationRoundOut] = []
+    queries: list[KnowledgeInvestigationQueryOut] = []
