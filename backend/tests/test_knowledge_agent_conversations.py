@@ -8,8 +8,6 @@ from sqlalchemy import func, select
 
 from app.db.session import async_session_factory
 from app.models import (
-    KnowledgeAgentRun,
-    KnowledgeConversation,
     KnowledgeMessage,
     Project,
     User,

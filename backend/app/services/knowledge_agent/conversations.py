@@ -165,7 +165,7 @@ async def create_conversation(
 
 def _encode_cursor(message_id: int) -> str:
     """把消息 id 编码为不透明游标。"""
-    raw = f"id:{message_id}".encode("utf-8")
+    raw = f"id:{message_id}".encode()
     return base64.urlsafe_b64encode(raw).decode("ascii")
 
 

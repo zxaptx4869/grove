@@ -11,7 +11,7 @@ import pytest
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 
-from app.db.session import Base, async_session_factory, engine
+from app.db.session import async_session_factory
 from app.models import (
     KnowledgeAgentEvidence,
     KnowledgeAgentRun,
@@ -29,7 +29,6 @@ from app.models.knowledge_agent import (
     RUN_PROCESSING,
     RUN_TERMINAL_STATUSES,
     RUN_WAITING,
-    SCOPE_PROJECT,
     SCOPE_WORKSPACE,
 )
 
@@ -239,7 +238,9 @@ def test_migration_upgrade_and_constraints(tmp_path: Path) -> None:
         _insert_run(1, "waiting", "active")
         with pytest.raises(sqlite3.IntegrityError):
             _insert_run(2, "waiting", "active")
-        conn.execute("UPDATE knowledge_agent_runs SET status='completed', active_slot=NULL WHERE id=1")
+        conn.execute(
+            "UPDATE knowledge_agent_runs SET status='completed', active_slot=NULL WHERE id=1"
+        )
         _insert_run(2, "completed", None)
         _insert_run(3, "failed", None)
 

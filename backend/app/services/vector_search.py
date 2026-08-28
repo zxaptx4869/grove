@@ -1,11 +1,14 @@
 """混合召回共享层：确定性召回 ∪ embedding 召回，RRF 融合排序。"""
 
 import logging
+from time import perf_counter
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models import Entry
+from app.models.knowledge_agent import PURPOSE_EMBEDDING
 from app.services.embedding import encode_text
+from app.services.knowledge_agent.observability import StageMeta
 from app.services.similarity import text_pair_similarity
 from app.services.vector_store import (
     cosine_similarity,
@@ -60,12 +63,21 @@ async def _embedding_scores(
     workspace_id: int,
     entries: list[Entry],
     text: str,
-) -> tuple[list[Entry], dict[int, float]]:
-    """编码文本并返回范围内按余弦相似度降序的 Entry 与其相似度；embedding 不可用时为空。"""
+) -> tuple[list[Entry], dict[int, float], StageMeta]:
+    """编码文本并返回范围内按余弦相似度降序的 Entry、相似度与阶段元数据。"""
+    started = perf_counter()
     result = await encode_text(db, workspace_id, text)
+    meta = StageMeta(
+        purpose=PURPOSE_EMBEDDING,
+        provider=result.provider,
+        model=result.model,
+        is_fallback=result.is_fallback,
+        error=result.error,
+        duration_ms=int((perf_counter() - started) * 1000),
+    )
     if result.is_fallback or result.vector is None:
         logger.debug("embedding 不可用（%s），混合召回降级为确定性召回", result.error)
-        return [], {}
+        return [], {}, meta
     entry_ids = {entry.id for entry in entries}
     vectors = await load_ready_vectors(
         db, workspace_id, entry_ids=entry_ids, model=result.model
@@ -82,7 +94,7 @@ async def _embedding_scores(
     scored.sort(key=lambda item: item[0], reverse=True)
     top_entries = [entry for _, entry in scored[:_EMBEDDING_RECALL_LIMIT]]
     cosine_by_id = {entry.id: score for score, entry in scored}
-    return top_entries, cosine_by_id
+    return top_entries, cosine_by_id, meta
 
 
 def _rrf_merge(*ranked_lists: list[Entry], top_k: int) -> list[Entry]:
@@ -108,11 +120,25 @@ async def hybrid_recall_by_query(
 ) -> list[Entry] | tuple[list[Entry], dict[int, float]]:
     """语义搜索混合召回：确定性 ∪ embedding，embedding 不可用时降级纯确定性。"""
     deterministic = _deterministic_by_query(entries, query)
-    embedding, cosine = await _embedding_scores(db, workspace_id, entries, query)
+    embedding, cosine, _meta = await _embedding_scores(db, workspace_id, entries, query)
     merged = _rrf_merge(deterministic, embedding, top_k=top_k)
     if return_scores:
         return merged, cosine
     return merged
+
+
+async def hybrid_recall_by_query_with_meta(
+    db: AsyncSession,
+    workspace_id: int,
+    entries: list[Entry],
+    query: str,
+    top_k: int,
+) -> tuple[list[Entry], dict[int, float], StageMeta]:
+    """语义搜索混合召回（带 embedding 阶段元数据），供知识 Agent 可观测性使用。"""
+    deterministic = _deterministic_by_query(entries, query)
+    embedding, cosine, meta = await _embedding_scores(db, workspace_id, entries, query)
+    merged = _rrf_merge(deterministic, embedding, top_k=top_k)
+    return merged, cosine, meta
 
 
 async def hybrid_recall_by_target(
@@ -126,7 +152,7 @@ async def hybrid_recall_by_target(
 ) -> list[Entry] | tuple[list[Entry], dict[int, float]]:
     """相似推荐混合召回：锚点 Entry 对比同项目其他 Entry。"""
     deterministic = _deterministic_by_target(target, others)
-    embedding, cosine = await _embedding_scores(
+    embedding, cosine, _meta = await _embedding_scores(
         db,
         workspace_id,
         others,
@@ -136,6 +162,25 @@ async def hybrid_recall_by_target(
     if return_scores:
         return merged, cosine
     return merged
+
+
+async def hybrid_recall_by_target_with_meta(
+    db: AsyncSession,
+    workspace_id: int,
+    target: Entry,
+    others: list[Entry],
+    top_k: int,
+) -> tuple[list[Entry], dict[int, float], StageMeta]:
+    """相似推荐混合召回（带 embedding 阶段元数据）。"""
+    deterministic = _deterministic_by_target(target, others)
+    embedding, cosine, meta = await _embedding_scores(
+        db,
+        workspace_id,
+        others,
+        entry_text(target),
+    )
+    merged = _rrf_merge(deterministic, embedding, top_k=top_k)
+    return merged, cosine, meta
 
 
 async def hybrid_recall_for_candidate(
@@ -151,7 +196,7 @@ async def hybrid_recall_for_candidate(
     embedding 不可用时最大余弦为 None。
     """
     deterministic = _deterministic_by_target(candidate, entries)
-    embedding, cosine_by_id = await _embedding_scores(
+    embedding, cosine_by_id, _meta = await _embedding_scores(
         db,
         workspace_id,
         entries,

@@ -17,6 +17,7 @@ from app.api.candidates import router as candidates_router
 from app.api.directory_draft import router as directory_draft_router
 from app.api.entry import router as entry_router
 from app.api.health import router as health_router
+from app.api.knowledge_agent import router as knowledge_agent_router
 from app.api.me import router as me_router
 from app.api.project_context import router as project_context_router
 from app.api.projects import router as projects_router
@@ -29,6 +30,7 @@ from app.context.worker import run_context_worker
 from app.core.config import get_settings
 from app.directory_worker import run_directory_draft_worker
 from app.embedding_worker import run_embedding_worker
+from app.knowledge_agent_worker import run_knowledge_agent_worker
 from app.processing.worker import run_worker
 
 logger = logging.getLogger(__name__)
@@ -52,6 +54,8 @@ async def lifespan(app: FastAPI):
         tasks.append(asyncio.create_task(run_directory_draft_worker(stop_event)))
     if settings.embedding_worker_enabled:
         tasks.append(asyncio.create_task(run_embedding_worker(stop_event)))
+    if settings.knowledge_agent_worker_enabled:
+        tasks.append(asyncio.create_task(run_knowledge_agent_worker(stop_event)))
     yield
     stop_event.set()
     for task in tasks:
@@ -81,6 +85,7 @@ def create_app() -> FastAPI:
     # 注册路由
     app.include_router(health_router)
     app.include_router(auth_router)
+    app.include_router(knowledge_agent_router)
     app.include_router(behavior_signals_router)
     app.include_router(ai_settings_router)
     app.include_router(candidates_router)

@@ -9,7 +9,12 @@ from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models import KnowledgeAgentRun, KnowledgeConversation, KnowledgeMessage
+from app.models import (
+    KnowledgeAgentRun,
+    KnowledgeConversation,
+    KnowledgeMessage,
+    Project,
+)
 from app.models.knowledge_agent import (
     ACTIVE_SLOT,
     MESSAGE_ROLE_ASSISTANT,
@@ -26,7 +31,6 @@ from app.schemas.knowledge_agent import (
     KnowledgeAnswerOut,
     KnowledgeRunOut,
     KnowledgeRunSubmitRequest,
-    KnowledgeRunSubmitOut,
 )
 from app.services.knowledge_agent.conversations import (
     DEFAULT_CONVERSATION_TITLE,
@@ -265,5 +269,45 @@ async def mark_run_failed(
     run.status = RUN_FAILED
     run.current_step = None
     run.active_slot = None
+    run.error = error
+    await db.flush()
+
+
+async def finalize_run(
+    db: AsyncSession,
+    run: KnowledgeAgentRun,
+    *,
+    answer: KnowledgeAnswerOut,
+    status: str,
+    fallback_summary: dict,
+) -> None:
+    """终态事务提交：助手消息、Run 结果与活动槽释放一次性完成。"""
+    if run.status in RUN_TERMINAL_STATUSES:
+        return
+    run.status = status
+    run.current_step = None
+    run.active_slot = None
+    run.answer_json = answer.model_dump_json()
+    run.fallback_summary = json.dumps(fallback_summary, ensure_ascii=False)
+    run.error = None
+    if run.assistant_message_id is not None:
+        assistant = await db.get(KnowledgeMessage, run.assistant_message_id)
+        if assistant is not None:
+            assistant.content = answer.answer
+    await db.flush()
+
+
+async def finalize_cancelled(
+    db: AsyncSession,
+    run: KnowledgeAgentRun,
+    error: str | None = None,
+) -> None:
+    """把 Run 标记为取消并释放活动槽；取消后的模型结果不写入正常回答。"""
+    if run.status in RUN_TERMINAL_STATUSES:
+        return
+    run.status = RUN_CANCELLED
+    run.current_step = None
+    run.active_slot = None
+    run.answer_json = None
     run.error = error
     await db.flush()

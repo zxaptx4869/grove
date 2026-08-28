@@ -14,12 +14,12 @@
 
 ## 3. 实现：可信只读工具与 Evidence
 
-- [ ] 3.1 抽取 Run 工具上下文与已发现对象集合，使用户、Workspace、项目范围只能由服务端注入，模型猜测的 UUID 无法越过搜索/用户显式引用边界
-- [ ] 3.2 实现 `search_confirmed_knowledge`，复用混合召回且只返回范围内正式 Entry；Workspace 结果携带项目归属，目录仅作为定位信息
-- [ ] 3.3 实现批量 `read_entries`，在读取时复验范围与已发现集合，并返回完整正式内容、项目、目录和真实来源关系
-- [ ] 3.4 实现 `read_source_evidence`，复用证据归一化在 Attachment `text_content` / `ocr_text` 中取得精确原文，并保存可引用 Evidence 与内容指纹
-- [ ] 3.5 实现 Evidence 句柄解析和最终引用校验，拒绝跨 Run 句柄、模型自由 quote、无真实关联 Source 与无法核验片段
-- [ ] 3.6 增加 Workspace/项目搜索、候选排除、已发现集合、跨范围读取、OCR 归一化、无效关联和伪造引用测试，并运行 `cd backend && .venv/bin/python -m pytest tests/test_knowledge_agent_tools.py tests/test_knowledge_agent_evidence.py`
+- [x] 3.1 抽取 Run 工具上下文与已发现对象集合，使用户、Workspace、项目范围只能由服务端注入，模型猜测的 UUID 无法越过搜索/用户显式引用边界
+- [x] 3.2 实现 `search_confirmed_knowledge`，复用混合召回且只返回范围内正式 Entry；Workspace 结果携带项目归属，目录仅作为定位信息
+- [x] 3.3 实现批量 `read_entries`，在读取时复验范围与已发现集合，并返回完整正式内容、项目、目录和真实来源关系
+- [x] 3.4 实现 `read_source_evidence`，复用证据归一化在 Attachment `text_content` / `ocr_text` 中取得精确原文，并保存可引用 Evidence 与内容指纹
+- [x] 3.5 实现 Evidence 句柄解析和最终引用校验，拒绝跨 Run 句柄、模型自由 quote、无真实关联 Source 与无法核验片段
+- [x] 3.6 增加 Workspace/项目搜索、候选排除、已发现集合、跨范围读取、OCR 归一化、无效关联和伪造引用测试，并运行 `cd backend && .venv/bin/python -m pytest tests/test_knowledge_agent_tools.py tests/test_knowledge_agent_evidence.py`
 
 ## 4. 实现：固定执行图、可观测性与 Worker
 

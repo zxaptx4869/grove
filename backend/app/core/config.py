@@ -64,6 +64,27 @@ class Settings(BaseSettings):
         default=True, description="是否启用 embedding 向量重建 Worker"
     )
 
+    # 进程内知识 Agent Worker（测试环境可置 false）
+    knowledge_agent_worker_enabled: bool = Field(
+        default=True, description="是否启用知识 Agent Worker"
+    )
+
+    # 知识 Agent 固定执行图预算：搜索召回上限、回答上下文 Entry 上限与 Evidence 读取上限
+    knowledge_agent_recall_limit: int = Field(
+        default=20, description="知识 Agent 混合召回候选上限"
+    )
+    knowledge_agent_context_limit: int = Field(
+        default=15, description="知识 Agent 回答上下文最多使用的 Entry 条数"
+    )
+    knowledge_agent_evidence_limit: int = Field(
+        default=30, description="知识 Agent 单 Run 最多读取的 Source/Attachment 证据数"
+    )
+
+    # 知识 Agent Worker 租约（秒）：processing 超过该阈值可恢复重试
+    knowledge_agent_lease_seconds: int = Field(
+        default=300, description="知识 Agent Run 处理租约时长（秒）"
+    )
+
     # 模型密钥存储：keychain（默认）/ memory（测试）
     secret_store: str = Field(default="keychain", description="密钥安全存储实现")
 
