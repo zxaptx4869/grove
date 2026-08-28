@@ -20,6 +20,15 @@ from app.services.evidence_normalize import normalize_evidence_quote
 logger = logging.getLogger(__name__)
 
 
+@dataclass
+class ReferenceValidationStats:
+    """最终引用校验统计：请求/有效/丢弃句柄数。"""
+
+    requested_count: int = 0
+    valid_count: int = 0
+    discarded_count: int = 0
+
+
 def attachment_fingerprint(text: str) -> str:
     """计算来源文本内容的 sha256 指纹，用于识别来源是否变化。"""
     return hashlib.sha256(text.encode("utf-8")).hexdigest()
@@ -163,8 +172,12 @@ async def build_validated_answer(
     db: AsyncSession,
     run_id: int,
     draft,
-) -> KnowledgeAnswerOut:
-    """把回答草稿转换为最终回答：只保留本 Run 可引用句柄，丢弃模型自由内容。"""
+) -> tuple[KnowledgeAnswerOut, ReferenceValidationStats]:
+    """把回答草稿转换为最终回答：只保留本 Run 可引用句柄，丢弃模型自由内容。
+
+    返回 (最终回答, 引用校验统计)。事实性回答没有有效引用时降级为
+    `insufficient`；部分句柄失效时保留有效引用并标记 `partial`。
+    """
     handles = [item.evidence_handle for item in draft.citations]
     handles.extend(
         item.evidence_handle_a for item in draft.conflicts
@@ -172,6 +185,7 @@ async def build_validated_answer(
     handles.extend(
         item.evidence_handle_b for item in draft.conflicts
     )
+    unique_handles = list(dict.fromkeys(handles))
     resolved = await resolve_evidence_handles(db, run_id, handles)
     citations = [
         _citation_out(resolved[item.evidence_handle])
@@ -197,11 +211,34 @@ async def build_validated_answer(
             )
         )
 
-    status = "insufficient" if draft.insufficient else "completed"
+    stats = ReferenceValidationStats(
+        requested_count=len(unique_handles),
+        valid_count=len(resolved),
+        discarded_count=len(unique_handles) - len(resolved),
+    )
+    if draft.insufficient:
+        # 模型显式标记知识不足：允许无引用，不伪装成事实性回答
+        status = "insufficient"
+    elif stats.valid_count == 0:
+        # 事实性回答但没有一个可引用句柄：不得保持 completed
+        status = "insufficient"
+        citations = []
+        conflicts = []
+    elif stats.discarded_count > 0:
+        # 部分句柄失效：保留有效引用并标记 partial
+        status = "partial"
+    else:
+        status = "completed"
     return KnowledgeAnswerOut(
         answer=draft.answer,
         status=status,
-        insufficient_note=draft.insufficient_note,
+        insufficient_note=draft.insufficient_note
+        if draft.insufficient
+        else (
+            "全部引用被丢弃，无法提供带证据的确定结论"
+            if stats.valid_count == 0
+            else None
+        ),
         citations=citations,
         conflicts=conflicts,
-    )
+    ), stats

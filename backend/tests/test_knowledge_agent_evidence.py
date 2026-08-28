@@ -214,14 +214,127 @@ async def test_build_validated_answer_drops_fake_handles_and_quotes() -> None:
                 KnowledgeCitationDraft(evidence_handle="ev_unknown"),
             ],
         )
-        answer = await build_validated_answer(db, run.id, draft)
+        answer, stats = await build_validated_answer(db, run.id, draft)
         assert len(answer.citations) == 1
         assert answer.citations[0].evidence_handle == evidence.handle
         # quote 必须是服务端核验过的原文，而不是模型提供的任何文本
         assert answer.citations[0].quote == "闭水试验通常持续 24 小时"
         assert answer.citations[0].entry_id == entry.id
         assert answer.citations[0].source_id == source.id
-        assert answer.status == "completed"
+        # 部分句柄失效：保留有效引用并把回答标记为 partial
+        assert answer.status == "partial"
+        assert stats.requested_count == 3
+        assert stats.valid_count == 1
+        assert stats.discarded_count == 2
+
+
+@pytest.mark.asyncio
+async def test_build_validated_answer_all_invalid_becomes_insufficient() -> None:
+    """事实性回答全部引用失效：不得保持 completed，标记 insufficient。"""
+    async with async_session_factory() as db:
+        user = await create_user(db, "全失效")
+        workspace = await create_workspace(db, user)
+        project = await create_project(db, workspace, "失效项目")
+        node = await create_child_node(db, project, "施工")
+        source, attachment = await create_source_attachment(
+            db,
+            workspace,
+            project,
+            text_content="闭水试验通常持续 24 小时。",
+        )
+        entry = await create_entry_with_evidence(
+            db,
+            project,
+            node,
+            source,
+            attachment,
+            title="闭水试验",
+            content="闭水试验通常持续 24 小时。",
+            quote="闭水试验通常持续 24 小时",
+        )
+        conversation = KnowledgeConversation(
+            workspace_id=workspace.id,
+            owner_user_id=user.id,
+            scope_type="workspace",
+            title="全失效测试",
+        )
+        db.add(conversation)
+        await db.flush()
+        run = KnowledgeAgentRun(
+            conversation_id=conversation.id,
+            workspace_id=workspace.id,
+            owner_user_id=user.id,
+            scope_type="workspace",
+            status=RUN_PROCESSING,
+            active_slot="active",
+            max_retries=1,
+        )
+        db.add(run)
+        await db.flush()
+        entry_evidence = await _entry_evidence(db, entry.id, source.id)
+        await _evidence_row(
+            db,
+            run_id=run.id,
+            entry=entry,
+            project=project,
+            source=source,
+            attachment=attachment,
+            entry_evidence=entry_evidence,
+            quote="闭水试验通常持续 24 小时",
+        )
+        await db.commit()
+
+        draft = KnowledgeAnswerDraft(
+            answer="闭水试验通常持续 24 小时。",
+            citations=[
+                KnowledgeCitationDraft(evidence_handle="ev_other_run"),
+                KnowledgeCitationDraft(evidence_handle="ev_unknown"),
+            ],
+        )
+        answer, stats = await build_validated_answer(db, run.id, draft)
+        assert answer.status == "insufficient"
+        assert answer.citations == []
+        assert "全部引用被丢弃" in (answer.insufficient_note or "")
+        assert stats.requested_count == 2
+        assert stats.valid_count == 0
+        assert stats.discarded_count == 2
+
+
+@pytest.mark.asyncio
+async def test_build_validated_answer_factual_without_any_citation() -> None:
+    """事实性回答没有任何引用请求：同样降级为 insufficient。"""
+    async with async_session_factory() as db:
+        user = await create_user(db, "无引用")
+        workspace = await create_workspace(db, user)
+        conversation = KnowledgeConversation(
+            workspace_id=workspace.id,
+            owner_user_id=user.id,
+            scope_type="workspace",
+            title="无引用测试",
+        )
+        db.add(conversation)
+        await db.flush()
+        run = KnowledgeAgentRun(
+            conversation_id=conversation.id,
+            workspace_id=workspace.id,
+            owner_user_id=user.id,
+            scope_type="workspace",
+            status=RUN_PROCESSING,
+            active_slot="active",
+            max_retries=1,
+        )
+        db.add(run)
+        await db.flush()
+        await db.commit()
+
+        draft = KnowledgeAnswerDraft(
+            answer="凭模型自身知识给出的结论。",
+            citations=[],
+        )
+        answer, stats = await build_validated_answer(db, run.id, draft)
+        assert answer.status == "insufficient"
+        assert stats.requested_count == 0
+        assert stats.valid_count == 0
 
 
 @pytest.mark.asyncio

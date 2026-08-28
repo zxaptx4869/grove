@@ -5,10 +5,11 @@ import logging
 from datetime import UTC, datetime
 
 from fastapi import HTTPException, status
-from sqlalchemy import select
+from sqlalchemy import select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.db.session import async_session_factory
 from app.models import (
     KnowledgeAgentRun,
     KnowledgeConversation,
@@ -23,6 +24,7 @@ from app.models.knowledge_agent import (
     MESSAGE_TYPE_USER,
     RUN_CANCELLED,
     RUN_FAILED,
+    RUN_PROCESSING,
     RUN_TERMINAL_STATUSES,
     RUN_WAITING,
 )
@@ -38,6 +40,36 @@ from app.services.knowledge_agent.conversations import (
 )
 
 logger = logging.getLogger(__name__)
+
+
+async def update_run_step(run_id: int, step: str) -> None:
+    """用独立短会话更新运行进度步骤；终态后迟到步骤不再覆盖。"""
+    async with async_session_factory() as db:
+        await db.execute(
+            update(KnowledgeAgentRun)
+            .where(
+                KnowledgeAgentRun.id == run_id,
+                KnowledgeAgentRun.status == RUN_PROCESSING,
+            )
+            .values(current_step=step)
+        )
+        await db.commit()
+
+
+async def read_run_cancel_state(run_id: int) -> tuple[bool, str]:
+    """用独立短会话读取最新取消状态，MySQL 长事务也能看到其他会话刚提交的取消。"""
+    async with async_session_factory() as db:
+        row = (
+            await db.execute(
+                select(
+                    KnowledgeAgentRun.cancel_requested,
+                    KnowledgeAgentRun.status,
+                ).where(KnowledgeAgentRun.id == run_id)
+            )
+        ).first()
+        if row is None:
+            return False, ""
+        return bool(row.cancel_requested), str(row.status)
 
 
 async def _scope_snapshot(

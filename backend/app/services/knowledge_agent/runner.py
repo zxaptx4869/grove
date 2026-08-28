@@ -3,7 +3,6 @@
 import logging
 from time import perf_counter
 
-from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.agents.knowledge_agent import ANSWER_PROMPT_VERSION, run_knowledge_answer_agent
@@ -26,9 +25,14 @@ from app.services.knowledge_agent.evidence import build_validated_answer
 from app.services.knowledge_agent.observability import (
     StageMeta,
     record_model_invocation,
+    record_reference_validation,
     run_fallback_summary,
 )
-from app.services.knowledge_agent.runs import finalize_run
+from app.services.knowledge_agent.runs import (
+    finalize_run,
+    read_run_cancel_state,
+    update_run_step,
+)
 from app.services.knowledge_agent.tools import (
     RunToolContext,
     read_entries,
@@ -44,16 +48,10 @@ class RunCancelled(Exception):
     """Run 已被取消：模型结果不得写入正常回答。"""
 
 
-async def _check_cancelled(db: AsyncSession, run_id: int) -> None:
-    """步骤边界检查取消请求（从数据库重新读取，支持跨进程取消）。"""
-    row = (
-        await db.execute(
-            select(KnowledgeAgentRun.cancel_requested, KnowledgeAgentRun.status).where(
-                KnowledgeAgentRun.id == run_id
-            )
-        )
-    ).first()
-    if row is not None and row.cancel_requested and row.status == RUN_PROCESSING:
+async def _check_cancelled(run_id: int) -> None:
+    """步骤边界检查取消请求：用独立短会话读取最新状态。"""
+    cancel_requested, status = await read_run_cancel_state(run_id)
+    if cancel_requested and status == RUN_PROCESSING:
         raise RunCancelled()
 
 
@@ -67,7 +65,12 @@ def _insufficient_answer(text: str, note: str) -> KnowledgeAnswerOut:
 
 
 async def execute_run(db: AsyncSession, run: KnowledgeAgentRun) -> None:
-    """执行一次 Run 的固定只读执行图，并在同一事务内提交终态。"""
+    """执行一次 Run 的固定只读执行图。
+
+    中间步骤的可观测记录（工具调用、模型调用、Evidence）在步骤边界提交，
+    使 SQLite/MySQL 上的短会话步骤更新可写；最终回答、Run 终态、活动槽释放
+    与可选输出工作集仍在终态事务一次性提交。
+    """
     settings = get_settings()
     ctx = RunToolContext(
         run_id=run.id,
@@ -82,8 +85,8 @@ async def execute_run(db: AsyncSession, run: KnowledgeAgentRun) -> None:
     scope = scope_label(run.scope_type, run.project_name)
 
     # 步骤 1：搜索正式知识（embedding + 重排阶段可观测）
-    await _check_cancelled(db, run.id)
-    run.current_step = STEP_SEARCH
+    await _check_cancelled(run.id)
+    await update_run_step(run.id, STEP_SEARCH)
     started = perf_counter()
     search = await search_confirmed_knowledge(
         db,
@@ -118,8 +121,10 @@ async def execute_run(db: AsyncSession, run: KnowledgeAgentRun) -> None:
         },
         duration_ms=duration_ms,
     )
+    # 提交本步骤可观测记录，释放 SQLite 写锁，让后续短会话步骤更新可写
+    await db.commit()
     if not search.items:
-        await _check_cancelled(db, run.id)
+        await _check_cancelled(run.id)
         summary = await run_fallback_summary(db, run.id)
         await finalize_run(
             db,
@@ -134,8 +139,8 @@ async def execute_run(db: AsyncSession, run: KnowledgeAgentRun) -> None:
         return
 
     # 步骤 2：批量读取候选 Entry（已发现集合 + 范围复验）
-    await _check_cancelled(db, run.id)
-    run.current_step = STEP_READ_ENTRIES
+    await _check_cancelled(run.id)
+    await update_run_step(run.id, STEP_READ_ENTRIES)
     entry_ids = [item.entry_id for item in search.items]
     started = perf_counter()
     entries = await read_entries(db, ctx, entry_ids)
@@ -152,8 +157,9 @@ async def execute_run(db: AsyncSession, run: KnowledgeAgentRun) -> None:
         },
         duration_ms=duration_ms,
     )
+    await db.commit()
     if not entries.items:
-        await _check_cancelled(db, run.id)
+        await _check_cancelled(run.id)
         summary = await run_fallback_summary(db, run.id)
         await finalize_run(
             db,
@@ -168,8 +174,8 @@ async def execute_run(db: AsyncSession, run: KnowledgeAgentRun) -> None:
         return
 
     # 步骤 3：读取并核验有限数量的 Source/Attachment 证据
-    await _check_cancelled(db, run.id)
-    run.current_step = STEP_READ_EVIDENCE
+    await _check_cancelled(run.id)
+    await update_run_step(run.id, STEP_READ_EVIDENCE)
     budget = settings.knowledge_agent_evidence_limit
     verified_evidence: list = []
     for item in entries.items:
@@ -205,9 +211,10 @@ async def execute_run(db: AsyncSession, run: KnowledgeAgentRun) -> None:
         verified_evidence.extend(citable)
         if budget <= 0:
             break
+    await db.commit()
 
     if not verified_evidence:
-        await _check_cancelled(db, run.id)
+        await _check_cancelled(run.id)
         summary = await run_fallback_summary(db, run.id)
         await finalize_run(
             db,
@@ -222,8 +229,8 @@ async def execute_run(db: AsyncSession, run: KnowledgeAgentRun) -> None:
         return
 
     # 步骤 4：组织回答（回答模型只接收句柄与核验原文）
-    await _check_cancelled(db, run.id)
-    run.current_step = STEP_ORGANIZE_ANSWER
+    await _check_cancelled(run.id)
+    await update_run_step(run.id, STEP_ORGANIZE_ANSWER)
     evidence_by_entry: dict[int, list] = {}
     for row in verified_evidence:
         evidence_by_entry.setdefault(row.entry_id, []).append(row)
@@ -262,22 +269,45 @@ async def execute_run(db: AsyncSession, run: KnowledgeAgentRun) -> None:
         meta=answer_meta,
         prompt_version=ANSWER_PROMPT_VERSION,
     )
+    await db.commit()
 
     # 步骤 5：服务端校验引用（只保留本 Run 可引用句柄）
-    await _check_cancelled(db, run.id)
-    run.current_step = STEP_VALIDATE_REFERENCES
-    answer = await build_validated_answer(db, run.id, draft)
+    await _check_cancelled(run.id)
+    await update_run_step(run.id, STEP_VALIDATE_REFERENCES)
+    answer, ref_stats = await build_validated_answer(db, run.id, draft)
+    factual_without_refs = not draft.insufficient and ref_stats.valid_count == 0
+    if ref_stats.discarded_count > 0:
+        await record_reference_validation(
+            db,
+            run.id,
+            stats=ref_stats,
+            note="部分引用被丢弃",
+        )
+    elif factual_without_refs:
+        await record_reference_validation(
+            db,
+            run.id,
+            stats=ref_stats,
+            note="事实性回答没有有效引用",
+        )
+    if ref_stats.discarded_count > 0 or factual_without_refs:
+        # 校验阶段可观测记录先行提交，避免阻塞终态前的短会话步骤更新
+        await db.commit()
     if answer_meta.is_fallback:
         answer = KnowledgeAnswerOut(
             answer=answer.answer,
             status="failed",
             insufficient_note=answer.insufficient_note or "回答模型不可用",
         )
-    run_status = RUN_PARTIAL if answer_meta.is_fallback else RUN_COMPLETED
+    run_status = (
+        RUN_PARTIAL
+        if (answer_meta.is_fallback or factual_without_refs or ref_stats.discarded_count)
+        else RUN_COMPLETED
+    )
 
     # 步骤 6：终态原子提交
-    await _check_cancelled(db, run.id)
-    run.current_step = STEP_FINALIZE
+    await _check_cancelled(run.id)
+    await update_run_step(run.id, STEP_FINALIZE)
     summary = await run_fallback_summary(db, run.id)
     await finalize_run(
         db,

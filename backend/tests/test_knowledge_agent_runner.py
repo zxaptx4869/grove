@@ -14,6 +14,7 @@ from app.agents.knowledge_agent import (
 from app.db.session import async_session_factory
 from app.models import (
     KnowledgeAgentModelInvocation,
+    KnowledgeAgentRun,
     KnowledgeAgentToolCall,
     KnowledgeConversation,
     KnowledgeMessage,
@@ -23,11 +24,19 @@ from app.models.knowledge_agent import (
     RUN_PARTIAL,
     RUN_PROCESSING,
     SCOPE_WORKSPACE,
+    STEP_SEARCH,
+    TOOL_EMPTY,
+    TOOL_ERROR,
+    TOOL_PARTIAL,
 )
 from app.schemas.knowledge_agent import KnowledgeRunSubmitRequest
-from app.services.knowledge_agent.observability import StageMeta
+from app.services.knowledge_agent.observability import StageMeta, run_fallback_summary
 from app.services.knowledge_agent.runner import RunCancelled, execute_run
-from app.services.knowledge_agent.runs import submit_message
+from app.services.knowledge_agent.runs import (
+    read_run_cancel_state,
+    submit_message,
+    update_run_step,
+)
 from app.services.knowledge_agent.tools import (
     RunToolContext,
     read_entries,
@@ -120,6 +129,33 @@ def _fake_answer_agent(draft: KnowledgeAnswerDraft, *, fallback: bool = False):
     return _fake
 
 
+def _dynamic_answer_agent():
+    """回答替身：引用回答上下文里实际提供的第一个 Evidence 句柄。"""
+
+    async def _fake(db, workspace_id, query, scope_label, entries):
+        handle = ""
+        for item in entries:
+            if item.get("evidences"):
+                handle = item["evidences"][0]["handle"]
+                break
+        return (
+            KnowledgeAnswerDraft(
+                answer="基于已有证据的回答。",
+                citations=[KnowledgeCitationDraft(evidence_handle=handle)] if handle else [],
+            ),
+            StageMeta(
+                purpose="answer",
+                provider="llm",
+                model="fake-answer",
+                is_fallback=False,
+                error=None,
+                duration_ms=1,
+            ),
+        )
+
+    return _fake
+
+
 @pytest.mark.asyncio
 async def test_runner_normal_completion_with_verified_citation(monkeypatch) -> None:
     """正常回答：原子提交结构化回答、引用与活动槽释放，各阶段可观测。"""
@@ -173,7 +209,7 @@ async def test_runner_normal_completion_with_verified_citation(monkeypatch) -> N
         )
         run.status = RUN_PROCESSING
         run.current_step = "claim"
-        await db.flush()
+        await db.commit()
         await execute_run(db, run)
         await db.commit()
 
@@ -299,7 +335,7 @@ async def test_runner_all_stages_normal_has_no_fallback(monkeypatch) -> None:
             ),
         )
         run.status = RUN_PROCESSING
-        await db.flush()
+        await db.commit()
         await execute_run(db, run)
         await db.commit()
 
@@ -323,7 +359,7 @@ async def test_runner_no_relevant_entries_is_insufficient() -> None:
         )
         await db.commit()
         run.status = RUN_PROCESSING
-        await db.flush()
+        await db.commit()
         await execute_run(db, run)
         await db.commit()
 
@@ -332,6 +368,9 @@ async def test_runner_no_relevant_entries_is_insufficient() -> None:
         assert answer["status"] == "insufficient"
         assert "没有召回相关正式 Entry" in answer["insufficient_note"]
         assert answer["citations"] == []
+        # 正常空搜索不得被误报为模型 fallback
+        summary = json.loads(run.fallback_summary)
+        assert summary["has_fallback"] is False
         assistant = await db.get(KnowledgeMessage, run.assistant_message_id)
         assert assistant.content == answer["answer"]
 
@@ -363,7 +402,7 @@ async def test_runner_no_verifiable_evidence_is_partial() -> None:
         conversation, run = await _conversation_and_run(db, user, workspace)
         await db.commit()
         run.status = RUN_PROCESSING
-        await db.flush()
+        await db.commit()
         await execute_run(db, run)
         await db.commit()
 
@@ -412,7 +451,7 @@ async def test_runner_answer_model_unavailable_is_partial_failed(monkeypatch) ->
             ),
         )
         run.status = RUN_PROCESSING
-        await db.flush()
+        await db.commit()
         await execute_run(db, run)
         await db.commit()
 
@@ -506,15 +545,10 @@ async def test_runner_tool_budget_limits_evidence_reads(monkeypatch) -> None:
         )
         monkeypatch.setattr(
             "app.services.knowledge_agent.runner.run_knowledge_answer_agent",
-            _fake_answer_agent(
-                KnowledgeAnswerDraft(
-                    answer="基于已有证据的回答。",
-                    citations=[],
-                )
-            ),
+            _dynamic_answer_agent(),
         )
         run.status = RUN_PROCESSING
-        await db.flush()
+        await db.commit()
         await execute_run(db, run)
         await db.commit()
 
@@ -530,6 +564,7 @@ async def test_runner_tool_budget_limits_evidence_reads(monkeypatch) -> None:
         assert len(tool_calls) == 1
         answer = json.loads(run.answer_json)
         assert answer["status"] == "completed"
+        assert len(answer["citations"]) == 1
 
 
 @pytest.mark.asyncio
@@ -610,7 +645,7 @@ async def test_runner_conflicts_kept_with_both_evidence(monkeypatch) -> None:
             ),
         )
         run.status = RUN_PROCESSING
-        await db.flush()
+        await db.commit()
         await execute_run(db, run)
         await db.commit()
 
@@ -623,7 +658,7 @@ async def test_runner_conflicts_kept_with_both_evidence(monkeypatch) -> None:
 
 @pytest.mark.asyncio
 async def test_runner_cancel_raises_at_step_boundary() -> None:
-    """步骤边界检测取消：RunCancelled 抛出，模型结果不写回。"""
+    """步骤边界检测取消：短会话读到已提交取消，RunCancelled 抛出。"""
     async with async_session_factory() as db:
         user = await create_user(db, "取消边界")
         workspace = await create_workspace(db, user)
@@ -632,10 +667,231 @@ async def test_runner_cancel_raises_at_step_boundary() -> None:
         await db.commit()
         run.status = RUN_PROCESSING
         run.cancel_requested = True
-        await db.flush()
+        await db.commit()
         with pytest.raises(RunCancelled):
             await execute_run(db, run)
         await db.rollback()
+
+
+@pytest.mark.asyncio
+async def test_run_step_short_session_visible_and_terminal_guard() -> None:
+    """短会话步骤更新立即可见；终态后迟到步骤不得覆盖。"""
+    async with async_session_factory() as db:
+        user = await create_user(db, "短会话步骤")
+        workspace = await create_workspace(db, user)
+        conversation, run = await _conversation_and_run(db, user, workspace)
+        run.status = RUN_PROCESSING
+        await db.commit()
+        run_id = run.id
+
+        await update_run_step(run_id, STEP_SEARCH)
+        async with async_session_factory() as fresh:
+            row = await fresh.get(KnowledgeAgentRun, run_id)
+            assert row.current_step == STEP_SEARCH
+
+        # 另一会话直接提交取消，短会话读取可见
+        async with async_session_factory() as other:
+            other_run = await other.get(KnowledgeAgentRun, run_id)
+            other_run.cancel_requested = True
+            await other.commit()
+        cancel_requested, status = await read_run_cancel_state(run_id)
+        assert cancel_requested is True
+        assert status == RUN_PROCESSING
+
+        # 终态后迟到步骤更新被活动状态条件阻止
+        async with async_session_factory() as final:
+            final_run = await final.get(KnowledgeAgentRun, run_id)
+            final_run.status = RUN_COMPLETED
+            final_run.current_step = None
+            final_run.active_slot = None
+            await final.commit()
+        await update_run_step(run_id, "late_step")
+        async with async_session_factory() as verify:
+            row = await verify.get(KnowledgeAgentRun, run_id)
+            assert row.status == RUN_COMPLETED
+            assert row.current_step is None
+
+
+@pytest.mark.asyncio
+async def test_tool_summary_empty_not_fallback_and_error_affected() -> None:
+    """工具降级汇总：正常 empty 不算 fallback，error/partial 进入受影响阶段。"""
+    async with async_session_factory() as db:
+        user = await create_user(db, "工具汇总")
+        workspace = await create_workspace(db, user)
+        conversation, run = await _conversation_and_run(db, user, workspace)
+        await db.commit()
+        db.add(
+            KnowledgeAgentToolCall(
+                run_id=run.id,
+                sequence=1,
+                tool_name="search_confirmed_knowledge",
+                status=TOOL_EMPTY,
+                duration_ms=1,
+            )
+        )
+        db.add(
+            KnowledgeAgentToolCall(
+                run_id=run.id,
+                sequence=2,
+                tool_name="read_source_evidence",
+                status=TOOL_ERROR,
+                error="数据库读取失败",
+                duration_ms=1,
+            )
+        )
+        db.add(
+            KnowledgeAgentToolCall(
+                run_id=run.id,
+                sequence=3,
+                tool_name="read_entries",
+                status=TOOL_PARTIAL,
+                error="部分对象越权或不可用",
+                duration_ms=1,
+            )
+        )
+        await db.commit()
+
+        summary = await run_fallback_summary(db, run.id)
+        assert summary["has_fallback"] is True
+        purposes = {stage["purpose"] for stage in summary["stages"]}
+        assert "tool:search_confirmed_knowledge" not in purposes
+        assert "tool:read_source_evidence" in purposes
+        assert "tool:read_entries" in purposes
+        error_stage = next(
+            stage
+            for stage in summary["stages"]
+            if stage["purpose"] == "tool:read_source_evidence"
+        )
+        assert error_stage["is_fallback"] is True
+        assert "数据库读取失败" in error_stage["error"]
+        partial_stage = next(
+            stage
+            for stage in summary["stages"]
+            if stage["purpose"] == "tool:read_entries"
+        )
+        assert partial_stage["is_fallback"] is True
+
+
+@pytest.mark.asyncio
+async def test_runner_all_references_invalid_marks_partial(monkeypatch) -> None:
+    """事实性回答全部引用失效：回答 insufficient 且 Run 至少为 partial。"""
+    async with async_session_factory() as db:
+        user = await create_user(db, "引用全失效")
+        workspace = await create_workspace(db, user)
+        project = await create_project(db, workspace, "失效项目")
+        node = await create_child_node(db, project, "施工")
+        source, attachment = await create_source_attachment(
+            db,
+            workspace,
+            project,
+            text_content="闭水试验通常持续 24 小时。",
+        )
+        await create_entry_with_evidence(
+            db,
+            project,
+            node,
+            source,
+            attachment,
+            title="闭水试验",
+            content="闭水试验通常持续 24 小时。",
+            quote="闭水试验通常持续 24 小时",
+        )
+        conversation, run = await _conversation_and_run(db, user, workspace)
+        await db.commit()
+
+        monkeypatch.setattr(
+            "app.services.knowledge_agent.runner.run_knowledge_answer_agent",
+            _fake_answer_agent(
+                KnowledgeAnswerDraft(
+                    answer="闭水试验通常持续 24 小时。",
+                    citations=[
+                        KnowledgeCitationDraft(evidence_handle="ev_other_run"),
+                        KnowledgeCitationDraft(evidence_handle="ev_unknown"),
+                    ],
+                )
+            ),
+        )
+        run.status = RUN_PROCESSING
+        await db.commit()
+        await execute_run(db, run)
+        await db.commit()
+
+        assert run.status == RUN_PARTIAL
+        answer = json.loads(run.answer_json)
+        assert answer["status"] == "insufficient"
+        assert "全部引用被丢弃" in (answer["insufficient_note"] or "")
+        assert answer["citations"] == []
+        summary = json.loads(run.fallback_summary)
+        assert summary["has_fallback"] is True
+        assert any(
+            stage["purpose"] == "validate_refs" for stage in summary["stages"]
+        )
+
+
+@pytest.mark.asyncio
+async def test_runner_partial_references_invalid_marks_partial(monkeypatch) -> None:
+    """部分句柄失效：保留有效引用，回答与 Run 标记 partial。"""
+    async with async_session_factory() as db:
+        user = await create_user(db, "引用部分失效")
+        workspace = await create_workspace(db, user)
+        project = await create_project(db, workspace, "部分失效项目")
+        node = await create_child_node(db, project, "施工")
+        source, attachment = await create_source_attachment(
+            db,
+            workspace,
+            project,
+            text_content="闭水试验通常持续 24 小时。",
+        )
+        await create_entry_with_evidence(
+            db,
+            project,
+            node,
+            source,
+            attachment,
+            title="闭水试验",
+            content="闭水试验通常持续 24 小时。",
+            quote="闭水试验通常持续 24 小时",
+        )
+        conversation, run = await _conversation_and_run(db, user, workspace)
+        await db.commit()
+
+        ctx = RunToolContext(
+            run_id=run.id,
+            workspace_id=workspace.id,
+            owner_user_id=user.id,
+            scope_type=SCOPE_WORKSPACE,
+            project_id=None,
+            project_name=None,
+        )
+        verified = await _evidence_for_run(db, ctx)
+        assert verified
+        handle = verified[0].evidence_handle
+        await db.commit()
+
+        monkeypatch.setattr(
+            "app.services.knowledge_agent.runner.run_knowledge_answer_agent",
+            _fake_answer_agent(
+                KnowledgeAnswerDraft(
+                    answer="闭水试验通常持续 24 小时。",
+                    citations=[
+                        KnowledgeCitationDraft(evidence_handle=handle),
+                        KnowledgeCitationDraft(evidence_handle="ev_fake"),
+                    ],
+                )
+            ),
+        )
+        run.status = RUN_PROCESSING
+        await db.commit()
+        await execute_run(db, run)
+        await db.commit()
+
+        assert run.status == RUN_PARTIAL
+        answer = json.loads(run.answer_json)
+        assert answer["status"] == "partial"
+        assert len(answer["citations"]) == 1
+        assert answer["citations"][0]["evidence_handle"] == handle
+        summary = json.loads(run.fallback_summary)
+        assert summary["has_fallback"] is True
 
 
 @pytest.mark.asyncio

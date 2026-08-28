@@ -8,9 +8,19 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models import KnowledgeAgentModelInvocation, KnowledgeAgentToolCall
-from app.models.knowledge_agent import TOOL_ERROR, TOOL_OK
+from app.models.knowledge_agent import (
+    TOOL_DENIED,
+    TOOL_EMPTY,
+    TOOL_ERROR,
+    TOOL_OK,
+    TOOL_PARTIAL,
+    TOOL_UNAVAILABLE,
+)
 
 logger = logging.getLogger(__name__)
+
+# 进入受影响阶段的工具状态：正常 ok 与正常 empty 不在此集合
+AFFECTED_TOOL_STATUSES = {TOOL_PARTIAL, TOOL_DENIED, TOOL_UNAVAILABLE, TOOL_ERROR}
 
 
 @dataclass
@@ -90,6 +100,32 @@ async def record_model_invocation(
     await db.flush()
 
 
+async def record_reference_validation(
+    db: AsyncSession,
+    run_id: int,
+    *,
+    stats,
+    note: str,
+) -> None:
+    """记录引用校验阶段的降级（服务端确定性阶段，不是模型调用）。"""
+    db.add(
+        KnowledgeAgentModelInvocation(
+            run_id=run_id,
+            purpose="validate_refs",
+            prompt_version="server",
+            provider="server",
+            model=None,
+            is_fallback=True,
+            error=(
+                f"{note}（请求 {stats.requested_count} / 有效 {stats.valid_count} / "
+                f"丢弃 {stats.discarded_count}）"
+            ),
+            duration_ms=0,
+        )
+    )
+    await db.flush()
+
+
 async def run_fallback_summary(
     db: AsyncSession,
     run_id: int,
@@ -120,14 +156,16 @@ async def run_fallback_summary(
         for item in invocations
     ]
     for item in tool_calls:
-        if item.status != TOOL_OK:
-            stages.append(
-                {
-                    "purpose": f"tool:{item.tool_name}",
-                    "is_fallback": item.status != TOOL_ERROR,
-                    "provider": None,
-                    "model": None,
-                    "error": item.error or item.status,
-                }
-            )
+        if item.status == TOOL_OK or item.status == TOOL_EMPTY:
+            # 正常完成与正常空结果不算 fallback
+            continue
+        stages.append(
+            {
+                "purpose": f"tool:{item.tool_name}",
+                "is_fallback": True,
+                "provider": None,
+                "model": None,
+                "error": item.error or item.status,
+            }
+        )
     return {"has_fallback": any(stage["is_fallback"] for stage in stages), "stages": stages}

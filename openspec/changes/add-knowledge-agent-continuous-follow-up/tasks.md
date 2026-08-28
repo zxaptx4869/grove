@@ -1,9 +1,9 @@
 ## 1. 骨架搭建前置：硬化知识 Agent 基础
 
-- [ ] 1.1 修复最终引用校验：记录请求/有效/丢弃句柄数，事实性回答全部引用失效时改为 `insufficient` 且 Run 至少为 `partial`，部分失效时保留有效引用并标记 `partial`
-- [ ] 1.2 修复工具降级汇总：`ok`/正常 `empty` 不算 fallback，`partial`/`denied`/`unavailable`/`error` 均进入受影响阶段且 error 不得被标为正常
-- [ ] 1.3 将 `current_step` 更新与取消检查改为独立短会话读写，确保运行进度可轮询且 MySQL 长事务能看到其他请求刚提交的取消；终态条件阻止迟到步骤覆盖
-- [ ] 1.4 补齐全部/部分无效引用、正常空搜索、工具 error/partial、运行中步骤与跨会话取消回归测试，并运行 `cd backend && .venv/bin/python -m pytest tests/test_knowledge_agent_evidence.py tests/test_knowledge_agent_runner.py tests/test_knowledge_agent_worker.py`
+- [x] 1.1 修复最终引用校验：记录请求/有效/丢弃句柄数，事实性回答全部引用失效时改为 `insufficient` 且 Run 至少为 `partial`，部分失效时保留有效引用并标记 `partial`
+- [x] 1.2 修复工具降级汇总：`ok`/正常 `empty` 不算 fallback，`partial`/`denied`/`unavailable`/`error` 均进入受影响阶段且 error 不得被标为正常
+- [x] 1.3 将 `current_step` 更新与取消检查改为独立短会话读写，确保运行进度可轮询且 MySQL 长事务能看到其他请求刚提交的取消；终态条件阻止迟到步骤覆盖
+- [x] 1.4 补齐全部/部分无效引用、正常空搜索、工具 error/partial、运行中步骤与跨会话取消回归测试，并运行 `cd backend && .venv/bin/python -m pytest tests/test_knowledge_agent_evidence.py tests/test_knowledge_agent_runner.py tests/test_knowledge_agent_worker.py`
 
 ## 2. 骨架搭建：上下文版本与 Run 契约
 
