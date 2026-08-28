@@ -8,6 +8,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
+from app.agents.investigation import ANSWER_MODE_ROUTE_PROMPT_VERSION
 from app.agents.knowledge_agent import ANSWER_PROMPT_VERSION, run_knowledge_answer_agent
 from app.agents.knowledge_context import CONTEXT_DECISION_PROMPT_VERSION
 from app.core.config import get_settings
@@ -19,6 +20,8 @@ from app.models import (
     Project,
 )
 from app.models.knowledge_agent import (
+    ANSWER_MODE_AUTO,
+    ANSWER_MODE_INVESTIGATE,
     CONTEXT_DECISION_CLARIFY,
     CONTEXT_DECISION_CONTINUE,
     CONTEXT_MODE_AUTO,
@@ -28,6 +31,7 @@ from app.models.knowledge_agent import (
     RUN_PROCESSING,
     STEP_CONTEXT_DECISION,
     STEP_FINALIZE,
+    STEP_INVESTIGATION_ROUTE,
     STEP_ORGANIZE_ANSWER,
     STEP_READ_ENTRIES,
     STEP_READ_EVIDENCE,
@@ -42,6 +46,7 @@ from app.services.knowledge_agent.follow_up import (
     ContextDecisionResult,
     decide_context,
 )
+from app.services.knowledge_agent.investigation import resolve_answer_mode
 from app.services.knowledge_agent.observability import (
     StageMeta,
     record_model_invocation,
@@ -318,6 +323,42 @@ async def execute_run(db: AsyncSession, run: KnowledgeAgentRun) -> None:
             )
         ).scalars().all()
         seed_entries = list(rows)
+
+    # 回答模式：显式覆盖或 auto 路由；investigate 进入有界调查分支
+    await _check_cancelled(run.id)
+    await update_run_step(run.id, STEP_INVESTIGATION_ROUTE)
+    if run.actual_answer_mode is None:
+        resolution = await resolve_answer_mode(
+            db,
+            workspace_id=run.workspace_id,
+            request_mode=run.request_answer_mode or ANSWER_MODE_AUTO,
+            objective=decision.standalone_query or query,
+            topic_summary=decision.topic_label,
+        )
+        run.actual_answer_mode = resolution.mode
+        if resolution.meta is not None:
+            await record_model_invocation(
+                db,
+                run_id=run.id,
+                meta=resolution.meta,
+                prompt_version=ANSWER_MODE_ROUTE_PROMPT_VERSION,
+            )
+        await db.commit()
+    if run.actual_answer_mode == ANSWER_MODE_INVESTIGATE:
+        from app.services.knowledge_agent.investigation_runner import (
+            execute_investigation,
+        )
+
+        await execute_investigation(
+            db,
+            run,
+            decision,
+            input_version=input_version,
+            working_set=working_set,
+            ctx=ctx,
+            seed_entries=seed_entries,
+        )
+        return
 
     # 步骤 1：搜索正式知识（工作集种子 + 独立查询新召回统一重排）
     await _check_cancelled(run.id)

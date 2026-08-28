@@ -128,6 +128,24 @@ def _default_decision(monkeypatch):
         _decide,
     )
 
+    async def _resolve_mode(
+        db,
+        *,
+        workspace_id,
+        request_mode,
+        objective,
+        topic_summary,
+    ):
+        # 默认快速路径：不产生路由降级，避免污染既有无降级断言
+        from app.services.knowledge_agent.investigation import AnswerModeResolution
+
+        return AnswerModeResolution(mode="quick")
+
+    monkeypatch.setattr(
+        "app.services.knowledge_agent.runner.resolve_answer_mode",
+        _resolve_mode,
+    )
+
 
 def run_id_counter() -> str:
     global _counter

@@ -32,8 +32,12 @@ def clean_query_text(text: str) -> str:
 
 
 def normalize_query_text(text: str) -> str:
-    """规范化查询文本：去空白 + 小写，用于指纹与全局去重。"""
-    return clean_query_text(text).lower()
+    """规范化查询文本：去全部空白 + 小写，用于指纹与全局去重。
+
+    空白差异（包括字间空格）不产生新查询；执行时仍使用保留单空格的
+    `clean_query_text` 文本。
+    """
+    return clean_query_text(text).replace(" ", "").lower()
 
 
 def query_fingerprint(text: str) -> str:
@@ -89,6 +93,7 @@ class LedgerEvidenceRef:
     handle: str
     entry_id: int
     source_id: int
+    source_title: str = ""
     attachment_id: int | None = None
     quote: str = ""
     round_number: int = 0
@@ -161,6 +166,10 @@ class InvestigationLedger:
 
     def distinct_entry_count(self) -> int:
         return len(self.discovered_entries)
+
+    def discovered_entry_count(self) -> int:
+        """本轮及后续新发现 Entry 数（工作集种子 round=0 不计入预算）。"""
+        return sum(1 for ref in self.discovered_entries.values() if ref.round_number > 0)
 
     def distinct_evidence_count(self) -> int:
         return len(self.evidences)
@@ -337,6 +346,7 @@ async def rebuild_ledger(
                 handle=evidence.handle,
                 entry_id=evidence.entry_id or 0,
                 source_id=evidence.source_id or 0,
+                source_title=evidence.source_title or "",
                 attachment_id=evidence.attachment_id,
                 quote=evidence.quote[:LEDGER_QUOTE_CHARS],
                 round_number=evidence.round_number or 0,

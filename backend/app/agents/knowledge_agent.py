@@ -100,8 +100,15 @@ async def run_knowledge_answer_agent(
     query: str,
     scope_label: str,
     entries: list[dict],
+    *,
+    purpose: str = PURPOSE_ANSWER,
+    synthesis_context: str | None = None,
 ) -> tuple[KnowledgeAnswerDraft, StageMeta]:
-    """运行回答 Agent，返回 (草稿, 阶段元数据)。"""
+    """运行回答 Agent，返回 (草稿, 阶段元数据)。
+
+    `purpose` 允许调查最终综合阶段使用独立阶段标识；`synthesis_context`
+    携带调查停止原因、未解决缺口与冲突提示，回答不得声称穷尽全部知识。
+    """
     started = perf_counter()
     text_model = await get_text_model(db, workspace_id)
     if isinstance(text_model, TestModel):
@@ -109,7 +116,7 @@ async def run_knowledge_answer_agent(
         return (
             _offline_answer(),
             StageMeta(
-                purpose=PURPOSE_ANSWER,
+                purpose=purpose,
                 provider="offline",
                 model=None,
                 is_fallback=True,
@@ -119,10 +126,22 @@ async def run_knowledge_answer_agent(
         )
 
     context = _format_context(query, scope_label, entries)
+    system_prompt = KNOWLEDGE_ANSWER_SYSTEM_PROMPT
+    if synthesis_context:
+        system_prompt = (
+            KNOWLEDGE_ANSWER_SYSTEM_PROMPT
+            + "\n"
+            + "调查已停止，请按以下摘要组织回答："
+            + "\n"
+            + synthesis_context
+            + "\n"
+            + "要求：必须明确未解决缺口与停止原因，不得声称穷尽全部知识；"
+            "只能引用上方给出的当前 Run Evidence 句柄。"
+        )
     agent = Agent(
         text_model,
         output_type=KnowledgeAnswerDraft,
-        system_prompt=KNOWLEDGE_ANSWER_SYSTEM_PROMPT,
+        system_prompt=system_prompt,
         retries=1,
         model_settings={"temperature": 0.4},
     )
@@ -136,7 +155,7 @@ async def run_knowledge_answer_agent(
         return (
             _offline_answer(),
             StageMeta(
-                purpose=PURPOSE_ANSWER,
+                purpose=purpose,
                 provider="llm",
                 model=str(model_name),
                 is_fallback=True,
@@ -148,7 +167,7 @@ async def run_knowledge_answer_agent(
         return (
             _offline_answer(),
             StageMeta(
-                purpose=PURPOSE_ANSWER,
+                purpose=purpose,
                 provider="llm",
                 model=str(model_name),
                 is_fallback=True,
@@ -159,7 +178,7 @@ async def run_knowledge_answer_agent(
     return (
         result.output,
         StageMeta(
-            purpose=PURPOSE_ANSWER,
+            purpose=purpose,
             provider="llm",
             model=str(model_name),
             is_fallback=False,

@@ -35,14 +35,14 @@
 
 ## 5. 实现：有界调查编排、预算与停止
 
-- [ ] 5.1 保留现有 quick 单轮执行图，在上下文决策后按 actual answer mode 分支；澄清路径不得创建 Investigation
-- [ ] 5.2 实现最多三轮的应用层循环：持久化轮次计划、执行去重后的固定搜索→Entry→Evidence 工具链、提交观察与账本增量，再把结果反馈下一轮控制器
-- [ ] 5.3 实现轮次、每轮查询、总查询、不同 Entry 和 Evidence 双层硬预算；客户端/模型无法放大预算，实际预算在 Investigation 创建时固化
-- [ ] 5.4 实现稳定停止原因：控制器完成/不足、无合法新查询、无新增 Entry/Evidence、各类预算、取消和失败；预算或无进展停止不得误报为模型 fallback
-- [ ] 5.5 实现最终综合：只传当前 Run Evidence 与紧凑账本，返回答案/引用及实际模式、轮数、查询数、停止原因、覆盖、未解决缺口和冲突提示；无证据时 insufficient
-- [ ] 5.6 输出工作集只加入最终有效引用实际使用的 Entry；仅被搜索发现的 Entry 不加入，失败/取消不推进
-- [ ] 5.7 增加 quick 不受影响、一/多轮补查、控制器主动停止、重复查询、无进展、每种预算停止、多轮引用、未解决缺口、冲突与工作集过滤测试；运行 `cd backend && .venv/bin/python -m pytest tests/test_knowledge_agent_runner.py tests/test_knowledge_agent_investigation_runner.py`
-- [ ] 5.8 完成调查编排本地提交，提交信息使用 `feat: 实现知识 Agent 有界自主调查`
+- [x] 5.1 保留现有 quick 单轮执行图，在上下文决策后按 actual answer mode 分支；澄清路径不得创建 Investigation
+- [x] 5.2 实现最多三轮的应用层循环：持久化轮次计划、执行去重后的固定搜索→Entry→Evidence 工具链、提交观察与账本增量，再把结果反馈下一轮控制器
+- [x] 5.3 实现轮次、每轮查询、总查询、不同 Entry 和 Evidence 双层硬预算；客户端/模型无法放大预算，实际预算在 Investigation 创建时固化
+- [x] 5.4 实现稳定停止原因：控制器完成/不足、无合法新查询、无新增 Entry/Evidence、各类预算、取消和失败；预算或无进展停止不得误报为模型 fallback
+- [x] 5.5 实现最终综合：只传当前 Run Evidence 与紧凑账本，返回答案/引用及实际模式、轮数、查询数、停止原因、覆盖、未解决缺口和冲突提示；无证据时 insufficient
+- [x] 5.6 输出工作集只加入最终有效引用实际使用的 Entry；仅被搜索发现的 Entry 不加入，失败/取消不推进
+- [x] 5.7 增加 quick 不受影响、一/多轮补查、控制器主动停止、重复查询、无进展、每种预算停止、多轮引用、未解决缺口、冲突与工作集过滤测试；运行 `cd backend && .venv/bin/python -m pytest tests/test_knowledge_agent_runner.py tests/test_knowledge_agent_investigation_runner.py`
+- [x] 5.8 完成调查编排本地提交，提交信息使用 `feat: 实现知识 Agent 有界自主调查`
 
 ## 6. 实现：检查点恢复、取消与终态一致性
 

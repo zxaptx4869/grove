@@ -52,9 +52,12 @@ from tests._knowledge_agent_fixtures import (
 def test_query_normalization_and_fingerprint() -> None:
     """查询规范化：去空白、小写，指纹稳定且区分不同语义。"""
     assert clean_query_text("  闭水试验  持续  多久  ") == "闭水试验 持续 多久"
-    assert normalize_query_text(" 闭水试验 持续 多久 ") == "闭水试验 持续 多久"
-    assert normalize_query_text("Water Test") == "water test"
+    assert normalize_query_text(" 闭水试验 持续 多久 ") == "闭水试验持续多久"
+    assert normalize_query_text("Water Test") == "watertest"
     assert query_fingerprint("闭水试验") == query_fingerprint("  闭水试验  ")
+    assert query_fingerprint("闭水试验持续多久") == query_fingerprint(
+        "闭水试验 持续 多久"
+    )
     assert query_fingerprint("放水时机") != query_fingerprint("闭水试验")
 
 
