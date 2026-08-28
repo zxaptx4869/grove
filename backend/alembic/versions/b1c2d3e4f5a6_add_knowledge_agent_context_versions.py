@@ -26,8 +26,12 @@ depends_on: str | Sequence[str] | None = None
 
 
 def _bigint() -> sa.BigInteger:
-    """返回与 ORM 一致的双库兼容主键/外键类型（MySQL 8 BIGINT / SQLite 兼容）。"""
-    return sa.BigInteger()
+    """返回与 ORM 一致的双库兼容主键/外键类型。
+
+    MySQL 8 使用 BIGINT；SQLite 必须用 INTEGER 才能获得 rowid 自增语义
+    （BIGINT PRIMARY KEY 不会自动生成 id）。
+    """
+    return sa.BigInteger().with_variant(sa.Integer(), "sqlite")
 
 
 def upgrade() -> None:

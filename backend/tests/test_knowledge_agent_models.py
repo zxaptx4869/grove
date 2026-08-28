@@ -441,6 +441,28 @@ def test_migration_upgrade_and_constraints(tmp_path: Path) -> None:
                 "(id, conversation_id, role, message_type, content, client_message_id, scope_type) "
                 "VALUES (2, 1, 'user', 'user', '重试', 'client-1', 'workspace')"
             )
+
+        # SQLite 自增回归：迁移创建的表（含知识 Agent 底座表）id 必须可自动生成
+        conn.execute(
+            "INSERT INTO knowledge_agent_runs "
+            "(conversation_id, workspace_id, owner_user_id, scope_type, status, "
+            " active_slot, retry_count, max_retries) "
+            "VALUES (1, 1, 1, 'workspace', 'completed', NULL, 0, 1)"
+        )
+        auto_run_id = conn.execute(
+            "SELECT id FROM knowledge_agent_runs ORDER BY id DESC LIMIT 1"
+        ).fetchone()[0]
+        assert auto_run_id is not None
+        conn.execute(
+            "INSERT INTO knowledge_context_versions "
+            "(conversation_id, workspace_id, owner_user_id, version_number, "
+            " scope_type, topic_label, status, close_reason, active_slot) "
+            "VALUES (1, 1, 1, 3, 'workspace', '自增主题', 'closed', 'scope_change', NULL)"
+        )
+        auto_version_id = conn.execute(
+            "SELECT id FROM knowledge_context_versions ORDER BY id DESC LIMIT 1"
+        ).fetchone()[0]
+        assert auto_version_id is not None
         conn.commit()
     finally:
         conn.close()
