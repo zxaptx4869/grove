@@ -79,6 +79,12 @@ class Settings(BaseSettings):
     knowledge_agent_evidence_limit: int = Field(
         default=30, description="知识 Agent 单 Run 最多读取的 Source/Attachment 证据数"
     )
+    knowledge_agent_history_limit: int = Field(
+        default=8, description="上下文决策最多使用的近期消息条数"
+    )
+    knowledge_agent_history_message_chars: int = Field(
+        default=500, description="上下文决策单条历史消息截断长度"
+    )
 
     # 知识 Agent Worker 租约（秒）：processing 超过该阈值可恢复重试
     knowledge_agent_lease_seconds: int = Field(

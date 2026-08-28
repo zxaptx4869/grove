@@ -15,11 +15,11 @@
 
 ## 3. 实现：上下文决策与有限历史
 
-- [ ] 3.1 新增结构化上下文决策 Agent，输出 `continue`/`new_topic`/`clarify`、独立查询、主题标签与澄清问题，并设置 prompt 版本、限长输入和有界重试
-- [ ] 3.2 实现有限历史选择：默认只取最近配置条数并截断内容，保存实际消息 ID；助手历史只进入决策阶段，不进入回答事实上下文
-- [ ] 3.3 实现应用层归一化和显式覆盖：`new_topic` 绕过分类并关闭旧工作集，`continue` 固定语义且只改写查询，无工作集时澄清
-- [ ] 3.4 实现安全降级：`auto` 分类失败按 `new_topic`，强制 `continue` 改写失败使用“主题 + 原问题”，所有路径记录 provider/model/fallback/error/耗时
-- [ ] 3.5 增加自动继续/新话题/澄清、显式覆盖、无工作集继续、历史限长、结构异常与模型降级测试，并运行 `cd backend && .venv/bin/python -m pytest tests/test_knowledge_agent_follow_up.py`
+- [x] 3.1 新增结构化上下文决策 Agent，输出 `continue`/`new_topic`/`clarify`、独立查询、主题标签与澄清问题，并设置 prompt 版本、限长输入和有界重试
+- [x] 3.2 实现有限历史选择：默认只取最近配置条数并截断内容，保存实际消息 ID；助手历史只进入决策阶段，不进入回答事实上下文
+- [x] 3.3 实现应用层归一化和显式覆盖：`new_topic` 绕过分类并关闭旧工作集，`continue` 固定语义且只改写查询，无工作集时澄清
+- [x] 3.4 实现安全降级：`auto` 分类失败按 `new_topic`，强制 `continue` 改写失败使用“主题 + 原问题”，所有路径记录 provider/model/fallback/error/耗时
+- [x] 3.5 增加自动继续/新话题/澄清、显式覆盖、无工作集继续、历史限长、结构异常与模型降级测试，并运行 `cd backend && .venv/bin/python -m pytest tests/test_knowledge_agent_follow_up.py`
 
 ## 4. 实现：版本化工作集服务
 
