@@ -53,3 +53,37 @@ curl -s -b cookies.txt http://127.0.0.1:8011/api/knowledge-agent/runs/{run_id}/o
 
 - 提交第二个问题的 409 需要与第一个问题在同一处理窗口内连续提交（进程内 Worker 每 0.5s 轮询）。
 - 验证期间产生的测试数据保留在开发库 `backend/grove.db`，可在人工验收后清理。
+
+## SQLite 手动走查覆盖（6.2）
+
+SQLite（开发库与测试库）已通过自动化测试覆盖以下场景，测试文件：
+`test_knowledge_agent_conversations.py`、`test_knowledge_agent_tools.py`、
+`test_knowledge_agent_evidence.py`、`test_knowledge_agent_runner.py`、
+`test_knowledge_agent_worker.py`、`test_knowledge_agent_api.py`。
+
+- Workspace 问答：跨项目搜索、项目归属与目录定位；
+- 项目问答：只读本项目正式 Entry；
+- 跨 Workspace 隔离：对话、Run、消息一律 404；
+- 真实原文引用：Attachment 文本/OCR 归一化定位后保存精确子串；
+- 幂等：同一 `client_message_id` 返回首次消息与 Run；
+- 取消：waiting/processing 取消不写回答、释放活动槽；
+- 重启恢复：超过租约的 processing Run 重新入队一次，超过上限失败；
+- 降级：embedding/重排/回答各阶段分别记录 provider/model/fallback/error/耗时，
+  回答模型不可用时 Run 为 `partial`、回答状态为 `failed`。
+
+## MySQL 8 真实验证（6.2）
+
+使用一次性临时 MySQL 8.0.45 实例（独立端口 33062、全新数据目录，验证后已删除）：
+
+```bash
+mysqld --no-defaults --initialize-insecure --datadir=<tmp> --user=$(whoami)
+mysqld --no-defaults --datadir=<tmp> --port=33062 --socket=<tmp>/mysql.sock --bind-address=127.0.0.1
+DATABASE_URL="mysql+asyncmy://root@127.0.0.1:33062/grove_ka_test" .venv/bin/alembic upgrade head
+```
+
+结果：
+
+- 完整迁移链（含 `a0b1c2d3e4f5` 知识 Agent 表）在 MySQL 8 执行成功；
+- 同一对话插入第二个 `active_slot='active'` Run → `ERROR 1062 Duplicate entry '1-active' for key 'uq_knowledge_run_active_slot'`；
+- 终态 `active_slot=NULL` 可并存多行（MySQL 唯一索引允许多个 NULL），与 SQLite 语义一致；
+- 同一对话重复 `client_message_id` → `ERROR 1062 Duplicate entry '1-client-1' for key 'uq_knowledge_message_client_id'`。
