@@ -1,93 +1,87 @@
 # reader-qa Specification
 
 ## Purpose
-基于已确认 Entry 提供节点与项目范围的带引用问答，冲突与知识不足可见，引用经应用层校验后返回。
+基于已确认 Entry 提供 Workspace/项目范围的带引用问答；问答由持久化知识 Agent Run 生成，引用经服务端核验 Evidence 校验后返回，冲突与知识不足可见。
+
 ## Requirements
 ### Requirement: 问答范围与 Workspace 隔离
-系统 MUST 支持节点阅读（当前节点及其子树）与项目阅读（整个项目）两种问答范围；问答 MUST 只读取当前 Workspace 内已确认的正式 Entry；越权项目或节点 MUST 失败（404），不暴露其他 Workspace 数据。
+系统 MUST 支持当前 Workspace「全部知识」与具体项目两种用户可选问答范围，不再提供目录节点级范围；问答 MUST 只读取 Run 固化范围内已确认的正式 Entry；越权 Workspace、项目、对话或 Run MUST 失败（404），不暴露范围外数据。
 
-#### Scenario: 节点阅读
-- **WHEN** 用户对某个目录节点发起问答
-- **THEN** 回答只基于该节点及其全部后代节点的已确认 Entry
+#### Scenario: Workspace 阅读
+- **WHEN** 用户在「全部知识」范围发起问答
+- **THEN** 回答可基于当前 Workspace 内各项目的已确认 Entry，并显示引用的项目归属
 
 #### Scenario: 项目阅读
-- **WHEN** 用户对某个项目发起问答
-- **THEN** 回答基于该项目全部已确认 Entry
+- **WHEN** 用户在具体项目范围发起问答
+- **THEN** 回答只基于该项目的已确认 Entry
 
-#### Scenario: 越权项目 404
-- **WHEN** 用户请求不属于当前 Workspace 的项目问答
-- **THEN** 请求失败（404），不返回任何数据
+#### Scenario: 目录不作为用户范围
+- **WHEN** 用户从 Web 或原生 App 选择知识问答范围
+- **THEN** 可选项只包含「全部知识」与项目，目录仅作为检索和引用定位信息
+
+#### Scenario: 越权对象 404
+- **WHEN** 用户请求不属于当前 Workspace 或当前用户的项目、对话或 Run
+- **THEN** 请求失败（404），不返回任何相关数据
 
 ### Requirement: 证据召回复用语义检索
-系统 MUST 复用语义检索的混合召回与文本模型语义重排，按用户问题召回最多 15 条已确认 Entry 作为问答上下文；embedding 未配置或失败时 MUST 降级为确定性召回；未配置文本模型密钥或模型调用失败时 MUST 降级为确定性召回结果并标记，不得静默调用外部服务。
+系统 MUST 在持久化 Agent Run 中通过受可信范围约束的知识工具复用语义检索混合召回与文本模型语义重排，按用户问题选取最多 15 条已确认 Entry 作为回答上下文；embedding 未配置或失败时 MUST 显式降级为确定性召回；重排模型未配置或调用失败时 MUST 使用确定性召回顺序并记录该阶段降级，不得静默调用外部服务。
 
 #### Scenario: 按问题召回上下文
-- **WHEN** 用户输入问题并发起问答且 embedding 可用
-- **THEN** 系统返回确定性召回与 embedding 召回合并后的语义相关已确认 Entry 作为回答上下文
+- **WHEN** Run 搜索用户问题且 embedding 与重排可用
+- **THEN** 系统在固化范围内合并确定性与 embedding 召回，并将语义重排后的相关正式 Entry 作为回答上下文
 
 #### Scenario: embedding 降级
 - **WHEN** 当前 Workspace 未配置 embedding 或编码失败
-- **THEN** 系统使用确定性召回结果作为上下文并标记降级，不中断问答
+- **THEN** 系统使用确定性召回结果并在 embedding 阶段记录降级，不中断后续证据读取
 
-#### Scenario: 模型失败降级
-- **WHEN** 文本模型不可用（未配置密钥或调用失败）
-- **THEN** 使用确定性召回结果作为上下文并标记降级，不中断问答
+#### Scenario: 重排模型降级
+- **WHEN** 文本重排模型未配置或调用失败
+- **THEN** 系统使用确定性召回顺序并在重排阶段记录降级，不把该阶段标记为正常
 
 ### Requirement: 带引用回答
-系统 MUST 返回结构化回答，包含答案文本与引用列表；引用 MUST 包含 `entry_id`、`source_id` 与原文片段 `quote`；关键结论 MUST 附引用；应用层 MUST 校验引用属于当前问答范围，非法引用 MUST 被丢弃。
+系统 MUST 返回包含答案文本与引用列表的结构化回答；每条引用 MUST 指向当前 Run 中由服务端核验的 Evidence，并包含 `evidence_id`、`entry_id`、`source_id`、可选 `attachment_id` 与真实原文 `quote`；关键结论 MUST 附有效引用；模型输出的自由 quote、范围外句柄或未经核验来源 MUST 被丢弃。
 
-#### Scenario: 回答附引用
+#### Scenario: 回答附真实引用
 - **WHEN** 回答中包含基于已确认 Entry 的关键结论
-- **THEN** 该结论附带对应的 Entry 与 Source 引用
+- **THEN** 该结论引用当前 Run 的 Evidence，且 `quote` 是实际 Source Attachment 中核验过的原文
 
 #### Scenario: 丢弃非法引用
-- **WHEN** 模型输出的引用指向范围外或不存在的 Entry / Source
+- **WHEN** 模型输出其他 Run、范围外、未知或不可引用的 Evidence 句柄
 - **THEN** 该引用被丢弃，不进入响应
 
-### Requirement: 知识不足可见
-系统 MUST 在知识库不足以回答时明确说明知识不足，不得用模型自身知识悄悄补齐；引用为空且声明不足时 MUST 标记 `insufficient`。
+#### Scenario: 模型自由生成 quote
+- **WHEN** 模型返回未绑定有效 Evidence 的原文片段
+- **THEN** 系统忽略该片段且不将其包装成可信引用
 
-#### Scenario: 知识不足提示
+### Requirement: 知识不足可见
+系统 MUST 在当前范围内没有足够正式 Entry 或没有可核验 Evidence 时明确说明知识不足，不得用模型自身知识悄悄补齐；关键结论无法获得有效引用时 MUST 将 Run 标为 `partial` 或将回答标记 `insufficient`。
+
+#### Scenario: 没有相关正式知识
 - **WHEN** 当前问答范围内没有足以回答问题的已确认 Entry
-- **THEN** 回答明确说明知识不足，不编造内容
+- **THEN** 回答明确说明知识不足、不编造内容并标记 `insufficient`
+
+#### Scenario: 有 Entry 但无可核验证据
+- **WHEN** 召回到相关 Entry 但其来源原文无法读取或核验
+- **THEN** 系统说明证据不足且不以未经核验的引用支持确定性结论
 
 ### Requirement: 冲突可见
-系统 MUST 在检测到问答范围内的已确认 Entry 相互矛盾时并列展示冲突（双方 Entry 与各自观点），不替用户裁决。
+系统 MUST 在检测到当前范围内有可核验 Evidence 支持的正式 Entry 相互矛盾时并列展示冲突双方、各自观点与各自 Evidence，不替用户裁决；缺少来源证据的疑似冲突 MUST 标记为待核验。
 
-#### Scenario: 展示冲突
-- **WHEN** 问答范围内存在说法矛盾的已确认 Entry
-- **THEN** 回答展示冲突双方及其观点
+#### Scenario: 展示有证据的冲突
+- **WHEN** 当前范围内存在由不同有效 Evidence 支持的矛盾 Entry
+- **THEN** 回答并列展示冲突双方、观点和各自引用
 
-### Requirement: 回答类型推荐
-系统 MUST 在回答中推荐主类型 `main_type`（knowledge / method / parameter / reminder）与信息性质 `info_nature`（fact / experience / advice / speculation / other）；推荐 MUST 由文本模型基于回答内容生成，降级时 MUST 为空。
-
-#### Scenario: 模型推荐类型
-- **WHEN** 问答由真实文本模型完成
-- **THEN** 回答附带推荐的主类型与信息性质
-
-#### Scenario: 降级不推荐类型
-- **WHEN** 问答降级
-- **THEN** 主类型与信息性质为空
-
-### Requirement: 保存建议
-系统 MUST 在回答中返回 `save_recommended`；知识不足（`insufficient`）或有效引用少于 2 条时 MUST 为 false，不得建议用户把复述或知识不足的回答保存为新知识。
-
-#### Scenario: 综合回答建议保存
-- **WHEN** 回答基于至少 2 条已确认 Entry 综合且非知识不足
-- **THEN** `save_recommended` 为 true
-
-#### Scenario: 复述或知识不足不建议保存
-- **WHEN** 回答知识不足或仅引用 1 条已有 Entry
-- **THEN** `save_recommended` 为 false
+#### Scenario: 冲突一方证据不可用
+- **WHEN** 疑似冲突的一方无法形成可引用 Evidence
+- **THEN** 回答将其标记为待核验而不把双方包装成同等可信结论
 
 ### Requirement: 可观测性
-系统 MUST 在问答响应中记录 `provider` / `model` / `is_fallback` / `error`；未配置密钥或模型调用失败 MUST 明确标记降级原因，禁止静默降级。
+系统 MUST 对一次问答的 embedding、重排、工具和回答阶段分别记录 provider、model、fallback 状态、error 与耗时，并在 Run 响应中汇总降级；未配置密钥或任一模型调用失败 MUST 明确标记对应阶段和原因，禁止静默降级。
 
-#### Scenario: 正常回答记录来源
-- **WHEN** 问答由真实文本模型完成
-- **THEN** 响应记录 provider 为 `llm`、模型名与 `is_fallback=false`
+#### Scenario: 正常回答记录各阶段来源
+- **WHEN** 问答各 AI 阶段均由真实模型完成
+- **THEN** 每个模型阶段记录实际 provider/model 与 `is_fallback=false`，Run 不显示降级
 
-#### Scenario: 降级回答记录原因
-- **WHEN** 问答降级为确定性上下文
-- **THEN** 响应标记 `is_fallback=true` 并带降级原因
-
+#### Scenario: 单阶段降级可识别
+- **WHEN** embedding、重排或回答任一阶段降级或失败
+- **THEN** 对应阶段记录 `is_fallback=true` 或失败原因，Run 汇总中可识别受影响阶段
