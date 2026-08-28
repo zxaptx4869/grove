@@ -23,12 +23,12 @@
 
 ## 4. 实现：固定执行图、可观测性与 Worker
 
-- [ ] 4.1 调整混合召回与 Reader 回答组织器，使 embedding、重排和回答分别返回 provider/model/fallback/error/耗时元数据，同时保持旧 Reader 调用方兼容
-- [ ] 4.2 实现有服务端预算的固定执行图：搜索、读取 Entry、读取 Evidence、组织回答、校验引用；每个新问题独立检索且最多使用 15 条 Entry
-- [ ] 4.3 持久化每次工具调用与模型调用，聚合 Run 降级摘要；回答模型不可用时返回可识别的 `partial` 或 `failed`，不得静默伪装成功
-- [ ] 4.4 实现 Worker 原子领取、步骤状态、租约、一次崩溃恢复、重试上限和终态事务提交，防止多个 Worker 生成重复答案
-- [ ] 4.5 实现 `waiting` / `processing` Run 取消和步骤边界检查，取消后的模型结果不写入正常助手消息
-- [ ] 4.6 增加正常回答、知识不足、冲突、各阶段降级、工具预算、并发领取、崩溃恢复、取消和原子提交测试，并运行 `cd backend && .venv/bin/python -m pytest tests/test_knowledge_agent_runner.py tests/test_knowledge_agent_worker.py`
+- [x] 4.1 调整混合召回与 Reader 回答组织器，使 embedding、重排和回答分别返回 provider/model/fallback/error/耗时元数据，同时保持旧 Reader 调用方兼容
+- [x] 4.2 实现有服务端预算的固定执行图：搜索、读取 Entry、读取 Evidence、组织回答、校验引用；每个新问题独立检索且最多使用 15 条 Entry
+- [x] 4.3 持久化每次工具调用与模型调用，聚合 Run 降级摘要；回答模型不可用时返回可识别的 `partial` 或 `failed`，不得静默伪装成功
+- [x] 4.4 实现 Worker 原子领取、步骤状态、租约、一次崩溃恢复、重试上限和终态事务提交，防止多个 Worker 生成重复答案
+- [x] 4.5 实现 `waiting` / `processing` Run 取消和步骤边界检查，取消后的模型结果不写入正常助手消息
+- [x] 4.6 增加正常回答、知识不足、冲突、各阶段降级、工具预算、并发领取、崩溃恢复、取消和原子提交测试，并运行 `cd backend && .venv/bin/python -m pytest tests/test_knowledge_agent_runner.py tests/test_knowledge_agent_worker.py`
 
 ## 5. 实现：知识 Agent API 与兼容边界
 

@@ -38,7 +38,12 @@ def _deterministic_by_query(entries: list[Entry], query: str) -> list[Entry]:
     """按查询与 Entry 的确定性相似度降序排序。"""
     scored: list[tuple[float, Entry]] = []
     for entry in entries:
-        score = text_pair_similarity(query, "", entry.title, entry.content)
+        # 查询作为问题文本时可能同时命中标题与正文：分别按「标题 vs 标题」和
+        # 「正文 vs 正文」比较并取更优，避免自然语言问题只能匹配标题。
+        score = max(
+            text_pair_similarity(query, "", entry.title, ""),
+            text_pair_similarity("", query, "", entry.content),
+        )
         if _keyword_hit(query, entry):
             score += _KEYWORD_BONUS
         if score > 0:

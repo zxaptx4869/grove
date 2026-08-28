@@ -166,6 +166,12 @@ async def build_validated_answer(
 ) -> KnowledgeAnswerOut:
     """把回答草稿转换为最终回答：只保留本 Run 可引用句柄，丢弃模型自由内容。"""
     handles = [item.evidence_handle for item in draft.citations]
+    handles.extend(
+        item.evidence_handle_a for item in draft.conflicts
+    )
+    handles.extend(
+        item.evidence_handle_b for item in draft.conflicts
+    )
     resolved = await resolve_evidence_handles(db, run_id, handles)
     citations = [
         _citation_out(resolved[item.evidence_handle])
