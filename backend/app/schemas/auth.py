@@ -39,3 +39,10 @@ class MeResponse(BaseModel):
 
     user: UserOut
     workspace: WorkspaceOut
+
+
+class MobileAuthResponse(BaseModel):
+    """原生移动端认证响应；Token 仅供安全存储后作为 Bearer 使用。"""
+
+    user: UserOut
+    token: str

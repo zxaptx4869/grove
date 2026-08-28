@@ -3,7 +3,7 @@
 from datetime import UTC, datetime, timedelta
 from typing import Annotated
 
-from fastapi import Cookie, Depends, HTTPException, status
+from fastapi import Cookie, Depends, Header, HTTPException, status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -26,12 +26,19 @@ def _unauthorized() -> HTTPException:
 async def get_current_user(
     db: DbSession,
     session_cookie: Annotated[str | None, Cookie(alias=settings.session_cookie_name)] = None,
+    authorization: Annotated[str | None, Header()] = None,
 ) -> User:
-    """从会话 Cookie 解析当前用户；无有效会话抛 401。"""
-    if not session_cookie:
+    """解析 Bearer 或 Cookie 会话；Bearer 存在时严格优先。"""
+    if authorization is not None:
+        scheme, _, token = authorization.partition(" ")
+        if scheme.lower() != "bearer" or not token or token.strip() != token:
+            raise _unauthorized()
+    else:
+        token = session_cookie
+    if not token:
         raise _unauthorized()
 
-    token_hash = hash_session_token(session_cookie)
+    token_hash = hash_session_token(token)
     stmt = select(Session).where(
         Session.token_hash == token_hash,
         Session.expires_at > datetime.now(UTC),
