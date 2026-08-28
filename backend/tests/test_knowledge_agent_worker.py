@@ -196,13 +196,14 @@ async def test_process_cancelled_run_releases_slot() -> None:
         await db.commit()
 
         assert await process_one_run() is True
-        async with async_session_factory() as db:
-            run = await db.get(KnowledgeAgentRun, run.id)
+        # 独立命名会话，避免遮蔽外层 db；退出 async with 后连接归还连接池
+        async with async_session_factory() as check_db:
+            run = await check_db.get(KnowledgeAgentRun, run.id)
             assert run.status == RUN_CANCELLED
             assert run.active_slot is None
             assert run.answer_json is None
-        assistant = await db.get(KnowledgeMessage, run.assistant_message_id)
-        assert assistant.content == ""
+            assistant = await check_db.get(KnowledgeMessage, run.assistant_message_id)
+            assert assistant.content == ""
 
 
 @pytest.mark.asyncio

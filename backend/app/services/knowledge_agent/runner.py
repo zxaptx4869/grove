@@ -259,6 +259,7 @@ async def execute_run(db: AsyncSession, run: KnowledgeAgentRun) -> None:
             history_limit=settings.knowledge_agent_history_limit,
             history_message_chars=settings.knowledge_agent_history_message_chars,
             user_message_id=run.user_message_id,
+            exclude_run_id=run.id,
         )
         await record_model_invocation(
             db,

@@ -20,12 +20,14 @@ from app.models.knowledge_agent import (
     MESSAGE_ROLE_USER,
     SCOPE_WORKSPACE,
 )
+from app.schemas.knowledge_agent import KnowledgeRunSubmitRequest
 from app.services.knowledge_agent.follow_up import (
     DEFAULT_CLARIFY_QUESTION,
     NO_ACTIVE_TOPIC_CLARIFY,
     decide_context,
     select_decision_history,
 )
+from app.services.knowledge_agent.runs import submit_message
 from tests._knowledge_agent_fixtures import create_user, create_workspace
 
 
@@ -379,6 +381,131 @@ async def test_history_selection_limit_and_truncation() -> None:
         assert history[1]["role"] == MESSAGE_ROLE_USER
         assert len(history[1]["content"]) == 100
         assert current.id not in ids
+
+
+@pytest.mark.asyncio
+async def test_real_submit_history_window_excludes_current_run_and_placeholders(
+    monkeypatch,
+) -> None:
+    """真实提交流程：当前 Run 用户消息与空助手占位不进历史，占位不挤掉有效条数。"""
+    monkeypatch.setattr(
+        "app.services.knowledge_agent.follow_up.run_context_decision_agent",
+        _fake_agent(
+            ContextDecisionDraft(
+                action="new_topic",
+                standalone_query="历史窗口问题",
+                topic_label="历史窗口",
+            )
+        ),
+    )
+    async with async_session_factory() as db:
+        user = await create_user(db, "真实历史窗口")
+        workspace = await create_workspace(db, user)
+        conversation = await _conversation(db, user, workspace)
+        # 5 对有效历史 + 1 条历史空助手占位 + 1 条超长消息对（验证截断）
+        valid_ids: list[int] = []
+        for index in range(5):
+            user_row = await _message(
+                db, conversation, MESSAGE_ROLE_USER, f"历史问题 {index}"
+            )
+            assistant_row = await _message(
+                db, conversation, MESSAGE_ROLE_ASSISTANT, f"历史回答 {index}"
+            )
+            valid_ids.extend([user_row.id, assistant_row.id])
+        stale_placeholder = await _message(db, conversation, MESSAGE_ROLE_ASSISTANT, "")
+        long_user = await _message(
+            db, conversation, MESSAGE_ROLE_USER, "长" * 1200
+        )
+        long_assistant = await _message(
+            db, conversation, MESSAGE_ROLE_ASSISTANT, "长回答"
+        )
+        await db.commit()
+
+        # 真实提交：创建当前用户消息、空助手占位与 waiting Run
+        user_message, run = await submit_message(
+            db,
+            conversation,
+            KnowledgeRunSubmitRequest(
+                client_message_id="history-window-real-submit",
+                message="最新问题",
+            ),
+        )
+        await db.commit()
+        assert run.user_message_id == user_message.id
+        assert run.assistant_message_id is not None
+
+        history, ids = await select_decision_history(
+            db,
+            conversation.id,
+            exclude_message_id=user_message.id,
+            exclude_run_id=run.id,
+            limit=8,
+            message_chars=100,
+        )
+        # 当前 Run 两条消息与历史空占位都被排除，仍取满 8 条有效历史
+        assert len(ids) == 8
+        assert user_message.id not in ids
+        assert run.assistant_message_id not in ids
+        assert stale_placeholder.id not in ids
+        # 读取顺序为时间正序：最早的是历史问题 2，最新的是「长回答」
+        assert ids[0] == valid_ids[4]  # 历史问题 2
+        assert set(ids) == set(valid_ids[4:]) | {long_user.id, long_assistant.id}
+        assert ids[-1] == long_assistant.id
+        assert ids[-2] == long_user.id
+        # 超长内容按配置截断
+        assert len(history[-2]["content"]) == 100
+        assert history[-1]["content"] == "长回答"
+
+        # 集成路径：decide_context 使用同一窗口并透传排除结果
+        result = await decide_context(
+            db,
+            workspace_id=workspace.id,
+            conversation_id=conversation.id,
+            current_message=user_message.content,
+            request_mode=CONTEXT_MODE_AUTO,
+            active_topic_label="历史窗口",
+            working_set_titles=[],
+            history_limit=8,
+            history_message_chars=100,
+            user_message_id=user_message.id,
+            exclude_run_id=run.id,
+        )
+        assert result.history_message_ids == ids
+        assert result.decision == CONTEXT_DECISION_NEW_TOPIC
+
+
+@pytest.mark.asyncio
+async def test_history_selection_skips_stale_empty_assistant_placeholders() -> None:
+    """历史遗留空助手占位被忽略：不挤掉有效历史条数。"""
+    async with async_session_factory() as db:
+        user = await create_user(db, "历史占位")
+        workspace = await create_workspace(db, user)
+        conversation = await _conversation(db, user, workspace)
+        for index in range(3):
+            await _message(db, conversation, MESSAGE_ROLE_USER, f"问题 {index}")
+            assistant_row = await _message(
+                db, conversation, MESSAGE_ROLE_ASSISTANT, f"回答 {index}"
+            )
+            if index == 2:
+                latest_valid_assistant_id = assistant_row.id
+        # 两条无内容助手占位混在历史中
+        await _message(db, conversation, MESSAGE_ROLE_ASSISTANT, "")
+        await _message(db, conversation, MESSAGE_ROLE_ASSISTANT, "   ")
+        current = await _message(db, conversation, MESSAGE_ROLE_USER, "最新问题")
+        await db.commit()
+
+        history, ids = await select_decision_history(
+            db,
+            conversation.id,
+            exclude_message_id=current.id,
+            limit=3,
+            message_chars=500,
+        )
+        # 占位不占窗口：仍取最近 3 条有效历史（回答 2、问题 2、回答 1）
+        assert len(history) == 3
+        assert len(ids) == 3
+        assert ids[-1] == latest_valid_assistant_id  # 回答 2
+        assert all(item["role"] != MESSAGE_ROLE_ASSISTANT or item["content"] for item in history)
 
 
 @pytest.mark.asyncio

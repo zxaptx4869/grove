@@ -69,35 +69,54 @@ async def select_decision_history(
     db: AsyncSession,
     conversation_id: int,
     *,
-    exclude_message_id: int | None,
+    exclude_message_id: int | None = None,
+    exclude_run_id: int | None = None,
     limit: int,
     message_chars: int,
 ) -> tuple[list[dict], list[int]]:
-    """选择最近有限条用户/助手消息并截断，返回 (消息, 实际消息 ID)。"""
-    rows = (
-        await db.execute(
-            select(KnowledgeMessage)
-            .where(
-                KnowledgeMessage.conversation_id == conversation_id,
-                KnowledgeMessage.role.in_([MESSAGE_ROLE_USER, MESSAGE_ROLE_ASSISTANT]),
-            )
-            .order_by(
-                KnowledgeMessage.created_at.desc(),
-                KnowledgeMessage.id.desc(),
-            )
-            .limit(limit + 1)
-        )
-    ).scalars().all()
+    """选择最近有限条有效用户/助手消息并截断，返回 (消息, 实际消息 ID)。
+
+    排除当前 Run 的用户消息与空助手占位消息，并忽略历史遗留的无内容助手
+    占位；被占位挤掉的空位由更早的有效消息补足，避免占位使窗口少取一条。
+    """
     selected: list[dict] = []
     message_ids: list[int] = []
-    for row in rows:
-        if exclude_message_id is not None and row.id == exclude_message_id:
-            continue
-        content = row.content[:message_chars]
-        selected.append({"role": row.role, "content": content})
-        message_ids.append(row.id)
-        if len(selected) >= limit:
+    page_size = max(limit + 10, 20)
+    offset = 0
+    while len(selected) < limit:
+        rows = (
+            await db.execute(
+                select(KnowledgeMessage)
+                .where(
+                    KnowledgeMessage.conversation_id == conversation_id,
+                    KnowledgeMessage.role.in_(
+                        [MESSAGE_ROLE_USER, MESSAGE_ROLE_ASSISTANT]
+                    ),
+                )
+                .order_by(
+                    KnowledgeMessage.created_at.desc(),
+                    KnowledgeMessage.id.desc(),
+                )
+                .limit(page_size)
+                .offset(offset)
+            )
+        ).scalars().all()
+        if not rows:
             break
+        offset += len(rows)
+        for row in rows:
+            if exclude_message_id is not None and row.id == exclude_message_id:
+                continue
+            if exclude_run_id is not None and row.run_id == exclude_run_id:
+                continue
+            # 空助手占位（当前或其他历史 Run）不参与意图理解
+            if row.role == MESSAGE_ROLE_ASSISTANT and not row.content.strip():
+                continue
+            content = row.content[:message_chars]
+            selected.append({"role": row.role, "content": content})
+            message_ids.append(row.id)
+            if len(selected) >= limit:
+                break
     # 恢复时间正序，供决策模型阅读
     selected.reverse()
     message_ids.reverse()
@@ -116,12 +135,14 @@ async def decide_context(
     history_limit: int,
     history_message_chars: int,
     user_message_id: int | None = None,
+    exclude_run_id: int | None = None,
 ) -> ContextDecisionResult:
     """执行上下文决策：显式覆盖优先，auto 走决策模型，均做归一化与安全降级。"""
     history, history_ids = await select_decision_history(
         db,
         conversation_id,
         exclude_message_id=user_message_id,
+        exclude_run_id=exclude_run_id,
         limit=history_limit,
         message_chars=history_message_chars,
     )

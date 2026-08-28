@@ -1,9 +1,9 @@
 ## 1. 骨架搭建前置：修复连续追问验收遗留
 
-- [ ] 1.1 调整有限历史选择，排除当前 Run 的用户消息、当前空助手占位和其他无内容助手占位，同时补足被占位挤掉的有效历史条数
-- [ ] 1.2 用真实消息提交流程补充历史窗口回归测试，断言实际消息 ID、顺序、内容截断与当前占位排除；运行 `cd backend && .venv/bin/python -m pytest tests/test_knowledge_agent_follow_up.py`
-- [ ] 1.3 修复跨会话取消测试的 session/engine 资源回收，确保不再出现 aiosqlite 连接被 GC 回收的 warning；运行 `cd backend && .venv/bin/python -m pytest tests/test_knowledge_agent_worker.py -W error`
-- [ ] 1.4 完成前置修复本地提交，提交信息使用 `fix: 硬化知识 Agent 历史与并发测试`
+- [x] 1.1 调整有限历史选择，排除当前 Run 的用户消息、当前空助手占位和其他无内容助手占位，同时补足被占位挤掉的有效历史条数
+- [x] 1.2 用真实消息提交流程补充历史窗口回归测试，断言实际消息 ID、顺序、内容截断与当前占位排除；运行 `cd backend && .venv/bin/python -m pytest tests/test_knowledge_agent_follow_up.py`
+- [x] 1.3 修复跨会话取消测试的 session/engine 资源回收，确保不再出现 aiosqlite 连接被 GC 回收的 warning；运行 `cd backend && .venv/bin/python -m pytest tests/test_knowledge_agent_worker.py -W error`
+- [x] 1.4 完成前置修复本地提交，提交信息使用 `fix: 硬化知识 Agent 历史与并发测试`
 
 ## 2. 骨架搭建：调查模型、状态与迁移
 
