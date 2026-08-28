@@ -8,10 +8,13 @@ from sqlalchemy import func, select, text, update
 
 from app.core.config import get_settings
 from app.db.session import async_session_factory, engine
-from app.models import KnowledgeAgentRun
+from app.models import KnowledgeAgentRun, KnowledgeInvestigation
 from app.models.knowledge_agent import (
+    INVESTIGATION_STATUS_ACTIVE,
+    INVESTIGATION_STATUS_CANCELLED,
     RUN_PROCESSING,
     RUN_WAITING,
+    STOP_REASON_CANCELLED,
 )
 from app.services.knowledge_agent.runner import RunCancelled, execute_run
 from app.services.knowledge_agent.runs import (
@@ -112,6 +115,20 @@ async def _finalize_cancelled_after_interrupt(run_id: int) -> None:
         run = await db.get(KnowledgeAgentRun, run_id)
         if run is not None and run.status == RUN_PROCESSING:
             await finalize_cancelled(db, run, "运行中被取消")
+            # 已提交轮次保留审计；活动调查进入取消终态
+            investigation = (
+                await db.execute(
+                    select(KnowledgeInvestigation).where(
+                        KnowledgeInvestigation.run_id == run_id
+                    )
+                )
+            ).scalar_one_or_none()
+            if (
+                investigation is not None
+                and investigation.status == INVESTIGATION_STATUS_ACTIVE
+            ):
+                investigation.status = INVESTIGATION_STATUS_CANCELLED
+                investigation.stop_reason = STOP_REASON_CANCELLED
             await db.commit()
 
 

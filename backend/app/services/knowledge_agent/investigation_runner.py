@@ -134,6 +134,42 @@ async def _get_or_create_investigation(
     return investigation
 
 
+async def _reset_incomplete_rounds(
+    db: AsyncSession,
+    investigation: KnowledgeInvestigation,
+) -> None:
+    """崩溃恢复：安全重置未完成轮次，从该轮重新开始。
+
+    已完成轮次是事务检查点（status=completed）；崩溃留下的 running/failed
+    轮次与其计划查询一并删除，避免唯一约束冲突和半成品观察。已提交的
+    Evidence 保留并由 `create_answer_evidence` 幂等复用；轮次号、查询、
+    助手回答与预算计数都不会重复。
+    """
+    rows = (
+        await db.execute(
+            select(KnowledgeInvestigationRound).where(
+                KnowledgeInvestigationRound.investigation_id == investigation.id,
+                KnowledgeInvestigationRound.status != INVESTIGATION_ROUND_COMPLETED,
+            )
+        )
+    ).scalars().all()
+    if not rows:
+        return
+    round_ids = [row.id for row in rows]
+    queries = (
+        await db.execute(
+            select(KnowledgeInvestigationQuery).where(
+                KnowledgeInvestigationQuery.round_id.in_(round_ids)
+            )
+        )
+    ).scalars().all()
+    for query in queries:
+        await db.delete(query)
+    for round_row in rows:
+        await db.delete(round_row)
+    await db.flush()
+
+
 def _working_set_summary(working_set: WorkingSetValidation) -> str:
     """工作集短摘要：只含标题线索，不复制正文。"""
     return "；".join(item.entry_title for item in working_set.items[:10])
@@ -288,7 +324,8 @@ async def _execute_query_round(
         await _check_cancelled(run.id)
         await update_run_step(run.id, STEP_ROUND_SEARCH)
         query_row.status = INVESTIGATION_QUERY_RUNNING
-        await db.flush()
+        # 提交状态变更，避免主会话写锁阻塞跨会话取消的短会话
+        await db.commit()
         started = perf_counter()
         search = await search_confirmed_knowledge(
             db,
@@ -343,6 +380,8 @@ async def _execute_query_round(
             query_sequence=query_row.sequence,
         )
         await db.commit()
+        # 每个查询工具批次后检查取消：搜索期间设置的取消在此边界命中
+        await _check_cancelled(run.id)
 
         denied_count = 0
         unavailable_count = 0
@@ -505,6 +544,7 @@ async def _synthesize_investigation_answer(
     working_set: WorkingSetValidation,
 ) -> tuple[KnowledgeAnswerOut, str, list[dict]]:
     """最终综合：只传当前 Run Evidence 与紧凑账本，返回 (回答, Run 状态, 引用线索)。"""
+    await _check_cancelled(run.id)
     if ledger.distinct_evidence_count() == 0:
         answer = _insufficient_answer(
             "调查未获得可核验的当前 Run 证据，无法给出带引用的确定结论。",
@@ -617,9 +657,14 @@ async def execute_investigation(
     settings = get_settings()
     scope = scope_label(run.scope_type, run.project_name)
     investigation = await _get_or_create_investigation(db, run, decision)
+    # 恢复：重置上次执行未完成轮次，再重建账本与剩余预算
+    await _reset_incomplete_rounds(db, investigation)
     await db.commit()
 
     ledger = await rebuild_ledger(db, investigation, run.id)
+    # 恢复：把重建出的已发现 Entry 回填到工具上下文，保证后续读取与综合授权
+    for entry_id in ledger.discovered_entries:
+        ctx.discovered_entry_ids.add(entry_id)
     # 复验有效的工作集种子进入已发现集合（round=0，不计入发现预算）
     for seed in seed_entries:
         ctx.discovered_entry_ids.add(seed.id)
@@ -632,9 +677,10 @@ async def execute_investigation(
             )
         )
 
-    stop_reason: str | None = None
+    # 恢复：若上次执行已在停止检查点提交停止原因，直接进入综合，不重复轮次
+    stop_reason: str | None = investigation.stop_reason
     round_number = investigation.current_round + 1
-    while round_number <= investigation.max_rounds:
+    while stop_reason is None and round_number <= investigation.max_rounds:
         await _check_cancelled(run.id)
         await update_run_step(run.id, STEP_ROUND_PLAN)
         controller_draft, controller_meta = await run_investigation_controller(

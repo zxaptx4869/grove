@@ -46,13 +46,13 @@
 
 ## 6. 实现：检查点恢复、取消与终态一致性
 
-- [ ] 6.1 将完成轮次作为事务检查点，恢复时从持久化查询、Entry/Evidence 和轮次摘要重建账本与剩余预算
-- [ ] 6.2 对未完成轮次实现安全重置或幂等重放；恢复不得重复轮次号、查询、Evidence、助手回答或预算计数
-- [ ] 6.3 在回答模式路由、控制器调用、每个查询工具批次、Evidence 读取和最终综合前后使用独立短会话检查取消
-- [ ] 6.4 取消时保留已提交轮次供审计，原子更新 Run/Investigation 取消状态和活动槽；丢弃未提交模型/工具结果且不生成正常回答或工作集
-- [ ] 6.5 将助手消息、Run/Investigation 终态与摘要、活动槽和可选工作集放入最终一致事务；提交失败可按租约恢复
-- [ ] 6.6 增加各阶段崩溃、完成两轮后恢复、未完成轮幂等重放、跨事务取消、迟到结果、最终事务回滚与两个 Worker 竞争测试；运行 `cd backend && .venv/bin/python -m pytest tests/test_knowledge_agent_investigation_recovery.py tests/test_knowledge_agent_worker.py -W error`
-- [ ] 6.7 完成恢复与取消本地提交，提交信息使用 `feat: 支持知识 Agent 调查恢复与取消`
+- [x] 6.1 将完成轮次作为事务检查点，恢复时从持久化查询、Entry/Evidence 和轮次摘要重建账本与剩余预算
+- [x] 6.2 对未完成轮次实现安全重置或幂等重放；恢复不得重复轮次号、查询、Evidence、助手回答或预算计数
+- [x] 6.3 在回答模式路由、控制器调用、每个查询工具批次、Evidence 读取和最终综合前后使用独立短会话检查取消
+- [x] 6.4 取消时保留已提交轮次供审计，原子更新 Run/Investigation 取消状态和活动槽；丢弃未提交模型/工具结果且不生成正常回答或工作集
+- [x] 6.5 将助手消息、Run/Investigation 终态与摘要、活动槽和可选工作集放入最终一致事务；提交失败可按租约恢复
+- [x] 6.6 增加各阶段崩溃、完成两轮后恢复、未完成轮幂等重放、跨事务取消、迟到结果、最终事务回滚与两个 Worker 竞争测试；运行 `cd backend && .venv/bin/python -m pytest tests/test_knowledge_agent_investigation_recovery.py tests/test_knowledge_agent_worker.py -W error`
+- [x] 6.7 完成恢复与取消本地提交，提交信息使用 `feat: 支持知识 Agent 调查恢复与取消`
 
 ## 7. 实现：API、进度与可观测性
 
