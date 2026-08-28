@@ -51,5 +51,5 @@
 - [x] 7.2 在 SQLite 用真实 API 走查首问、自动追问、强制继续、强制新话题、澄清、范围切换、引用重新核验、幂等和取消，并记录 curl 请求、状态码、决策与工作集版本
 - [x] 7.3 使用可用 MySQL 8 环境验证迁移、单活动工作集约束、运行中步骤可见、跨事务取消和崩溃恢复；记录环境与结果
 - [x] 7.4 运行 `openspec validate --all --strict`，核对实现与 proposal、design、六份 delta specs 及权威产品专题一致
-- [ ] 7.5 向用户逐条说明遗留问题与影响，获同意后再登记后续优化；用户手动验收通过后执行 `openspec archive add-knowledge-agent-continuous-follow-up` 并同步主规格
-- [ ] 7.6 归档后完成本地提交并停在 push/merge 前，等待用户明确确认
+- [x] 7.5 向用户逐条说明遗留问题与影响，获同意后再登记后续优化；用户手动验收通过后执行 `openspec archive add-knowledge-agent-continuous-follow-up` 并同步主规格
+- [x] 7.6 归档后完成本地提交并停在 push/merge 前，等待用户明确确认

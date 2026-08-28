@@ -7,6 +7,10 @@
 - **WHEN** Run 决策为新话题且 embedding 与重排可用
 - **THEN** 系统在固化范围内按当前独立查询召回和重排相关正式 Entry
 
+#### Scenario: 按问题召回上下文
+- **WHEN** Run 搜索用户问题且 embedding 与重排可用
+- **THEN** 系统在固化范围内合并确定性与 embedding 召回，并将语义重排后的相关正式 Entry 作为回答上下文
+
 #### Scenario: 追问合并工作集与新召回
 - **WHEN** Run 决策为继续当前主题
 - **THEN** 系统合并复验有效的工作集 Entry 与新召回项，并按独立查询统一重排为回答上下文
@@ -25,6 +29,14 @@
 #### Scenario: 连续回答附本轮真实引用
 - **WHEN** 追问回答使用上一主题工作集中的 Entry
 - **THEN** 关键结论引用当前 Run 重新生成的 Evidence，而不是复用历史句柄
+
+#### Scenario: 回答附真实引用
+- **WHEN** 回答中包含基于已确认 Entry 的关键结论
+- **THEN** 该结论引用当前 Run 的 Evidence，且 `quote` 是实际 Source Attachment 中核验过的原文
+
+#### Scenario: 丢弃非法引用
+- **WHEN** 模型输出其他 Run、范围外、未知或不可引用的 Evidence 句柄
+- **THEN** 该引用被丢弃，不进入响应
 
 #### Scenario: 丢弃部分非法引用
 - **WHEN** 模型同时输出当前 Run 有效句柄和历史、范围外或未知句柄
@@ -45,6 +57,10 @@
 - **WHEN** 当前范围内的新召回与复验工作集都没有足以回答问题的正式 Entry
 - **THEN** 回答明确说明知识不足、不编造内容并标记 `insufficient`
 
+#### Scenario: 有 Entry 但无可核验证据
+- **WHEN** 召回到相关 Entry 但其来源原文无法读取或核验
+- **THEN** 系统说明证据不足且不以未经核验的引用支持确定性结论
+
 #### Scenario: 有 Entry 但无本轮可核验证据
 - **WHEN** 召回或工作集包含相关 Entry 但其当前来源原文无法读取或核验
 - **THEN** 系统说明证据不足且不以历史 Evidence 或未经核验引用支持确定性结论
@@ -54,6 +70,10 @@
 
 #### Scenario: 正常连续回答记录各阶段来源
 - **WHEN** 上下文决策及问答各 AI 阶段均由真实模型完成且引用有效
+- **THEN** 每个模型阶段记录实际 provider/model 与 `is_fallback=false`，Run 不显示降级
+
+#### Scenario: 正常回答记录各阶段来源
+- **WHEN** 问答各 AI 阶段均由真实模型完成
 - **THEN** 每个模型阶段记录实际 provider/model 与 `is_fallback=false`，Run 不显示降级
 
 #### Scenario: 单阶段降级可识别

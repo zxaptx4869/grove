@@ -114,3 +114,22 @@ DATABASE_URL="mysql+asyncmy://root@127.0.0.1:33063/grove_mysql_test?charset=utf8
 
 结论：MySQL 8 下迁移、单活动版本约束、多终态 NULL、运行中步骤可见与跨事务
 取消语义均符合 design 第 7 条（短会话读写）与 specs 的契约。
+
+## 人工验收（用户委托代理执行）
+
+验收日期：2026-08-28（第二轮，端口 8013，全新用户 `accept_followup`）
+用户将手动验收委托给代理执行，结果与第一轮走查一致：
+
+| 场景 | 结果 |
+|---|---|
+| 首问（auto，离线降级） | 201 → `new_topic`、输出版本 5、`context_degraded=true` |
+| 自动追问 | `new_topic`、输入版本 5、输出版本 6 |
+| 强制继续（continue） | `continue`、独立查询 = 「主题：原问题」、输入版本 6、无输出版本（无有效引用不推进） |
+| 强制新话题（new_topic） | 提交关闭旧活动版本、输出版本 7（空主题） |
+| 范围切换 | 200，`active_topic_label=None`、活动版本关闭 |
+| 无工作集强制继续 | `clarify`、`answer.status=clarification`、无版本 |
+| 幂等重试（改模式） | 200，返回首次 Run（模式仍为 `continue`） |
+| 取消 waiting Run | `cancelled`、无回答、无决策 |
+
+验收结论：连续追问、工作集版本、显式覆盖、澄清、范围切换、幂等与取消
+均符合 proposal / design / delta specs 契约，通过验收。
