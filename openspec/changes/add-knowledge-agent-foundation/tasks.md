@@ -1,9 +1,9 @@
 ## 1. 骨架搭建：数据模型与迁移
 
-- [ ] 1.1 新增知识对话、消息、Agent Run、工具调用、模型调用与 Run Evidence 的 SQLAlchemy 模型和枚举，落实用户/Workspace 归属、范围快照、外键、游标排序字段与内容指纹
-- [ ] 1.2 为 `(conversation_id, client_message_id)` 幂等键和 `(conversation_id, active_slot)` 单活动 Run 约束新增 Alembic 迁移，并确认终态 `active_slot=NULL` 同时兼容 SQLite 与 MySQL 8
-- [ ] 1.3 新增对话、范围、消息、Run、阶段记录、Evidence 与分页响应的 Pydantic schemas，确保 API 不返回原始 prompt 或整份 Attachment
-- [ ] 1.4 增加模型与迁移测试并运行 `cd backend && .venv/bin/python -m pytest tests/test_knowledge_agent_models.py`
+- [x] 1.1 新增知识对话、消息、Agent Run、工具调用、模型调用与 Run Evidence 的 SQLAlchemy 模型和枚举，落实用户/Workspace 归属、范围快照、外键、游标排序字段与内容指纹
+- [x] 1.2 为 `(conversation_id, client_message_id)` 幂等键和 `(conversation_id, active_slot)` 单活动 Run 约束新增 Alembic 迁移，并确认终态 `active_slot=NULL` 同时兼容 SQLite 与 MySQL 8
+- [x] 1.3 新增对话、范围、消息、Run、阶段记录、Evidence 与分页响应的 Pydantic schemas，确保 API 不返回原始 prompt 或整份 Attachment
+- [x] 1.4 增加模型与迁移测试并运行 `cd backend && .venv/bin/python -m pytest tests/test_knowledge_agent_models.py`
 
 ## 2. 骨架搭建：对话与 Run 应用服务
 
