@@ -74,7 +74,7 @@
 
 ## 9. 收尾：评审、遗留与归档
 
-- [ ] 9.1 检查本 change 没有引入联网、知识写入、客户端 UI、任意工具循环或跨 Run 事实记忆，并完成安全/隔离/证据边界代码复核
+- [x] 9.1 检查本 change 没有引入联网、知识写入、客户端 UI、任意工具循环或跨 Run 事实记忆，并完成安全/隔离/证据边界代码复核
 - [ ] 9.2 向用户逐条说明遗留问题、背景和影响；仅在用户同意后登记到 `docs/discussions/Grove后续优化清单.md`
 - [ ] 9.3 等待用户手动验收通过后执行 `openspec archive add-knowledge-agent-bounded-investigation`，再次运行 `openspec validate --all --strict` 并完成归档本地提交
 - [ ] 9.4 停在 push/merge 前等待用户明确确认，不自行推送或合并
