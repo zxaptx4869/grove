@@ -1,4 +1,9 @@
-"""Reader 问答 API。"""
+"""Reader 问答 API。
+
+兼容边界：本项目在知识 Agent 底座（/api/knowledge-agent）上线后仍保留旧 Reader
+端点，供现有 Web 页面在迁移前继续使用；新知识 Agent 协议不依赖本端点，也不在本
+change 中删除或代理。后续 Web 接入 change 完成迁移与人工验收后，再单独移除。
+"""
 
 from typing import Annotated
 

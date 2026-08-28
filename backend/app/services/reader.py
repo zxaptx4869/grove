@@ -1,4 +1,9 @@
-"""Reader 问答服务：范围加载、证据召回、带引用回答与保存转候选。"""
+"""Reader 问答服务：范围加载、证据召回、带引用回答与保存转候选。
+
+兼容边界：本服务是旧 Web Reader 的一次性问答链路，保留给现有页面在迁移前使用；
+知识 Agent 底座（knowledge_agent 服务包）复用其中的混合召回与证据归一化，但不再
+沿用节点级范围与自由 quote 引用，新能力按知识 Agent delta specs 实现。
+"""
 
 import json
 import logging
