@@ -1,0 +1,14 @@
+{
+  "expo": {
+    "name": "知林 Grove",
+    "slug": "grove-mobile",
+    "scheme": "grove",
+    "version": "0.1.0",
+    "orientation": "portrait",
+    "userInterfaceStyle": "light",
+    "plugins": ["expo-router", "expo-secure-store"],
+    "experiments": { "typedRoutes": true },
+    "ios": { "supportsTablet": true },
+    "android": { "adaptiveIcon": { "backgroundColor": "#F7F8F7" } }
+  }
+}

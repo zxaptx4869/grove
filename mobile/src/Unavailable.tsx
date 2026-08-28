@@ -1,0 +1,4 @@
+import { StyleSheet, Text, View } from "react-native";
+import { theme } from "@/src/theme";
+export function Unavailable({ title, detail }: { title: string; detail: string }) { return <View style={s.page}><View style={s.icon}><Text style={s.iconText}>G</Text></View><Text style={s.title}>{title}尚未接入</Text><Text style={s.detail}>{detail}</Text><Text style={s.note}>此栏目不会展示模拟业务数据。</Text></View>; }
+const s=StyleSheet.create({page:{flex:1,backgroundColor:theme.bg,padding:24,justifyContent:"center",alignItems:"center"},icon:{width:44,height:44,borderRadius:10,backgroundColor:theme.greenSoft,alignItems:"center",justifyContent:"center",marginBottom:16},iconText:{color:theme.green,fontWeight:"800"},title:{fontSize:20,fontWeight:"700",color:theme.ink},detail:{color:theme.muted,textAlign:"center",lineHeight:21,marginTop:8},note:{marginTop:18,fontSize:12,color:theme.muted}});
