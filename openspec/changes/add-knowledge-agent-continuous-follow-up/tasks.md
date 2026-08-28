@@ -39,11 +39,11 @@
 
 ## 6. 实现：API 兼容与恢复
 
-- [ ] 6.1 扩展消息提交 API 接收可选 `context_mode`，幂等重试始终返回首次模式/决策；旧客户端不传时保持 `auto`
-- [ ] 6.2 扩展对话、消息和 Run 查询，返回活动主题摘要、上下文决策、独立查询、输入/输出版本与澄清状态，同时保持其他用户/Workspace 一律 404
-- [ ] 6.3 扩展范围切换事务关闭活动工作集；活动 Run 期间仍返回 409 且不改变范围或版本
-- [ ] 6.4 确保 Worker 崩溃恢复继续使用 Run 固化输入版本，重复执行不产生多个活动工作集或重复助手回答
-- [ ] 6.5 增加 API 级默认/显式模式、幂等、轮询进度、澄清、版本恢复、范围切换和跨 Workspace 隔离测试，并运行 `cd backend && .venv/bin/python -m pytest tests/test_knowledge_agent_api.py tests/test_knowledge_agent_worker.py`
+- [x] 6.1 扩展消息提交 API 接收可选 `context_mode`，幂等重试始终返回首次模式/决策；旧客户端不传时保持 `auto`
+- [x] 6.2 扩展对话、消息和 Run 查询，返回活动主题摘要、上下文决策、独立查询、输入/输出版本与澄清状态，同时保持其他用户/Workspace 一律 404
+- [x] 6.3 扩展范围切换事务关闭活动工作集；活动 Run 期间仍返回 409 且不改变范围或版本
+- [x] 6.4 确保 Worker 崩溃恢复继续使用 Run 固化输入版本，重复执行不产生多个活动工作集或重复助手回答
+- [x] 6.5 增加 API 级默认/显式模式、幂等、轮询进度、澄清、版本恢复、范围切换和跨 Workspace 隔离测试，并运行 `cd backend && .venv/bin/python -m pytest tests/test_knowledge_agent_api.py tests/test_knowledge_agent_worker.py`
 
 ## 7. 验证与收尾
 

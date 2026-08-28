@@ -18,6 +18,8 @@ from app.models import (
 )
 from app.models.knowledge_agent import (
     ACTIVE_SLOT,
+    CONTEXT_CLOSE_REASON_NEW_TOPIC,
+    CONTEXT_MODE_NEW_TOPIC,
     MESSAGE_ROLE_ASSISTANT,
     MESSAGE_ROLE_USER,
     MESSAGE_TYPE_ASSISTANT,
@@ -37,6 +39,10 @@ from app.schemas.knowledge_agent import (
 from app.services.knowledge_agent.conversations import (
     DEFAULT_CONVERSATION_TITLE,
     active_run_for_conversation,
+)
+from app.services.knowledge_agent.working_set import (
+    close_active_context_version,
+    get_active_context_version,
 )
 
 logger = logging.getLogger(__name__)
@@ -118,6 +124,15 @@ async def submit_message(
         )
 
     scope_type, project_id, project_name = await _scope_snapshot(db, conversation)
+    # 固化提交时的输入工作集版本；显式新话题在提交事务立即关闭旧活动版本
+    active_version = await get_active_context_version(db, conversation.id)
+    input_context_version_id = active_version.id if active_version is not None else None
+    if payload.context_mode == CONTEXT_MODE_NEW_TOPIC and active_version is not None:
+        await close_active_context_version(
+            db,
+            conversation.id,
+            reason=CONTEXT_CLOSE_REASON_NEW_TOPIC,
+        )
     user_message = KnowledgeMessage(
         conversation_id=conversation.id,
         role=MESSAGE_ROLE_USER,
@@ -159,6 +174,7 @@ async def submit_message(
         project_name=project_name,
         user_message_id=user_message.id,
         request_context_mode=payload.context_mode,
+        input_context_version_id=input_context_version_id,
         status=RUN_WAITING,
         current_step="waiting",
         active_slot=ACTIVE_SLOT,

@@ -13,6 +13,7 @@ from app.knowledge_agent_worker import (
     recover_stale_runs,
 )
 from app.models import (
+    KnowledgeAgentModelInvocation,
     KnowledgeAgentRun,
     KnowledgeConversation,
     KnowledgeMessage,
@@ -28,6 +29,10 @@ from app.models.knowledge_agent import (
 from app.schemas.knowledge_agent import KnowledgeRunSubmitRequest
 from app.services.knowledge_agent.runs import submit_message
 from app.services.knowledge_agent.tools import RunToolContext, SearchToolOutput
+from app.services.knowledge_agent.working_set import (
+    get_active_context_version,
+    get_conversation_context_versions,
+)
 from tests._knowledge_agent_fixtures import (
     create_child_node,
     create_entry_with_evidence,
@@ -365,3 +370,157 @@ async def test_retry_limit_exhausted_marks_failed(monkeypatch) -> None:
             assert run.active_slot is None
             assert "超过恢复上限" in (run.error or "")
             assert run.answer_json is None
+
+
+@pytest.mark.asyncio
+async def test_crash_recovery_reuses_input_version_without_duplicates(
+    monkeypatch,
+) -> None:
+    """崩溃恢复继续使用 Run 固化输入版本；不重复决策、不产生多个活动版本。"""
+    async with async_session_factory() as db:
+        user = await create_user(db, "版本恢复")
+        workspace = await create_workspace(db, user)
+        project = await create_project(db, workspace, "版本恢复项目")
+        node = await create_child_node(db, project, "施工")
+        source, attachment = await create_source_attachment(
+            db,
+            workspace,
+            project,
+            text_content="闭水试验通常持续 24 小时。",
+        )
+        await create_entry_with_evidence(
+            db,
+            project,
+            node,
+            source,
+            attachment,
+            title="闭水试验",
+            content="闭水试验通常持续 24 小时。",
+            quote="闭水试验通常持续 24 小时",
+        )
+        conversation, first_run = await _conversation_and_run(db, user, workspace)
+        await db.commit()
+        await _cancel_other_waiting_runs(db, keep_run_id=first_run.id)
+
+        # 第一轮：正常完成并建立活动版本
+        async with async_session_factory() as db:
+            run = await db.get(KnowledgeAgentRun, first_run.id)
+            ctx = RunToolContext(
+                run_id=run.id,
+                workspace_id=workspace.id,
+                owner_user_id=user.id,
+                scope_type=SCOPE_WORKSPACE,
+                project_id=None,
+                project_name=None,
+            )
+            verified = await _evidence_for_run(db, ctx)
+            handle = verified[0].evidence_handle
+            await db.commit()
+        monkeypatch.setattr(
+            "app.services.knowledge_agent.runner.run_knowledge_answer_agent",
+            _fake_answer_agent(
+                KnowledgeAnswerDraft(
+                    answer="闭水试验通常持续 24 小时。",
+                    citations=[KnowledgeCitationDraft(evidence_handle=handle)],
+                )
+            ),
+        )
+        assert await process_one_run() is True
+        async with async_session_factory() as db:
+            first_run = await db.get(KnowledgeAgentRun, first_run.id)
+            assert first_run.status == RUN_COMPLETED
+            first_version = await get_active_context_version(db, conversation.id)
+            assert first_version is not None
+            assert first_version.source_run_id == first_run.id
+
+        # 第二轮 continue：提交固化输入版本后在回答校验阶段崩溃
+        async with async_session_factory() as db:
+            _message, second_run = await submit_message(
+                db,
+                conversation,
+                KnowledgeRunSubmitRequest(
+                    client_message_id=f"recover-{run_id_counter()}",
+                    message="为什么不能提前放水？",
+                    context_mode="continue",
+                ),
+            )
+            second_run_id = second_run.id
+            assert second_run.input_context_version_id == first_version.id
+            await db.commit()
+            await _cancel_other_waiting_runs(db, keep_run_id=second_run_id)
+
+        async def _boom(db, run_id, draft):
+            raise RuntimeError("模拟回答校验阶段崩溃")
+
+        with monkeypatch.context() as ctx:
+            ctx.setattr(
+                "app.services.knowledge_agent.runner.build_validated_answer",
+                _boom,
+            )
+            assert await process_one_run() is True
+
+        async with async_session_factory() as db:
+            second_run = await db.get(KnowledgeAgentRun, second_run_id)
+            assert second_run.status == RUN_WAITING
+            assert second_run.retry_count == 1
+            assert second_run.output_context_version_id is None
+            assert second_run.input_context_version_id == first_version.id
+            decision_calls = (
+                await db.execute(
+                    select(KnowledgeAgentModelInvocation).where(
+                        KnowledgeAgentModelInvocation.run_id == second_run_id,
+                        KnowledgeAgentModelInvocation.purpose == "context_decision",
+                    )
+                )
+            ).scalars().all()
+            assert len(decision_calls) == 1
+            active = await get_active_context_version(db, conversation.id)
+            assert active.id == first_version.id
+
+        # 重试：复用已固化决策与输入版本，只生成一个输出版本
+        async with async_session_factory() as db:
+            run = await db.get(KnowledgeAgentRun, second_run_id)
+            ctx = RunToolContext(
+                run_id=run.id,
+                workspace_id=workspace.id,
+                owner_user_id=user.id,
+                scope_type=SCOPE_WORKSPACE,
+                project_id=None,
+                project_name=None,
+            )
+            verified = await _evidence_for_run(db, ctx)
+            retry_handle = verified[0].evidence_handle
+            await db.commit()
+        monkeypatch.setattr(
+            "app.services.knowledge_agent.runner.run_knowledge_answer_agent",
+            _fake_answer_agent(
+                KnowledgeAnswerDraft(
+                    answer="闭水试验验收前不得提前放水。",
+                    citations=[KnowledgeCitationDraft(evidence_handle=retry_handle)],
+                )
+            ),
+        )
+        assert await process_one_run() is True
+
+        async with async_session_factory() as db:
+            second_run = await db.get(KnowledgeAgentRun, second_run_id)
+            assert second_run.status == RUN_COMPLETED
+            assert second_run.output_context_version_id is not None
+            versions = await get_conversation_context_versions(
+                db, conversation.id
+            )
+            assert len(versions) == 2
+            active = await get_active_context_version(db, conversation.id)
+            assert active.id == second_run.output_context_version_id
+            assert active.parent_version_id == first_version.id
+            decision_calls = (
+                await db.execute(
+                    select(KnowledgeAgentModelInvocation).where(
+                        KnowledgeAgentModelInvocation.run_id == second_run_id,
+                        KnowledgeAgentModelInvocation.purpose == "context_decision",
+                    )
+                )
+            ).scalars().all()
+            assert len(decision_calls) == 1
+            assistant = await db.get(KnowledgeMessage, second_run.assistant_message_id)
+            assert assistant.content == "闭水试验验收前不得提前放水。"

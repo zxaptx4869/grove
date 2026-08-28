@@ -15,6 +15,7 @@ from app.models import (
     Project,
 )
 from app.models.knowledge_agent import (
+    CONTEXT_CLOSE_REASON_SCOPE_CHANGE,
     MESSAGE_ROLE_SYSTEM,
     MESSAGE_TYPE_SCOPE_CHANGE,
     RUN_ACTIVE_STATUSES,
@@ -27,7 +28,10 @@ from app.schemas.knowledge_agent import (
     KnowledgeMessageOut,
     KnowledgeScopeChangeRequest,
 )
-from app.services.knowledge_agent.working_set import active_context_summaries
+from app.services.knowledge_agent.working_set import (
+    active_context_summaries,
+    close_active_context_version,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -317,6 +321,12 @@ async def change_scope(
     conversation.scope_type = payload.scope_type
     conversation.project_id = new_project_id
     conversation.last_activity_at = datetime.now(UTC)
+    # 范围切换事务同时关闭活动工作集；历史版本保留原范围快照
+    await close_active_context_version(
+        db,
+        conversation.id,
+        reason=CONTEXT_CLOSE_REASON_SCOPE_CHANGE,
+    )
 
     message = KnowledgeMessage(
         conversation_id=conversation.id,
