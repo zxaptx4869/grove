@@ -408,6 +408,52 @@ async def test_source_evidence_unavailable_and_denied() -> None:
 
 
 @pytest.mark.asyncio
+async def test_read_source_evidence_deleted_source_not_crash() -> None:
+    """证据指向已删除 Source 时不崩溃，记录为不可用且不产生引用。"""
+    async with async_session_factory() as db:
+        user = await create_user(db, "孤儿来源")
+        workspace = await create_workspace(db, user)
+        project = await create_project(db, workspace, "来源项目")
+        node = await create_child_node(db, project, "施工")
+        source, attachment = await create_source_attachment(
+            db,
+            workspace,
+            project,
+            title="旧来源",
+            text_content="闭水试验通常持续 24 小时。",
+        )
+        entry = await create_entry_with_evidence(
+            db,
+            project,
+            node,
+            source,
+            attachment,
+            title="闭水试验",
+            content="闭水试验通常持续 24 小时。",
+            quote="闭水试验通常持续 24 小时",
+        )
+        # SQLite 不强制外键：直接删除 Source 会留下孤儿证据行
+        await db.delete(source)
+        await db.commit()
+
+        ctx = RunToolContext(
+            run_id=1,
+            workspace_id=workspace.id,
+            owner_user_id=user.id,
+            scope_type=SCOPE_WORKSPACE,
+            project_id=None,
+            project_name=None,
+        )
+        ctx.discovered_entry_ids.add(entry.id)
+        result = await read_source_evidence(db, ctx, entry.id, [source.id])
+        assert len(result.items) == 1
+        item = result.items[0]
+        assert item.citable is False
+        assert item.status == TOOL_UNAVAILABLE
+        assert item.reason == "Source 已删除"
+
+
+@pytest.mark.asyncio
 async def test_evidence_unverified_quote() -> None:
     """候选片段无法在原文中定位时禁止引用。"""
     async with async_session_factory() as db:

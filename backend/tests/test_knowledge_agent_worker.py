@@ -27,7 +27,7 @@ from app.models.knowledge_agent import (
 )
 from app.schemas.knowledge_agent import KnowledgeRunSubmitRequest
 from app.services.knowledge_agent.runs import submit_message
-from app.services.knowledge_agent.tools import RunToolContext
+from app.services.knowledge_agent.tools import RunToolContext, SearchToolOutput
 from tests._knowledge_agent_fixtures import (
     create_child_node,
     create_entry_with_evidence,
@@ -196,8 +196,49 @@ async def test_process_cancelled_run_releases_slot() -> None:
             assert run.status == RUN_CANCELLED
             assert run.active_slot is None
             assert run.answer_json is None
-            assistant = await db.get(KnowledgeMessage, run.assistant_message_id)
-            assert assistant.content == ""
+        assistant = await db.get(KnowledgeMessage, run.assistant_message_id)
+        assert assistant.content == ""
+
+
+@pytest.mark.asyncio
+async def test_cancel_from_other_session_during_processing(monkeypatch) -> None:
+    """处理中跨会话取消：Worker 步骤边界必须读到取消标记并丢弃结果。"""
+    async with async_session_factory() as db:
+        user = await create_user(db, "跨会话取消")
+        workspace = await create_workspace(db, user)
+        _conversation, run = await _conversation_and_run(db, user, workspace)
+        await db.commit()
+        await _cancel_other_waiting_runs(db, keep_run_id=run.id)
+    run_id = run.id
+
+    async def _search_sets_cancel(
+        db,
+        ctx,
+        query,
+        *,
+        recall_limit,
+        context_limit,
+    ):
+        """模拟 Worker 持有 run 对象期间，另一个会话提交取消请求。"""
+        async with async_session_factory() as other:
+            other_run = await other.get(KnowledgeAgentRun, run_id)
+            other_run.cancel_requested = True
+            await other.commit()
+        return SearchToolOutput(items=[])
+
+    monkeypatch.setattr(
+        "app.services.knowledge_agent.runner.search_confirmed_knowledge",
+        _search_sets_cancel,
+    )
+    assert await process_one_run() is True
+
+    async with async_session_factory() as db:
+        run = await db.get(KnowledgeAgentRun, run_id)
+        assert run.status == RUN_CANCELLED
+        assert run.active_slot is None
+        assert run.answer_json is None
+        assistant = await db.get(KnowledgeMessage, run.assistant_message_id)
+        assert assistant.content == ""
 
 
 @pytest.mark.asyncio

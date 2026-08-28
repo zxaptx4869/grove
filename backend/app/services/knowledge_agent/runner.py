@@ -3,6 +3,7 @@
 import logging
 from time import perf_counter
 
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.agents.knowledge_agent import ANSWER_PROMPT_VERSION, run_knowledge_answer_agent
@@ -45,8 +46,14 @@ class RunCancelled(Exception):
 
 async def _check_cancelled(db: AsyncSession, run_id: int) -> None:
     """步骤边界检查取消请求（从数据库重新读取，支持跨进程取消）。"""
-    run = await db.get(KnowledgeAgentRun, run_id)
-    if run is not None and run.cancel_requested and run.status == RUN_PROCESSING:
+    row = (
+        await db.execute(
+            select(KnowledgeAgentRun.cancel_requested, KnowledgeAgentRun.status).where(
+                KnowledgeAgentRun.id == run_id
+            )
+        )
+    ).first()
+    if row is not None and row.cancel_requested and row.status == RUN_PROCESSING:
         raise RunCancelled()
 
 
@@ -112,6 +119,7 @@ async def execute_run(db: AsyncSession, run: KnowledgeAgentRun) -> None:
         duration_ms=duration_ms,
     )
     if not search.items:
+        await _check_cancelled(db, run.id)
         summary = await run_fallback_summary(db, run.id)
         await finalize_run(
             db,
@@ -145,6 +153,7 @@ async def execute_run(db: AsyncSession, run: KnowledgeAgentRun) -> None:
         duration_ms=duration_ms,
     )
     if not entries.items:
+        await _check_cancelled(db, run.id)
         summary = await run_fallback_summary(db, run.id)
         await finalize_run(
             db,
@@ -198,6 +207,7 @@ async def execute_run(db: AsyncSession, run: KnowledgeAgentRun) -> None:
             break
 
     if not verified_evidence:
+        await _check_cancelled(db, run.id)
         summary = await run_fallback_summary(db, run.id)
         await finalize_run(
             db,

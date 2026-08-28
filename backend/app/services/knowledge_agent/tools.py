@@ -371,7 +371,10 @@ async def read_source_evidence(
         await db.execute(
             select(Source)
             .options(selectinload(Source.attachments))
-            .where(Source.id.in_(list(set(source_ids) & allowed_source_ids)))
+            .where(
+                Source.id.in_(list(set(source_ids) & allowed_source_ids)),
+                Source.workspace_id == ctx.workspace_id,
+            )
         )
     ).scalars().all()
     source_by_id = {source.id: source for source in source_rows}
@@ -399,7 +402,7 @@ async def read_source_evidence(
                 EvidenceReadItem(
                     entry_id=entry_id,
                     source_id=source_id,
-                    source_title=source.title,
+                    source_title="已删除来源",
                     citable=False,
                     status=TOOL_UNAVAILABLE,
                     reason="Source 已删除",
