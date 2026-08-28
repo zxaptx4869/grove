@@ -441,6 +441,11 @@ class KnowledgeContextVersion(Base):
             "active_slot",
             name="uq_knowledge_context_active_slot",
         ),
+        UniqueConstraint(
+            "conversation_id",
+            "version_number",
+            name="uq_knowledge_context_version_number",
+        ),
         Index(
             "ix_knowledge_context_claim",
             "conversation_id",

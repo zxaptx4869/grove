@@ -84,8 +84,8 @@ async def active_context_summaries(
             )
             .outerjoin(
                 KnowledgeWorkingSetItem,
-                KnowledgeWorkingSetItem.context_version_id
-                == KnowledgeContextVersion.id,
+                (KnowledgeWorkingSetItem.context_version_id == KnowledgeContextVersion.id)
+                & KnowledgeWorkingSetItem.entry_id.is_not(None),
             )
             .where(
                 KnowledgeContextVersion.conversation_id.in_(conversation_ids),
@@ -176,8 +176,10 @@ async def load_validated_working_set(
     ).scalars().all()
     entry_by_id = {entry.id: entry for entry in entries}
     path_by_node: dict[int, str] = {}
+    loaded_project_ids: set[int] = set()
     for entry in entries:
-        if entry.project_id is not None and entry.project_id not in path_by_node:
+        if entry.project_id is not None and entry.project_id not in loaded_project_ids:
+            loaded_project_ids.add(entry.project_id)
             path_by_node.update(await build_node_path_map(db, entry.project_id))
 
     validation = WorkingSetValidation()

@@ -119,7 +119,7 @@ class KnowledgeAnswerOut(BaseModel):
     """结构化回答：引用只能来自本 Run 的 Evidence 句柄。"""
 
     answer: str
-    status: AnswerStatus = "completed"
+    status: AnswerStatus
     insufficient_note: str | None = None
     citations: list[KnowledgeRunCitationOut] = []
     conflicts: list[KnowledgeConflictOut] = []

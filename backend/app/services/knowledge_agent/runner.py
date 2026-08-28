@@ -4,7 +4,9 @@ import json
 import logging
 from time import perf_counter
 
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import selectinload
 
 from app.agents.knowledge_agent import ANSWER_PROMPT_VERSION, run_knowledge_answer_agent
 from app.agents.knowledge_context import CONTEXT_DECISION_PROMPT_VERSION
@@ -14,6 +16,7 @@ from app.models import (
     KnowledgeAgentRun,
     KnowledgeContextVersion,
     KnowledgeMessage,
+    Project,
 )
 from app.models.knowledge_agent import (
     CONTEXT_DECISION_CLARIFY,
@@ -179,9 +182,10 @@ async def _build_output_version(
     return version
 
 
-async def _cited_items_from_answer(
+def _cited_items_from_answer(
     answer: KnowledgeAnswerOut,
     entries_by_id: dict[int, object],
+    source_run_id: int,
 ) -> list[dict]:
     """从最终有效引用提取本轮引用的 Entry 线索（去重、按引用顺序）。"""
     cited: list[dict] = []
@@ -198,7 +202,7 @@ async def _cited_items_from_answer(
                 "entry_title": citation.entry_title,
                 "project_name": info.project_name if info is not None else None,
                 "node_path": info.node_path if info is not None else None,
-                "source_run_id": None,
+                "source_run_id": source_run_id,
             }
         )
     return cited
@@ -300,12 +304,19 @@ async def execute_run(db: AsyncSession, run: KnowledgeAgentRun) -> None:
 
     # 继续追问：复验有效的工作集种子进入服务端已发现集合；新话题不使用旧种子
     seed_entries: list[Entry] = []
-    if decision.decision == CONTEXT_DECISION_CONTINUE:
+    if decision.decision == CONTEXT_DECISION_CONTINUE and working_set.items:
+        seed_ids = [seed.entry_id for seed in working_set.items]
         for seed in working_set.items:
             ctx.discovered_entry_ids.add(seed.entry_id)
-            entry = await db.get(Entry, seed.entry_id)
-            if entry is not None:
-                seed_entries.append(entry)
+        rows = (
+            await db.execute(
+                select(Entry)
+                .join(Project, Entry.project_id == Project.id)
+                .options(selectinload(Entry.project))
+                .where(Entry.id.in_(seed_ids))
+            )
+        ).scalars().all()
+        seed_entries = list(rows)
 
     # 步骤 1：搜索正式知识（工作集种子 + 独立查询新召回统一重排）
     await _check_cancelled(run.id)
@@ -555,7 +566,7 @@ async def execute_run(db: AsyncSession, run: KnowledgeAgentRun) -> None:
         if (answer_meta.is_fallback or factual_without_refs or ref_stats.discarded_count)
         else RUN_COMPLETED
     )
-    cited_items = await _cited_items_from_answer(answer, entries_by_id)
+    cited_items = _cited_items_from_answer(answer, entries_by_id, run.id)
 
     # 步骤 6：终态原子提交（回答 + Run 终态 + 活动槽释放 + 可选输出版本）
     await _check_cancelled(run.id)

@@ -1147,6 +1147,7 @@ async def test_runner_continue_merges_seed_and_new_discovery(monkeypatch) -> Non
         # 本轮引用优先，旧有效项按最近使用保留
         assert [item.entry_id for item in items] == [entry_b.id, entry_a.id]
         assert items[0].include_reason == "cited"
+        assert items[0].source_run_id == run.id
         assert items[1].include_reason == "recent"
         seed_calls = (
             await db.execute(

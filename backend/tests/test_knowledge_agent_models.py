@@ -25,6 +25,7 @@ from app.models import (
 )
 from app.models.knowledge_agent import (
     ACTIVE_SLOT,
+    CONTEXT_CLOSE_REASON_NEW_TOPIC,
     CONTEXT_STATUS_ACTIVE,
     CONTEXT_STATUS_CLOSED,
     RUN_ACTIVE_STATUSES,
@@ -195,12 +196,16 @@ async def test_context_version_active_slot_unique_and_terminal_null() -> None:
         user, workspace = await _user_and_workspace(db)
         conversation = await _conversation(db, user, workspace)
 
-        def _version(status: str, active_slot: str | None) -> KnowledgeContextVersion:
+        def _version(
+            status: str,
+            active_slot: str | None,
+            version_number: int = 1,
+        ) -> KnowledgeContextVersion:
             return KnowledgeContextVersion(
                 conversation_id=conversation.id,
                 workspace_id=workspace.id,
                 owner_user_id=user.id,
-                version_number=1,
+                version_number=version_number,
                 scope_type=SCOPE_WORKSPACE,
                 topic_label="闭水试验",
                 status=status,
@@ -214,9 +219,9 @@ async def test_context_version_active_slot_unique_and_terminal_null() -> None:
             await db.flush()
         await db.rollback()
 
-        db.add(_version(CONTEXT_STATUS_CLOSED, None))
+        db.add(_version(CONTEXT_STATUS_CLOSED, None, version_number=1))
         await db.flush()
-        db.add(_version(CONTEXT_STATUS_CLOSED, None))
+        db.add(_version(CONTEXT_STATUS_CLOSED, None, version_number=2))
         await db.flush()
         rows = (
             await db.execute(
@@ -227,6 +232,41 @@ async def test_context_version_active_slot_unique_and_terminal_null() -> None:
         ).scalars().all()
         assert len(rows) == 2
         assert all(row.active_slot is None for row in rows)
+
+
+@pytest.mark.asyncio
+async def test_context_version_number_unique_per_conversation() -> None:
+    """同一对话版本号唯一；不同对话允许相同版本号。"""
+    async with async_session_factory() as db:
+        user, workspace = await _user_and_workspace(db)
+        first = await _conversation(db, user, workspace)
+        second = await _conversation(db, user, workspace)
+
+        def _version(conversation_id: int) -> KnowledgeContextVersion:
+            return KnowledgeContextVersion(
+                conversation_id=conversation_id,
+                workspace_id=workspace.id,
+                owner_user_id=user.id,
+                version_number=1,
+                scope_type=SCOPE_WORKSPACE,
+                topic_label="主题",
+                status=CONTEXT_STATUS_CLOSED,
+                close_reason=CONTEXT_CLOSE_REASON_NEW_TOPIC,
+                active_slot=None,
+            )
+
+        db.add(_version(first.id))
+        await db.flush()
+        db.add(_version(first.id))
+        with pytest.raises(IntegrityError):
+            await db.flush()
+        await db.rollback()
+
+        # 不同对话可以使用相同版本号
+        db.add(_version(first.id))
+        await db.flush()
+        db.add(_version(second.id))
+        await db.flush()
 
 
 @pytest.mark.asyncio
@@ -457,12 +497,21 @@ def test_migration_upgrade_and_constraints(tmp_path: Path) -> None:
             "INSERT INTO knowledge_context_versions "
             "(conversation_id, workspace_id, owner_user_id, version_number, "
             " scope_type, topic_label, status, close_reason, active_slot) "
-            "VALUES (1, 1, 1, 3, 'workspace', '自增主题', 'closed', 'scope_change', NULL)"
+            "VALUES (1, 1, 1, 5, 'workspace', '自增主题', 'closed', 'scope_change', NULL)"
         )
         auto_version_id = conn.execute(
             "SELECT id FROM knowledge_context_versions ORDER BY id DESC LIMIT 1"
         ).fetchone()[0]
         assert auto_version_id is not None
+
+        # 版本号唯一约束：同一对话重复 version_number 被拒绝
+        with pytest.raises(sqlite3.IntegrityError):
+            conn.execute(
+                "INSERT INTO knowledge_context_versions "
+                "(conversation_id, workspace_id, owner_user_id, version_number, "
+                " scope_type, topic_label, status, close_reason, active_slot) "
+                "VALUES (1, 1, 1, 1, 'workspace', '重复版本号', 'closed', 'scope_change', NULL)"
+            )
         conn.commit()
     finally:
         conn.close()

@@ -538,3 +538,21 @@ async def test_create_version_rollback_keeps_old_active() -> None:
         assert active is not None
         assert active.id == parent_id
         assert active.status == CONTEXT_STATUS_ACTIVE
+
+
+@pytest.mark.asyncio
+async def test_active_summary_keeps_empty_topic_version() -> None:
+    """空主题版本（无 Entry 项）仍返回活动摘要且 entry_count=0。"""
+    async with async_session_factory() as db:
+        user = await create_user(db, "空主题摘要")
+        workspace = await create_workspace(db, user)
+        conversation = await _conversation(db, user, workspace)
+        version = await _active_version(db, conversation, user, workspace)
+        await db.commit()
+
+        topic, version_id, entry_count = await active_context_summary(
+            db, conversation.id
+        )
+        assert topic == "闭水试验"
+        assert version_id == version.id
+        assert entry_count == 0
