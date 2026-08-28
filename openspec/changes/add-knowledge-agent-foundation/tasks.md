@@ -7,10 +7,10 @@
 
 ## 2. 骨架搭建：对话与 Run 应用服务
 
-- [ ] 2.1 实现按当前用户与 Workspace 创建、列出、读取知识对话以及游标分页读取消息的仓储和服务
-- [ ] 2.2 实现 Workspace/项目范围校验与 `scope_change` 系统消息，活动 Run 期间切换范围返回冲突，历史消息和 Run 保留范围快照
-- [ ] 2.3 实现用户消息幂等提交，在单事务中创建用户消息、助手占位消息与 `waiting` Run，并以数据库约束保证同会话串行
-- [ ] 2.4 增加对话所有权、跨 Workspace 404、越权项目、范围切换、分页、幂等与并发冲突测试，并运行 `cd backend && .venv/bin/python -m pytest tests/test_knowledge_agent_conversations.py`
+- [x] 2.1 实现按当前用户与 Workspace 创建、列出、读取知识对话以及游标分页读取消息的仓储和服务
+- [x] 2.2 实现 Workspace/项目范围校验与 `scope_change` 系统消息，活动 Run 期间切换范围返回冲突，历史消息和 Run 保留范围快照
+- [x] 2.3 实现用户消息幂等提交，在单事务中创建用户消息、助手占位消息与 `waiting` Run，并以数据库约束保证同会话串行
+- [x] 2.4 增加对话所有权、跨 Workspace 404、越权项目、范围切换、分页、幂等与并发冲突测试，并运行 `cd backend && .venv/bin/python -m pytest tests/test_knowledge_agent_conversations.py`
 
 ## 3. 实现：可信只读工具与 Evidence
 
