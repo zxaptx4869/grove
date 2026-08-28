@@ -7,12 +7,12 @@
 
 ## 2. 骨架搭建：调查模型、状态与迁移
 
-- [ ] 2.1 定义回答模式、调查/轮次/查询状态、停止原因和服务端预算配置，默认最多 3 轮、每轮 3 个查询、总计 6 个不同查询、30 个不同 Entry、12 条 Evidence
-- [ ] 2.2 新增 Run 一对一 Investigation、Round、Query（或满足设计等价规范的模型），保存所有权、范围/模式/预算快照、当前轮次、规范化查询指纹、增量计数、覆盖/缺口/冲突摘要与恢复时间
-- [ ] 2.3 扩展 Run、ModelInvocation、ToolCall、Evidence 或关联模型，保存请求/实际回答模式、调查摘要及可选 investigation/round/query 归属；为同调查轮次号和规范化查询建立唯一约束
-- [ ] 2.4 新增 Alembic 迁移与 downgrade，兼容 SQLite/MySQL 8；旧 Run 保持可读，旧客户端缺省 `answer_mode=auto`
-- [ ] 2.5 增加枚举、模型默认值、Workspace/用户冗余、唯一约束、级联关系、SQLite 升降级和序列化测试；运行 `cd backend && .venv/bin/python -m pytest tests/test_knowledge_agent_models.py tests/test_knowledge_agent_investigation_models.py`
-- [ ] 2.6 完成数据骨架本地提交，提交信息使用 `feat: 建立知识 Agent 调查数据骨架`
+- [x] 2.1 定义回答模式、调查/轮次/查询状态、停止原因和服务端预算配置，默认最多 3 轮、每轮 3 个查询、总计 6 个不同查询、30 个不同 Entry、12 条 Evidence
+- [x] 2.2 新增 Run 一对一 Investigation、Round、Query（或满足设计等价规范的模型），保存所有权、范围/模式/预算快照、当前轮次、规范化查询指纹、增量计数、覆盖/缺口/冲突摘要与恢复时间
+- [x] 2.3 扩展 Run、ModelInvocation、ToolCall、Evidence 或关联模型，保存请求/实际回答模式、调查摘要及可选 investigation/round/query 归属；为同调查轮次号和规范化查询建立唯一约束
+- [x] 2.4 新增 Alembic 迁移与 downgrade，兼容 SQLite/MySQL 8；旧 Run 保持可读，旧客户端缺省 `answer_mode=auto`
+- [x] 2.5 增加枚举、模型默认值、Workspace/用户冗余、唯一约束、级联关系、SQLite 升降级和序列化测试；运行 `cd backend && .venv/bin/python -m pytest tests/test_knowledge_agent_models.py tests/test_knowledge_agent_investigation_models.py`
+- [x] 2.6 完成数据骨架本地提交，提交信息使用 `feat: 建立知识 Agent 调查数据骨架`
 
 ## 3. 实现：回答模式路由与结构化调查控制器
 

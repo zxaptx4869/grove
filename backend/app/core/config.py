@@ -88,6 +88,22 @@ class Settings(BaseSettings):
     knowledge_agent_working_set_limit: int = Field(
         default=15, description="工作集版本最多保存的 Entry 线索数"
     )
+    # 知识 Agent 有界调查预算：创建 Investigation 时固化，客户端/模型不能放大
+    knowledge_agent_investigation_max_rounds: int = Field(
+        default=3, description="深度调查默认最多轮次"
+    )
+    knowledge_agent_investigation_max_queries_per_round: int = Field(
+        default=3, description="深度调查每轮最多查询数"
+    )
+    knowledge_agent_investigation_max_total_queries: int = Field(
+        default=6, description="深度调查全 Run 最多不同查询数"
+    )
+    knowledge_agent_investigation_max_entries: int = Field(
+        default=30, description="深度调查最多发现的不同 Entry 数"
+    )
+    knowledge_agent_investigation_max_evidence: int = Field(
+        default=12, description="深度调查最多可引用 Evidence 条数"
+    )
 
     # 知识 Agent Worker 租约（秒）：processing 超过该阈值可恢复重试
     knowledge_agent_lease_seconds: int = Field(

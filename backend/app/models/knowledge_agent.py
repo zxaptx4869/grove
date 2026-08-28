@@ -69,6 +69,12 @@ CONTEXT_MODE_CONTINUE = "continue"
 CONTEXT_MODE_NEW_TOPIC = "new_topic"
 CONTEXT_MODES = (CONTEXT_MODE_AUTO, CONTEXT_MODE_CONTINUE, CONTEXT_MODE_NEW_TOPIC)
 
+# ---- 回答模式 ----
+ANSWER_MODE_AUTO = "auto"
+ANSWER_MODE_QUICK = "quick"
+ANSWER_MODE_INVESTIGATE = "investigate"
+ANSWER_MODES = (ANSWER_MODE_AUTO, ANSWER_MODE_QUICK, ANSWER_MODE_INVESTIGATE)
+
 CONTEXT_DECISION_CONTINUE = "continue"
 CONTEXT_DECISION_NEW_TOPIC = "new_topic"
 CONTEXT_DECISION_CLARIFY = "clarify"
@@ -101,11 +107,80 @@ STEP_ORGANIZE_ANSWER = "organize_answer"
 STEP_VALIDATE_REFERENCES = "validate_references"
 STEP_FINALIZE = "finalize"
 
+# ---- Run 步骤（调查分支扩展） ----
+STEP_INVESTIGATION_ROUTE = "investigation_route"
+STEP_ROUND_PLAN = "round_plan"
+STEP_ROUND_SEARCH = "round_search"
+STEP_ROUND_EVIDENCE = "round_evidence"
+STEP_SYNTHESIZE = "synthesize"
+
 # ---- 模型调用用途 ----
 PURPOSE_CONTEXT_DECISION = "context_decision"
 PURPOSE_EMBEDDING = "embedding"
 PURPOSE_RERANK = "rerank"
 PURPOSE_ANSWER = "answer"
+PURPOSE_ANSWER_MODE_ROUTE = "answer_mode_route"
+PURPOSE_INVESTIGATION_CONTROLLER = "investigation_controller"
+PURPOSE_SYNTHESIS = "synthesis"
+
+# ---- 调查状态 ----
+INVESTIGATION_STATUS_ACTIVE = "active"
+INVESTIGATION_STATUS_COMPLETED = "completed"
+INVESTIGATION_STATUS_INSUFFICIENT = "insufficient"
+INVESTIGATION_STATUS_CANCELLED = "cancelled"
+INVESTIGATION_STATUS_FAILED = "failed"
+INVESTIGATION_TERMINAL_STATUSES = {
+    INVESTIGATION_STATUS_COMPLETED,
+    INVESTIGATION_STATUS_INSUFFICIENT,
+    INVESTIGATION_STATUS_CANCELLED,
+    INVESTIGATION_STATUS_FAILED,
+}
+
+# ---- 调查轮次状态 ----
+INVESTIGATION_ROUND_RUNNING = "running"
+INVESTIGATION_ROUND_COMPLETED = "completed"
+INVESTIGATION_ROUND_CANCELLED = "cancelled"
+INVESTIGATION_ROUND_FAILED = "failed"
+
+# ---- 调查查询状态 ----
+INVESTIGATION_QUERY_PLANNED = "planned"
+INVESTIGATION_QUERY_RUNNING = "running"
+INVESTIGATION_QUERY_EXECUTED = "executed"
+INVESTIGATION_QUERY_EMPTY = "empty"
+INVESTIGATION_QUERY_PARTIAL = "partial"
+INVESTIGATION_QUERY_ERROR = "error"
+
+# ---- 调查停止原因（稳定枚举） ----
+STOP_REASON_CONTROLLER_COMPLETE = "controller_complete"
+STOP_REASON_INSUFFICIENT = "insufficient"
+STOP_REASON_NO_PROGRESS = "no_progress"
+STOP_REASON_MAX_ROUNDS = "max_rounds"
+STOP_REASON_QUERY_BUDGET = "query_budget"
+STOP_REASON_ENTRY_BUDGET = "entry_budget"
+STOP_REASON_EVIDENCE_BUDGET = "evidence_budget"
+STOP_REASON_CANCELLED = "cancelled"
+STOP_REASON_FAILED = "failed"
+STOP_REASONS = (
+    STOP_REASON_CONTROLLER_COMPLETE,
+    STOP_REASON_INSUFFICIENT,
+    STOP_REASON_NO_PROGRESS,
+    STOP_REASON_MAX_ROUNDS,
+    STOP_REASON_QUERY_BUDGET,
+    STOP_REASON_ENTRY_BUDGET,
+    STOP_REASON_EVIDENCE_BUDGET,
+    STOP_REASON_CANCELLED,
+    STOP_REASON_FAILED,
+)
+
+# ---- 调查控制器动作 ----
+INVESTIGATION_ACTION_SEARCH = "search"
+INVESTIGATION_ACTION_ANSWER = "answer"
+INVESTIGATION_ACTION_INSUFFICIENT = "insufficient"
+INVESTIGATION_ACTIONS = (
+    INVESTIGATION_ACTION_SEARCH,
+    INVESTIGATION_ACTION_ANSWER,
+    INVESTIGATION_ACTION_INSUFFICIENT,
+)
 
 # ---- 工具调用状态 ----
 TOOL_OK = "ok"
@@ -221,6 +296,9 @@ class KnowledgeAgentRun(Base):
     context_decision: Mapped[str | None] = mapped_column(String(16), nullable=True)
     standalone_query: Mapped[str | None] = mapped_column(Text, nullable=True)
     topic_label: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    # ---- 回答模式契约：请求模式与路由后的实际模式分开保存 ----
+    request_answer_mode: Mapped[str | None] = mapped_column(String(16), nullable=True)
+    actual_answer_mode: Mapped[str | None] = mapped_column(String(16), nullable=True)
     # JSON：实际用于判断的历史消息 ID（不保存原始 prompt）
     history_message_ids_json: Mapped[str | None] = mapped_column(Text, nullable=True)
     # 输入工作集在领取时固化；恢复执行不漂移到后来状态
@@ -240,6 +318,10 @@ class KnowledgeAgentRun(Base):
     context_meta_json: Mapped[str | None] = mapped_column(Text, nullable=True)
     # JSON 汇总：各阶段降级摘要（不保存原始 prompt）
     fallback_summary: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # 当前调查轮次（轮询进度；非调查 Run 保持 None/0）
+    current_round: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    # JSON：调查摘要（实际模式、轮数、查询数、停止原因、覆盖/缺口/冲突、降级）
+    investigation_summary: Mapped[str | None] = mapped_column(Text, nullable=True)
     # 结构化回答 JSON（终态一次性写入）
     answer_json: Mapped[str | None] = mapped_column(Text, nullable=True)
     error: Mapped[str | None] = mapped_column(Text, nullable=True)
@@ -268,6 +350,11 @@ class KnowledgeAgentRun(Base):
     output_context_version: Mapped["KnowledgeContextVersion | None"] = relationship(
         foreign_keys=[output_context_version_id],
         post_update=True,
+    )
+    investigation: Mapped["KnowledgeInvestigation | None"] = relationship(
+        back_populates="run",
+        cascade="all, delete-orphan",
+        uselist=False,
     )
 
 
@@ -332,6 +419,15 @@ class KnowledgeAgentToolCall(Base):
     status: Mapped[str] = mapped_column(String(16), default=TOOL_OK, nullable=False)
     error: Mapped[str | None] = mapped_column(Text, nullable=True)
     duration_ms: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    # 可选调查归属：用于逐轮审计
+    investigation_id: Mapped[int | None] = mapped_column(
+        BigInteger,
+        ForeignKey("knowledge_investigations.id", ondelete="SET NULL"),
+        index=True,
+        nullable=True,
+    )
+    round_number: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    query_sequence: Mapped[int | None] = mapped_column(Integer, nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )
@@ -364,6 +460,15 @@ class KnowledgeAgentModelInvocation(Base):
     duration_ms: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
     # JSON：可获得的使用量信息；不保存请求内容
     usage_json: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # 可选调查归属：路由/控制器/综合阶段的轮次与查询归属
+    investigation_id: Mapped[int | None] = mapped_column(
+        BigInteger,
+        ForeignKey("knowledge_investigations.id", ondelete="SET NULL"),
+        index=True,
+        nullable=True,
+    )
+    round_number: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    query_sequence: Mapped[int | None] = mapped_column(Integer, nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )
@@ -413,6 +518,9 @@ class KnowledgeAgentEvidence(Base):
     purpose: Mapped[str] = mapped_column(
         String(16), default=EVIDENCE_PURPOSE_ANSWER, nullable=False
     )
+    # 证据轮次归属：多轮命中同一 Evidence 时保留首轮归属并幂等复用
+    round_number: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    query_sequence: Mapped[int | None] = mapped_column(Integer, nullable=True)
     is_citable: Mapped[bool] = mapped_column(
         Boolean, default=True, server_default="1", nullable=False
     )
@@ -564,3 +672,223 @@ class KnowledgeWorkingSetItem(Base):
         back_populates="items"
     )
     entry: Mapped["Entry"] = relationship()
+
+
+class KnowledgeInvestigation(Base):
+    """Run 一对一的有界自主调查：固化范围、预算、进度、停止原因与恢复时间。
+
+    调查账本只属于当前 Run，不是跨对话记忆；覆盖/缺口/冲突只保存有长度上限
+    的 JSON 摘要，不保存整份 Attachment 或无限 prompt。
+    """
+
+    __tablename__ = "knowledge_investigations"
+    __table_args__ = (
+        UniqueConstraint("run_id", name="uq_knowledge_investigation_run"),
+        Index("ix_knowledge_investigation_status", "status", "created_at"),
+    )
+
+    id: Mapped[int] = mapped_column(
+        BigInteger().with_variant(Integer, "sqlite"), primary_key=True, autoincrement=True
+    )
+    run_id: Mapped[int] = mapped_column(
+        BigInteger,
+        ForeignKey("knowledge_agent_runs.id", ondelete="CASCADE"),
+        index=True,
+        nullable=False,
+    )
+    conversation_id: Mapped[int] = mapped_column(
+        BigInteger,
+        ForeignKey("knowledge_conversations.id", ondelete="CASCADE"),
+        index=True,
+        nullable=False,
+    )
+    workspace_id: Mapped[int] = mapped_column(
+        BigInteger, ForeignKey("workspaces.id", ondelete="CASCADE"), index=True, nullable=False
+    )
+    owner_user_id: Mapped[int] = mapped_column(
+        BigInteger, ForeignKey("users.id", ondelete="CASCADE"), index=True, nullable=False
+    )
+    # 调查固化范围：创建后不随对话当前范围变化
+    scope_type: Mapped[str] = mapped_column(String(16), nullable=False)
+    project_id: Mapped[int | None] = mapped_column(
+        BigInteger, ForeignKey("projects.id", ondelete="SET NULL"), index=True, nullable=True
+    )
+    project_name: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    objective: Mapped[str] = mapped_column(Text, nullable=False)
+    requested_answer_mode: Mapped[str] = mapped_column(String(16), nullable=False)
+    actual_answer_mode: Mapped[str | None] = mapped_column(String(16), nullable=True)
+    status: Mapped[str] = mapped_column(
+        String(16), default=INVESTIGATION_STATUS_ACTIVE, nullable=False
+    )
+    # 预算快照：创建时固化，客户端/模型不能放大
+    max_rounds: Mapped[int] = mapped_column(Integer, default=3, nullable=False)
+    max_queries_per_round: Mapped[int] = mapped_column(Integer, default=3, nullable=False)
+    max_total_queries: Mapped[int] = mapped_column(Integer, default=6, nullable=False)
+    max_entries: Mapped[int] = mapped_column(Integer, default=30, nullable=False)
+    max_evidence: Mapped[int] = mapped_column(Integer, default=12, nullable=False)
+    # 进度与累计计数
+    current_round: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    total_queries_executed: Mapped[int] = mapped_column(
+        Integer, default=0, nullable=False
+    )
+    distinct_entries_found: Mapped[int] = mapped_column(
+        Integer, default=0, nullable=False
+    )
+    citable_evidence_count: Mapped[int] = mapped_column(
+        Integer, default=0, nullable=False
+    )
+    stop_reason: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    # JSON 摘要：过程观察，不是正式知识
+    coverage_summary: Mapped[str | None] = mapped_column(Text, nullable=True)
+    gaps_summary: Mapped[str | None] = mapped_column(Text, nullable=True)
+    conflicts_summary: Mapped[str | None] = mapped_column(Text, nullable=True)
+    recovered_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False
+    )
+
+    run: Mapped["KnowledgeAgentRun"] = relationship(back_populates="investigation")
+    conversation: Mapped["KnowledgeConversation"] = relationship()
+    rounds: Mapped[list["KnowledgeInvestigationRound"]] = relationship(
+        back_populates="investigation",
+        cascade="all, delete-orphan",
+        order_by="KnowledgeInvestigationRound.round_number",
+    )
+    queries: Mapped[list["KnowledgeInvestigationQuery"]] = relationship(
+        back_populates="investigation",
+        cascade="all, delete-orphan",
+        order_by="KnowledgeInvestigationQuery.round_number, KnowledgeInvestigationQuery.sequence",
+    )
+
+
+class KnowledgeInvestigationRound(Base):
+    """一轮调查的持久化检查点：控制器动作、观察摘要、增量计数与调用归属。"""
+
+    __tablename__ = "knowledge_investigation_rounds"
+    __table_args__ = (
+        UniqueConstraint(
+            "investigation_id",
+            "round_number",
+            name="uq_knowledge_investigation_round_number",
+        ),
+        Index(
+            "ix_knowledge_investigation_round_claim",
+            "investigation_id",
+            "status",
+            "round_number",
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(
+        BigInteger().with_variant(Integer, "sqlite"), primary_key=True, autoincrement=True
+    )
+    investigation_id: Mapped[int] = mapped_column(
+        BigInteger,
+        ForeignKey("knowledge_investigations.id", ondelete="CASCADE"),
+        index=True,
+        nullable=False,
+    )
+    workspace_id: Mapped[int] = mapped_column(
+        BigInteger, ForeignKey("workspaces.id", ondelete="CASCADE"), index=True, nullable=False
+    )
+    owner_user_id: Mapped[int] = mapped_column(
+        BigInteger, ForeignKey("users.id", ondelete="CASCADE"), index=True, nullable=False
+    )
+    round_number: Mapped[int] = mapped_column(Integer, nullable=False)
+    status: Mapped[str] = mapped_column(
+        String(16), default=INVESTIGATION_ROUND_RUNNING, nullable=False
+    )
+    controller_action: Mapped[str | None] = mapped_column(String(16), nullable=True)
+    # 有长度上限的 JSON 观察摘要（应用层写入前截断）
+    coverage_json: Mapped[str | None] = mapped_column(Text, nullable=True)
+    gaps_json: Mapped[str | None] = mapped_column(Text, nullable=True)
+    conflicts_json: Mapped[str | None] = mapped_column(Text, nullable=True)
+    reason: Mapped[str | None] = mapped_column(Text, nullable=True)
+    queries_planned: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    queries_executed: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    entries_added: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    evidence_added: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    # JSON：控制器模型调用归属（provider/model/fallback/error/duration_ms/prompt_version）
+    meta_json: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False
+    )
+
+    investigation: Mapped["KnowledgeInvestigation"] = relationship(
+        back_populates="rounds"
+    )
+    queries: Mapped[list["KnowledgeInvestigationQuery"]] = relationship(
+        back_populates="round",
+        cascade="all, delete-orphan",
+        order_by="KnowledgeInvestigationQuery.sequence",
+    )
+
+
+class KnowledgeInvestigationQuery(Base):
+    """轮次内的一条计划/已执行查询：规范化指纹全局去重与执行状态留痕。"""
+
+    __tablename__ = "knowledge_investigation_queries"
+    __table_args__ = (
+        UniqueConstraint(
+            "investigation_id",
+            "normalized_query_hash",
+            name="uq_knowledge_investigation_query_hash",
+        ),
+        Index(
+            "ix_knowledge_investigation_query_round",
+            "investigation_id",
+            "round_number",
+            "sequence",
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(
+        BigInteger().with_variant(Integer, "sqlite"), primary_key=True, autoincrement=True
+    )
+    investigation_id: Mapped[int] = mapped_column(
+        BigInteger,
+        ForeignKey("knowledge_investigations.id", ondelete="CASCADE"),
+        index=True,
+        nullable=False,
+    )
+    round_id: Mapped[int | None] = mapped_column(
+        BigInteger,
+        ForeignKey("knowledge_investigation_rounds.id", ondelete="SET NULL"),
+        index=True,
+        nullable=True,
+    )
+    workspace_id: Mapped[int] = mapped_column(
+        BigInteger, ForeignKey("workspaces.id", ondelete="CASCADE"), index=True, nullable=False
+    )
+    owner_user_id: Mapped[int] = mapped_column(
+        BigInteger, ForeignKey("users.id", ondelete="CASCADE"), index=True, nullable=False
+    )
+    round_number: Mapped[int] = mapped_column(Integer, nullable=False)
+    sequence: Mapped[int] = mapped_column(Integer, nullable=False)
+    original_query: Mapped[str] = mapped_column(Text, nullable=False)
+    normalized_query: Mapped[str] = mapped_column(Text, nullable=False)
+    normalized_query_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    status: Mapped[str] = mapped_column(
+        String(16), default=INVESTIGATION_QUERY_PLANNED, nullable=False
+    )
+    # JSON：结果计数（命中/新增 Entry、Evidence、denied/unavailable）
+    result_counts_json: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False
+    )
+
+    investigation: Mapped["KnowledgeInvestigation"] = relationship(
+        back_populates="queries"
+    )
+    round: Mapped["KnowledgeInvestigationRound | None"] = relationship(
+        back_populates="queries"
+    )
