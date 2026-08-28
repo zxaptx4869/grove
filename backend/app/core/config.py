@@ -124,6 +124,9 @@ class Settings(BaseSettings):
     knowledge_agent_investigation_reason_chars: int = Field(
         default=500, description="控制器 reason 最大字符数"
     )
+    knowledge_agent_investigation_query_chars: int = Field(
+        default=200, description="调查控制器单条文本查询最大字符数"
+    )
 
     # 知识 Agent Worker 租约（秒）：processing 超过该阈值可恢复重试
     knowledge_agent_lease_seconds: int = Field(

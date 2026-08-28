@@ -330,7 +330,8 @@ async def _execute_query_round(
         search = await search_confirmed_knowledge(
             db,
             ctx,
-            query_row.normalized_query,
+            # 检索使用清理后的原文（保留空格与大小写）；规范化文本只用于指纹去重
+            query_row.original_query,
             recall_limit=settings.knowledge_agent_recall_limit,
             context_limit=settings.knowledge_agent_context_limit,
         )
@@ -429,6 +430,7 @@ async def _execute_query_round(
             evidence_budget = (
                 investigation.max_evidence - ledger.distinct_evidence_count()
             )
+            await _check_cancelled(run.id)
             for item in entries.items:
                 if evidence_budget <= 0:
                     break

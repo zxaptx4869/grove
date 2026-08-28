@@ -274,6 +274,7 @@ def test_controller_queries_capped_deduplicated_and_summaries_truncated() -> Non
                 "放水时机",
                 "验收标准",
                 "第五个查询",
+                "超长查询 " + "长" * 1000,
             ],
             coverage=["覆盖项 " + "长" * 500 for _ in range(30)],
             gaps=["缺口项" for _ in range(30)],
@@ -283,6 +284,16 @@ def test_controller_queries_capped_deduplicated_and_summaries_truncated() -> Non
         **defaults,
     )
     assert plan.queries == ["闭水试验", "放水时机", "验收标准"]
+    # 单条查询长度同样受服务端上限约束（超长查询被确定性截断）
+    long_plan = validate_controller_output(
+        InvestigationControllerDraft(
+            action="search",
+            queries=["闭水试验" + "长" * 1000],
+        ),
+        **defaults,
+    )
+    assert len(long_plan.queries[0]) == defaults["query_chars"]
+    assert long_plan.queries[0].endswith("长" * (defaults["query_chars"] - 4))
     assert len(plan.coverage) == defaults["summary_items"]
     assert all(len(item) <= defaults["summary_item_chars"] for item in plan.coverage)
     assert len(plan.gaps) == defaults["summary_items"]

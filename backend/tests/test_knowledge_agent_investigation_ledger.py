@@ -1,5 +1,6 @@
 """知识 Agent 调查账本与可信只读工具测试：去重、幂等、归属、紧凑性与重建。"""
 
+import json
 import uuid
 
 import pytest
@@ -436,6 +437,63 @@ async def test_rebuild_ledger_from_persisted_rows() -> None:
         assert rebuilt.gaps == ["放水时机未覆盖"]
         assert rebuilt.unavailable[0]["id"] == 9
         assert len(rebuilt.executed_queries) == 2
+
+
+@pytest.mark.asyncio
+async def test_rebuild_ledger_empty_observation_overrides_previous() -> None:
+    """最新一轮空覆盖/缺口是有效观察：重建时覆盖旧轮摘要而非回退。"""
+    async with async_session_factory() as db:
+        user = await create_user(db, "空观察重建")
+        workspace = await create_workspace(db, user)
+        conversation = KnowledgeConversation(
+            workspace_id=workspace.id,
+            owner_user_id=user.id,
+            scope_type=SCOPE_WORKSPACE,
+            title="空观察对话",
+        )
+        db.add(conversation)
+        await db.flush()
+        _user_message, run = await submit_message(
+            db,
+            conversation,
+            KnowledgeRunSubmitRequest(
+                client_message_id=f"empty-obs-{uuid.uuid4().hex[:8]}",
+                message="问题",
+            ),
+        )
+        investigation = KnowledgeInvestigation(
+            run_id=run.id,
+            conversation_id=conversation.id,
+            workspace_id=workspace.id,
+            owner_user_id=user.id,
+            scope_type=SCOPE_WORKSPACE,
+            objective="问题",
+            requested_answer_mode=ANSWER_MODE_INVESTIGATE,
+            current_round=2,
+        )
+        db.add(investigation)
+        await db.flush()
+        for round_number, coverage in [
+            (1, ["旧覆盖"]),
+            (2, []),
+        ]:
+            db.add(
+                KnowledgeInvestigationRound(
+                    investigation_id=investigation.id,
+                    workspace_id=workspace.id,
+                    owner_user_id=user.id,
+                    round_number=round_number,
+                    status="completed",
+                    coverage_json=json.dumps(coverage, ensure_ascii=False),
+                    gaps_json="[]",
+                    conflicts_json="[]",
+                )
+            )
+        await db.commit()
+
+        rebuilt = await rebuild_ledger(db, investigation, run.id)
+        assert rebuilt.coverage == []
+        assert rebuilt.gaps == []
 
 
 @pytest.mark.asyncio

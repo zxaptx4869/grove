@@ -326,8 +326,9 @@ async def rebuild_ledger(
                         reason=item.get("reason", ""),
                         round_number=int(item.get("round_number", round_row.round_number)),
                     )
-        # 观察摘要取最近一轮（控制器视角的最新覆盖/缺口/冲突）
-        if round_row.coverage_json:
+        # 观察摘要取最近一轮（控制器视角的最新覆盖/缺口/冲突）；
+        # 空数组也是有效观察（本轮明确无覆盖/缺口/冲突），不能回退到旧轮
+        if round_row.coverage_json is not None:
             try:
                 coverage = json.loads(round_row.coverage_json)
                 gaps = json.loads(round_row.gaps_json or "[]")

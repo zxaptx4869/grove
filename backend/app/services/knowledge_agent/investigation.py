@@ -133,11 +133,12 @@ def validate_controller_output(
     draft: InvestigationControllerDraft | None,
     *,
     max_queries: int,
+    query_chars: int,
     summary_items: int,
     summary_item_chars: int,
     reason_chars: int,
 ) -> ControllerPlan:
-    """校验控制器输出：忽略越权字段、去空白、限查询数与确定性截断摘要。"""
+    """校验控制器输出：忽略越权字段、去空白、限查询数与长度、确定性截断摘要。"""
     if draft is None or draft.action not in INVESTIGATION_ACTIONS:
         return ControllerPlan(
             invalid=True,
@@ -148,7 +149,7 @@ def validate_controller_output(
         text = " ".join(str(raw).split())
         if not text or text in queries:
             continue
-        queries.append(text)
+        queries.append(text[:query_chars])
         if len(queries) >= max_queries:
             break
     return ControllerPlan(
@@ -178,6 +179,7 @@ def controller_plan_defaults() -> dict:
     settings = get_settings()
     return {
         "max_queries": settings.knowledge_agent_investigation_max_queries_per_round,
+        "query_chars": settings.knowledge_agent_investigation_query_chars,
         "summary_items": settings.knowledge_agent_investigation_summary_items,
         "summary_item_chars": settings.knowledge_agent_investigation_summary_item_chars,
         "reason_chars": settings.knowledge_agent_investigation_reason_chars,

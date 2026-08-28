@@ -1080,3 +1080,75 @@ async def test_quick_path_does_not_create_investigation(monkeypatch) -> None:
         assert investigation is None
         answer = json.loads(run.answer_json)
         assert answer["citations"][0]["quote"] == "闭水试验通常持续 24 小时"
+
+
+@pytest.mark.asyncio
+async def test_investigation_search_uses_original_query_not_normalized(
+    monkeypatch,
+) -> None:
+    """检索使用清理后的原文（保留空格），规范化文本只用于指纹去重。"""
+    async with async_session_factory() as db:
+        user = await create_user(db, "原文检索")
+        workspace = await create_workspace(db, user)
+        project = await create_project(db, workspace, "原文项目")
+        node = await create_child_node(db, project, "施工")
+        source, attachment = await create_source_attachment(
+            db,
+            workspace,
+            project,
+            text_content="闭水试验通常持续 24 小时。",
+        )
+        entry = await create_entry_with_evidence(
+            db,
+            project,
+            node,
+            source,
+            attachment,
+            title="闭水试验",
+            content="闭水试验通常持续 24 小时。",
+            quote="闭水试验通常持续 24 小时",
+        )
+        _conversation, run = await _investigation_run(db, user, workspace)
+        await db.commit()
+
+        controller, _calls = _controller_sequence(
+            [
+                InvestigationControllerDraft(
+                    action=INVESTIGATION_ACTION_SEARCH,
+                    queries=["  water   test  "],
+                ),
+                InvestigationControllerDraft(action=INVESTIGATION_ACTION_ANSWER),
+            ]
+        )
+        received_queries: list[str] = []
+
+        async def _capturing_search(
+            db,
+            ctx,
+            query,
+            *,
+            recall_limit,
+            context_limit,
+            seed_entries=None,
+        ):
+            received_queries.append(query)
+            ctx.discovered_entry_ids.add(entry.id)
+            return SearchToolOutput(items=[_search_result(entry)])
+
+        monkeypatch.setattr(
+            "app.services.knowledge_agent.investigation_runner.run_investigation_controller",
+            controller,
+        )
+        monkeypatch.setattr(
+            "app.services.knowledge_agent.investigation_runner.search_confirmed_knowledge",
+            _capturing_search,
+        )
+        monkeypatch.setattr(
+            "app.services.knowledge_agent.investigation_runner.run_knowledge_answer_agent",
+            _synthesis_agent(),
+        )
+
+        await execute_run(db, run)
+        await db.commit()
+        # 控制器查询经校验去空白后为 "water test"，检索必须收到原文而非 "watertest"
+        assert received_queries == ["water test"]
