@@ -66,11 +66,11 @@
 
 ## 8. 验证：自动化、SQLite 与真实 MySQL
 
-- [ ] 8.1 运行完整后端测试和静态检查且无 warning：`cd backend && .venv/bin/python -m pytest -W error && .venv/bin/ruff check app tests`
-- [ ] 8.2 在全新与已有 SQLite 数据库执行 Alembic upgrade/downgrade/upgrade，验证默认模式、唯一约束、级联关系和旧 Run 兼容
-- [ ] 8.3 用真实 API 走查 quick、auto→quick、auto→investigate、强制 investigate、两轮补查、无进展、预算停止、多轮引用、幂等、取消和崩溃恢复，并把 curl、状态码、轮次账本和停止摘要记录到 `docs/验收记录/add-knowledge-agent-bounded-investigation-curl.md`
-- [ ] 8.4 在可用 MySQL 8 环境验证迁移、同调查查询/轮次唯一约束、逐轮事务提交、跨事务取消、租约恢复与最终事务一致性，并把环境和结果写入同一验收记录
-- [ ] 8.5 运行 `openspec validate --all --strict`，逐项核对实现与 proposal、design、六份 delta specs、两个权威产品专题一致
+- [x] 8.1 运行完整后端测试和静态检查且无 warning：`cd backend && .venv/bin/python -m pytest -W error && .venv/bin/ruff check app tests`
+- [x] 8.2 在全新与已有 SQLite 数据库执行 Alembic upgrade/downgrade/upgrade，验证默认模式、唯一约束、级联关系和旧 Run 兼容
+- [x] 8.3 用真实 API 走查 quick、auto→quick、auto→investigate、强制 investigate、两轮补查、无进展、预算停止、多轮引用、幂等、取消和崩溃恢复，并把 curl、状态码、轮次账本和停止摘要记录到 `docs/验收记录/add-knowledge-agent-bounded-investigation-curl.md`
+- [x] 8.4 在可用 MySQL 8 环境验证迁移、同调查查询/轮次唯一约束、逐轮事务提交、跨事务取消、租约恢复与最终事务一致性，并把环境和结果写入同一验收记录
+- [x] 8.5 运行 `openspec validate --all --strict`，逐项核对实现与 proposal、design、六份 delta specs、两个权威产品专题一致
 
 ## 9. 收尾：评审、遗留与归档
 
