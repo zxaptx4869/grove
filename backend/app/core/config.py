@@ -104,6 +104,26 @@ class Settings(BaseSettings):
     knowledge_agent_investigation_max_evidence: int = Field(
         default=12, description="深度调查最多可引用 Evidence 条数"
     )
+    # 回答模式路由与调查控制器模型设置
+    knowledge_agent_answer_mode_router_enabled: bool = Field(
+        default=True, description="auto 回答模式路由是否启用；关闭时 auto 一律 quick"
+    )
+    knowledge_agent_answer_mode_router_timeout_seconds: float = Field(
+        default=20.0, description="回答模式路由模型调用超时（秒）"
+    )
+    knowledge_agent_investigation_controller_timeout_seconds: float = Field(
+        default=30.0, description="调查控制器模型调用超时（秒）"
+    )
+    # 调查控制器输出摘要长度上限（服务端确定性截断）
+    knowledge_agent_investigation_summary_items: int = Field(
+        default=20, description="控制器 coverage/gaps/conflicts 最多条目数"
+    )
+    knowledge_agent_investigation_summary_item_chars: int = Field(
+        default=200, description="控制器单条摘要最大字符数"
+    )
+    knowledge_agent_investigation_reason_chars: int = Field(
+        default=500, description="控制器 reason 最大字符数"
+    )
 
     # 知识 Agent Worker 租约（秒）：processing 超过该阈值可恢复重试
     knowledge_agent_lease_seconds: int = Field(

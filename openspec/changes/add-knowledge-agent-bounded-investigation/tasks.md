@@ -16,12 +16,12 @@
 
 ## 3. 实现：回答模式路由与结构化调查控制器
 
-- [ ] 3.1 新增独立回答模式路由 Agent：输入独立问题和受限主题摘要，结构化输出 quick/investigate，配置独立 purpose、prompt 版本、超时与有限重试
-- [ ] 3.2 实现 `auto` 路由、`quick`/`investigate` 显式覆盖与安全 fallback；路由失败固定选择 quick，并记录 provider/model/fallback/error/耗时
-- [ ] 3.3 新增结构化调查控制器：只输出 `search`/`answer`/`insufficient`、最多三条文本查询及有长度上限的 coverage/gaps/conflicts/reason，不接受范围、对象 ID、工具名或预算修改
-- [ ] 3.4 实现控制器输入构建，只传独立问题、可信范围标签、工作集短摘要、已执行查询、紧凑证据账本和剩余预算，不传无限历史或整份 Attachment
-- [ ] 3.5 增加模式显式覆盖、auto quick/investigate、路由未配置/失败/非法结构、控制器三种动作、越权字段、超长摘要与模型可观测性测试；运行 `cd backend && .venv/bin/python -m pytest tests/test_knowledge_agent_investigation_agents.py`
-- [ ] 3.6 完成路由与控制器本地提交，提交信息使用 `feat: 增加知识 Agent 调查路由与控制器`
+- [x] 3.1 新增独立回答模式路由 Agent：输入独立问题和受限主题摘要，结构化输出 quick/investigate，配置独立 purpose、prompt 版本、超时与有限重试
+- [x] 3.2 实现 `auto` 路由、`quick`/`investigate` 显式覆盖与安全 fallback；路由失败固定选择 quick，并记录 provider/model/fallback/error/耗时
+- [x] 3.3 新增结构化调查控制器：只输出 `search`/`answer`/`insufficient`、最多三条文本查询及有长度上限的 coverage/gaps/conflicts/reason，不接受范围、对象 ID、工具名或预算修改
+- [x] 3.4 实现控制器输入构建，只传独立问题、可信范围标签、工作集短摘要、已执行查询、紧凑证据账本和剩余预算，不传无限历史或整份 Attachment
+- [x] 3.5 增加模式显式覆盖、auto quick/investigate、路由未配置/失败/非法结构、控制器三种动作、越权字段、超长摘要与模型可观测性测试；运行 `cd backend && .venv/bin/python -m pytest tests/test_knowledge_agent_investigation_agents.py`
+- [x] 3.6 完成路由与控制器本地提交，提交信息使用 `feat: 增加知识 Agent 调查路由与控制器`
 
 ## 4. 实现：调查账本与可信只读工具
 
