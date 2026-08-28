@@ -368,6 +368,13 @@
     .entry-summary { padding: 10px 11px; border: 1px solid var(--g-border); border-radius: 8px; background: var(--g-bg); font-size: 12px; line-height: 20px; }
     .source-context { margin-top: 8px; color: var(--g-muted); font-size: 11px; line-height: 18px; }
     .source-meta { display: grid; gap: 7px; margin-top: 13px; padding-top: 12px; border-top: 1px solid var(--g-border); color: var(--g-muted); font-size: 11px; }
+    .source-pager { min-height: 44px; display: grid; grid-template-columns: 1fr auto 1fr; align-items: center; gap: 8px; margin-top: 10px; padding: 4px; border: 1px solid var(--g-border); border-radius: 9px; background: var(--g-bg); }
+    .source-pager[hidden] { display: none; }
+    .source-pager button { min-height: 36px; padding: 0 9px; border: 0; border-radius: 7px; background: transparent; color: var(--g-green); font-size: 12px; font-weight: 650; }
+    .source-pager button:first-child { justify-self: start; }
+    .source-pager button:last-child { justify-self: end; }
+    .source-pager button:disabled { color: var(--g-faint); }
+    .source-pager span { color: var(--g-muted); font-size: 11px; font-weight: 650; }
     .confirm-box { padding: 11px; border: 1px solid var(--g-border); border-radius: 9px; background: var(--g-bg); }
     .confirm-box strong { display: block; font-size: 13px; }
     .confirm-box p { margin-top: 4px; color: var(--g-muted); font-size: 11px; line-height: 18px; }
@@ -542,7 +549,7 @@
         <button class="nav-item" data-nav="knowledge"><span class="nav-glyph"><svg class="icon"><use href="#i-nav-knowledge"/></svg></span><span>知识</span></button>
       </nav>
 
-      <section class="overlay" id="diffOverlay" aria-label="审阅完整差异">
+      <section class="overlay" id="diffOverlay" role="dialog" aria-modal="true" aria-label="审阅完整差异" tabindex="-1">
         <header class="overlay-header"><button class="header-icon" data-close-overlay aria-label="返回对话"><svg class="icon" style="transform:rotate(180deg)"><use href="#i-chevron"/></svg></button><h1>审阅完整差异</h1><span></span></header>
         <div class="overlay-scroll">
           <div class="diff-summary"><span class="badge ai">AI 建议 · 待确认</span><h2>卫生间防水施工与验收要点</h2><p>目标：新房装修 / 施工 / 防水 · 汇总 5 条 Entry、7 个 Source</p></div>
@@ -555,8 +562,9 @@
           <div class="diff-panel" data-diff-panel="impact">
             <div class="diff-block"><div class="diff-block-head"><strong>正式知识</strong><span class="badge neutral">5 条</span></div><div style="padding:0 11px">
               <div class="impact-object"><span class="row-icon"><svg class="icon"><use href="#i-edit"/></svg></span><div><strong>卫生间防水施工与验收要点</strong><p>作为合并后的主 Entry · 新增版本</p></div><span class="badge confirmed">更新</span></div>
-              <div class="impact-object"><span class="row-icon"><svg class="icon"><use href="#i-merge"/></svg></span><div><strong>闭水试验至少 24 小时</strong><p>保留来源并指向主 Entry</p></div><span class="badge ai">已合并</span></div>
+              <div class="impact-object"><span class="row-icon"><svg class="icon"><use href="#i-merge"/></svg></span><div><strong>基层处理与重点部位</strong><p>保留来源并指向主 Entry</p></div><span class="badge ai">已合并</span></div>
               <div class="impact-object"><span class="row-icon"><svg class="icon"><use href="#i-merge"/></svg></span><div><strong>卫生间防水验收清单</strong><p>保留来源并指向主 Entry</p></div><span class="badge ai">已合并</span></div>
+              <div class="impact-object"><span class="row-icon"><svg class="icon"><use href="#i-alert"/></svg></span><div><strong>闭水试验至少 24 小时</strong><p>存在条件冲突，不参与合并</p></div><span class="badge risk">保留</span></div>
               <div class="impact-object"><span class="row-icon"><svg class="icon"><use href="#i-alert"/></svg></span><div><strong>闭水试验建议保持 48 小时</strong><p>存在条件冲突，不参与合并</p></div><span class="badge risk">保留</span></div>
             </div></div>
             <div class="diff-block"><div class="diff-block-head"><strong>来源证据</strong><span class="badge confirmed">7 个保留</span></div><div class="diff-line">没有 Source 被删除；每条关键结论继续关联原始证据片段。</div></div>
@@ -565,7 +573,7 @@
         <footer class="overlay-footer"><button class="button primary block" data-open-sheet="confirm">确认合并并标记 2 条重复知识</button></footer>
       </section>
 
-      <section class="overlay" id="historyOverlay" aria-label="对话历史">
+      <section class="overlay" id="historyOverlay" role="dialog" aria-modal="true" aria-label="对话历史" tabindex="-1">
         <header class="overlay-header"><button class="header-icon" data-close-overlay aria-label="关闭历史"><svg class="icon" style="transform:rotate(180deg)"><use href="#i-chevron"/></svg></button><h1>对话历史</h1><button class="header-icon" data-demo-toast="已创建一个新对话" aria-label="新建对话"><svg class="icon"><use href="#i-plus"/></svg></button></header>
         <div class="overlay-scroll" style="padding-bottom:24px">
           <div class="section-title" style="margin-top:0"><h2>今天</h2><span>同一个知识 Agent</span></div>
@@ -598,7 +606,7 @@
 
       <section class="sheet" id="sourceSheet" role="dialog" aria-modal="true" aria-label="引用与来源">
         <div class="sheet-handle"></div><div class="sheet-head"><h2 id="sourceTitle">引用与来源</h2><button class="sheet-close" data-close-sheet aria-label="关闭"><svg class="icon"><use href="#i-close"/></svg></button></div>
-        <div class="sheet-body"><span class="badge confirmed">对应正式 Entry</span><h3 id="sourceEntry" style="margin-top:8px;font-size:16px">闭水试验完成后再验收防水层</h3><p id="sourcePath" class="muted caption" style="margin-top:4px">新房装修 / 施工 / 防水</p><div class="source-section"><span class="source-section-label">ENTRY 总结</span><div class="entry-summary" id="sourceSummary">闭水期间同时观察水位和楼下顶面，再进入验收。</div></div><div class="source-section"><span class="source-section-label">SOURCE 原文</span><div class="source-quote" id="sourceQuote">“闭水期间应持续观察水位变化，并到楼下检查顶面是否出现渗漏。”</div><p class="source-context" id="sourceContext">上下文：该段位于“闭水验收”小节，前文记录了试验开始时间。</p></div><div class="source-meta"><span id="sourceFile">Source：防水验收记录.md</span><span>证据关系已由应用层校验 · 不包含 Agent 回答</span></div><div class="inline-actions"><button class="button" data-demo-toast="已打开完整 Entry">查看完整知识</button><button class="button ghost" data-close-sheet>关闭</button></div></div>
+        <div class="sheet-body"><span class="badge confirmed" id="sourceRelationBadge">对应正式 Entry</span><h3 id="sourceEntry" style="margin-top:8px;font-size:16px">闭水试验完成后再验收防水层</h3><p id="sourcePath" class="muted caption" style="margin-top:4px">新房装修 / 施工 / 防水</p><div class="source-section"><span class="source-section-label">ENTRY 总结</span><div class="entry-summary" id="sourceSummary">闭水期间同时观察水位和楼下顶面，再进入验收。</div></div><div class="source-section"><span class="source-section-label">SOURCE 原文</span><div class="source-quote" id="sourceQuote">“闭水期间应持续观察水位变化，并到楼下检查顶面是否出现渗漏。”</div><p class="source-context" id="sourceContext">上下文：该段位于“闭水验收”小节，前文记录了试验开始时间。</p></div><div class="source-meta"><span id="sourceFile">Source：防水验收记录.md</span><span>证据关系已由应用层校验 · 不包含 Agent 回答</span></div><div class="source-pager" id="sourcePager" hidden><button type="button" data-source-page="previous">上一来源</button><span id="sourcePageLabel">来源 1 / 2</span><button type="button" data-source-page="next">下一来源</button></div><div class="inline-actions"><button class="button" data-demo-toast="已打开完整 Entry">查看完整知识</button><button class="button ghost" data-close-sheet>关闭</button></div></div>
       </section>
 
       <section class="sheet" id="confirmSheet" role="dialog" aria-modal="true" aria-label="确认知识修改">
@@ -634,6 +642,11 @@
     let busy = false
     let toastTimer
     let keyboardTimer
+    let sheetTrigger = null
+    let overlayTrigger = null
+    let activeSourceContext = null
+    let activeSources = []
+    let activeSourceIndex = 0
 
     const icon = (name, extra = '') => `<svg class="icon ${extra}"><use href="#i-${name}"/></svg>`
     const scrollThread = () => requestAnimationFrame(() => { thread.scrollTop = thread.scrollHeight })
@@ -659,27 +672,58 @@
       <button class="followup-button operation" data-prompt="把能确定的部分整理成一条更完整的知识，旧的重复内容也处理一下"><span>把确定部分整理成知识，并处理重复内容</span>${icon('merge')}</button>
     </div></div>`
 
-    function closeSheets() {
+    const focusableSelector = 'button:not([disabled]):not([tabindex="-1"]), input:not([disabled]), textarea:not([disabled]), select:not([disabled]), [href], [tabindex]:not([tabindex="-1"])'
+    const activeLayer = () => document.querySelector('.sheet.open') || document.querySelector('.overlay.open')
+
+    function syncLayerIsolation() {
+      const sheet = document.querySelector('.sheet.open')
+      const overlay = document.querySelector('.overlay.open')
+      document.querySelectorAll('.app-header, .screens, .bottom-nav').forEach(element => { element.inert = Boolean(sheet || overlay) })
+      document.querySelectorAll('.overlay').forEach(element => { element.inert = Boolean(sheet || (overlay && element !== overlay)) })
+      document.querySelectorAll('.sheet').forEach(element => { element.inert = Boolean(sheet && element !== sheet) })
+    }
+
+    function restoreFocus(trigger) {
+      if (trigger?.isConnected && !trigger.closest('[inert]')) trigger.focus({ preventScroll: true })
+    }
+
+    function closeSheets({ restore = true } = {}) {
       document.querySelectorAll('.sheet.open').forEach(sheet => sheet.classList.remove('open'))
       scrim.classList.remove('open')
+      syncLayerIsolation()
+      if (restore) restoreFocus(sheetTrigger)
+      sheetTrigger = null
     }
 
     function openSheet(name) {
-      closeSheets()
+      const trigger = document.activeElement
+      closeSheets({ restore: false })
       const sheet = document.getElementById(`${name}Sheet`)
       if (!sheet) return
+      sheetTrigger = trigger
       scrim.classList.add('open')
       sheet.classList.add('open')
+      syncLayerIsolation()
       sheet.querySelector('button, input, textarea')?.focus({ preventScroll: true })
     }
 
     function openOverlay(name) {
-      document.querySelectorAll('.overlay.open').forEach(overlay => overlay.classList.remove('open'))
+      const trigger = document.activeElement
+      closeOverlays({ restore: false })
       const overlay = document.getElementById(`${name}Overlay`)
-      if (overlay) overlay.classList.add('open')
+      if (!overlay) return
+      overlayTrigger = trigger
+      overlay.classList.add('open')
+      syncLayerIsolation()
+      overlay.querySelector(focusableSelector)?.focus({ preventScroll: true })
     }
 
-    function closeOverlays() { document.querySelectorAll('.overlay.open').forEach(overlay => overlay.classList.remove('open')) }
+    function closeOverlays({ restore = true } = {}) {
+      document.querySelectorAll('.overlay.open').forEach(overlay => overlay.classList.remove('open'))
+      syncLayerIsolation()
+      if (restore) restoreFocus(overlayTrigger)
+      overlayTrigger = null
+    }
 
     async function runProcess({ id, eyebrow, title, completeTitle, steps, summary }) {
       add(`${agentLabel()}<article class="card process-card" id="${id}"><div class="card-body"><div class="card-head"><div><div class="eyebrow">${icon('search')}${eyebrow}</div><h2>${title}</h2></div><span class="badge neutral">进行中</span></div><div class="process-list">${steps.map((step, index) => `<div class="process-step ${index === 0 ? 'current' : ''}" data-process-step="${index}"><span class="step-mark">${icon('check')}</span><span>${step}</span></div>`).join('')}</div><div class="process-summary">${icon('circle-check')}${summary}</div>${scopeStamp()}</div></article>`)
@@ -759,7 +803,7 @@
       stage = 'clarifying'
       add(`${agentLabel()}<article class="card process-card" id="mergeProcess"><div class="card-body"><div class="process-summary" style="display:flex">${icon('search')}正在“${currentScope}”中定位重复 Entry 与来源关系…</div>${scopeStamp()}</div></article>`)
       await wait(750)
-      document.getElementById('mergeProcess').outerHTML = `<article class="card"><div class="card-body"><div class="card-head"><div><div class="eyebrow">${icon('alert')}需要消除一个歧义</div><h2>冲突内容不能作为重复项处理</h2></div><span class="badge risk">请确认</span></div><p class="answer-intro">我找到 3 条可以合并的重复知识，以及 2 条包含条件冲突的知识。建议只合并确定部分，保留冲突双方。</p>${scopeStamp()}<div class="choice-grid"><button class="choice recommended" data-clarify="recommended"><strong>按建议处理</strong><span>合并 3 条重复知识，保留 2 条冲突知识</span></button><button class="choice" data-clarify="manual"><strong>重新选择影响对象</strong><span>逐条决定哪些知识参与合并</span></button></div></div></article>`
+      document.getElementById('mergeProcess').outerHTML = `<article class="card"><div class="card-body"><div class="card-head"><div><div class="eyebrow">${icon('alert')}需要消除一个歧义</div><h2>冲突内容不能作为重复项处理</h2></div><span class="badge risk">请确认</span></div><p class="answer-intro">我找到 3 条内容高度重合的知识：其中 1 条作为主 Entry 更新，另外 2 条标记为“已合并”；还有 2 条包含条件冲突的知识，建议保留双方。</p>${scopeStamp()}<div class="choice-grid"><button class="choice recommended" data-clarify="recommended"><strong>按建议处理</strong><span>更新 1 条主知识，合并 2 条重复知识，保留 2 条冲突知识</span></button><button class="choice" data-clarify="manual"><strong>重新选择影响对象</strong><span>逐条决定哪些知识参与合并</span></button></div></div></article>`
       scrollThread()
       busy = false
     }
@@ -899,7 +943,10 @@
 
     const sourceData = {
       base: { entry: '基层处理与重点部位', path: '新房装修 / 施工 / 防水', file: '施工交底截图', summary: '阴阳角和管根需在大面施工前先做加强处理。', quote: '“基层清理完成后，阴阳角、管根等位置先做加强处理，再进行大面施工。”', context: '上下文：截图的上一项是“基层含水状态”，下一项是“第一遍涂刷”。' },
-      detail: { entry: '易渗漏位置检查', path: '新房装修 / 施工 / 防水', file: '监理检查清单.pdf · 第 3 页', summary: '地漏、管根、门槛石附近是验收时需重点复查的位置。', quote: '“地漏、管根和门槛石周边应逐项检查，发现空鼓、破损时先修补；修补完成后再进行下一步验收。”', context: '上下文：该段位于“节点复查”小节，后文是检查记录的签字要求。' },
+      detail: { entry: '易渗漏位置检查', path: '新房装修 / 施工 / 防水', summary: '地漏、管根、门槛石附近是验收时需重点复查的位置。', sources: [
+        { file: '监理检查清单.pdf · 第 3 页', quote: '“地漏、管根和门槛石周边应逐项检查，发现空鼓、破损时先修补；修补完成后再进行下一步验收。”', context: '上下文：该段位于“节点复查”小节，后文是检查记录的签字要求。' },
+        { file: '防水验收记录.md · 易渗漏位置', quote: '“门槛石内侧、地漏周边与管根位置已逐项复查；地漏周边补刷完成后再次检查，未见破损。”', context: '上下文：该段位于现场验收记录，前文记录了补刷时间，后文附有检查人签字。' }
+      ] },
       close: { entry: '闭水试验完成后再验收防水层', path: '新房装修 / 施工 / 防水', file: '防水验收记录.md', summary: '闭水期间同时观察水位和楼下顶面，再进入验收。', quote: '“闭水期间应持续观察水位变化，并到楼下检查顶面是否出现渗漏。”', context: '上下文：该段位于“闭水验收”小节，前文记录了试验开始时间。' },
       close24: { entry: '闭水试验至少观察 24 小时', path: '新房装修 / 施工 / 防水', file: '防水验收记录.md', summary: '24 小时是该次验收记录中的最低观察时间。', quote: '“本次闭水自 6 月 18 日 10:00 开始，至少观察 24 小时，并复查楼下顶面。”', context: '上下文：这是单次项目验收记录，未标注防水材料型号。' },
       close48: { entry: '闭水试验建议观察 48 小时', path: '新房装修 / 施工 / 防水', file: '监理复查清单.pdf · 第 5 页', summary: '监理复查清单建议将闭水观察延长至 48 小时。', quote: '“条件允许时，建议闭水保持 48 小时后再进行复查。”', context: '上下文：清单未说明“条件允许”具体指材料、工期还是环境条件。' },
@@ -909,14 +956,29 @@
       counter: { entry: '门槛石二次施工后的渗漏复盘', path: '新房装修 / 验收 / 问题复盘', file: '卫生间渗漏复盘.md', summary: '闭水通过后的二次施工仍可能破坏局部防水层。', quote: '“首次闭水 24 小时楼下未见异常。门槛石安装后出现局部渗水，拆检发现二次施工破坏了门口防水层。”', context: '上下文：复盘结论要求二次施工后重新检查受影响部位。' }
     }
 
+    function renderSource() {
+      if (!activeSourceContext || !activeSources.length) return
+      const source = activeSources[activeSourceIndex]
+      const count = activeSources.length
+      document.getElementById('sourceRelationBadge').textContent = count > 1 ? `对应正式 Entry · ${count} 个来源` : '对应正式 Entry'
+      document.getElementById('sourceEntry').textContent = activeSourceContext.entry
+      document.getElementById('sourcePath').textContent = activeSourceContext.path
+      document.getElementById('sourceSummary').textContent = activeSourceContext.summary
+      document.getElementById('sourceFile').textContent = `Source：${source.file}`
+      document.getElementById('sourceQuote').textContent = source.quote
+      document.getElementById('sourceContext').textContent = source.context
+      const pager = document.getElementById('sourcePager')
+      pager.hidden = count < 2
+      document.getElementById('sourcePageLabel').textContent = `来源 ${activeSourceIndex + 1} / ${count}`
+      pager.querySelector('[data-source-page="previous"]').disabled = activeSourceIndex === 0
+      pager.querySelector('[data-source-page="next"]').disabled = activeSourceIndex === count - 1
+    }
+
     function showSource(key) {
-      const data = sourceData[key] || sourceData.close
-      document.getElementById('sourceEntry').textContent = data.entry
-      document.getElementById('sourcePath').textContent = data.path
-      document.getElementById('sourceSummary').textContent = data.summary
-      document.getElementById('sourceFile').textContent = `Source：${data.file}`
-      document.getElementById('sourceQuote').textContent = data.quote
-      document.getElementById('sourceContext').textContent = data.context
+      activeSourceContext = sourceData[key] || sourceData.close
+      activeSources = activeSourceContext.sources || [activeSourceContext]
+      activeSourceIndex = 0
+      renderSource()
       openSheet('source')
     }
 
@@ -961,6 +1023,13 @@
       }
       if (target.matches('[data-close-overlay]')) closeOverlays()
       if (target.dataset.source) showSource(target.dataset.source)
+      if (target.dataset.sourcePage) {
+        const offset = target.dataset.sourcePage === 'next' ? 1 : -1
+        activeSourceIndex = Math.max(0, Math.min(activeSources.length - 1, activeSourceIndex + offset))
+        renderSource()
+        const preferredDirection = target.dataset.sourcePage === 'next' ? 'previous' : 'next'
+        document.querySelector(`[data-source-page="${preferredDirection}"]`)?.focus({ preventScroll: true })
+      }
       if (target.dataset.entry) showEntry(target.dataset.entry)
       if (target.matches('[data-confirm-execute]')) executeChange()
       if (target.matches('[data-confirm-undo]')) confirmUndo()
@@ -1055,7 +1124,28 @@
     })
 
     document.addEventListener('keydown', event => {
-      if (event.key === 'Escape') { closeSheets(); closeOverlays() }
+      const layer = activeLayer()
+      if (event.key === 'Escape') {
+        if (document.querySelector('.sheet.open')) closeSheets()
+        else if (document.querySelector('.overlay.open')) closeOverlays()
+        return
+      }
+      if (event.key !== 'Tab' || !layer) return
+      const focusable = [...layer.querySelectorAll(focusableSelector)].filter(element => !element.closest('[hidden]'))
+      if (!focusable.length) {
+        event.preventDefault()
+        layer.focus({ preventScroll: true })
+        return
+      }
+      const first = focusable[0]
+      const last = focusable[focusable.length - 1]
+      if (event.shiftKey && document.activeElement === first) {
+        event.preventDefault()
+        last.focus({ preventScroll: true })
+      } else if (!event.shiftKey && document.activeElement === last) {
+        event.preventDefault()
+        first.focus({ preventScroll: true })
+      }
     })
   </script>
 </body>
