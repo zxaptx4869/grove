@@ -22,7 +22,7 @@ Worker MUST 通过数据库原子操作领取待执行 Run，并记录领取时�
 - **WHEN** 两个 Worker 同时尝试领取同一个 `waiting` Run
 - **THEN** 只有一个 Worker 获得执行权且不会提交两份助手回答或重复调查轮次
 
-#### Scenario: quick Worker 重启后恢复
+#### Scenario: Worker 重启后恢复
 - **WHEN** Worker 在 quick 只读执行中退出且 Run 超过处理租约
 - **THEN** 系统在重试上限内将 Run 重新入队并安全重放单轮执行图
 
@@ -41,7 +41,7 @@ Worker MUST 通过数据库原子操作领取待执行 Run，并记录领取时�
 - **WHEN** 用户取消尚未领取的 `waiting` Run
 - **THEN** 系统将其标记为 `cancelled`、释放活动槽且 Worker 不再执行
 
-#### Scenario: 取消处理中的 quick Run
+#### Scenario: 取消处理中的 Run
 - **WHEN** 用户取消正在模型调用中的 quick Run
 - **THEN** 系统记录取消请求，并在下一个可中断点识别取消、丢弃未提交结果且不更新工作集
 
@@ -60,11 +60,11 @@ Worker MUST 通过数据库原子操作领取待执行 Run，并记录领取时�
 ### Requirement: 终态提交保持一致
 系统 MUST 在同一事务中提交助手消息结果、Run 终态、可选 Investigation 终态与调查摘要、活动槽释放以及可选输出工作集版本；失败、取消、澄清或重复执行 MUST NOT 留下被当作正常事实回答或活动上下文的半成品状态，输出工作集只可包含最终有效引用实际使用的 Entry。
 
-#### Scenario: 调查回答与工作集提交成功
+#### Scenario: 回答与工作集提交成功
 - **WHEN** 调查停止、最终回答和引用通过校验且满足工作集推进条件
 - **THEN** 系统原子写入助手消息、Run/Investigation 终态与摘要、新工作集版本并释放活动槽
 
-#### Scenario: quick 回答提交成功
+#### Scenario: 回答提交成功
 - **WHEN** quick 回答和引用通过最终校验
 - **THEN** 系统原子写入助手消息、Run 结果与 `completed` 或 `partial` 终态、可选工作集版本并释放活动槽
 
@@ -83,7 +83,7 @@ Worker MUST 通过数据库原子操作领取待执行 Run，并记录领取时�
 ### Requirement: 分阶段 AI 可观测性
 系统 MUST 为上下文决策/改写、回答模式路由、每轮调查控制器、embedding、重排、最终回答及每次工具调用保存阶段、provider、model、fallback 状态、错误、耗时与可选轮次/查询归属，并在 Run 上汇总用户可识别的降级、预算停止或异常状态；正常空结果 MUST NOT 误报为 fallback，工具部分失败或错误 MUST NOT 被记录为完全正常。
 
-#### Scenario: 调查全阶段正常
+#### Scenario: 全阶段正常
 - **WHEN** 路由、各轮控制器、embedding、重排和回答均由配置模型成功完成且工具正常
 - **THEN** 各阶段记录实际 provider/model、轮次归属与 `is_fallback=false`，Run 无降级摘要
 
@@ -91,9 +91,13 @@ Worker MUST 通过数据库原子操作领取待执行 Run，并记录领取时�
 - **WHEN** auto 路由失败并按规则回退 quick，后续问答成功
 - **THEN** 路由阶段记录 fallback/error，Run 返回实际模式 quick 且不得把整次执行标为完全正常
 
-#### Scenario: embedding 降级但调查继续
+#### Scenario: embedding 降级但回答成功
 - **WHEN** 某轮 embedding 失败后使用确定性召回且后续阶段成功
 - **THEN** 对应轮次的 embedding 记录降级原因，其他阶段记录实际模型，Run 汇总为部分降级
+
+#### Scenario: 上下文决策降级
+- **WHEN** 自动上下文决策模型不可用并安全回退为新话题
+- **THEN** 决策阶段记录 provider/model/fallback/error，Run 汇总可识别该阶段
 
 #### Scenario: 控制器非法输出
 - **WHEN** 某轮控制器返回非法 schema 或越权字段
@@ -110,6 +114,8 @@ Worker MUST 通过数据库原子操作领取待执行 Run，并记录领取时�
 #### Scenario: 回答模型不可用
 - **WHEN** 调查已有结果但最终回答模型未配置或调用失败
 - **THEN** 系统明确记录回答阶段失败并将 Run 标为 `partial` 或 `failed`，不得伪装为正常 AI 回答
+
+## ADDED Requirements
 
 ### Requirement: 知识问答使用 quick 或有界调查执行图
 系统 MUST 在上下文决策后按实际回答模式执行 quick 固定单轮图，或执行由应用控制、服务端预算限制的调查循环；两条路径的事实均 MUST 只来自当前 Run 重新读取的正式 Entry 与 Evidence，模型 MUST NOT 自行创建无限工具循环。
@@ -139,4 +145,3 @@ Worker MUST 通过数据库原子操作领取待执行 Run，并记录领取时�
 ### Requirement: 连续问答使用固定有限执行图
 **Reason**: 单一固定执行图无法表达新增的 quick 单轮与有界自主调查两条执行路径，已由“知识问答使用 quick 或有界调查执行图”完整替代。
 **Migration**: 既有客户端默认提交 `answer_mode=auto`；旧 Run 按 quick 兼容读取，现有单轮执行逻辑保留为 quick 分支。
-

@@ -37,7 +37,7 @@
 ### Requirement: Entry 读取受已发现集合约束
 系统 MUST 只允许读取本 Run 任一已提交搜索结果、固化工作集中的复验有效种子，或用户在本 Run 显式引用且仍属于 Run 范围的 Entry；调查中已发现集合 MUST 跨轮次累积并在每次读取前复验。Entry 读取 MUST 返回完整正式内容以及项目、目录和来源关系，不得因模型提供有效 UUID 而绕过发现过程。
 
-#### Scenario: 读取本轮搜索发现的 Entry
+#### Scenario: 读取搜索发现的 Entry
 - **WHEN** 模型请求批量读取当前轮搜索返回且属于当前范围的 Entry
 - **THEN** 工具返回这些 Entry 的完整正式内容与归属信息
 
@@ -94,4 +94,3 @@
 #### Scenario: 大体积原文被读取
 - **WHEN** Evidence 工具读取长 Attachment
 - **THEN** 审计只保存长度受限摘要、对象句柄与定位，不复制整份原文
-

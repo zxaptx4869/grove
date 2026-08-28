@@ -3,8 +3,12 @@
 ### Requirement: 证据召回复用语义检索
 系统 MUST 在持久化 Agent Run 中通过受可信范围约束的知识工具复用语义检索混合召回与文本模型语义重排；quick 模式按一个独立查询完成单轮召回，investigate 模式可在预算内按多轮不同查询召回并将结果加入 Run 账本；继续追问 MUST 将复验有效的输入工作集种子与当前 Run 新召回去重统一重排。单次回答上下文最多包含 15 条已确认 Entry，调查账本不同 Entry 总量另受服务端预算限制；embedding 或重排降级 MUST 分阶段、分轮次记录，不得静默调用外部服务。
 
-#### Scenario: quick 按当前问题召回
+#### Scenario: 按问题召回上下文
 - **WHEN** actual mode 为 quick 且 embedding 与重排可用
+- **THEN** 系统在固化范围内按当前独立查询召回和重排相关正式 Entry
+
+#### Scenario: 新话题按当前问题召回
+- **WHEN** Run 决策为新话题且 embedding 与重排可用
 - **THEN** 系统在固化范围内按当前独立查询召回和重排相关正式 Entry
 
 #### Scenario: 调查按新缺口补查
@@ -30,7 +34,7 @@
 ### Requirement: 带引用回答
 系统 MUST 返回包含答案文本、引用列表与回答模式/调查摘要的结构化回答；每条事实引用 MUST 指向当前 Run 任一轮由服务端重新核验的 Evidence，并包含 `evidence_id`、`entry_id`、`source_id`、可选 `attachment_id` 与真实原文 `quote`；关键结论 MUST 附有效引用。模型输出的自由 quote、历史 Run 句柄、范围外句柄或未经核验来源 MUST 被丢弃，并据有效引用、覆盖缺口与停止原因调整回答和 Run 状态。
 
-#### Scenario: 多轮调查回答附真实引用
+#### Scenario: 回答附真实引用
 - **WHEN** 最终回答综合多个已完成调查轮次的证据
 - **THEN** 每个关键结论只引用当前 Run 账本中的有效 Evidence，并返回实际模式和调查摘要
 
@@ -69,6 +73,10 @@
 - **WHEN** 调查因轮次或其他预算停止且仍存在未覆盖方面
 - **THEN** 回答列出已有证据支持的部分与未解决缺口，并返回稳定停止原因
 
+#### Scenario: 有 Entry 但无本轮可核验证据
+- **WHEN** 召回或工作集包含相关 Entry 但其当前来源原文无法读取或核验
+- **THEN** 系统说明证据不足且不以历史 Evidence 或未经核验引用支持确定性结论
+
 #### Scenario: 工作集证据已失效
 - **WHEN** 工作集包含相关 Entry 但其当前来源原文无法读取或核验
 - **THEN** 系统说明证据不足且不以历史 Evidence 或未经核验引用支持确定性结论
@@ -91,11 +99,11 @@
 ### Requirement: 可观测性
 系统 MUST 对一次问答的上下文决策/改写、回答模式路由、逐轮调查控制器、embedding、重排、工具和最终回答阶段分别记录 provider、model、fallback 状态、error、耗时及轮次/查询归属，并在 Run 响应中汇总降级、预算停止或异常；未配置密钥、任一模型调用失败、工具部分失败或引用校验降级 MUST 明确标记对应阶段和原因，禁止静默降级。
 
-#### Scenario: 正常调查记录各阶段来源
+#### Scenario: 正常连续回答记录各阶段来源
 - **WHEN** 路由、调查控制器及问答各 AI 阶段均由真实模型完成且引用有效
 - **THEN** 每个模型阶段记录实际 provider/model、轮次归属与 `is_fallback=false`，Run 不显示降级
 
-#### Scenario: 正常 quick 回答记录各阶段来源
+#### Scenario: 正常回答记录各阶段来源
 - **WHEN** quick 问答各 AI 阶段均由真实模型完成
 - **THEN** 每个模型阶段记录实际 provider/model 与 `is_fallback=false`，Run 不显示降级
 
@@ -106,4 +114,3 @@
 #### Scenario: 正常空搜索不误报
 - **WHEN** 某轮搜索成功完成但没有新增相关正式 Entry
 - **THEN** 系统记录无进展停止，不把正常空结果标成模型 fallback
-

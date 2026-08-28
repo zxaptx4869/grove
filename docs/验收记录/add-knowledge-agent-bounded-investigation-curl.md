@@ -91,3 +91,26 @@ DATABASE_URL="mysql+asyncmy://root@127.0.0.1:33063/grove_mysql_test?charset=utf8
 不存在；可观测性契约（模型/工具阶段、round/query 归属、正常 empty 不误报
 fallback）由 `tests/test_knowledge_agent_api.py` 与本 change 新增的
 `tests/test_knowledge_agent_investigation_api.py` 覆盖。
+
+## 人工验收（用户委托代理执行）
+
+验收日期：2026-08-28。用户将手动验收委托给代理执行：全新用户
+`accept_investigation`、独立数据库 `backend/grove_accept.db`（迁移到
+`c4d5e6f7a8b9`）、端口 8013，进程内 Worker 开启；未配置模型密钥。
+
+| 场景 | 结果 |
+|---|---|
+| 未登录访问 Run | 401 |
+| 注册 / 建项目节点来源 / 确认 Entry | 201/201/201/200/200 |
+| quick 首问 | 201 → `request/actual=quick`、单轮、无调查摘要（`null`）；回答模型离线 → `partial` + `answer.status=failed`（符合设计） |
+| auto | `actual=quick`（路由离线降级）；observability 记录 `answer_mode_route`：`provider=offline`、`is_fallback=true`、`error=未配置文本模型密钥` |
+| 强制 investigate | `actual=investigate`、`current_round=1`、`partial`；`investigation_summary`：`rounds_completed=1`、`queries_executed=0`、`stop_reason=insufficient` |
+| 逐轮调查详情 | `GET /runs/3/investigation` → 200；`status=insufficient`、预算快照 `3/3/6/30/12`、1 个 round（`controller_action=insufficient`、`is_fallback=true`）、0 条查询 |
+| 幂等重试（同 `client_message_id` 改 quick） | 200；返回原 Run 3，`request_answer_mode=investigate`、消息内容不变 |
+| 空消息 | 422 |
+| 取消 waiting Run | `cancelled`、`active_slot=null`、无回答 |
+| 跨用户隔离 | 另一用户读 Run 与调查详情均 404 |
+| 调查相关自动化测试 | `test_knowledge_agent_investigation_{runner,recovery,api,ledger,agents}.py` 共 43 项全部通过（覆盖两轮补查、预算停止、多轮引用、冲突、恢复、取消与 API 契约） |
+
+验收结论：回答模式固化与降级可见、调查落库与逐轮审计、预算快照、幂等、
+取消、隔离与只读边界均符合 proposal / design / delta specs 契约，通过验收。

@@ -8,7 +8,6 @@ import uuid
 from pathlib import Path
 
 import pytest
-from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 
 from app.db.session import async_session_factory
@@ -34,8 +33,8 @@ from app.models.knowledge_agent import (
     INVESTIGATION_STATUS_FAILED,
     INVESTIGATION_STATUS_INSUFFICIENT,
     INVESTIGATION_TERMINAL_STATUSES,
-    RUN_COMPLETED,
     SCOPE_WORKSPACE,
+    STOP_REASON_CANCELLED,
     STOP_REASON_CONTROLLER_COMPLETE,
     STOP_REASON_ENTRY_BUDGET,
     STOP_REASON_EVIDENCE_BUDGET,
@@ -44,7 +43,6 @@ from app.models.knowledge_agent import (
     STOP_REASON_MAX_ROUNDS,
     STOP_REASON_NO_PROGRESS,
     STOP_REASON_QUERY_BUDGET,
-    STOP_REASON_CANCELLED,
     STOP_REASONS,
 )
 from app.schemas.knowledge_agent import KnowledgeRunSubmitRequest
@@ -69,7 +67,10 @@ async def _user_workspace_conversation(
     return user, workspace, conversation
 
 
-async def _investigation_with_run(db, conversation) -> tuple[KnowledgeInvestigation, KnowledgeAgentRun]:
+async def _investigation_with_run(
+    db,
+    conversation,
+) -> tuple[KnowledgeInvestigation, KnowledgeAgentRun]:
     """创建带调查的 waiting Run（走真实幂等提交 + 直接创建 Investigation）。"""
     user_message, run = await submit_message(
         db,
