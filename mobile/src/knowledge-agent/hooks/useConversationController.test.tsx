@@ -270,7 +270,9 @@ describe("useConversationController", () => {
     });
 
     expect(api.submitMessage).toHaveBeenCalledTimes(1);
-    expect(rendered.result.current.pending?.phase).toBe("conflict");
+    // 409 后不保留“发送中”气泡，错误文案说明冲突
+    expect(rendered.result.current.pending).toBeNull();
+    expect(rendered.result.current.submitError).toContain("进行中的回答");
     // 刷新服务端最近 Run：对话与消息被重新获取
     await waitFor(() => {
       expect(api.getConversation).toHaveBeenCalled();

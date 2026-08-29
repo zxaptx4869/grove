@@ -276,6 +276,7 @@ test("过程卡轮询失败显示就地重试", async () => {
     />,
   );
   expect(view.getByText(/状态更新失败/)).toBeOnTheScreen();
+  expect(view.getByText("状态异常")).toBeOnTheScreen();
   await fireEvent.press(view.getByLabelText("重试获取回答状态"));
   expect(onRetry).toHaveBeenCalled();
 });
@@ -405,4 +406,56 @@ test("提交网络失败保留 pending 并显示就地重试", async () => {
   expect(await view.findByText("发送未完成")).toBeOnTheScreen();
   expect(view.getByLabelText("重试发送")).toBeOnTheScreen();
   expect(view.getByText("闭水试验多久？")).toBeOnTheScreen();
+  // 失败时输入框文本保留，便于就地修改重试
+  expect(input.props.value).toBe("闭水试验多久？");
+});
+
+test("活动 Run 409 时显示冲突说明且不保留发送中气泡与重试", async () => {
+  const api = knowledgeAgentApi as jest.Mocked<typeof knowledgeAgentApi>;
+  api.createConversation.mockResolvedValue({
+    id: 10,
+    title: "新对话",
+    scopeType: "workspace",
+    projectId: null,
+    projectName: null,
+    activeTopicLabel: null,
+    activeContextVersionId: null,
+    activeEntryCount: 0,
+    recentRunId: null,
+    recentRunStatus: null,
+    recentRunCurrentStep: null,
+    recentRunUpdatedAt: null,
+    lastActivityAt: "2026-08-29T10:00:00Z",
+    createdAt: "2026-08-29T09:00:00Z",
+  });
+  api.getConversation.mockResolvedValue({
+    id: 10,
+    title: "新对话",
+    scopeType: "workspace",
+    projectId: null,
+    projectName: null,
+    activeTopicLabel: null,
+    activeContextVersionId: null,
+    activeEntryCount: 0,
+    recentRunId: null,
+    recentRunStatus: null,
+    recentRunCurrentStep: null,
+    recentRunUpdatedAt: null,
+    lastActivityAt: "2026-08-29T10:00:00Z",
+    createdAt: "2026-08-29T09:00:00Z",
+  });
+  api.submitMessage.mockRejectedValue({
+    status: 409,
+    message: "存在进行中的问答",
+  });
+
+  const view = await render(<ConversationScreen />, { wrapper });
+  const input = await view.findByLabelText("对话输入");
+  await fireEvent.changeText(input, "第二个问题");
+  await fireEvent.press(view.getByLabelText("发送"));
+
+  expect(await view.findByText("发送未完成")).toBeOnTheScreen();
+  expect(view.getByText(/已有进行中的回答/)).toBeOnTheScreen();
+  expect(view.queryByLabelText("重试发送")).toBeNull();
+  expect(view.queryByText("发送中…")).toBeNull();
 });

@@ -27,6 +27,7 @@ import { ScopeSheet } from "@/src/knowledge-agent/components/ScopeSheet";
 import { useConversationController } from "@/src/knowledge-agent/hooks/useConversationController";
 import { useKeyboardHeight } from "@/src/knowledge-agent/hooks/useKeyboardHeight";
 import { scopeLabel } from "@/src/knowledge-agent/adapters/scope";
+import { toUserErrorMessage } from "@/src/knowledge-agent/errors";
 import type {
   KnowledgeMessage,
   KnowledgeRun,
@@ -77,6 +78,8 @@ export function ConversationScreen() {
       controller.pending.phase === "submitting");
 
   const handleSend = useCallback(() => {
+    // 先滚到底让 pending 气泡可见，提交成功后再对齐服务端消息
+    scrollRef.current?.scrollToEnd({ animated: true });
     void controller.submit(text).then((submitted) => {
       // 只有确定成功才清空输入与滚动；失败时保留文本便于就地修改重试
       if (submitted) {
@@ -263,15 +266,17 @@ export function ConversationScreen() {
             <View style={styles.inlineError}>
               <Text style={styles.inlineErrorTitle}>发送未完成</Text>
               <Text style={styles.inlineErrorCopy}>{controller.submitError}</Text>
-              <Pressable
-                accessibilityRole="button"
-                accessibilityLabel="重试发送"
-                onPress={() => void controller.retrySubmit()}
-                style={styles.retryButton}
-              >
-                <AgentIcon name="retry" size={16} color={theme.green} />
-                <Text style={styles.retryText}>重试发送</Text>
-              </Pressable>
+              {controller.pending !== null && submitting && (
+                <Pressable
+                  accessibilityRole="button"
+                  accessibilityLabel="重试发送"
+                  onPress={() => void controller.retrySubmit()}
+                  style={styles.retryButton}
+                >
+                  <AgentIcon name="retry" size={16} color={theme.green} />
+                  <Text style={styles.retryText}>重试发送</Text>
+                </Pressable>
+              )}
             </View>
           )}
         </ScrollView>
@@ -287,7 +292,9 @@ export function ConversationScreen() {
             onRemoveAnswerOverride={() => controller.setAnswerMode("auto")}
             submitting={submitting}
             disabled={
-              controller.initialLoading || controller.conversationsError !== null
+              controller.initialLoading ||
+              (controller.conversationsError !== null &&
+                !controller.userInitiatedDraft)
             }
           />
         </View>
@@ -318,7 +325,7 @@ export function ConversationScreen() {
         loadingProjects={projectsQuery.isLoading}
         projectsError={
           projectsQuery.isError
-            ? String((projectsQuery.error as Error).message)
+            ? toUserErrorMessage(projectsQuery.error)
             : null
         }
         disabled={controller.activeRun !== null}

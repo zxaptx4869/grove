@@ -6,17 +6,22 @@ import type { KnowledgeAnswer } from "@/src/knowledge-agent/types";
 
 test("cleanAnswerText 移除常见 Markdown 标记但保留换行与内容", () => {
   const text =
-    "## 釉面类型对比\n\n**天鹅绒釉面**（易清洁度 4 星）\n- 耐磨\n- 防滑\n1. 先看胚体\n*斜体*";
+    "## 釉面类型对比\n\n**天鹅绒釉面**（易清洁度 4 星）\n- 耐磨\n- 防滑\n1. 先看胚体";
   const cleaned = cleanAnswerText(text);
   expect(cleaned).toContain("釉面类型对比");
   expect(cleaned).toContain("天鹅绒釉面（易清洁度 4 星）");
   expect(cleaned).toContain("耐磨");
   expect(cleaned).toContain("先看胚体");
-  expect(cleaned).toContain("斜体");
   expect(cleaned).not.toContain("**");
   expect(cleaned).not.toContain("##");
   expect(cleaned).not.toContain("- 耐磨");
   expect(cleaned).not.toContain("1. ");
+});
+
+test("cleanAnswerText 不误删正文中的成对星号", () => {
+  expect(cleanAnswerText("规格 100*50 与 80*40 均可")).toBe(
+    "规格 100*50 与 80*40 均可",
+  );
 });
 
 test("insufficient 但有引用与实质内容时按部分结果展示", () => {

@@ -23,7 +23,6 @@ import {
   attachConversation,
   canRetrySubmission,
   createPendingSubmission,
-  markConflict,
   type PendingSubmission,
 } from "@/src/knowledge-agent/state/submission";
 import type {
@@ -51,6 +50,7 @@ export interface ConversationController {
   activeConversation: KnowledgeConversation | null;
   activeConversationLoading: boolean;
   isDraft: boolean;
+  userInitiatedDraft: boolean;
   draftScope: DraftScope;
   currentScope: KnowledgeScopeChangeRequest;
   scopeLabel: string;
@@ -326,8 +326,10 @@ export function useConversationController(
       } catch (error) {
         const classified = classifyKnowledgeAgentError(error);
         if (classified.kind === "conflict") {
-          // 活动 Run 409：不创建第二个本地任务，刷新并展示服务端最近 Run
-          setPending(markConflict(submission));
+          // 活动 Run 409：服务端未接受该消息，清空 pending 不显示“发送中”，
+          // 刷新并展示服务端最近 Run；错误文案说明冲突原因，不提供重试。
+          setPending(null);
+          setSubmitError("已有进行中的回答，请等待完成或取消后再提问");
           const conversationId =
             submission.conversationId ?? selectedConversationId;
           if (conversationId !== null) {
@@ -522,6 +524,7 @@ export function useConversationController(
     activeConversation,
     activeConversationLoading: activeConversationQuery.isLoading,
     isDraft,
+    userInitiatedDraft: explicitChoice === "draft",
     draftScope,
     currentScope,
     scopeLabel: scopeLabelOf(currentScope),

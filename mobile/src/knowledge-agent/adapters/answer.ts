@@ -31,7 +31,8 @@ const STOP_REASON_LABELS: Record<InvestigationStopReason, string> = {
  *
  * 后端回答模型可能输出 `**加粗**`、`## 标题`、`- 列表` 等标记；原生 Text
  * 不解析 Markdown，直接展示会裸露星号和井号。这里保留换行与内容顺序，
- * 只移除标记字符，不引入任何富文本渲染。
+ * 只移除标记字符，不引入任何富文本渲染。行内单星号不做处理，避免误删
+ * 正文中的成对星号（如「100*50」）。
  */
 export function cleanAnswerText(text: string): string {
   return text
@@ -39,7 +40,6 @@ export function cleanAnswerText(text: string): string {
     .replace(/(^|\n)[ \t]*#{1,6}[ \t]+/g, "$1")
     .replace(/(^|\n)[ \t]*[-*][ \t]+/g, "$1")
     .replace(/(^|\n)[ \t]*\d+[.、][ \t]+/g, "$1")
-    .replace(/\*([^*]+)\*/g, "$1")
     .replace(/[ \t]+\n/g, "\n")
     .replace(/\n{3,}/g, "\n\n")
     .trim();

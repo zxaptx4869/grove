@@ -400,7 +400,9 @@ async def _execute_query_round(
         if admitted_entry_ids:
             await _check_cancelled(run.id)
             await update_run_step(run.id, STEP_ROUND_EVIDENCE)
+            started = perf_counter()
             entries = await read_entries(db, ctx, admitted_entry_ids)
+            read_duration_ms = int((perf_counter() - started) * 1000)
             denied_count = len(entries.denied_entry_ids)
             unavailable_count = len(entries.unavailable_entry_ids)
             await record_tool_result(
@@ -417,7 +419,7 @@ async def _execute_query_round(
                     "denied": denied_count,
                     "unavailable": unavailable_count,
                 },
-                duration_ms=0,
+                duration_ms=read_duration_ms,
                 investigation_id=investigation.id,
                 round_number=round_number,
                 query_sequence=query_row.sequence,

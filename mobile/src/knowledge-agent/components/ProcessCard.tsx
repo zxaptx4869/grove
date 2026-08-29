@@ -34,7 +34,13 @@ export function ProcessCard({
             </Eyebrow>
             <Text style={styles.title}>{step.title}</Text>
           </View>
-          <Badge tone="neutral">{cancelling ? "正在取消" : "进行中"}</Badge>
+          <Badge tone={pollingError !== null ? "error" : "neutral"}>
+            {cancelling
+              ? "正在取消"
+              : pollingError !== null
+                ? "状态异常"
+                : "进行中"}
+          </Badge>
         </View>
         <View style={styles.scopeRow}>
           <AgentIcon name="folder" size={14} color={theme.muted} />
