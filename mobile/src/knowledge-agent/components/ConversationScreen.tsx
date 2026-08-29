@@ -1,8 +1,10 @@
-import { useCallback, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import {
   ActivityIndicator,
+  LayoutAnimation,
   NativeScrollEvent,
   NativeSyntheticEvent,
+  Platform,
   Pressable,
   ScrollView,
   StyleSheet,
@@ -44,6 +46,18 @@ export function ConversationScreen() {
   const controller = useConversationController(token);
   const insets = useSafeAreaInsets();
   const keyboardHeight = useKeyboardHeight(insets.bottom);
+  const previousKeyboardHeightRef = useRef(0);
+  // Android 键盘收起/弹出动画与 padding 瞬移不同步会导致输入框闪烁；
+  // 高度变化时用 LayoutAnimation 平滑过渡，让 composer 跟随键盘动画。
+  useEffect(() => {
+    if (
+      Platform.OS === "android" &&
+      previousKeyboardHeightRef.current !== keyboardHeight
+    ) {
+      LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
+    }
+    previousKeyboardHeightRef.current = keyboardHeight;
+  }, [keyboardHeight]);
   const [text, setText] = useState("");
   const [historyOpen, setHistoryOpen] = useState(false);
   const [scopeOpen, setScopeOpen] = useState(false);
