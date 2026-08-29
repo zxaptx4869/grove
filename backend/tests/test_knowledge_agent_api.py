@@ -234,6 +234,43 @@ async def test_submit_idempotent_and_polling_recovery(client: httpx.AsyncClient)
 
 
 @pytest.mark.asyncio
+async def test_message_page_normalizes_runs(client: httpx.AsyncClient) -> None:
+    """消息页 runs 集合去重携带关联 Run，用户/助手消息通过 run_id 复用。"""
+    await _register(client)
+    project = await _project(client, "规范化项目")
+    node = await _node(client, project["id"], "施工")
+    await _entry(client, project["id"], node["id"], "闭水试验通常持续 24 小时")
+    conversation = await _conversation(client)
+    submitted = await client.post(
+        f"/api/knowledge-agent/conversations/{conversation['id']}/messages",
+        json={"client_message_id": "norm-1", "message": "闭水试验通常持续多久？"},
+    )
+    assert submitted.status_code == 201
+    run_id = submitted.json()["run"]["id"]
+
+    async with async_session_factory() as db:
+        await _cancel_other_waiting_runs(db, keep_run_id=run_id)
+    assert await process_one_run() is True
+
+    page = (
+        await client.get(
+            f"/api/knowledge-agent/conversations/{conversation['id']}/messages"
+        )
+    ).json()
+    assert len(page["runs"]) == 1
+    run = page["runs"][0]
+    assert run["id"] == run_id
+    assert run["status"] in {"completed", "partial"}
+    assert run["answer"] is not None
+    assert run["answer"]["answer"]
+    items = page["items"]
+    user_message = next(item for item in items if item["role"] == "user")
+    assistant_message = next(item for item in items if item["role"] == "assistant")
+    assert user_message["run_id"] == run_id
+    assert assistant_message["run_id"] == run_id
+
+
+@pytest.mark.asyncio
 async def test_submit_active_conflict_and_cancel(client: httpx.AsyncClient) -> None:
     """活动 Run 期间新问题 409；取消后不再产生回答。"""
     await _register(client)

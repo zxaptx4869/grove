@@ -4,9 +4,9 @@ import uuid
 
 import pytest
 from fastapi import HTTPException
-from sqlalchemy import func, select
+from sqlalchemy import event, func, select
 
-from app.db.session import async_session_factory
+from app.db.session import async_session_factory, engine
 from app.models import (
     KnowledgeMessage,
     Project,
@@ -16,6 +16,7 @@ from app.models import (
 )
 from app.models.knowledge_agent import (
     MESSAGE_TYPE_SCOPE_CHANGE,
+    MESSAGE_TYPE_USER,
     RUN_CANCELLED,
     RUN_WAITING,
     SCOPE_PROJECT,
@@ -357,7 +358,7 @@ async def test_scope_change_same_scope_is_noop() -> None:
 
 @pytest.mark.asyncio
 async def test_message_cursor_pagination() -> None:
-    """游标分页稳定顺序且不重复不跳过。"""
+    """游标分页：无 cursor 返回最近一页，页内正序，向前加载不重复不跳过。"""
     async with async_session_factory() as db:
         user = await _user(db, "分页")
         workspace = await _workspace_for(db, user)
@@ -380,6 +381,20 @@ async def test_message_cursor_pagination() -> None:
             await cancel_run(db, run)
             await db.commit()
 
+        # 无 cursor：返回最近一页且页内按时间正序
+        rows, next_cursor = await list_messages(
+            db,
+            conversation.id,
+            limit=2,
+        )
+        assert [row.id for row in rows] == sorted(row.id for row in rows)
+        user_contents = [
+            row.content for row in rows if row.message_type == MESSAGE_TYPE_USER
+        ]
+        assert user_contents[-1] == "第 5 个问题"
+        assert next_cursor is not None
+
+        # 向前遍历全部消息：不重复、不遗漏；跨页顺序从最近到最早
         seen: list[int] = []
         cursor: str | None = None
         for _ in range(10):
@@ -389,12 +404,164 @@ async def test_message_cursor_pagination() -> None:
                 cursor=cursor,
                 limit=2,
             )
-            seen.extend(row.id for row in rows)
+            assert [row.id for row in rows] == sorted(row.id for row in rows)
+            seen.extend(reversed([row.id for row in rows]))
             if cursor is None:
                 break
+        # 每页 2 条、共 5 次提交 = 10 条消息
         assert len(seen) == 10
         assert len(set(seen)) == 10
-        assert seen == sorted(seen)
+        assert seen == sorted(seen, reverse=True)
+
+
+@pytest.mark.asyncio
+async def test_message_pagination_recent_first_and_before_cursor() -> None:
+    """首页最近优先、尾页无游标、相同时间戳按 id 稳定排序且无重复。"""
+    from datetime import UTC, datetime
+
+    from sqlalchemy import update as sa_update
+
+    async with async_session_factory() as db:
+        user = await _user(db, "新分页")
+        workspace = await _workspace_for(db, user)
+        conversation = await create_conversation(
+            db,
+            workspace.id,
+            user.id,
+            KnowledgeConversationCreate(scope_type="workspace"),
+        )
+        for index in range(6):
+            _, run = await submit_message(
+                db,
+                conversation,
+                KnowledgeRunSubmitRequest(
+                    client_message_id=f"np-{index}",
+                    message=f"第 {index + 1} 个问题",
+                ),
+            )
+            await db.commit()
+            await cancel_run(db, run)
+            await db.commit()
+
+        # 把所有消息压到同一时间戳，验证 (created_at, id) 稳定序
+        fixed_time = datetime.now(UTC)
+        await db.execute(
+            sa_update(KnowledgeMessage)
+            .where(KnowledgeMessage.conversation_id == conversation.id)
+            .values(created_at=fixed_time)
+        )
+        await db.commit()
+
+        # 首页返回最近一页（最大 id 在后），页内正序
+        rows, cursor = await list_messages(
+            db,
+            conversation.id,
+            limit=3,
+        )
+        assert len(rows) == 3
+        assert rows[-1].id == max(row.id for row in rows)
+        user_contents = [
+            row.content for row in rows if row.message_type == MESSAGE_TYPE_USER
+        ]
+        assert user_contents[-1] == "第 6 个问题"
+        assert cursor is not None
+
+        # 向前加载更早一页，与首页不重复
+        older, cursor = await list_messages(
+            db,
+            conversation.id,
+            cursor=cursor,
+            limit=3,
+        )
+        assert len(older) == 3
+        assert not {row.id for row in rows} & {row.id for row in older}
+        older_user_contents = [
+            row.content
+            for row in older
+            if row.message_type == MESSAGE_TYPE_USER
+        ]
+        assert older_user_contents[-1] == "第 5 个问题"
+        before_cursor = cursor
+
+        # 继续向前遍历全部剩余页：不重复、不遗漏，最终返回空页且无游标
+        seen_ids = {row.id for row in rows} | {row.id for row in older}
+        # 从最近页开始遍历：第 6 → 第 5 → … → 第 1
+        all_user_contents = user_contents + older_user_contents
+        cursor = before_cursor
+        while cursor is not None:
+            page, cursor = await list_messages(
+                db,
+                conversation.id,
+                cursor=cursor,
+                limit=3,
+            )
+            assert [row.id for row in page] == sorted(row.id for row in page)
+            assert not seen_ids & {row.id for row in page}
+            seen_ids |= {row.id for row in page}
+            all_user_contents.extend(
+                row.content
+                for row in page
+                if row.message_type == MESSAGE_TYPE_USER
+            )
+        # 12 条消息全部遍历且不重复；用户消息全部出现
+        assert len(seen_ids) == 12
+        assert sorted(all_user_contents) == [
+            f"第 {index} 个问题" for index in range(1, 7)
+        ]
+
+
+@pytest.mark.asyncio
+async def test_conversation_list_batch_hydrates_recent_run() -> None:
+    """列表批量水合每个对话最近 Run 摘要，且只发一条 Runs 聚合查询。"""
+    async with async_session_factory() as db:
+        user = await _user(db, "列表Run")
+        workspace = await _workspace_for(db, user)
+        conversation_ids = []
+        for index in range(3):
+            conversation = await create_conversation(
+                db,
+                workspace.id,
+                user.id,
+                KnowledgeConversationCreate(scope_type="workspace"),
+            )
+            conversation_ids.append(conversation.id)
+            for submit_index in range(2):
+                _, run = await submit_message(
+                    db,
+                    conversation,
+                    KnowledgeRunSubmitRequest(
+                        client_message_id=f"list-{index}-{submit_index}",
+                        message=f"列表问题 {index}-{submit_index}",
+                    ),
+                )
+                await db.commit()
+                await cancel_run(db, run)
+                await db.commit()
+
+        # 统计 list_conversations 期间对 knowledge_agent_runs 的 SELECT 次数
+        run_select_count = {"count": 0}
+
+        def _count_runs_select(conn, cursor, statement, parameters, context, executemany):
+            if "FROM knowledge_agent_runs" in statement:
+                run_select_count["count"] += 1
+
+        event.listen(engine.sync_engine, "before_cursor_execute", _count_runs_select)
+        try:
+            summaries = await list_conversations(db, workspace.id, user.id)
+        finally:
+            event.remove(
+                engine.sync_engine,
+                "before_cursor_execute",
+                _count_runs_select,
+            )
+
+        assert len(summaries) == 3
+        for summary in summaries:
+            assert summary.recent_run_id is not None
+            assert summary.recent_run_status == RUN_CANCELLED
+            assert summary.recent_run_updated_at is not None
+        # 批量聚合查询只执行一次，不按会话逐条查询
+        assert run_select_count["count"] == 1
 
 
 @pytest.mark.asyncio

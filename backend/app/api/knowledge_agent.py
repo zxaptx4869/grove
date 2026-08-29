@@ -43,6 +43,7 @@ from app.services.knowledge_agent.conversations import (
     list_conversations,
     list_messages,
     message_out,
+    recent_runs_for_conversations,
 )
 from app.services.knowledge_agent.runs import (
     cancel_run,
@@ -219,12 +220,16 @@ async def get_conversation_endpoint(
     topic_label, version_id, entry_count = await active_context_summary(
         db, conversation.id
     )
+    recent_run = (await recent_runs_for_conversations(db, [conversation.id])).get(
+        conversation.id
+    )
     return conversation_out(
         conversation,
         project_name,
         active_version_id=version_id,
         active_topic_label=topic_label,
         active_entry_count=entry_count,
+        recent_run=recent_run,
     )
 
 
@@ -248,7 +253,9 @@ async def list_messages_endpoint(
     if run_ids:
         run_rows = (
             await db.execute(
-                select(KnowledgeAgentRun).where(KnowledgeAgentRun.id.in_(run_ids))
+                select(KnowledgeAgentRun)
+                .where(KnowledgeAgentRun.id.in_(run_ids))
+                .order_by(KnowledgeAgentRun.id)
             )
         ).scalars().all()
         runs_by_id = {run.id: run for run in run_rows}
@@ -258,6 +265,7 @@ async def list_messages_endpoint(
             for row in rows
         ],
         next_cursor=next_cursor,
+        runs=[run_out(run) for run in runs_by_id.values()],
     )
 
 
@@ -277,7 +285,10 @@ async def change_scope_endpoint(
     conversation, _event = await change_scope(db, conversation, payload)
     await db.commit()
     project_name = await _project_name(db, workspace.id, conversation.project_id)
-    return conversation_out(conversation, project_name)
+    recent_run = (await recent_runs_for_conversations(db, [conversation.id])).get(
+        conversation.id
+    )
+    return conversation_out(conversation, project_name, recent_run=recent_run)
 
 
 @router.post(

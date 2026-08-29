@@ -61,6 +61,11 @@ class KnowledgeConversationOut(BaseModel):
     active_topic_label: str | None = None
     active_context_version_id: int | None = None
     active_entry_count: int = 0
+    # 最近 Run 摘要：用于客户端恢复活动/最近执行状态，不复制完整 Run
+    recent_run_id: int | None = None
+    recent_run_status: RunStatus | None = None
+    recent_run_current_step: str | None = None
+    recent_run_updated_at: datetime | None = None
     last_activity_at: datetime
     created_at: datetime
 
@@ -99,10 +104,12 @@ class KnowledgeMessageOut(BaseModel):
 
 
 class KnowledgeMessagePageOut(BaseModel):
-    """游标分页的消息页。"""
+    """游标分页的消息页：无 cursor 时返回最近一页且页内按时间正序；
+    `next_cursor` 指向更早消息；`runs` 是本页关联且去重的 Run 集合。"""
 
     items: list[KnowledgeMessageOut]
     next_cursor: str | None = None
+    runs: list["KnowledgeRunOut"] = []
 
 
 class KnowledgeRunCitationOut(BaseModel):

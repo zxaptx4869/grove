@@ -7,10 +7,10 @@
 
 ## 2. 对话历史与恢复契约
 
-- [ ] 2.1 将消息历史接口改为无 cursor 返回最近一页且响应内按时间正序；游标以不透明的 before 语义加载更早消息，补充首页、尾页、相同时间戳、无重复/遗漏测试。
-- [ ] 2.2 在 `KnowledgeMessagePageOut` 规范化返回本页关联且去重的 `KnowledgeRunOut[]`，让历史用户消息与助手消息通过 `run_id` 复用同一 Run，不产生逐消息 N+1。
-- [ ] 2.3 在 `KnowledgeConversationOut` 增加最近 Run 的 id、status、current_step、updated_at 摘要；列表查询批量水合最近 Run，补充查询数量或服务测试证明不会按会话逐条查询。
-- [ ] 2.4 运行 `cd backend && .venv/bin/python -m pytest tests/test_knowledge_agent_conversations.py tests/test_knowledge_agent_runs.py -W error && .venv/bin/ruff check app tests`，通过后完成一次本地提交。
+- [x] 2.1 将消息历史接口改为无 cursor 返回最近一页且响应内按时间正序；游标以不透明的 before 语义加载更早消息，补充首页、尾页、相同时间戳、无重复/遗漏测试。
+- [x] 2.2 在 `KnowledgeMessagePageOut` 规范化返回本页关联且去重的 `KnowledgeRunOut[]`，让历史用户消息与助手消息通过 `run_id` 复用同一 Run，不产生逐消息 N+1。
+- [x] 2.3 在 `KnowledgeConversationOut` 增加最近 Run 的 id、status、current_step、updated_at 摘要；列表查询批量水合最近 Run，补充查询数量或服务测试证明不会按会话逐条查询。
+- [x] 2.4 运行 `cd backend && .venv/bin/python -m pytest tests/test_knowledge_agent_conversations.py tests/test_knowledge_agent_runs.py -W error && .venv/bin/ruff check app tests`，通过后完成一次本地提交。
 
 ## 3. 引用与冲突展示契约
 

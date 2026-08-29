@@ -5,7 +5,7 @@ import logging
 from datetime import UTC, datetime
 
 from fastapi import HTTPException, status
-from sqlalchemy import select
+from sqlalchemy import and_, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models import (
@@ -102,11 +102,15 @@ async def list_conversations(
     ).scalars().all()
     project_names = await _project_name_map(db, workspace_id, [row.project_id for row in rows])
     summaries = await active_context_summaries(db, [row.id for row in rows])
+    recent_runs = await recent_runs_for_conversations(
+        db, [row.id for row in rows]
+    )
     return [
         conversation_out(
             conversation,
             project_names.get(conversation.project_id),
             *summaries.get(conversation.id, (None, None, 0)),
+            recent_run=recent_runs.get(conversation.id),
         )
         for conversation in rows
     ]
@@ -138,6 +142,7 @@ def conversation_out(
     active_topic_label: str | None = None,
     active_version_id: int | None = None,
     active_entry_count: int = 0,
+    recent_run: KnowledgeAgentRun | None = None,
 ) -> KnowledgeConversationOut:
     """组装对话响应。"""
     return KnowledgeConversationOut(
@@ -149,9 +154,55 @@ def conversation_out(
         active_topic_label=active_topic_label,
         active_context_version_id=active_version_id,
         active_entry_count=active_entry_count,
+        recent_run_id=recent_run.id if recent_run else None,
+        recent_run_status=recent_run.status if recent_run else None,
+        recent_run_current_step=recent_run.current_step if recent_run else None,
+        recent_run_updated_at=recent_run.updated_at if recent_run else None,
         last_activity_at=conversation.last_activity_at,
         created_at=conversation.created_at,
     )
+
+
+async def recent_runs_for_conversations(
+    db: AsyncSession,
+    conversation_ids: list[int],
+) -> dict[int, KnowledgeAgentRun]:
+    """批量水合每个对话的最近 Run（按 updated_at 取最新，同会话最多一条）。
+
+    单条 SQL 聚合查询完成，避免按会话逐条发起查询造成 N+1。
+    """
+    ids = list(dict.fromkeys(conversation_ids))
+    if not ids:
+        return {}
+    latest = (
+        select(
+            KnowledgeAgentRun.conversation_id,
+            func.max(KnowledgeAgentRun.updated_at).label("max_updated"),
+        )
+        .where(KnowledgeAgentRun.conversation_id.in_(ids))
+        .group_by(KnowledgeAgentRun.conversation_id)
+        .subquery()
+    )
+    rows = (
+        await db.execute(
+            select(KnowledgeAgentRun)
+            .join(
+                latest,
+                and_(
+                    KnowledgeAgentRun.conversation_id
+                    == latest.c.conversation_id,
+                    KnowledgeAgentRun.updated_at == latest.c.max_updated,
+                ),
+            )
+        )
+    ).scalars().all()
+    # 同一 updated_at 时间戳存在多条 Run 时按 id 取最新，保持确定性
+    result: dict[int, KnowledgeAgentRun] = {}
+    for run in rows:
+        current = result.get(run.conversation_id)
+        if current is None or run.id > current.id:
+            result[run.conversation_id] = run
+    return result
 
 
 async def create_conversation(
@@ -212,26 +263,29 @@ async def list_messages(
     cursor: str | None = None,
     limit: int = 30,
 ) -> tuple[list[KnowledgeMessage], str | None]:
-    """按 (created_at, id) 稳定顺序游标分页读取消息。"""
+    """游标分页读取消息：无 cursor 返回最近一页且页内按时间正序；
+    游标使用不透明 before 语义加载更早消息。"""
     limit = max(1, min(limit, 100))
     cursor_id = _decode_cursor(cursor)
     stmt = (
         select(KnowledgeMessage)
         .where(KnowledgeMessage.conversation_id == conversation_id)
         .order_by(
-            KnowledgeMessage.created_at.asc(),
-            KnowledgeMessage.id.asc(),
+            KnowledgeMessage.created_at.desc(),
+            KnowledgeMessage.id.desc(),
         )
-        .limit(limit + 1)
     )
     if cursor_id is not None:
-        stmt = stmt.where(KnowledgeMessage.id > cursor_id)
-    rows = (await db.execute(stmt)).scalars().all()
+        # before 语义：只取比游标消息更早的消息
+        stmt = stmt.where(KnowledgeMessage.id < cursor_id)
+    rows_desc = (await db.execute(stmt.limit(limit + 1))).scalars().all()
     next_cursor = None
-    if len(rows) > limit:
-        next_cursor = _encode_cursor(rows[limit - 1].id)
-        rows = rows[:limit]
-    return list(rows), next_cursor
+    if len(rows_desc) > limit:
+        # 还有更早消息：游标指向本页最早一条，下一页继续向前
+        next_cursor = _encode_cursor(rows_desc[limit - 1].id)
+        rows_desc = rows_desc[:limit]
+    # 页内按时间正序返回，客户端直接顺序渲染
+    return list(reversed(rows_desc)), next_cursor
 
 
 def message_out(
