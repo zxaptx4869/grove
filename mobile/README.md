@@ -10,6 +10,8 @@ npm install
 npm start
 ```
 
+Android 真机通过 Expo Go 连接开发服务器时，电脑和手机必须能互相访问局域网地址。局域网、访客 Wi-Fi 或防火墙导致无法下载开发更新时，改用 `npm run start -- --tunnel`，再重新扫描终端给出的二维码。不要把 Expo Web 预览当作原生端替代验收。
+
 在电脑浏览器快速预览应用壳可执行 `npm run web`。这是 Expo Web 预览，不代表 iOS/Android 原生端已完成验证。
 后端本机配置的 `FRONTEND_ORIGINS` 还必须包含 `http://localhost:8081` 与 `http://127.0.0.1:8081`，否则浏览器会阻止登录请求。
 

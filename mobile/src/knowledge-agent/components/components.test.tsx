@@ -60,9 +60,11 @@ const queryClients: QueryClient[] = [];
 
 afterEach(async () => {
   await act(async () => {
-    cleanup();
     await Promise.all(queryClients.map((client) => client.cancelQueries()));
+    // Query 通知经由零延迟任务批量投递；卸载前在 act 内排空该批次。
+    await new Promise<void>((resolve) => setTimeout(resolve, 0));
   });
+  cleanup();
   for (const client of queryClients) {
     client.clear();
   }
