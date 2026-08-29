@@ -43,7 +43,7 @@ export function ConversationScreen() {
   const { token } = useAuth();
   const controller = useConversationController(token);
   const insets = useSafeAreaInsets();
-  const keyboardHeight = useKeyboardHeight();
+  const keyboardHeight = useKeyboardHeight(insets.bottom);
   const [text, setText] = useState("");
   const [historyOpen, setHistoryOpen] = useState(false);
   const [scopeOpen, setScopeOpen] = useState(false);
