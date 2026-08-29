@@ -58,15 +58,15 @@
 
 ## 9. 视觉、可访问性与设备走查
 
-- [ ] 9.1 依据 `docs/prototypes/grove-mobile-agent-prototype.html` 和 `grove-ui-conventions` 对齐四栏壳、对话默认页、顶栏范围、历史入口、thread、composer、过程/回答卡与 Bottom Sheet；保持本 change 在 design 中记录的只读裁剪和有意偏离。
-- [ ] 9.2 在 390×844 主视口及 360×800、412×915 扩展视口走查空态、短/长对话、键盘展开、历史、范围、模式、过程、回答、引用与冲突；不得出现横向滚动、内容截断、顶栏/composer/底栏/系统键盘互相遮挡。
-- [ ] 9.3 校验安全区、动态字体/文本缩放、44×44 触控目标、读屏标签、焦点顺序、颜色对比和 reduce-motion；记录 iOS 与 Android 的实际差异，不用伪键盘或网页截图替代原生验收。
-- [ ] 9.4 将代表性走查截图和说明放入该 change 的验收产物目录（不提交临时构建包、密钥或 `.env`），运行 `cd mobile && npm test -- --runInBand && npm run lint && npm run typecheck` 后完成一次本地提交。
+- [x] 9.1 依据 `docs/prototypes/grove-mobile-agent-prototype.html` 和 `grove-ui-conventions` 对齐四栏壳、对话默认页、顶栏范围、历史入口、thread、composer、过程/回答卡与 Bottom Sheet；保持本 change 在 design 中记录的只读裁剪和有意偏离。
+- [x] 9.2 在 390×844 主视口及 360×800、412×915 扩展视口走查空态、短/长对话、键盘展开、历史、范围、模式、过程、回答、引用与冲突；不得出现横向滚动、内容截断、顶栏/composer/底栏/系统键盘互相遮挡。
+- [x] 9.3 校验安全区、动态字体/文本缩放、44×44 触控目标、读屏标签、焦点顺序、颜色对比和 reduce-motion；记录 iOS 与 Android 的实际差异，不用伪键盘或网页截图替代原生验收。
+- [x] 9.4 将代表性走查截图和说明放入该 change 的验收产物目录（不提交临时构建包、密钥或 `.env`），运行 `cd mobile && npm test -- --runInBand && npm run lint && npm run typecheck` 后完成一次本地提交。
 
 ## 10. 全量验证、验收与收尾
 
-- [ ] 10.1 运行 `cd backend && .venv/bin/python -m pytest -W error && .venv/bin/ruff check app tests`，再用真实 Bearer Session 对 conversation create/list/patch、messages recent/older、submit、run poll/cancel 与 citation/conflict 响应执行 curl 走查，确认预期为 200/201/409 而非 404。
-- [ ] 10.2 运行 `cd mobile && npm test -- --runInBand && npm run lint && npm run typecheck && npx expo export --platform ios && npx expo export --platform android`；若本机工具链无法完成设备构建，记录明确缺口并至少完成 Expo bundle/export 与真机或模拟器走查之一，不以静默跳过代替验证。
-- [ ] 10.3 手动走查 draft 首次发送、最近会话恢复、向上分页、范围切换、连续追问、quick/auto/investigate、前后台恢复、取消、断网幂等重试、五种回答状态、引用、冲突和三个目标视口，并把结果写入该 change 的 validation 记录。
-- [ ] 10.4 运行 `openspec validate add-native-knowledge-agent-conversation --strict` 与 `openspec validate --all --strict`；逐项核对 tasks、spec scenarios、原型偏离和产品专题，发现遗留项时按 AGENTS.md 先向用户说明并询问是否登记。
-- [ ] 10.5 完成最终本地提交并停留在特性分支等待用户验证；只有用户明确确认后才执行 OpenSpec archive、最终归档提交、push 或合并。
+- [x] 10.1 运行 `cd backend && .venv/bin/python -m pytest -W error && .venv/bin/ruff check app tests`，再用真实 Bearer Session 对 conversation create/list/patch、messages recent/older、submit、run poll/cancel 与 citation/conflict 响应执行 curl 走查，确认预期为 200/201/409 而非 404。
+- [x] 10.2 运行 `cd mobile && npm test -- --runInBand && npm run lint && npm run typecheck && npx expo export --platform ios && npx expo export --platform android`；若本机工具链无法完成设备构建，记录明确缺口并至少完成 Expo bundle/export 与真机或模拟器走查之一，不以静默跳过代替验证。
+- [x] 10.3 手动走查 draft 首次发送、最近会话恢复、向上分页、范围切换、连续追问、quick/auto/investigate、前后台恢复、取消、断网幂等重试、五种回答状态、引用、冲突和三个目标视口，并把结果写入该 change 的 validation 记录。
+- [x] 10.4 运行 `openspec validate add-native-knowledge-agent-conversation --strict` 与 `openspec validate --all --strict`；逐项核对 tasks、spec scenarios、原型偏离和产品专题，发现遗留项时按 AGENTS.md 先向用户说明并询问是否登记。
+- [x] 10.5 完成最终本地提交并停留在特性分支等待用户验证；只有用户明确确认后才执行 OpenSpec archive、最终归档提交、push 或合并。

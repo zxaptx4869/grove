@@ -68,12 +68,66 @@ describe("知识 Agent API 序列化", () => {
   });
 
   test("消息分页使用不透明 before 游标", async () => {
-    mockFetch({ items: [], next_cursor: null, runs: [] });
-    await api.knowledgeAgentApi.listMessages("token-3", 4, "before-cursor");
+    mockFetch({
+      items: [
+        {
+          id: 1,
+          conversation_id: 4,
+          role: "user",
+          message_type: "user",
+          content: "问题",
+          client_message_id: "c-1",
+          run_id: 9,
+          scope_type: "project",
+          project_id: 7,
+          project_name: "项目",
+          request_context_mode: "auto",
+          context_decision: "new_topic",
+          standalone_query: "问题",
+          topic_label: "主题",
+          request_answer_mode: "auto",
+          actual_answer_mode: "quick",
+          current_round: 0,
+          input_context_version_id: null,
+          output_context_version_id: null,
+          created_at: "2026-08-29T10:00:00Z",
+        },
+      ],
+      next_cursor: "cursor-next",
+      runs: [
+        {
+          id: 9,
+          conversation_id: 4,
+          status: "completed",
+          scope_type: "project",
+          project_id: 7,
+          project_name: "项目",
+          answer: {
+            answer: "正文",
+            status: "completed",
+            insufficient_note: null,
+            citations: [],
+            conflicts: [],
+          },
+        },
+      ],
+    });
+    const page = await api.knowledgeAgentApi.listMessages(
+      "token-3",
+      4,
+      "before-cursor",
+    );
     const [url] = (globalThis.fetch as jest.Mock).mock.calls[0] as [string];
     expect(url).toContain(
       "/conversations/4/messages?cursor=before-cursor&limit=30",
     );
+    // snake_case → camelCase 归一化
+    expect(page.items[0].conversationId).toBe(4);
+    expect(page.items[0].runId).toBe(9);
+    expect(page.items[0].scopeType).toBe("project");
+    expect(page.nextCursor).toBe("cursor-next");
+    expect(page.runs[0].projectName).toBe("项目");
+    expect(page.runs[0].answer?.insufficientNote).toBeNull();
   });
 
   test("409 冲突与网络错误转换为可识别结果", async () => {

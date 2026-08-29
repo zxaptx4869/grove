@@ -16,6 +16,27 @@ import type {
 
 const MESSAGE_PAGE_LIMIT = 30;
 
+/** 后端返回 snake_case JSON；统一转换为前端 camelCase 类型。 */
+function toCamel(key: string): string {
+  return key.replace(/_([a-z])/g, (_match, letter: string) =>
+    letter.toUpperCase(),
+  );
+}
+
+function normalizePayload<T>(value: unknown): T {
+  if (Array.isArray(value)) {
+    return value.map((item) => normalizePayload(item)) as T;
+  }
+  if (value !== null && typeof value === "object") {
+    const output: Record<string, unknown> = {};
+    for (const [key, item] of Object.entries(value as Record<string, unknown>)) {
+      output[toCamel(key)] = normalizePayload(item);
+    }
+    return output as T;
+  }
+  return value as T;
+}
+
 function serializeScope(
   scope: KnowledgeScopeChangeRequest,
 ): Record<string, unknown> {
@@ -49,7 +70,9 @@ function withToken(
       }),
     );
   }
-  return run(token).catch((error: unknown) => {
+  return run(token)
+    .then((result) => normalizePayload(result))
+    .catch((error: unknown) => {
     throw classifyKnowledgeAgentError(error);
   });
 }
