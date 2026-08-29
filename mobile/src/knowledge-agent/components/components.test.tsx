@@ -1,4 +1,4 @@
-import { fireEvent, render } from "@testing-library/react-native";
+import { act, fireEvent, render } from "@testing-library/react-native";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 
 import { knowledgeAgentApi } from "@/src/knowledge-agent/api";
@@ -58,7 +58,10 @@ jest.mock("react-native-safe-area-context", () => {
 
 const queryClients: QueryClient[] = [];
 
-afterEach(() => {
+afterEach(async () => {
+  await act(async () => {
+    await Promise.all(queryClients.map((client) => client.cancelQueries()));
+  });
   for (const client of queryClients) {
     client.clear();
   }
@@ -67,7 +70,7 @@ afterEach(() => {
 
 function wrapper({ children }: { children: React.ReactNode }) {
   const client = new QueryClient({
-    defaultOptions: { queries: { retry: false } },
+    defaultOptions: { queries: { retry: false, gcTime: 0 } },
   });
   queryClients.push(client);
   return <QueryClientProvider client={client}>{children}</QueryClientProvider>;
@@ -242,7 +245,7 @@ test("五种回答状态区分展示，知识不足不显示成功文案", async
   }
 });
 
-test("insufficient 但有引用与实质内容时按部分结果展示并保留引用", async () => {
+test("insufficient 带引用时仍遵循后端知识不足状态", async () => {
   const view = await render(
     <AnswerCard
       run={run(1, "completed", {
@@ -258,8 +261,8 @@ test("insufficient 但有引用与实质内容时按部分结果展示并保留�
     />,
     { wrapper },
   );
-  expect(view.getAllByText("部分结果").length).toBeGreaterThan(0);
-  expect(view.getByText("综合回答")).toBeOnTheScreen();
+  expect(view.getAllByText("知识不足").length).toBeGreaterThan(0);
+  expect(view.queryByText("综合回答")).toBeNull();
   expect(view.getByLabelText("查看引用：Entry 1")).toBeOnTheScreen();
 });
 
@@ -271,6 +274,7 @@ test("过程卡轮询失败显示就地重试", async () => {
       scopeLabel="全部知识"
       cancelling={false}
       pollingError="连接超时，请检查网络后重试"
+      cancelError={null}
       onCancel={jest.fn()}
       onRetryPolling={onRetry}
     />,

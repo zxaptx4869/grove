@@ -11,6 +11,7 @@ export function ProcessCard({
   scopeLabel,
   cancelling,
   pollingError,
+  cancelError,
   onCancel,
   onRetryPolling,
 }: {
@@ -18,6 +19,7 @@ export function ProcessCard({
   scopeLabel: string;
   cancelling: boolean;
   pollingError: string | null;
+  cancelError: string | null;
   onCancel: () => void;
   onRetryPolling: () => void;
 }) {
@@ -46,23 +48,29 @@ export function ProcessCard({
           <AgentIcon name="folder" size={14} color={theme.muted} />
           <Text style={styles.scopeText}>检索范围：{scopeLabel}</Text>
         </View>
-        {pollingError !== null && (
+        {(pollingError !== null || cancelError !== null) && (
           <View style={styles.pollingErrorBox}>
-            <Text style={styles.pollingErrorText}>状态更新失败：{pollingError}</Text>
+            <Text style={styles.pollingErrorText}>
+              {cancelError !== null
+                ? `取消未完成：${cancelError}`
+                : `状态更新失败：${pollingError}`}
+            </Text>
             <Pressable
               accessibilityRole="button"
               accessibilityLabel="重试获取回答状态"
-              onPress={onRetryPolling}
+              onPress={cancelError !== null ? onCancel : onRetryPolling}
               style={({ pressed }) => [
                 styles.cancel,
                 pressed && styles.cancelPressed,
               ]}
             >
-              <Text style={styles.cancelText}>重试</Text>
+              <Text style={styles.cancelText}>
+                {cancelError !== null ? "重试取消" : "重试"}
+              </Text>
             </Pressable>
           </View>
         )}
-        {!cancelling && pollingError === null && (
+        {!cancelling && pollingError === null && cancelError === null && (
           <Pressable
             accessibilityRole="button"
             accessibilityLabel="取消当前回答"

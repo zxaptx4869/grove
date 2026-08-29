@@ -24,7 +24,7 @@ test("cleanAnswerText 不误删正文中的成对星号", () => {
   );
 });
 
-test("insufficient 但有引用与实质内容时按部分结果展示", () => {
+test("后端 insufficient 即使带引用也保持知识不足语义", () => {
   const answer: KnowledgeAnswer = {
     answer: "厨房推荐使用 4000K 色温。",
     status: "insufficient",
@@ -48,8 +48,8 @@ test("insufficient 但有引用与实质内容时按部分结果展示", () => {
     conflicts: [],
   };
   const presentation = presentAnswer(answer, "completed");
-  expect(presentation.status).toBe("partial");
-  expect(presentation.headline).toBe("部分结果");
+  expect(presentation.status).toBe("insufficient");
+  expect(presentation.headline).toBe("知识不足");
   expect(presentation.note).toContain("证据预算");
 });
 

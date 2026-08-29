@@ -1,7 +1,7 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useRef, useState } from "react";
 import {
   ActivityIndicator,
-  LayoutAnimation,
+  KeyboardAvoidingView,
   NativeScrollEvent,
   NativeSyntheticEvent,
   Platform,
@@ -25,7 +25,6 @@ import { ModeSheet } from "@/src/knowledge-agent/components/ModeSheet";
 import { ProcessCard } from "@/src/knowledge-agent/components/ProcessCard";
 import { ScopeSheet } from "@/src/knowledge-agent/components/ScopeSheet";
 import { useConversationController } from "@/src/knowledge-agent/hooks/useConversationController";
-import { useKeyboardHeight } from "@/src/knowledge-agent/hooks/useKeyboardHeight";
 import { scopeLabel } from "@/src/knowledge-agent/adapters/scope";
 import { toUserErrorMessage } from "@/src/knowledge-agent/errors";
 import type {
@@ -46,19 +45,6 @@ export function ConversationScreen() {
   const { token } = useAuth();
   const controller = useConversationController(token);
   const insets = useSafeAreaInsets();
-  const keyboardHeight = useKeyboardHeight(insets.bottom);
-  const previousKeyboardHeightRef = useRef(0);
-  // Android 键盘收起/弹出动画与 padding 瞬移不同步会导致输入框闪烁；
-  // 高度变化时用 LayoutAnimation 平滑过渡，让 composer 跟随键盘动画。
-  useEffect(() => {
-    if (
-      Platform.OS === "android" &&
-      previousKeyboardHeightRef.current !== keyboardHeight
-    ) {
-      LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
-    }
-    previousKeyboardHeightRef.current = keyboardHeight;
-  }, [keyboardHeight]);
   const [text, setText] = useState("");
   const [historyOpen, setHistoryOpen] = useState(false);
   const [scopeOpen, setScopeOpen] = useState(false);
@@ -69,7 +55,8 @@ export function ConversationScreen() {
   const projectsQuery = useQuery({
     queryKey: ["projects"],
     queryFn: () => getProjects(token as string),
-    enabled: Boolean(token),
+    // 项目仅供范围 Sheet 使用，延迟读取能避免对话首屏多一次无关请求与状态更新。
+    enabled: Boolean(token && scopeOpen),
   });
 
   const submitting =
@@ -121,7 +108,10 @@ export function ConversationScreen() {
 
   return (
     <SafeAreaView edges={["top"]} style={styles.page}>
-      <View style={styles.page}>
+      <KeyboardAvoidingView
+        style={styles.page}
+        behavior={Platform.OS === "ios" ? "padding" : undefined}
+      >
         <View style={styles.header}>
           <View style={styles.brandMark}>
             <Text style={styles.brandText}>G</Text>
@@ -152,7 +142,7 @@ export function ConversationScreen() {
           style={styles.thread}
           contentContainerStyle={[
             styles.threadContent,
-            { paddingBottom: 154 + insets.bottom },
+            { paddingBottom: 96 + insets.bottom },
           ]}
           onScroll={handleScroll}
           scrollEventThrottle={100}
@@ -244,6 +234,7 @@ export function ConversationScreen() {
                 run={controller.thread.runsById.get(message.runId ?? -1) ?? null}
                 cancelling={controller.cancelling}
                 pollingError={controller.runPollingError}
+                cancelError={controller.cancelError}
                 onCancelRun={controller.requestCancelRun}
                 onRetryPolling={controller.retryRunPolling}
                 onRetryRun={(runId) => void controller.retryRun(runId)}
@@ -281,7 +272,7 @@ export function ConversationScreen() {
           )}
         </ScrollView>
 
-        <View style={{ paddingBottom: keyboardHeight }}>
+        <View>
           <Composer
             value={text}
             onChangeText={setText}
@@ -298,7 +289,7 @@ export function ConversationScreen() {
             }
           />
         </View>
-      </View>
+      </KeyboardAvoidingView>
 
       <HistorySheet
         visible={historyOpen}
@@ -353,6 +344,7 @@ function ThreadMessage({
   run,
   cancelling,
   pollingError,
+  cancelError,
   onCancelRun,
   onRetryPolling,
   onRetryRun,
@@ -362,6 +354,7 @@ function ThreadMessage({
   run: KnowledgeRun | null;
   cancelling: boolean;
   pollingError: string | null;
+  cancelError: string | null;
   onCancelRun: () => void;
   onRetryPolling: () => void;
   onRetryRun: (runId: number) => void;
@@ -408,6 +401,7 @@ function ThreadMessage({
           scopeLabel={runScope}
           cancelling={cancelling}
           pollingError={pollingError}
+          cancelError={cancelError}
           onCancel={onCancelRun}
           onRetryPolling={onRetryPolling}
         />

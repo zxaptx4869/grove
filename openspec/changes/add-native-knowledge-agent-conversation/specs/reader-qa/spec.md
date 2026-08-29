@@ -50,3 +50,36 @@
 - **WHEN** 疑似冲突的一方无法形成可引用 Evidence
 - **THEN** 回答将其标记为待核验或未解决缺口，不返回伪造的双边冲突对象
 
+### Requirement: 回答状态与终态覆盖由最终有效 Evidence 决定
+系统 MUST 在服务端最终组装回答时，以当前 Run 实际采用且通过校验的 citations、核心问题维度、终态 gaps 与可核验证冲突权威生成 `answer.status`、coverage、gaps 与 conflicts。`completed` MUST 表示核心问题已有充分有效引用支持；`partial` MUST 表示仍有用正文和有效引用、但存在影响完整性的明确缺口；`insufficient` MUST 表示没有足够证据形成有用回答或核心问题基本无法回答。Run 生命周期和 `stop_reason` MUST NOT 直接决定 `answer.status`，搜索前控制器计划 MUST NOT 伪装为终态 coverage/gaps。
+
+#### Scenario: 预算停止但核心回答充分
+- **WHEN** 调查因 Evidence 预算停止，但最终有效引用已充分覆盖核心问题且不存在影响回答完整性的缺口
+- **THEN** answer.status 为 `completed`，stop_reason 仅在调查摘要解释预算停止
+
+#### Scenario: 有效正文仍有明确缺口
+- **WHEN** 最终回答含有效 citations 和有用内容，但某个核心维度或必要条件尚未被当前 Run Evidence 覆盖
+- **THEN** answer.status 为 `partial`，终态 gaps 说明实际未覆盖部分
+
+#### Scenario: 只有边缘证据或无证据
+- **WHEN** 最终有效 Evidence 只支持边缘信息，或没有足以形成有用回答的有效 citation
+- **THEN** answer.status 为 `insufficient`，不得把过程停止原因作为唯一依据
+
+#### Scenario: 部分 citation 校验失效
+- **WHEN** 生成后部分引用被丢弃但仍保留足以组成有用答案的其他有效引用
+- **THEN** 系统按剩余有效 Evidence 重建 coverage/gaps，并在仍有明确缺口时返回 `partial` 而非 `insufficient`
+
+### Requirement: 回答正文直接服务问题
+系统 MUST 在回答生成 prompt 和结构化输出职责中要求正文首句直接给出事实、推荐、主要差异或操作步骤；正文 MUST NOT 复述用户问题，或使用不增加信息的“关于这个问题”“根据当前已确认知识”“以下是基于正式知识”等开场。范围、来源数、部分结果、预算、轮次、停止原因和 coverage/gaps MUST 由回答卡或调查摘要呈现，不能以长篇重复进入正文。
+
+#### Scenario: 决策问题
+- **WHEN** 用户询问在多个方案中如何选择
+- **THEN** 正文第一句给出有证据支持的推荐，再说明条件与引用支持
+
+#### Scenario: 对比或操作问题
+- **WHEN** 用户请求对比或操作步骤
+- **THEN** 正文先给主要差异或可执行步骤，不先复述问题或解释界面状态
+
+#### Scenario: 部分或知识不足结果
+- **WHEN** answer.status 为 partial 或 insufficient
+- **THEN** 正文仍直接陈述可回答的结论或不足事实，状态、范围和调查限制由结构化区域承担

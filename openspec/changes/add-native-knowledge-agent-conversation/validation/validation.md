@@ -4,9 +4,18 @@
 > 日期：2026-08-29
 > 分支：codex/add-native-knowledge-agent-conversation
 
+## 0. 2026-08-29 生产测试修正
+
+- 调查不再按首条搜索结果立即读取 Source。每轮先完成所有合法搜索，按 Query 轮转保留候选，再按稳定轮转选择 Entry 与 Source；单 Query、单 Entry 受公平配额约束。同 Entry + 同 Source 或等价规范化 quote 不重复纳入 Evidence 账本；不同 Entry/Source 的冲突双方不被普通去重合并。
+- Run 42～46 的共同症状是 12 条预算被首条 Query、重复 Source/quote 消耗，而不是“12 条本身一定不够”。优化后默认仍保持 12：定向调查/Runner 回归证明多 Query 轮转、硬上限与终态引用仍成立，尚无新的真实 Run 数据证明分配消除浪费后仍需上调。后续真机/生产验证应记录实际引用数、跨 Query 覆盖与 gaps 后再重估。
+- `answer.status` 由后端最终引用校验和结构化核心覆盖评估产生：有效核心回答为 completed；有用引用但明确缺口/部分引用失效为 partial；无足够核心 Evidence 为 insufficient。Run 执行状态和 stop_reason 不再重分类回答状态。终态 coverage/gaps/conflicts 只取最终有效 citation，不再复用控制器搜索前计划。
+- 回答模型 prompt 要求正文首句直接回答，并把状态、范围、来源、预算、轮次、停止原因和 coverage/gaps 留给结构化卡片。原生端已删除 insufficient → partial 的自行改写。
+- Android 继续由 `softwareKeyboardLayoutMode=resize` 负责可用高度，删除完整 keyboardHeight padding 与 LayoutAnimation；iOS 通过 KeyboardAvoidingView + Safe Area 避让。消息区底部预留改为动态 Composer/Safe Area 空间（96px + inset），不再保留 154px 固定值。
+- Bottom Sheet 统一使用 Sheet 内 ScrollView；draft 范围保存 projectName；轮询直接拿到终态会覆盖旧 processing Run；取消失败在过程卡持久显示并可重试；partial/fallback/failed/cancelled 均保留重新提问或恢复入口。Jest 已移除 forceExit，并用 fake timer 清理和 QueryClient cancel/clear 修复真实测试句柄。
+
 ## 1. 后端自动化验证
 
-- `cd backend && .venv/bin/python -m pytest -W error`：全量通过。
+- `cd backend && .venv/bin/python -m pytest -W error`：386 项通过（为避免本机单命令 30 秒输出窗口，按测试文件分两批完整执行：197 + 189）。
 - `cd backend && .venv/bin/ruff check app tests`：通过。
 - 覆盖：Entry 硬预算（单轮批量、恢复剩余预算）、逐 Query 审计增量、同范围 no-op、
   最近页优先分页（首页/尾页/相同时间戳/无重复遗漏）、消息页规范化 Runs、
@@ -14,8 +23,7 @@
 
 ## 2. 移动端自动化验证
 
-- `cd mobile && npm test -- --runInBand`：31 个测试通过（jest 配置 forceExit，
-  原因：RNTL v14 + TanStack Query 的假定时器/GC 句柄会让正常结束阶段挂起）。
+- `cd mobile && npm test -- --runInBand`：43 个测试通过；Jest 不再配置 `forceExit`，测试 QueryClient 在清理时取消查询并清空 cache，轮询测试使用 fake timer 后显式清理。
 - `cd mobile && npm run lint`：通过。
 - `cd mobile && npm run typecheck`：通过。
 - `npx expo export --platform ios`：成功（Hermes bundle）。

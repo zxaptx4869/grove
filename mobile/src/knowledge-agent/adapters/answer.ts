@@ -62,23 +62,6 @@ export function presentAnswer(
     };
   }
   const status = answer?.status ?? "failed";
-  // 契约上是 insufficient，但回答包含有效引用与实质内容时，按「部分结果」
-  // 展示并保留预算/缺口说明，避免与下方完整回答自相矛盾；完全无引用仍为知识不足。
-  if (
-    status === "insufficient" &&
-    answer !== null &&
-    answer.citations.length > 0 &&
-    answer.answer.trim() !== ""
-  ) {
-    return {
-      status: "partial",
-      headline: "部分结果",
-      note:
-        answer.insufficientNote ??
-        "当前知识存在缺口，以下为已有证据范围内的有效内容。",
-      tone: "risk",
-    };
-  }
   switch (status) {
     case "completed":
       return {

@@ -29,6 +29,18 @@ class ReferenceValidationStats:
     discarded_count: int = 0
 
 
+def _summary_items(values: list[str]) -> list[str]:
+    """规范化模型给出的结构化覆盖摘要，避免空白或超长过程说明持久化。"""
+    result: list[str] = []
+    for value in values:
+        text = " ".join(str(value).split())[:160]
+        if text and text not in result:
+            result.append(text)
+        if len(result) >= 5:
+            break
+    return result
+
+
 def attachment_fingerprint(text: str) -> str:
     """计算来源文本内容的 sha256 指纹，用于识别来源是否变化。"""
     return hashlib.sha256(text.encode("utf-8")).hexdigest()
@@ -63,9 +75,7 @@ def locate_verified_quote(text: str, quote: str) -> VerifiedQuote | None:
 
 async def build_node_path_map(db: AsyncSession, project_id: int) -> dict[int, str]:
     """构建项目内 node_id → 目录路径（如「施工/水电」）的映射。"""
-    nodes = (
-        await db.execute(select(Node).where(Node.project_id == project_id))
-    ).scalars().all()
+    nodes = (await db.execute(select(Node).where(Node.project_id == project_id))).scalars().all()
     by_id = {node.id: node for node in nodes}
 
     def _path(node: Node) -> str:
@@ -147,14 +157,18 @@ async def resolve_evidence_handles(
     if not unique:
         return {}
     rows = (
-        await db.execute(
-            select(KnowledgeAgentEvidence).where(
-                KnowledgeAgentEvidence.run_id == run_id,
-                KnowledgeAgentEvidence.handle.in_(unique),
-                KnowledgeAgentEvidence.is_citable.is_(True),
+        (
+            await db.execute(
+                select(KnowledgeAgentEvidence).where(
+                    KnowledgeAgentEvidence.run_id == run_id,
+                    KnowledgeAgentEvidence.handle.in_(unique),
+                    KnowledgeAgentEvidence.is_citable.is_(True),
+                )
             )
         )
-    ).scalars().all()
+        .scalars()
+        .all()
+    )
     return {row.handle: row for row in rows}
 
 
@@ -186,12 +200,8 @@ async def build_validated_answer(
     `insufficient`；部分句柄失效时保留有效引用并标记 `partial`。
     """
     handles = [item.evidence_handle for item in draft.citations]
-    handles.extend(
-        item.evidence_handle_a for item in draft.conflicts
-    )
-    handles.extend(
-        item.evidence_handle_b for item in draft.conflicts
-    )
+    handles.extend(item.evidence_handle_a for item in draft.conflicts)
+    handles.extend(item.evidence_handle_b for item in draft.conflicts)
     unique_handles = list(dict.fromkeys(handles))
     resolved = await resolve_evidence_handles(db, run_id, handles)
     citations = [
@@ -225,29 +235,38 @@ async def build_validated_answer(
         valid_count=len(resolved),
         discarded_count=len(unique_handles) - len(resolved),
     )
-    if draft.insufficient:
-        # 模型显式标记知识不足：允许无引用，不伪装成事实性回答
-        status = "insufficient"
-    elif stats.valid_count == 0:
+    coverage = _summary_items(getattr(draft, "coverage", []))
+    gaps = _summary_items(getattr(draft, "gaps", []))
+    core_question_answered = bool(getattr(draft, "core_question_answered", True))
+    coverage_complete = bool(getattr(draft, "coverage_complete", True))
+    if stats.valid_count == 0:
         # 事实性回答但没有一个可引用句柄：不得保持 completed
         status = "insufficient"
         citations = []
         conflicts = []
-    elif stats.discarded_count > 0:
+    elif draft.insufficient or not core_question_answered:
+        # 边缘 Evidence 不能因存在零散引用伪装为有用的部分结果。
+        status = "insufficient"
+    elif stats.discarded_count > 0 or not coverage_complete or gaps:
         # 部分句柄失效：保留有效引用并标记 partial
         status = "partial"
     else:
         status = "completed"
+    if citations and not coverage:
+        entry_count = len({citation.entry_id for citation in citations})
+        coverage = [f"当前回答采用 {len(citations)} 条核验证据，涉及 {entry_count} 条正式知识"]
+    if status == "partial" and not gaps:
+        gaps = ["当前 Run 的有效证据尚未完整覆盖核心问题"]
+    if status == "insufficient" and not gaps:
+        gaps = [draft.insufficient_note or "当前 Run 证据不足以回答核心问题"]
     return KnowledgeAnswerOut(
         answer=draft.answer,
         status=status,
         insufficient_note=draft.insufficient_note
         if draft.insufficient
-        else (
-            "全部引用被丢弃，无法提供带证据的确定结论"
-            if stats.valid_count == 0
-            else None
-        ),
+        else ("全部引用被丢弃，无法提供带证据的确定结论" if stats.valid_count == 0 else None),
         citations=citations,
         conflicts=conflicts,
+        coverage=coverage,
+        gaps=gaps,
     ), stats

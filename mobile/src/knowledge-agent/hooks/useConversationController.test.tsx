@@ -31,7 +31,10 @@ const api = knowledgeAgentApi as jest.Mocked<typeof knowledgeAgentApi>;
 
 const queryClients: QueryClient[] = [];
 
-afterEach(() => {
+afterEach(async () => {
+  await act(async () => {
+    await Promise.all(queryClients.map((client) => client.cancelQueries()));
+  });
   for (const client of queryClients) {
     client.clear();
   }
@@ -127,7 +130,7 @@ function run(
 
 function makeWrapper() {
   const queryClient = new QueryClient({
-    defaultOptions: { queries: { retry: false } },
+    defaultOptions: { queries: { retry: false, gcTime: 0 } },
   });
   queryClients.push(queryClient);
   return function Wrapper({ children }: { children: React.ReactNode }) {
@@ -318,6 +321,7 @@ describe("useConversationController", () => {
       await rendered.unmount();
     } finally {
       restoreAppState();
+      jest.clearAllTimers();
       jest.useRealTimers();
     }
   });
@@ -373,32 +377,39 @@ describe("useConversationController", () => {
         configurable: true,
         writable: true,
       });
+      jest.clearAllTimers();
       jest.useRealTimers();
     }
   });
 
   test("取消活动 Run 提交取消并保持轮询", async () => {
+    jest.useFakeTimers();
     const restoreAppState = mockAppStateActive();
-    api.listConversations.mockResolvedValue([conversation(1)]);
-    api.getConversation.mockResolvedValue(conversation(1));
-    api.listMessages.mockResolvedValue({
-      items: [message(1, "user", 9, "问题"), message(2, "assistant", 9)],
-      nextCursor: null,
-      runs: [run(9, "processing")],
-    });
-    api.getRun.mockResolvedValue(run(9, "processing"));
-    api.cancelRun.mockResolvedValue({ ...run(9, "processing"), cancelRequested: true });
+    try {
+      api.listConversations.mockResolvedValue([conversation(1)]);
+      api.getConversation.mockResolvedValue(conversation(1));
+      api.listMessages.mockResolvedValue({
+        items: [message(1, "user", 9, "问题"), message(2, "assistant", 9)],
+        nextCursor: null,
+        runs: [run(9, "processing")],
+      });
+      api.getRun.mockResolvedValue(run(9, "processing"));
+      api.cancelRun.mockResolvedValue({ ...run(9, "processing"), cancelRequested: true });
 
-    const rendered = await renderController();
-    await waitFor(() => expect(rendered.result.current.activeRun).not.toBeNull());
-    await act(async () => {
-      rendered.result.current.requestCancelRun();
-    });
-    await waitFor(() => {
-      expect(api.cancelRun).toHaveBeenCalledWith("token", 9);
-    });
-    restoreAppState();
-    await rendered.unmount();
+      const rendered = await renderController();
+      await waitFor(() => expect(rendered.result.current.activeRun).not.toBeNull());
+      await act(async () => {
+        rendered.result.current.requestCancelRun();
+      });
+      await waitFor(() => {
+        expect(api.cancelRun).toHaveBeenCalledWith("token", 9);
+      });
+      await rendered.unmount();
+    } finally {
+      restoreAppState();
+      jest.clearAllTimers();
+      jest.useRealTimers();
+    }
   });
 });
 

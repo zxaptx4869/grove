@@ -155,6 +155,9 @@ class KnowledgeAnswerOut(BaseModel):
     insufficient_note: str | None = None
     citations: list[KnowledgeRunCitationOut] = []
     conflicts: list[KnowledgeConflictOut] = []
+    # 只由本 Run 最终有效引用支撑的终态覆盖/缺口，不复用控制器搜索前计划。
+    coverage: list[str] = []
+    gaps: list[str] = []
 
 
 class FallbackStageOut(BaseModel):

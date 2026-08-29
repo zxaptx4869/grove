@@ -460,7 +460,9 @@ async def test_investigation_multi_round_discovery_and_citations(monkeypatch) ->
             "验收规则",
         }
         assert investigation.coverage_summary
-        assert json.loads(investigation.coverage_summary) == ["时长", "放水时机"]
+        assert json.loads(investigation.coverage_summary) == [
+            "当前回答采用 2 条核验证据，涉及 2 条正式知识"
+        ]
 
 
 @pytest.mark.asyncio
@@ -926,9 +928,10 @@ async def test_investigation_insufficient_keeps_gaps_and_partial(monkeypatch) ->
         run = await db.get(KnowledgeAgentRun, run.id)
         investigation, _rounds, _queries = await _load_investigation(db, run.id)
         assert investigation.stop_reason == STOP_REASON_INSUFFICIENT
-        assert json.loads(investigation.gaps_summary) == ["放水时机无来源"]
+        # 搜索前控制器的缺口不是终态事实；最终综合只保留已校验答案的摘要。
+        assert json.loads(investigation.gaps_summary) == []
         summary = json.loads(run.investigation_summary)
-        assert summary["gaps"] == ["放水时机无来源"]
+        assert summary["gaps"] == []
         answer = json.loads(run.answer_json)
         assert answer["citations"]
 

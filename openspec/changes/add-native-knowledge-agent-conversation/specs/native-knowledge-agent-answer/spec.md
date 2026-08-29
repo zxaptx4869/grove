@@ -27,7 +27,7 @@
 - **THEN** 页面展示回答正文、生成时范围和来源条，并使用「基于正式知识」语义
 
 #### Scenario: 部分回答
-- **WHEN** Run 或 answer 为 partial 且仍有有效内容
+- **WHEN** answer 为 partial 且仍有有效内容
 - **THEN** 页面保留有效回答和引用，并在内容附近说明哪些部分降级、失效或未覆盖
 
 #### Scenario: 知识不足
@@ -106,3 +106,17 @@
 - **WHEN** 仅移动网络请求失败且服务端 Run 状态未知
 - **THEN** 页面显示连接问题和刷新动作，不把 Run 改成本地 failed/cancelled
 
+#### Scenario: partial 或可恢复降级
+- **WHEN** answer.status 为 partial，或 fallback_summary 指示已有有效结果但可通过新 Run 补查
+- **THEN** 页面提供重新提问或适配的恢复入口，不自行把 insufficient 改写为 partial
+
+### Requirement: 长内容 Sheet 可滚动且恢复对话
+原生 App MUST 让 History、Scope、Mode 与 Citation Bottom Sheet 的长内容在 Sheet 内独立滚动，并在关闭后恢复原对话阅读状态；Sheet 不得因长项目名、引用原文、错误或选项列表遮挡关闭操作或 Composer。
+
+#### Scenario: 长引用原文
+- **WHEN** Citation quote 或 Source 标题超过一屏
+- **THEN** 用户可在 Citation Sheet 内滚动到全部内容并始终可关闭 Sheet
+
+#### Scenario: 长历史或选项
+- **WHEN** History、Scope 或 Mode 列表超过可用高度
+- **THEN** 对应 Sheet 内可滚动，关闭后对话仍保留原消息位置和输入状态

@@ -13,7 +13,7 @@ from app.services.knowledge_agent.observability import StageMeta
 
 logger = logging.getLogger(__name__)
 
-ANSWER_PROMPT_VERSION = "v1"
+ANSWER_PROMPT_VERSION = "v2"
 
 
 class KnowledgeCitationDraft(BaseModel):
@@ -38,6 +38,11 @@ class KnowledgeAnswerDraft(BaseModel):
     conflicts: list[KnowledgeConflictDraft] = []
     insufficient: bool = False
     insufficient_note: str | None = None
+    # 只概括当前 Evidence 是否足够回答核心问题；服务端仍按实际句柄复核。
+    core_question_answered: bool = True
+    coverage_complete: bool = True
+    coverage: list[str] = []
+    gaps: list[str] = []
 
 
 KNOWLEDGE_ANSWER_SYSTEM_PROMPT = (
@@ -57,6 +62,16 @@ KNOWLEDGE_ANSWER_SYSTEM_PROMPT = (
     "不要替用户裁决。"
     "\n"
     "5. 即时回答不是正式知识，不得修改任何正式数据。"
+    "\n"
+    "6. 正文首句必须直接回答：决策先给推荐、对比先给主要差异、操作先给步骤、"
+    "事实先给答案。不得复述问题，不得使用“关于这个问题”“根据当前已确认知识”"
+    "“以下是基于正式知识的回答”等没有新增信息的开场。"
+    "\n"
+    "7. 范围、来源数、部分结果、预算、轮次、停止原因和 coverage/gaps 由结构化卡片展示，"
+    "不要在正文重复。只在多维长回答时先给一至两句有实际信息的结论摘要。"
+    "\n"
+    "8. 请给出 core_question_answered、coverage_complete、coverage 与 gaps。它们只能"
+    "概括本次实际引用的 Evidence 覆盖情况；边缘证据不能视为已回答核心问题。"
 )
 
 
@@ -79,8 +94,7 @@ def _format_context(
                 f"句柄 {evidence['handle']} 「{evidence['quote']}」"
             )
     parts.append(
-        "引用规则：citations 只能使用上面列出的句柄；句柄必须完整原样返回；"
-        "不要把原文片段当成句柄。"
+        "引用规则：citations 只能使用上面列出的句柄；句柄必须完整原样返回；不要把原文片段当成句柄。"
     )
     return "\n".join(parts)
 
@@ -135,7 +149,8 @@ async def run_knowledge_answer_agent(
             + "\n"
             + synthesis_context
             + "\n"
-            + "要求：必须明确未解决缺口与停止原因，不得声称穷尽全部知识；"
+            + "要求：正文不要复述停止原因、预算或范围；只能直接回答可支持的内容。"
+            "coverage/gaps 用结构化字段表达终态覆盖与未解决缺口；"
             "只能引用上方给出的当前 Run Evidence 句柄。"
         )
     agent = Agent(

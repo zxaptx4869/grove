@@ -2,6 +2,7 @@ import type { ReactNode } from "react";
 import {
   Modal,
   Pressable,
+  ScrollView,
   StyleSheet,
   Text,
   View,
@@ -165,8 +166,14 @@ export function Sheet({
               <AgentIcon name="close" size={20} color={theme.muted} />
             </Pressable>
           </View>
-          <SafeAreaView edges={["bottom"]} style={styles.sheetBody}>
-            {children}
+          <SafeAreaView edges={["bottom"]} style={styles.sheetSafeArea}>
+            <ScrollView
+              style={styles.sheetScroll}
+              contentContainerStyle={styles.sheetBody}
+              keyboardShouldPersistTaps="handled"
+            >
+              {children}
+            </ScrollView>
           </SafeAreaView>
         </View>
       </View>
@@ -273,5 +280,7 @@ const styles = StyleSheet.create({
     borderRadius: 8,
     backgroundColor: theme.soft,
   },
+  sheetSafeArea: { flexShrink: 1 },
+  sheetScroll: { flexGrow: 0 },
   sheetBody: { paddingHorizontal: 16, paddingTop: 8, paddingBottom: 18 },
 });

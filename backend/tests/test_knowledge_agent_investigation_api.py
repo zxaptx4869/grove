@@ -272,7 +272,7 @@ async def test_api_investigation_run_completes_with_detail(
     assert summary["stop_reason"] == STOP_REASON_CONTROLLER_COMPLETE
     assert summary["rounds_completed"] == 2
     assert summary["queries_executed"] == 1
-    assert summary["coverage"] == ["时长"]
+    assert summary["coverage"] == ["当前回答采用 1 条核验证据，涉及 1 条正式知识"]
 
     detail_response = await client.get(
         f"/api/knowledge-agent/runs/{run_id}/investigation"

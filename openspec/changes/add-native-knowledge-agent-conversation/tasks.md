@@ -70,3 +70,13 @@
 - [x] 10.3 手动走查 draft 首次发送、最近会话恢复、向上分页、范围切换、连续追问、quick/auto/investigate、前后台恢复、取消、断网幂等重试、五种回答状态、引用、冲突和三个目标视口，并把结果写入该 change 的 validation 记录。
 - [x] 10.4 运行 `openspec validate add-native-knowledge-agent-conversation --strict` 与 `openspec validate --all --strict`；逐项核对 tasks、spec scenarios、原型偏离和产品专题，发现遗留项时按 AGENTS.md 先向用户说明并询问是否登记。
 - [x] 10.5 完成最终本地提交并停留在特性分支等待用户验证；只有用户明确确认后才执行 OpenSpec archive、最终归档提交、push 或合并。
+
+## 11. 生产测试修正与回归验证
+
+- [x] 11.1 在调查 Runner 实现“搜索候选池 → 确定性全局选择 → 受限 Evidence 读取”：为有候选的查询提供跨维度保留名额，再按稳定轮转补足；执行同 Entry/等价 quote/重复来源去重与单 Query/Entry/来源限额，同时保留真实冲突双方、审计、恢复、取消和 Workspace/项目隔离。
+- [x] 11.2 以 Run 42～46 同类数据和定向测试评估优化后的 Evidence 利用率；只有可证明 12 条已无明显浪费仍不足时才调整默认值，并在 design/validation 记录测量理由。补充多查询竞争、重复 quote/Source、跨维度覆盖、恢复和硬预算测试。
+- [x] 11.3 将 completed/partial/insufficient 的权威判定收敛到后端最终组装器；以最终有效引用、核心维度和真实缺口重建 coverage/gaps/conflicts，更新 schema、prompt、Runner/回答测试，覆盖预算停止但有效、边缘证据、无证据和部分引用失效。
+- [x] 11.4 重写回答生成约束与测试，使正文首句直接回答；覆盖短事实、决策、对比、操作、部分结果、知识不足和连续追问，禁止用前端字符串清理代替协议修复。
+- [x] 11.5 修复移动端 answer 状态直通、首次终态轮询归并、取消持久错误与重试、partial/fallback 恢复入口、draft 项目名和四类长 Bottom Sheet 滚动；移除 Jest forceExit 并修复实际 act 警告或未释放 handle。
+- [x] 11.6 按平台收敛键盘避让：Android `resize` 不重复补偿键盘高度，iOS 采用原生避让和安全区，动态替代 154px 空白；为键盘开闭、多行增长、发送、模式切换、前台恢复和状态卡补充组件测试。
+- [x] 11.7 运行后端全量 pytest/ruff、调查/Runner/Evidence/回答状态定向测试，移动端无 forceExit 的全量 Jest/lint/typecheck 与组件/controller/adapter 测试，`git diff --check`、当前 change strict 与全库 strict；更新 validation.md 的真实数量和原生未验证项，完成可验证段落的本地提交，不 archive/push/merge。

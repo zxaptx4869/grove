@@ -43,7 +43,7 @@
 
 #### Scenario: 草稿选择项目范围
 - **WHEN** 用户在尚未创建的对话选择当前 Workspace 某项目
-- **THEN** 顶栏立即显示该项目，首次发送创建项目范围 Conversation
+- **THEN** 顶栏立即显示该项目的真实名称，首次发送创建项目范围 Conversation
 
 #### Scenario: 既有空闲对话切换范围
 - **WHEN** 用户在无活动 Run 的既有对话从项目切换到全部知识
@@ -110,6 +110,10 @@
 - **WHEN** 消息提交返回 waiting 或 processing
 - **THEN** 客户端持续轮询同一 Run，更新可验证步骤并在终态自动停止
 
+#### Scenario: 首次轮询已是终态
+- **WHEN** 提交后第一次轮询直接返回 completed、failed 或 cancelled
+- **THEN** 客户端归并终态消息和回答并清除 activeRun，不保留旧 processing 卡
+
 #### Scenario: App 进入后台
 - **WHEN** Run 仍处理且 AppState 离开 active
 - **THEN** 客户端停止轮询，服务端 Worker 继续执行且本地不伪装为取消
@@ -122,16 +126,24 @@
 - **WHEN** 用户确认取消 waiting/processing Run
 - **THEN** 客户端提交取消、显示正在取消并轮询到 cancelled，不显示迟到正常回答
 
+#### Scenario: 取消请求失败
+- **WHEN** 用户取消 Run 的网络或服务端请求失败
+- **THEN** 客户端在 Run 卡保留可见错误、最后已知状态和重试取消操作，不静默吞掉错误
+
 #### Scenario: 轮询临时失败
 - **WHEN** Run 状态请求网络失败
 - **THEN** 客户端保留最后已知状态、停止激进重试并提供手动重试，不重新提交问题
 
 ### Requirement: 原生对话状态可访问且不遮挡
-原生对话页 MUST 使用安全区、可滚动消息区、真实系统键盘和键盘避让；输入聚焦时底栏 MUST 隐藏，composer、长消息、历史 Sheet 和模式 Sheet MUST 在 360×800、390×844、412×915 下可操作且无横向溢出。交互控件 MUST 有辅助名称和非颜色状态表达。
+原生对话页 MUST 使用安全区、可滚动消息区、真实系统键盘和每个平台唯一的键盘避让负责人；Android `resize` 时 MUST NOT 再以完整 keyboardHeight 补偿 Composer，iOS MUST 使用平台原生避让与安全区。输入聚焦时底栏 MUST 隐藏，composer、长消息、历史 Sheet 和模式 Sheet MUST 在 360×800、390×844、412×915 下可操作且无横向溢出。交互控件 MUST 有辅助名称和非颜色状态表达。
 
 #### Scenario: 键盘展开发送
 - **WHEN** 用户在 390×844 设备聚焦多行输入并发送
 - **THEN** composer 始终位于键盘上方、底栏隐藏、消息区仍可滚动且发送后焦点行为稳定
+
+#### Scenario: Android resize 不二次跳动
+- **WHEN** Android 系统以 resize 展开/收起键盘，或多行 Composer 从一行增至多行
+- **THEN** 系统只采用 resize 后可用高度布局，不额外叠加完整键盘高度或动画补偿，最新消息和 Composer 均保持可见
 
 #### Scenario: 小尺寸长对话
 - **WHEN** 360×800 设备展示长回答与多个来源
@@ -140,4 +152,3 @@
 #### Scenario: 使用读屏操作
 - **WHEN** 用户通过辅助技术访问范围、历史、模式、发送、取消和 Sheet 关闭控件
 - **THEN** 每个控件有可理解名称、状态和顺序，不只通过图标或颜色表达
-

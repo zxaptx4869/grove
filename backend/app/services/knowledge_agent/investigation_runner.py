@@ -7,6 +7,7 @@
 
 import json
 import logging
+from collections import defaultdict, deque
 from time import perf_counter
 
 from sqlalchemy import select
@@ -103,9 +104,7 @@ async def _get_or_create_investigation(
     """读取或创建 Run 一对一调查；预算在创建时从服务端配置固化。"""
     investigation = (
         await db.execute(
-            select(KnowledgeInvestigation).where(
-                KnowledgeInvestigation.run_id == run.id
-            )
+            select(KnowledgeInvestigation).where(KnowledgeInvestigation.run_id == run.id)
         )
     ).scalar_one_or_none()
     if investigation is not None:
@@ -146,23 +145,31 @@ async def _reset_incomplete_rounds(
     助手回答与预算计数都不会重复。
     """
     rows = (
-        await db.execute(
-            select(KnowledgeInvestigationRound).where(
-                KnowledgeInvestigationRound.investigation_id == investigation.id,
-                KnowledgeInvestigationRound.status != INVESTIGATION_ROUND_COMPLETED,
+        (
+            await db.execute(
+                select(KnowledgeInvestigationRound).where(
+                    KnowledgeInvestigationRound.investigation_id == investigation.id,
+                    KnowledgeInvestigationRound.status != INVESTIGATION_ROUND_COMPLETED,
+                )
             )
         )
-    ).scalars().all()
+        .scalars()
+        .all()
+    )
     if not rows:
         return
     round_ids = [row.id for row in rows]
     queries = (
-        await db.execute(
-            select(KnowledgeInvestigationQuery).where(
-                KnowledgeInvestigationQuery.round_id.in_(round_ids)
+        (
+            await db.execute(
+                select(KnowledgeInvestigationQuery).where(
+                    KnowledgeInvestigationQuery.round_id.in_(round_ids)
+                )
             )
         )
-    ).scalars().all()
+        .scalars()
+        .all()
+    )
     for query in queries:
         await db.delete(query)
     for round_row in rows:
@@ -182,15 +189,9 @@ def _remaining_budget(
     """剩余预算：rounds/queries/entries/evidence，均不小于 0。"""
     return {
         "rounds": max(0, investigation.max_rounds - investigation.current_round),
-        "queries": max(
-            0, investigation.max_total_queries - len(ledger.executed_query_hashes)
-        ),
-        "entries": max(
-            0, investigation.max_entries - ledger.discovered_entry_count()
-        ),
-        "evidence": max(
-            0, investigation.max_evidence - ledger.distinct_evidence_count()
-        ),
+        "queries": max(0, investigation.max_total_queries - len(ledger.executed_query_hashes)),
+        "entries": max(0, investigation.max_entries - ledger.discovered_entry_count()),
+        "evidence": max(0, investigation.max_evidence - ledger.distinct_evidence_count()),
     }
 
 
@@ -254,11 +255,7 @@ async def _commit_round_observation(
         ensure_ascii=False,
     )
     round_row.unavailable_json = json.dumps(
-        [
-            item
-            for item in ledger.unavailable
-            if item["round_number"] == round_number
-        ],
+        [item for item in ledger.unavailable if item["round_number"] == round_number],
         ensure_ascii=False,
     )
     investigation.current_round = round_number
@@ -267,9 +264,7 @@ async def _commit_round_observation(
     investigation.citable_evidence_count = ledger.distinct_evidence_count()
     investigation.coverage_summary = json.dumps(ledger.coverage, ensure_ascii=False)
     investigation.gaps_summary = json.dumps(ledger.gaps, ensure_ascii=False)
-    investigation.conflicts_summary = json.dumps(
-        ledger.conflicts, ensure_ascii=False
-    )
+    investigation.conflicts_summary = json.dumps(ledger.conflicts, ensure_ascii=False)
     if stop_reason is not None:
         investigation.stop_reason = stop_reason
     run.current_round = round_number
@@ -315,11 +310,19 @@ async def _execute_query_round(
     query_rows: list[KnowledgeInvestigationQuery],
     round_number: int,
 ) -> tuple[int, int, int]:
-    """执行固定搜索→Entry→Evidence 工具链，返回 (执行数, 新增 Entry, 新增 Evidence)。"""
+    """执行“搜索候选池→全局选择→受限读取”，返回轮次增量。
+
+    搜索结果不再按查询返回顺序立即读取 Evidence。先把所有合法查询的
+    Entry 候选汇总，再轮转选择 Entry 与 Source 候选，避免首条查询耗尽
+    全部预算。所有最终读取仍通过 RunToolContext 的 Workspace/项目范围校验。
+    """
     settings = get_settings()
-    executed = 0
-    round_entries_added = 0
-    round_evidence_added = 0
+    searches: dict[int, object] = {}
+    search_durations: dict[int, int] = {}
+    candidates_by_query: dict[int, list[int]] = {}
+    query_stats: dict[int, dict[str, int]] = {}
+
+    # 第一阶段：所有搜索先完成，不能让返回较早的查询抢先读取 Evidence。
     for query_row in query_rows:
         await _check_cancelled(run.id)
         await update_run_step(run.id, STEP_ROUND_SEARCH)
@@ -356,18 +359,69 @@ async def _execute_query_round(
                 round_number=round_number,
                 query_sequence=query_row.sequence,
             )
-        # 预算内接纳：先计算本 Query 可接纳的新 Entry 剩余额度，
-        # 只把至多 remaining 个新 Entry 送入读取与账本，任何单轮批量结果
-        # 和恢复路径都不得使实际不同对象数超过服务端固化上限。
-        remaining_entries = max(
-            0, investigation.max_entries - ledger.discovered_entry_count()
+        candidate_ids = list(
+            dict.fromkeys(
+                item.entry_id
+                for item in search.items
+                if item.entry_id not in ledger.discovered_entries
+            )
         )
-        new_candidate_ids = [
-            item.entry_id
-            for item in search.items
-            if item.entry_id not in ledger.discovered_entries
+        searches[query_row.sequence] = search
+        search_durations[query_row.sequence] = duration_ms
+        candidates_by_query[query_row.sequence] = candidate_ids
+        query_stats[query_row.sequence] = {
+            "hits": len(search.items),
+            "new_entries": len(candidate_ids),
+            "entries_added": 0,
+            "evidence_added": 0,
+            "denied": 0,
+            "unavailable": 0,
+            "deduped": 0,
+            "limited": 0,
+        }
+        # 每个查询工具批次后检查取消：搜索期间设置的取消在此边界命中
+        await _check_cancelled(run.id)
+
+    # 第二阶段：Entry 候选按查询轮转。每个查询最多消耗公平份额，除非它是
+    # 唯一仍有候选的查询；同一 Entry 被多查询命中时只计第一个稳定归属。
+    remaining_entries = max(0, investigation.max_entries - ledger.discovered_entry_count())
+    entry_limit_per_query = max(
+        1, (remaining_entries + max(1, len(query_rows)) - 1) // max(1, len(query_rows))
+    )
+    queues = {sequence: deque(entry_ids) for sequence, entry_ids in candidates_by_query.items()}
+    selected_entries: list[tuple[int, int]] = []
+    selected_entry_ids: set[int] = set()
+    selected_per_query: defaultdict[int, int] = defaultdict(int)
+    while len(selected_entries) < remaining_entries and any(queues.values()):
+        progress = False
+        for query_row in query_rows:
+            queue = queues[query_row.sequence]
+            while queue and queue[0] in selected_entry_ids:
+                queue.popleft()
+                query_stats[query_row.sequence]["deduped"] += 1
+            if not queue or selected_per_query[query_row.sequence] >= entry_limit_per_query:
+                continue
+            entry_id = queue.popleft()
+            selected_entries.append((query_row.sequence, entry_id))
+            selected_entry_ids.add(entry_id)
+            selected_per_query[query_row.sequence] += 1
+            progress = True
+            if len(selected_entries) >= remaining_entries:
+                break
+        if not progress:
+            # 所有仍有候选的查询均已用完公平份额时，稳定放宽限额继续轮转。
+            entry_limit_per_query += 1
+
+    for query_row in query_rows:
+        admitted_ids = [
+            entry_id for sequence, entry_id in selected_entries if sequence == query_row.sequence
         ]
-        admitted_entry_ids = new_candidate_ids[:remaining_entries]
+        query_stats[query_row.sequence]["limited"] = max(
+            0,
+            len(candidates_by_query[query_row.sequence])
+            - len(admitted_ids)
+            - query_stats[query_row.sequence]["deduped"],
+        )
         await record_tool_result(
             db,
             run_id=run.id,
@@ -378,182 +432,212 @@ async def _execute_query_round(
                 "query_sequence": query_row.sequence,
             },
             result={
-                "total": len(search.items),
-                "entry_ids": admitted_entry_ids,
-                "new_entries": len(new_candidate_ids),
-                "admitted": len(admitted_entry_ids),
+                "total": query_stats[query_row.sequence]["hits"],
+                "entry_ids": admitted_ids,
+                "new_entries": query_stats[query_row.sequence]["new_entries"],
+                "admitted": len(admitted_ids),
+                "deduped": query_stats[query_row.sequence]["deduped"],
+                "limited": query_stats[query_row.sequence]["limited"],
                 "remaining_entry_budget": remaining_entries,
             },
-            duration_ms=duration_ms,
+            duration_ms=search_durations[query_row.sequence],
             investigation_id=investigation.id,
             round_number=round_number,
             query_sequence=query_row.sequence,
         )
-        await db.commit()
-        # 每个查询工具批次后检查取消：搜索期间设置的取消在此边界命中
+    await db.commit()
+
+    entries_by_id: dict[int, object] = {}
+    if selected_entries:
         await _check_cancelled(run.id)
-
-        denied_count = 0
-        unavailable_count = 0
-        query_entries_added = 0
-        query_evidence_added = 0
-        if admitted_entry_ids:
-            await _check_cancelled(run.id)
-            await update_run_step(run.id, STEP_ROUND_EVIDENCE)
-            started = perf_counter()
-            entries = await read_entries(db, ctx, admitted_entry_ids)
-            read_duration_ms = int((perf_counter() - started) * 1000)
-            denied_count = len(entries.denied_entry_ids)
-            unavailable_count = len(entries.unavailable_entry_ids)
-            await record_tool_result(
-                db,
-                run_id=run.id,
-                tool_name="read_entries",
-                params={
-                    "entry_ids": admitted_entry_ids,
-                    "round": round_number,
-                    "query_sequence": query_row.sequence,
-                },
-                result={
-                    "total": len(entries.items),
-                    "denied": denied_count,
-                    "unavailable": unavailable_count,
-                },
-                duration_ms=read_duration_ms,
-                investigation_id=investigation.id,
+        await update_run_step(run.id, STEP_ROUND_EVIDENCE)
+        selected_ids = [entry_id for _, entry_id in selected_entries]
+        started = perf_counter()
+        entries = await read_entries(db, ctx, selected_ids)
+        read_duration_ms = int((perf_counter() - started) * 1000)
+        entries_by_id = {item.entry_id: item for item in entries.items}
+        owner_by_entry = dict(selected_entries)
+        for entry_id in entries.denied_entry_ids:
+            sequence = owner_by_entry.get(entry_id)
+            if sequence is not None:
+                query_stats[sequence]["denied"] += 1
+            ledger.add_unavailable(
+                kind="entry",
+                obj_id=entry_id,
+                reason="Entry 越权或未发现",
                 round_number=round_number,
-                query_sequence=query_row.sequence,
             )
-            for entry_id in entries.denied_entry_ids:
-                ledger.add_unavailable(
-                    kind="entry",
-                    obj_id=entry_id,
-                    reason="Entry 越权或未发现",
-                    round_number=round_number,
-                )
-            for entry_id in entries.unavailable_entry_ids:
-                ledger.add_unavailable(
-                    kind="entry",
-                    obj_id=entry_id,
-                    reason="Entry 已删除或移出范围",
-                    round_number=round_number,
-                )
-            await db.commit()
-
-            evidence_budget = (
-                investigation.max_evidence - ledger.distinct_evidence_count()
+        for entry_id in entries.unavailable_entry_ids:
+            sequence = owner_by_entry.get(entry_id)
+            if sequence is not None:
+                query_stats[sequence]["unavailable"] += 1
+            ledger.add_unavailable(
+                kind="entry",
+                obj_id=entry_id,
+                reason="Entry 已删除或移出范围",
+                round_number=round_number,
             )
-            await _check_cancelled(run.id)
-            for item in entries.items:
-                if evidence_budget <= 0 or (
-                    ledger.discovered_entry_count() >= investigation.max_entries
-                ):
-                    break
-                if not ledger.add_entry(
-                    LedgerEntryRef(
-                        entry_id=item.entry_id,
-                        entry_title=item.title,
-                        project_name=item.project_name,
-                        node_path=item.node_path,
-                        round_number=round_number,
-                    )
-                ):
-                    continue
-                query_entries_added += 1
-                source_ids = [source["source_id"] for source in item.sources]
-                if not source_ids:
-                    continue
-                started = perf_counter()
-                evidence_result = await read_source_evidence(
-                    db,
-                    ctx,
-                    item.entry_id,
-                    source_ids[:evidence_budget],
-                    round_number=round_number,
-                    query_sequence=query_row.sequence,
-                )
-                duration_ms = int((perf_counter() - started) * 1000)
-                citable = [
-                    row
-                    for row in evidence_result.items
-                    if row.citable and row.evidence_id is not None
-                ]
-                unavailable_evidence = [
-                    row for row in evidence_result.items if not row.citable
-                ]
-                await record_tool_result(
-                    db,
-                    run_id=run.id,
-                    tool_name="read_source_evidence",
-                    params={
-                        "entry_id": item.entry_id,
-                        "source_ids": source_ids,
-                        "round": round_number,
-                        "query_sequence": query_row.sequence,
-                    },
-                    result={
-                        "total": len(evidence_result.items),
-                        "citable": len(citable),
-                        "denied": 0,
-                        "unavailable": len(unavailable_evidence),
-                    },
-                    duration_ms=duration_ms,
-                    investigation_id=investigation.id,
-                    round_number=round_number,
-                    query_sequence=query_row.sequence,
-                )
-                for row in unavailable_evidence:
-                    ledger.add_unavailable(
-                        kind="evidence",
-                        obj_id=row.source_id,
-                        reason=row.reason or row.status,
-                        round_number=round_number,
-                    )
-                for row in citable:
-                    if ledger.add_evidence(
-                        LedgerEvidenceRef(
-                            evidence_id=row.evidence_id,
-                            handle=row.evidence_handle or "",
-                            entry_id=row.entry_id,
-                            source_id=row.source_id,
-                            source_title=row.source_title,
-                            attachment_id=row.attachment_id,
-                            quote=row.quote or "",
-                            round_number=round_number,
-                        )
-                    ):
-                        query_evidence_added += 1
-                evidence_budget = (
-                    investigation.max_evidence - ledger.distinct_evidence_count()
-                )
-                await db.commit()
-
-        executed += 1
-        query_row.status = INVESTIGATION_QUERY_EXECUTED
-        # 审计计数只记录本 Query 自身增量；Round 汇总在 _commit_round_observation
-        # 中累加，避免把同轮前序查询的累计值误写成当前查询结果。
-        query_row.result_counts_json = json.dumps(
-            {
-                "hits": len(search.items),
-                "new_entries": len(new_candidate_ids),
-                "entries_added": query_entries_added,
-                "evidence_added": query_evidence_added,
-                "denied": denied_count,
-                "unavailable": unavailable_count,
+        await record_tool_result(
+            db,
+            run_id=run.id,
+            tool_name="read_entries",
+            params={"entry_ids": selected_ids, "round": round_number},
+            result={
+                "total": len(entries.items),
+                "denied": len(entries.denied_entry_ids),
+                "unavailable": len(entries.unavailable_entry_ids),
             },
-            ensure_ascii=False,
+            duration_ms=read_duration_ms,
+            investigation_id=investigation.id,
+            round_number=round_number,
         )
+        for sequence, entry_id in selected_entries:
+            item = entries_by_id.get(entry_id)
+            if item is None:
+                continue
+            if ledger.add_entry(
+                LedgerEntryRef(
+                    entry_id=item.entry_id,
+                    entry_title=item.title,
+                    project_name=item.project_name,
+                    node_path=item.node_path,
+                    round_number=round_number,
+                )
+            ):
+                query_stats[sequence]["entries_added"] += 1
+        await db.commit()
+
+    # 第三阶段：将已读取 Entry 的 Source 候选再次按查询轮转。单 Entry 与单
+    # Query 都有上限，避免一个高来源数的 Entry 重新垄断 Evidence 预算。
+    evidence_budget = max(0, investigation.max_evidence - ledger.distinct_evidence_count())
+    evidence_limit_per_query = max(
+        1, (evidence_budget + max(1, len(query_rows)) - 1) // max(1, len(query_rows))
+    )
+    evidence_limit_per_entry = max(
+        1, (evidence_budget + max(1, len(selected_entries)) - 1) // max(1, len(selected_entries))
+    )
+    source_queues: dict[int, deque[tuple[int, int]]] = defaultdict(deque)
+    for sequence, entry_id in selected_entries:
+        item = entries_by_id.get(entry_id)
+        if item is None:
+            continue
+        for source in item.sources:
+            source_queues[sequence].append((entry_id, int(source["source_id"])))
+    selected_sources: list[tuple[int, int, int]] = []
+    selected_source_keys: set[tuple[int, int]] = set()
+    selected_evidence_per_query: defaultdict[int, int] = defaultdict(int)
+    selected_evidence_per_entry: defaultdict[int, int] = defaultdict(int)
+    while len(selected_sources) < evidence_budget and any(source_queues.values()):
+        progress = False
+        for query_row in query_rows:
+            queue = source_queues[query_row.sequence]
+            while queue and queue[0] in selected_source_keys:
+                queue.popleft()
+                query_stats[query_row.sequence]["deduped"] += 1
+            if (
+                not queue
+                or selected_evidence_per_query[query_row.sequence] >= evidence_limit_per_query
+            ):
+                continue
+            entry_id, source_id = queue[0]
+            if selected_evidence_per_entry[entry_id] >= evidence_limit_per_entry:
+                queue.popleft()
+                query_stats[query_row.sequence]["limited"] += 1
+                continue
+            queue.popleft()
+            selected_sources.append((query_row.sequence, entry_id, source_id))
+            selected_source_keys.add((entry_id, source_id))
+            selected_evidence_per_query[query_row.sequence] += 1
+            selected_evidence_per_entry[entry_id] += 1
+            progress = True
+            if len(selected_sources) >= evidence_budget:
+                break
+        if not progress:
+            evidence_limit_per_query += 1
+            evidence_limit_per_entry += 1
+
+    seen_quotes = {
+        (ref.entry_id, " ".join(ref.quote.split()).casefold()) for ref in ledger.evidences.values()
+    }
+    seen_sources = {(ref.entry_id, ref.source_id) for ref in ledger.evidences.values()}
+    for sequence, entry_id, source_id in selected_sources:
+        await _check_cancelled(run.id)
+        started = perf_counter()
+        evidence_result = await read_source_evidence(
+            db, ctx, entry_id, [source_id], round_number=round_number, query_sequence=sequence
+        )
+        duration_ms = int((perf_counter() - started) * 1000)
+        citable = [
+            row for row in evidence_result.items if row.citable and row.evidence_id is not None
+        ]
+        unavailable = [row for row in evidence_result.items if not row.citable]
+        await record_tool_result(
+            db,
+            run_id=run.id,
+            tool_name="read_source_evidence",
+            params={
+                "entry_id": entry_id,
+                "source_ids": [source_id],
+                "round": round_number,
+                "query_sequence": sequence,
+            },
+            result={
+                "total": len(evidence_result.items),
+                "citable": len(citable),
+                "denied": 0,
+                "unavailable": len(unavailable),
+            },
+            duration_ms=duration_ms,
+            investigation_id=investigation.id,
+            round_number=round_number,
+            query_sequence=sequence,
+        )
+        for row in unavailable:
+            query_stats[sequence]["unavailable"] += 1
+            ledger.add_unavailable(
+                kind="evidence",
+                obj_id=row.source_id,
+                reason=row.reason or row.status,
+                round_number=round_number,
+            )
+        for row in citable:
+            quote_key = (row.entry_id, " ".join((row.quote or "").split()).casefold())
+            source_key = (row.entry_id, row.source_id)
+            if source_key in seen_sources or quote_key in seen_quotes:
+                query_stats[sequence]["deduped"] += 1
+                continue
+            if ledger.add_evidence(
+                LedgerEvidenceRef(
+                    evidence_id=row.evidence_id,
+                    handle=row.evidence_handle or "",
+                    entry_id=row.entry_id,
+                    source_id=row.source_id,
+                    source_title=row.source_title,
+                    attachment_id=row.attachment_id,
+                    quote=row.quote or "",
+                    round_number=round_number,
+                )
+            ):
+                query_stats[sequence]["evidence_added"] += 1
+                seen_sources.add(source_key)
+                seen_quotes.add(quote_key)
+        await db.commit()
+
+    for query_row in query_rows:
+        stats = query_stats[query_row.sequence]
+        query_row.status = INVESTIGATION_QUERY_EXECUTED
+        query_row.result_counts_json = json.dumps(stats, ensure_ascii=False)
         ledger.add_executed_query(
             fingerprint=query_row.normalized_query_hash,
             text=query_row.normalized_query,
             round_number=round_number,
         )
-        # 每条查询作为一个可审计检查点提交，避免下一条查询的独立短会话
-        # （取消检查 / 进度步骤）与主会话未提交写锁在 SQLite 上互相阻塞。
-        await db.commit()
-        round_entries_added += query_entries_added
-        round_evidence_added += query_evidence_added
-    return executed, round_entries_added, round_evidence_added
+    await db.commit()
+    return (
+        len(query_rows),
+        sum(item["entries_added"] for item in query_stats.values()),
+        sum(item["evidence_added"] for item in query_stats.values()),
+    )
 
 
 async def _synthesize_investigation_answer(
@@ -576,9 +660,7 @@ async def _synthesize_investigation_answer(
         )
         return answer, RUN_PARTIAL, []
 
-    entry_ids = [
-        ref.entry_id for ref in ledger.discovered_entries.values() if ref.entry_id != 0
-    ]
+    entry_ids = [ref.entry_id for ref in ledger.discovered_entries.values() if ref.entry_id != 0]
     entries = await read_entries(db, ctx, entry_ids)
     entries_by_id = {item.entry_id: item for item in entries.items}
     evidence_by_entry: dict[int, list[LedgerEvidenceRef]] = {}
@@ -664,6 +746,10 @@ async def _synthesize_investigation_answer(
         else RUN_COMPLETED
     )
     cited_items = _cited_items_from_answer(answer, entries_by_id, run.id)
+    # 控制器 coverage/gaps 是搜索前计划；终态只保留实际有效引用的结果。
+    ledger.coverage = list(answer.coverage)
+    ledger.gaps = list(answer.gaps)
+    ledger.conflicts = [conflict.summary for conflict in answer.conflicts]
     return answer, run_status, cited_items
 
 
@@ -751,9 +837,7 @@ async def execute_investigation(
                 ledger.executed_query_hashes,
                 max_queries=investigation.max_queries_per_round,
             )
-            room = investigation.max_total_queries - len(
-                ledger.executed_query_hashes
-            )
+            room = investigation.max_total_queries - len(ledger.executed_query_hashes)
             if not new_queries:
                 stop_reason = STOP_REASON_NO_PROGRESS
             elif room <= 0:
@@ -849,9 +933,7 @@ async def execute_investigation(
     if stop_reason is None:
         stop_reason = STOP_REASON_MAX_ROUNDS
     investigation.stop_reason = stop_reason
-    investigation.coverage_summary = json.dumps(ledger.coverage, ensure_ascii=False)
-    investigation.gaps_summary = json.dumps(ledger.gaps, ensure_ascii=False)
-    investigation.conflicts_summary = json.dumps(ledger.conflicts, ensure_ascii=False)
+    # 此处只提交停止检查点；终态 coverage/gaps 要等引用校验后才可写入。
     # 调查终止状态作为检查点提交，避免综合步骤的短会话被 SQLite 写锁阻塞
     await db.commit()
 
@@ -870,6 +952,9 @@ async def execute_investigation(
         investigation.status = INVESTIGATION_STATUS_INSUFFICIENT
     else:
         investigation.status = INVESTIGATION_STATUS_COMPLETED
+    investigation.coverage_summary = json.dumps(ledger.coverage, ensure_ascii=False)
+    investigation.gaps_summary = json.dumps(ledger.gaps, ensure_ascii=False)
+    investigation.conflicts_summary = json.dumps(ledger.conflicts, ensure_ascii=False)
     summary = await run_fallback_summary(db, run.id)
     run.investigation_summary = json.dumps(
         {

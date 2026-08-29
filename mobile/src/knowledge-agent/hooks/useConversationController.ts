@@ -41,6 +41,7 @@ import { isRunActive } from "@/src/knowledge-agent/types";
 export interface DraftScope {
   scopeType: KnowledgeScopeType;
   projectId: number | null;
+  projectName?: string;
 }
 
 export interface ConversationController {
@@ -80,6 +81,7 @@ export interface ConversationController {
   runPollingError: string | null;
   retryRunPolling: () => void;
   cancelling: boolean;
+  cancelError: string | null;
   requestCancelRun: () => void;
   appActive: boolean;
 }
@@ -125,6 +127,7 @@ export function useConversationController(
   const [scopeError, setScopeError] = useState<string | null>(null);
   const [olderError, setOlderError] = useState<string | null>(null);
   const [loadingOlder, setLoadingOlder] = useState(false);
+  const [cancelError, setCancelError] = useState<string | null>(null);
   const previousRunStatusRef = useRef<RunStatus | null>(null);
   const modesRef = useRef<ModeSelection>(DEFAULT_MODES);
   useEffect(() => {
@@ -168,6 +171,7 @@ export function useConversationController(
       return {
         scopeType: draftScope.scopeType,
         projectId: draftScope.projectId,
+        projectName: draftScope.projectName,
       };
     }
     return {
@@ -199,7 +203,7 @@ export function useConversationController(
     [recentPageQuery.data, olderPages, runOverrides, extraMessages],
   );
 
-  const activeRun = useMemo(() => {
+  const baseActiveRun = useMemo(() => {
     const runs = [...threadBase.runsById.values()].filter((run) =>
       isRunActive(run.status),
     );
@@ -209,7 +213,7 @@ export function useConversationController(
     )[0];
   }, [threadBase.runsById]);
 
-  const activeRunId = activeRun?.id ?? null;
+  const activeRunId = baseActiveRun?.id ?? null;
 
   // 仅在前台且 Run 未终态时轮询；进入后台停止，回到前台立即恢复
   const runQuery = useQuery({
@@ -228,13 +232,24 @@ export function useConversationController(
     return upsertRun(threadBase, runQuery.data);
   }, [threadBase, runQuery.data]);
 
+  // 轮询直接返回终态时，用该服务端结果覆盖旧消息页中的 processing Run。
+  const activeRun = useMemo(() => {
+    const runs = new Map(threadBase.runsById);
+    if (runQuery.data) runs.set(runQuery.data.id, runQuery.data);
+    const active = [...runs.values()].filter((run) => isRunActive(run.status));
+    if (active.length === 0) return null;
+    return active.sort((left, right) =>
+      right.updatedAt.localeCompare(left.updatedAt),
+    )[0];
+  }, [threadBase.runsById, runQuery.data]);
+
   // Run 进入终态后同步服务端消息与对话摘要（助手回答内容、最近 Run 状态）
   useEffect(() => {
     const status: RunStatus | null = runQuery.data?.status ?? null;
     if (status === null) return;
     const previous = previousRunStatusRef.current;
     previousRunStatusRef.current = status;
-    if (previous !== null && isRunActive(previous) && !isRunActive(status)) {
+    if (!isRunActive(status) && previous !== status) {
       if (selectedConversationId !== null) {
         void queryClient.invalidateQueries({
           queryKey: knowledgeAgentKeys.messages(selectedConversationId),
@@ -418,6 +433,7 @@ export function useConversationController(
         setDraftScope({
           scopeType: scope.scopeType,
           projectId: scope.projectId ?? null,
+          projectName: scope.projectName ?? undefined,
         });
         setScopeError(null);
         return;
@@ -493,6 +509,7 @@ export function useConversationController(
 
   const requestCancelRun = useCallback(() => {
     if (!activeRunId) return;
+    setCancelError(null);
     void cancelMutation
       .mutateAsync(activeRunId)
       .then(() => {
@@ -500,8 +517,9 @@ export function useConversationController(
           queryKey: knowledgeAgentKeys.run(activeRunId),
         });
       })
-      .catch(() => {
-        // 取消请求失败：保持轮询，展示服务端真实状态
+      .catch((error) => {
+        // 取消失败保留在 Run 卡，用户可原操作重试。
+        setCancelError(toUserErrorMessage(error));
       });
   }, [activeRunId, cancelMutation, queryClient]);
 
@@ -562,6 +580,7 @@ export function useConversationController(
       void runQuery.refetch();
     },
     cancelling: cancelMutation.isPending || Boolean(activeRun?.cancelRequested),
+    cancelError,
     requestCancelRun,
     appActive,
   };
