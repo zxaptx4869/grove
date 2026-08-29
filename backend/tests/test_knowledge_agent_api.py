@@ -137,6 +137,59 @@ async def test_conversation_create_list_scope_change(client: httpx.AsyncClient) 
 
 
 @pytest.mark.asyncio
+async def test_scope_change_same_scope_api_noop(client: httpx.AsyncClient) -> None:
+    """API 层同范围 PATCH 返回 200 且不产生 scope_change 消息。"""
+    await _register(client)
+    project = await _project(client, "API 同范围项目")
+    conversation = await _conversation(client)
+    messages_before = (
+        await client.get(
+            f"/api/knowledge-agent/conversations/{conversation['id']}/messages"
+        )
+    ).json()["items"]
+    assert not any(
+        item["message_type"] == "scope_change" for item in messages_before
+    )
+
+    same = await client.patch(
+        f"/api/knowledge-agent/conversations/{conversation['id']}/scope",
+        json={"scope_type": "workspace"},
+    )
+    assert same.status_code == 200
+    assert same.json()["scope_type"] == "workspace"
+    messages_after = (
+        await client.get(
+            f"/api/knowledge-agent/conversations/{conversation['id']}/messages"
+        )
+    ).json()["items"]
+    assert not any(
+        item["message_type"] == "scope_change" for item in messages_after
+    )
+
+    project_conv = await client.post(
+        "/api/knowledge-agent/conversations",
+        json={"scope_type": "project", "project_id": project["id"]},
+    )
+    assert project_conv.status_code == 201
+    project_id = project_conv.json()["id"]
+    same_project = await client.patch(
+        f"/api/knowledge-agent/conversations/{project_id}/scope",
+        json={"scope_type": "project", "project_id": project["id"]},
+    )
+    assert same_project.status_code == 200
+    assert same_project.json()["scope_type"] == "project"
+    project_messages = (
+        await client.get(
+            f"/api/knowledge-agent/conversations/{project_id}/messages"
+        )
+    ).json()["items"]
+    assert not any(
+        item["message_type"] == "scope_change"
+        for item in project_messages
+    )
+
+
+@pytest.mark.asyncio
 async def test_submit_idempotent_and_polling_recovery(client: httpx.AsyncClient) -> None:
     """提交返回 waiting Run；幂等重试返回同一 Run；轮询恢复终态回答。"""
     await _register(client)

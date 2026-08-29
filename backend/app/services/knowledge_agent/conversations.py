@@ -297,8 +297,12 @@ async def change_scope(
     db: AsyncSession,
     conversation: KnowledgeConversation,
     payload: KnowledgeScopeChangeRequest,
-) -> tuple[KnowledgeConversation, KnowledgeMessage]:
-    """切换对话当前范围；活动 Run 期间返回 409，历史消息与 Run 保留快照。"""
+) -> tuple[KnowledgeConversation, KnowledgeMessage | None]:
+    """切换对话当前范围；活动 Run 期间返回 409，历史消息与 Run 保留快照。
+
+    提交与对话当前 Workspace/项目完全相同的范围时幂等返回当前对话，
+    不更新最近活动时间、不关闭活动工作集、不追加 scope_change 系统消息。
+    """
     active = await active_run_for_conversation(db, conversation.id)
     if active is not None:
         raise HTTPException(
@@ -313,6 +317,12 @@ async def change_scope(
             detail="项目范围必须指定当前 Workspace 内的项目",
         )
     new_project_id = payload.project_id if payload.scope_type == SCOPE_PROJECT else None
+
+    if (
+        conversation.scope_type == payload.scope_type
+        and conversation.project_id == new_project_id
+    ):
+        return conversation, None
 
     old_scope_type = conversation.scope_type
     old_project_name = None

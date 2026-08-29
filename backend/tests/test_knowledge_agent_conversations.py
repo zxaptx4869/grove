@@ -297,6 +297,65 @@ async def test_scope_change_conflict_with_active_run() -> None:
 
 
 @pytest.mark.asyncio
+async def test_scope_change_same_scope_is_noop() -> None:
+    """相同 Workspace/项目范围 PATCH 幂等 no-op：不追加事件、不改活动时间。"""
+    async with async_session_factory() as db:
+        user = await _user(db, "同范围")
+        workspace = await _workspace_for(db, user)
+        project = await _project(db, workspace, "同范围项目")
+        workspace_conv = await create_conversation(
+            db,
+            workspace.id,
+            user.id,
+            KnowledgeConversationCreate(scope_type="workspace"),
+        )
+        project_conv = await create_conversation(
+            db,
+            workspace.id,
+            user.id,
+            KnowledgeConversationCreate(
+                scope_type="project",
+                project_id=project.id,
+            ),
+        )
+        await db.flush()
+        workspace_activity = workspace_conv.last_activity_at
+        project_activity = project_conv.last_activity_at
+
+        returned_ws, event_ws = await change_scope(
+            db,
+            workspace_conv,
+            KnowledgeScopeChangeRequest(scope_type="workspace"),
+        )
+        assert returned_ws.id == workspace_conv.id
+        assert event_ws is None
+        assert workspace_conv.last_activity_at == workspace_activity
+
+        returned_project, event_project = await change_scope(
+            db,
+            project_conv,
+            KnowledgeScopeChangeRequest(
+                scope_type="project",
+                project_id=project.id,
+            ),
+        )
+        assert returned_project.id == project_conv.id
+        assert event_project is None
+        assert project_conv.last_activity_at == project_activity
+
+        count = (
+            await db.execute(
+                select(func.count())
+                .select_from(KnowledgeMessage)
+                .where(KnowledgeMessage.conversation_id.in_(
+                    [workspace_conv.id, project_conv.id]
+                ))
+            )
+        ).scalar_one()
+        assert count == 0
+
+
+@pytest.mark.asyncio
 async def test_message_cursor_pagination() -> None:
     """游标分页稳定顺序且不重复不跳过。"""
     async with async_session_factory() as db:

@@ -318,8 +318,8 @@ async def _execute_query_round(
     """执行固定搜索→Entry→Evidence 工具链，返回 (执行数, 新增 Entry, 新增 Evidence)。"""
     settings = get_settings()
     executed = 0
-    entries_added = 0
-    evidence_added = 0
+    round_entries_added = 0
+    round_evidence_added = 0
     for query_row in query_rows:
         await _check_cancelled(run.id)
         await update_run_step(run.id, STEP_ROUND_SEARCH)
@@ -356,11 +356,18 @@ async def _execute_query_round(
                 round_number=round_number,
                 query_sequence=query_row.sequence,
             )
-        new_entry_ids = [
+        # 预算内接纳：先计算本 Query 可接纳的新 Entry 剩余额度，
+        # 只把至多 remaining 个新 Entry 送入读取与账本，任何单轮批量结果
+        # 和恢复路径都不得使实际不同对象数超过服务端固化上限。
+        remaining_entries = max(
+            0, investigation.max_entries - ledger.discovered_entry_count()
+        )
+        new_candidate_ids = [
             item.entry_id
             for item in search.items
             if item.entry_id not in ledger.discovered_entries
         ]
+        admitted_entry_ids = new_candidate_ids[:remaining_entries]
         await record_tool_result(
             db,
             run_id=run.id,
@@ -372,8 +379,10 @@ async def _execute_query_round(
             },
             result={
                 "total": len(search.items),
-                "entry_ids": [item.entry_id for item in search.items],
-                "new_entries": len(new_entry_ids),
+                "entry_ids": admitted_entry_ids,
+                "new_entries": len(new_candidate_ids),
+                "admitted": len(admitted_entry_ids),
+                "remaining_entry_budget": remaining_entries,
             },
             duration_ms=duration_ms,
             investigation_id=investigation.id,
@@ -386,10 +395,12 @@ async def _execute_query_round(
 
         denied_count = 0
         unavailable_count = 0
-        if new_entry_ids:
+        query_entries_added = 0
+        query_evidence_added = 0
+        if admitted_entry_ids:
             await _check_cancelled(run.id)
             await update_run_step(run.id, STEP_ROUND_EVIDENCE)
-            entries = await read_entries(db, ctx, new_entry_ids)
+            entries = await read_entries(db, ctx, admitted_entry_ids)
             denied_count = len(entries.denied_entry_ids)
             unavailable_count = len(entries.unavailable_entry_ids)
             await record_tool_result(
@@ -397,7 +408,7 @@ async def _execute_query_round(
                 run_id=run.id,
                 tool_name="read_entries",
                 params={
-                    "entry_ids": new_entry_ids,
+                    "entry_ids": admitted_entry_ids,
                     "round": round_number,
                     "query_sequence": query_row.sequence,
                 },
@@ -432,9 +443,11 @@ async def _execute_query_round(
             )
             await _check_cancelled(run.id)
             for item in entries.items:
-                if evidence_budget <= 0:
+                if evidence_budget <= 0 or (
+                    ledger.discovered_entry_count() >= investigation.max_entries
+                ):
                     break
-                ledger.add_entry(
+                if not ledger.add_entry(
                     LedgerEntryRef(
                         entry_id=item.entry_id,
                         entry_title=item.title,
@@ -442,8 +455,9 @@ async def _execute_query_round(
                         node_path=item.node_path,
                         round_number=round_number,
                     )
-                )
-                entries_added += 1
+                ):
+                    continue
+                query_entries_added += 1
                 source_ids = [source["source_id"] for source in item.sources]
                 if not source_ids:
                     continue
@@ -506,7 +520,7 @@ async def _execute_query_round(
                             round_number=round_number,
                         )
                     ):
-                        evidence_added += 1
+                        query_evidence_added += 1
                 evidence_budget = (
                     investigation.max_evidence - ledger.distinct_evidence_count()
                 )
@@ -514,12 +528,14 @@ async def _execute_query_round(
 
         executed += 1
         query_row.status = INVESTIGATION_QUERY_EXECUTED
+        # 审计计数只记录本 Query 自身增量；Round 汇总在 _commit_round_observation
+        # 中累加，避免把同轮前序查询的累计值误写成当前查询结果。
         query_row.result_counts_json = json.dumps(
             {
                 "hits": len(search.items),
-                "new_entries": len(new_entry_ids),
-                "entries_added": entries_added,
-                "evidence_added": evidence_added,
+                "new_entries": len(new_candidate_ids),
+                "entries_added": query_entries_added,
+                "evidence_added": query_evidence_added,
                 "denied": denied_count,
                 "unavailable": unavailable_count,
             },
@@ -530,8 +546,12 @@ async def _execute_query_round(
             text=query_row.normalized_query,
             round_number=round_number,
         )
-        await db.flush()
-    return executed, entries_added, evidence_added
+        # 每条查询作为一个可审计检查点提交，避免下一条查询的独立短会话
+        # （取消检查 / 进度步骤）与主会话未提交写锁在 SQLite 上互相阻塞。
+        await db.commit()
+        round_entries_added += query_entries_added
+        round_evidence_added += query_evidence_added
+    return executed, round_entries_added, round_evidence_added
 
 
 async def _synthesize_investigation_answer(
@@ -809,15 +829,15 @@ async def execute_investigation(
         )
         await db.commit()
 
-        # 确定性停止：无进展 / 各类预算
-        if entries_added == 0 and evidence_added == 0:
-            stop_reason = STOP_REASON_NO_PROGRESS
-            break
+        # 确定性停止：各类预算优先于无进展，保证剩余额度耗尽时以正确原因停止
         if ledger.discovered_entry_count() >= investigation.max_entries:
             stop_reason = STOP_REASON_ENTRY_BUDGET
             break
         if ledger.distinct_evidence_count() >= investigation.max_evidence:
             stop_reason = STOP_REASON_EVIDENCE_BUDGET
+            break
+        if entries_added == 0 and evidence_added == 0:
+            stop_reason = STOP_REASON_NO_PROGRESS
             break
         if len(ledger.executed_query_hashes) >= investigation.max_total_queries:
             stop_reason = STOP_REASON_QUERY_BUDGET

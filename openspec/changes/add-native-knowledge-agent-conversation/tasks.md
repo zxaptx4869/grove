@@ -1,9 +1,9 @@
 ## 1. 前置契约加固
 
-- [ ] 1.1 修复受限调查的 Entry 接纳预算：每轮读取搜索结果前计算剩余额度，read、Evidence、Round 与账本均不得超过 `max_entries`；补充单轮多结果和恢复场景测试，并运行 `cd backend && .venv/bin/python -m pytest tests/test_knowledge_agent_investigation.py tests/test_knowledge_agent_investigation_runner.py -W error`。
-- [ ] 1.2 让每条 Investigation Query 的 `result_counts_json` 仅记录本 Query 的 hits、新增 Entry、Evidence、denied 与 unavailable 增量，Round 再汇总；补充多 Query 审计测试，并运行对应调查测试文件。
-- [ ] 1.3 将既有 Conversation PATCH 到相同 Workspace/项目范围实现为幂等 no-op，不新增 `scope_change` 消息；补充服务与 API 回归测试，并运行 `cd backend && .venv/bin/python -m pytest tests/test_knowledge_agent_conversations.py -W error`。
-- [ ] 1.4 运行 `cd backend && .venv/bin/python -m pytest -W error && .venv/bin/ruff check app tests`，确认前置修复没有回归后按仓库约定完成一次本地提交。
+- [x] 1.1 修复受限调查的 Entry 接纳预算：每轮读取搜索结果前计算剩余额度，read、Evidence、Round 与账本均不得超过 `max_entries`；补充单轮多结果和恢复场景测试，并运行 `cd backend && .venv/bin/python -m pytest tests/test_knowledge_agent_investigation.py tests/test_knowledge_agent_investigation_runner.py -W error`。
+- [x] 1.2 让每条 Investigation Query 的 `result_counts_json` 仅记录本 Query 的 hits、新增 Entry、Evidence、denied 与 unavailable 增量，Round 再汇总；补充多 Query 审计测试，并运行对应调查测试文件。
+- [x] 1.3 将既有 Conversation PATCH 到相同 Workspace/项目范围实现为幂等 no-op，不新增 `scope_change` 消息；补充服务与 API 回归测试，并运行 `cd backend && .venv/bin/python -m pytest tests/test_knowledge_agent_conversations.py -W error`。
+- [x] 1.4 运行 `cd backend && .venv/bin/python -m pytest -W error && .venv/bin/ruff check app tests`，确认前置修复没有回归后按仓库约定完成一次本地提交。
 
 ## 2. 对话历史与恢复契约
 

@@ -32,6 +32,7 @@ from app.models.knowledge_agent import (
     RUN_WAITING,
     STOP_REASON_CANCELLED,
     STOP_REASON_CONTROLLER_COMPLETE,
+    STOP_REASON_ENTRY_BUDGET,
 )
 from app.schemas.knowledge_agent import KnowledgeRunSubmitRequest
 from app.services.knowledge_agent.observability import StageMeta
@@ -405,6 +406,124 @@ async def test_recovery_after_two_committed_rounds_resumes_third(monkeypatch) ->
         assert len(queries) == 2
         answer = json.loads(run.answer_json)
         assert len(answer["citations"]) == 2
+
+
+@pytest.mark.asyncio
+async def test_recovery_honors_remaining_entry_budget(monkeypatch) -> None:
+    """崩溃恢复后按剩余 Entry 预算接纳对象，累计不超服务端固化上限。"""
+    from app.core.config import get_settings
+
+    async with async_session_factory() as db:
+        user = await create_user(db, "恢复预算")
+        workspace = await create_workspace(db, user)
+        project = await create_project(db, workspace, "恢复预算项目")
+        entries = []
+        for index in range(4):
+            node = await create_child_node(db, project, f"恢复节点{index}")
+            source, attachment = await create_source_attachment(
+                db,
+                workspace,
+                project,
+                text_content=f"恢复记录 {index}：闭水试验持续 24 小时。",
+            )
+            entries.append(
+                await create_entry_with_evidence(
+                    db,
+                    project,
+                    node,
+                    source,
+                    attachment,
+                    title=f"恢复条目 {index}",
+                    content=f"恢复记录 {index}：闭水试验持续 24 小时。",
+                    quote=f"恢复记录 {index}：闭水试验持续 24 小时",
+                )
+            )
+        _conversation, run = await _investigate_run(db, user, workspace)
+        await db.commit()
+        await _cancel_other_waiting_runs(db, keep_run_id=run.id)
+        run_id = run.id
+
+    state = {"calls": 0}
+
+    async def _controller(
+        db,
+        workspace_id,
+        *,
+        objective,
+        scope_label,
+        working_set_summary,
+        executed_queries,
+        ledger_summary,
+        remaining_budget,
+    ):
+        state["calls"] += 1
+        if state["calls"] == 2:
+            raise RuntimeError("模拟第二轮控制器调用前崩溃")
+        return (
+            InvestigationControllerDraft(
+                action=INVESTIGATION_ACTION_SEARCH,
+                queries=["闭水试验"] if state["calls"] == 1 else ["放水时机"],
+            ),
+            _controller_meta(),
+        )
+
+    monkeypatch.setattr(
+        "app.services.knowledge_agent.investigation_runner.run_investigation_controller",
+        _controller,
+    )
+    monkeypatch.setattr(
+        "app.services.knowledge_agent.investigation_runner.search_confirmed_knowledge",
+        _scripted_search(
+            {
+                "闭水试验": [_search_result(entries[0])],
+                # 恢复后的第二轮一次返回 3 个新候选，但只剩 2 个 Entry 名额
+                "放水时机": [
+                    _search_result(entries[1]),
+                    _search_result(entries[2]),
+                    _search_result(entries[3]),
+                ],
+            }
+        ),
+    )
+    monkeypatch.setattr(
+        "app.services.knowledge_agent.investigation_runner.run_knowledge_answer_agent",
+        _synthesis_agent(),
+    )
+    settings = get_settings()
+    monkeypatch.setattr(settings, "knowledge_agent_investigation_max_entries", 3)
+    monkeypatch.setattr(
+        settings, "knowledge_agent_investigation_max_total_queries", 6
+    )
+    monkeypatch.setattr(settings, "knowledge_agent_investigation_max_rounds", 3)
+
+    # 第一次处理：第一轮完成并提交检查点，第二轮控制器调用前崩溃
+    assert await process_one_run() is True
+    async with async_session_factory() as db:
+        run = await db.get(KnowledgeAgentRun, run_id)
+        assert run.status == RUN_WAITING
+        investigation, rounds, _queries = await _load_investigation(db, run_id)
+        assert investigation.current_round == 1
+        assert len(rounds) == 1
+        assert rounds[0].status == INVESTIGATION_ROUND_COMPLETED
+        assert rounds[0].entries_added == 1
+
+    # 第二次处理：从已提交检查点恢复，按剩余 2 个名额接纳批量结果
+    assert await process_one_run() is True
+    async with async_session_factory() as db:
+        run = await db.get(KnowledgeAgentRun, run_id)
+        assert run.status == RUN_COMPLETED
+        investigation, rounds, queries = await _load_investigation(db, run_id)
+        assert investigation.stop_reason == STOP_REASON_ENTRY_BUDGET
+        assert investigation.distinct_entries_found == 3
+        assert investigation.distinct_entries_found <= 3
+        assert rounds[1].entries_added == 2
+        second_round_queries = [
+            query for query in queries if query.round_number == 2
+        ]
+        assert len(second_round_queries) == 1
+        counts = json.loads(second_round_queries[0].result_counts_json)
+        assert counts["new_entries"] == 3
+        assert counts["entries_added"] == 2
 
 
 @pytest.mark.asyncio

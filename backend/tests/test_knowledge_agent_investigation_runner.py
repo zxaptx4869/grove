@@ -691,6 +691,178 @@ async def test_investigation_budget_stops(monkeypatch) -> None:
 
 
 @pytest.mark.asyncio
+async def test_investigation_entry_budget_admits_only_remaining_in_batch(
+    monkeypatch,
+) -> None:
+    """单轮搜索返回多个新 Entry 时只接纳剩余预算数量，任何计数不超上限。"""
+    from app.core.config import get_settings
+
+    async with async_session_factory() as db:
+        user = await create_user(db, "批量预算")
+        workspace = await create_workspace(db, user)
+        project = await create_project(db, workspace, "批量项目")
+        entries = []
+        for index in range(4):
+            node = await create_child_node(db, project, f"节点{index}")
+            source, attachment = await create_source_attachment(
+                db,
+                workspace,
+                project,
+                text_content=f"批量记录 {index}：闭水试验持续 24 小时。",
+            )
+            entries.append(
+                await create_entry_with_evidence(
+                    db,
+                    project,
+                    node,
+                    source,
+                    attachment,
+                    title=f"批量条目 {index}",
+                    content=f"批量记录 {index}：闭水试验持续 24 小时。",
+                    quote=f"批量记录 {index}：闭水试验持续 24 小时",
+                )
+            )
+        _conversation, run = await _investigation_run(db, user, workspace)
+        await db.commit()
+
+        controller, _calls = _controller_sequence(
+            [
+                __import__(
+                    "app.agents.investigation", fromlist=["InvestigationControllerDraft"]
+                ).InvestigationControllerDraft(
+                    action=INVESTIGATION_ACTION_SEARCH,
+                    queries=["批量记录"],
+                )
+            ]
+        )
+        monkeypatch.setattr(
+            "app.services.knowledge_agent.investigation_runner.run_investigation_controller",
+            controller,
+        )
+        monkeypatch.setattr(
+            "app.services.knowledge_agent.investigation_runner.search_confirmed_knowledge",
+            _scripted_search(
+                {"批量记录": [_search_result(entry) for entry in entries]}
+            ),
+        )
+        monkeypatch.setattr(
+            "app.services.knowledge_agent.investigation_runner.run_knowledge_answer_agent",
+            _synthesis_agent(),
+        )
+
+        settings = get_settings()
+        monkeypatch.setattr(settings, "knowledge_agent_investigation_max_entries", 2)
+        monkeypatch.setattr(
+            settings, "knowledge_agent_investigation_max_total_queries", 6
+        )
+        await execute_run(db, run)
+        await db.commit()
+        run = await db.get(KnowledgeAgentRun, run.id)
+        investigation, rounds, queries = await _load_investigation(db, run.id)
+        assert investigation.stop_reason == STOP_REASON_ENTRY_BUDGET
+        assert investigation.distinct_entries_found == 2
+        assert (
+            investigation.distinct_entries_found
+            <= settings.knowledge_agent_investigation_max_entries
+        )
+        assert rounds[0].entries_added == 2
+        assert len(queries) == 1
+        counts = json.loads(queries[0].result_counts_json)
+        # 命中 4 个候选，但只接纳剩余预算内的 2 个进入读取与账本
+        assert counts["hits"] == 4
+        assert counts["new_entries"] == 4
+        assert counts["entries_added"] == 2
+
+
+@pytest.mark.asyncio
+async def test_investigation_query_counts_are_per_query_increments(
+    monkeypatch,
+) -> None:
+    """同一轮多条查询分别记录自身增量，Round 再汇总，不写成累计值。"""
+    from app.core.config import get_settings
+
+    async with async_session_factory() as db:
+        user = await create_user(db, "逐查询计数")
+        workspace = await create_workspace(db, user)
+        project = await create_project(db, workspace, "计数项目")
+        entry_a = None
+        entry_b = None
+        entry_c = None
+        for index in range(3):
+            node = await create_child_node(db, project, f"计数节点{index}")
+            source, attachment = await create_source_attachment(
+                db,
+                workspace,
+                project,
+                text_content=f"计数记录 {index}：闭水试验持续 24 小时。",
+            )
+            entry = await create_entry_with_evidence(
+                db,
+                project,
+                node,
+                source,
+                attachment,
+                title=f"计数条目 {index}",
+                content=f"计数记录 {index}：闭水试验持续 24 小时。",
+                quote=f"计数记录 {index}：闭水试验持续 24 小时",
+            )
+            if index == 0:
+                entry_a = entry
+            elif index == 1:
+                entry_b = entry
+            else:
+                entry_c = entry
+        _conversation, run = await _investigation_run(db, user, workspace)
+        await db.commit()
+
+        controller, _calls = _controller_sequence(
+            [
+                __import__(
+                    "app.agents.investigation", fromlist=["InvestigationControllerDraft"]
+                ).InvestigationControllerDraft(
+                    action=INVESTIGATION_ACTION_SEARCH,
+                    queries=["查询一", "查询二"],
+                )
+            ]
+        )
+        monkeypatch.setattr(
+            "app.services.knowledge_agent.investigation_runner.run_investigation_controller",
+            controller,
+        )
+        monkeypatch.setattr(
+            "app.services.knowledge_agent.investigation_runner.search_confirmed_knowledge",
+            _scripted_search(
+                {
+                    "查询一": [_search_result(entry_a), _search_result(entry_b)],
+                    "查询二": [_search_result(entry_c)],
+                }
+            ),
+        )
+        monkeypatch.setattr(
+            "app.services.knowledge_agent.investigation_runner.run_knowledge_answer_agent",
+            _synthesis_agent(),
+        )
+
+        settings = get_settings()
+        monkeypatch.setattr(settings, "knowledge_agent_investigation_max_entries", 30)
+        monkeypatch.setattr(
+            settings, "knowledge_agent_investigation_max_total_queries", 6
+        )
+        await execute_run(db, run)
+        await db.commit()
+        investigation, rounds, queries = await _load_investigation(db, run.id)
+        assert investigation.distinct_entries_found == 3
+        assert len(queries) == 2
+        first = json.loads(queries[0].result_counts_json)
+        second = json.loads(queries[1].result_counts_json)
+        # 第一条新增 2、第二条新增 1：不能把第二条写成累计 3
+        assert first["entries_added"] == 2
+        assert second["entries_added"] == 1
+        assert rounds[0].entries_added == 3
+        assert rounds[0].queries_executed == 2
+
+
+@pytest.mark.asyncio
 async def test_investigation_insufficient_keeps_gaps_and_partial(monkeypatch) -> None:
     """控制器判断知识不足：保留未解决缺口，回答带已有证据与缺口说明。"""
     async with async_session_factory() as db:
