@@ -225,6 +225,33 @@ describe("useConversationController", () => {
     await rendered.unmount();
   });
 
+  test("已有对话时直接发送不创建新对话，连续追问进入同一对话", async () => {
+    api.listConversations.mockResolvedValue([conversation(1)]);
+    api.getConversation.mockResolvedValue(conversation(1));
+    api.listMessages.mockResolvedValue({ items: [], nextCursor: null, runs: [] });
+    api.submitMessage.mockResolvedValue({
+      userMessage: message(3, "user", 2, "第二轮问题"),
+      run: run(2, "waiting"),
+    });
+
+    const rendered = await renderController();
+    await waitFor(() => expect(rendered.result.current.isDraft).toBe(false));
+    await act(async () => {
+      await rendered.result.current.submit("第二轮问题");
+    });
+
+    // 直接提交到已恢复的对话，不得再创建 Conversation
+    expect(api.createConversation).not.toHaveBeenCalled();
+    expect(api.submitMessage).toHaveBeenCalledWith("token", 1, {
+      clientMessageId: "test-client-id",
+      message: "第二轮问题",
+      contextMode: "auto",
+      answerMode: "auto",
+    });
+    expect(rendered.result.current.isDraft).toBe(false);
+    await rendered.unmount();
+  });
+
   test("活动 Run 409 时不创建第二个本地任务，只刷新服务端状态", async () => {
     api.listConversations.mockResolvedValue([]);
     api.createConversation.mockResolvedValue(conversation(30));

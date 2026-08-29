@@ -279,13 +279,20 @@ export function useConversationController(
       setSubmitError(null);
       let current = submission;
       try {
-        if (current.conversationId === null) {
+        // 目标对话：优先复用提交中已固化的 conversation_id（网络重试路径），
+        // 否则使用当前选中的对话；只有本地草稿（没有对话）才首次发送时创建。
+        const targetConversationId =
+          current.conversationId ?? selectedConversationId;
+        if (targetConversationId === null) {
           const created = await knowledgeAgentApi.createConversation(token, {
             scopeType: draftScope.scopeType,
             projectId: draftScope.projectId,
           });
           setExplicitChoice(created.id);
           current = attachConversation(current, created.id);
+          setPending(current);
+        } else if (current.conversationId === null) {
+          current = attachConversation(current, targetConversationId);
           setPending(current);
         }
         const conversationId = current.conversationId as number;
