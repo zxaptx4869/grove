@@ -180,6 +180,7 @@ export interface KnowledgeRunSubmit {
 export interface KnowledgeScopeChangeRequest {
   scopeType: KnowledgeScopeType;
   projectId?: number | null;
+  projectName?: string | null;
 }
 
 export type RunTerminalStatus = Extract<

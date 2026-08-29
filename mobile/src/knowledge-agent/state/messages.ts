@@ -85,6 +85,34 @@ export function upsertMessage(
   return { ...state, items };
 }
 
+export function upsertRun(
+  state: MessageThreadState,
+  run: KnowledgeRun,
+): MessageThreadState {
+  return { ...state, runsById: mergeRuns(state.runsById, [run]) };
+}
+
 export function threadFromPage(page: KnowledgeMessagePage): MessageThreadState {
   return applyRecentPage(emptyThread(), page);
+}
+
+/** 由服务端最近页、向前加载的旧页、轮询 Run 覆盖与本地提交消息组合线程。 */
+export function composeThread(
+  recent: KnowledgeMessagePage | undefined,
+  olderPages: KnowledgeMessagePage[],
+  runOverrides: Map<number, KnowledgeRun>,
+  extraMessages: KnowledgeMessage[],
+): MessageThreadState {
+  if (!recent) return emptyThread();
+  let state = threadFromPage(recent);
+  for (let index = olderPages.length - 1; index >= 0; index -= 1) {
+    state = prependOlderPage(state, olderPages[index]);
+  }
+  for (const run of runOverrides.values()) {
+    state = upsertRun(state, run);
+  }
+  for (const message of extraMessages) {
+    state = upsertMessage(state, message);
+  }
+  return state;
 }
