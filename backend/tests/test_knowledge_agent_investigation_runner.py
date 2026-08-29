@@ -6,10 +6,14 @@ import pytest
 from sqlalchemy import select
 
 from app.agents.investigation import InvestigationControllerDraft
-from app.agents.knowledge_agent import KnowledgeConflictDraft
+from app.agents.knowledge_agent import (
+    KnowledgeConflictDraft,
+    KnowledgeEvidenceSummaryDraft,
+)
 from app.db.session import async_session_factory
 from app.models import (
     EntrySourceEvidence,
+    KnowledgeAgentModelInvocation,
     KnowledgeAgentRun,
     KnowledgeInvestigation,
     KnowledgeInvestigationQuery,
@@ -40,7 +44,11 @@ from app.services.knowledge_agent.investigation import AnswerModeResolution
 from app.services.knowledge_agent.ledger import query_fingerprint
 from app.services.knowledge_agent.observability import StageMeta
 from app.services.knowledge_agent.runner import execute_run
-from app.services.knowledge_agent.tools import SearchResultItem, SearchToolOutput
+from app.services.knowledge_agent.tools import (
+    ReadEntriesOutput,
+    SearchResultItem,
+    SearchToolOutput,
+)
 from tests._knowledge_agent_fixtures import (
     create_child_node,
     create_entry_with_evidence,
@@ -905,14 +913,54 @@ async def test_investigation_query_counts_are_per_query_increments(
             "app.services.knowledge_agent.investigation_runner.run_investigation_controller",
             controller,
         )
+        scripted_search = _scripted_search(
+            {
+                "查询一": [_search_result(entry_a), _search_result(entry_b)],
+                "查询二": [_search_result(entry_c)],
+            }
+        )
+
+        async def _search_with_model_audit(
+            db,
+            ctx,
+            query,
+            *,
+            recall_limit,
+            context_limit,
+            seed_entries=None,
+        ):
+            result = await scripted_search(
+                db,
+                ctx,
+                query,
+                recall_limit=recall_limit,
+                context_limit=context_limit,
+                seed_entries=seed_entries,
+            )
+            return result.model_copy(
+                update={
+                    "embedding_meta": {
+                        "purpose": "embedding",
+                        "provider": "fake",
+                        "model": "fake-embedding",
+                        "is_fallback": False,
+                        "error": None,
+                        "duration_ms": 1,
+                    },
+                    "rerank_meta": {
+                        "purpose": "rerank",
+                        "provider": "fake",
+                        "model": "fake-rerank",
+                        "is_fallback": False,
+                        "error": None,
+                        "duration_ms": 1,
+                    },
+                }
+            )
+
         monkeypatch.setattr(
             "app.services.knowledge_agent.investigation_runner.search_confirmed_knowledge",
-            _scripted_search(
-                {
-                    "查询一": [_search_result(entry_a), _search_result(entry_b)],
-                    "查询二": [_search_result(entry_c)],
-                }
-            ),
+            _search_with_model_audit,
         )
         monkeypatch.setattr(
             "app.services.knowledge_agent.investigation_runner.run_knowledge_answer_agent",
@@ -936,6 +984,76 @@ async def test_investigation_query_counts_are_per_query_increments(
         assert second["entries_added"] == 1
         assert rounds[0].entries_added == 3
         assert rounds[0].queries_executed == 2
+        search_invocations = (
+            await db.execute(
+                select(KnowledgeAgentModelInvocation).where(
+                    KnowledgeAgentModelInvocation.run_id == run.id,
+                    KnowledgeAgentModelInvocation.purpose.in_(["embedding", "rerank"]),
+                )
+            )
+        ).scalars().all()
+        assert len(search_invocations) == 4
+
+
+@pytest.mark.asyncio
+async def test_investigation_denied_entry_is_attributed_to_owning_query(
+    monkeypatch,
+) -> None:
+    """Entry 被拒绝时计入其所属 Query，不能因映射方向错误丢失审计。"""
+    async with async_session_factory() as db:
+        user = await create_user(db, "拒绝归属")
+        workspace = await create_workspace(db, user)
+        project = await create_project(db, workspace, "拒绝项目")
+        node = await create_child_node(db, project, "施工")
+        source, attachment = await create_source_attachment(
+            db,
+            workspace,
+            project,
+            text_content="闭水试验通常持续 24 小时。",
+        )
+        entry = await create_entry_with_evidence(
+            db,
+            project,
+            node,
+            source,
+            attachment,
+            title="闭水试验",
+            quote="闭水试验通常持续 24 小时",
+        )
+        _conversation, run = await _investigation_run(db, user, workspace)
+        await db.commit()
+
+        controller, _calls = _controller_sequence(
+            [
+                InvestigationControllerDraft(
+                    action=INVESTIGATION_ACTION_SEARCH,
+                    queries=["拒绝查询"],
+                )
+            ]
+        )
+        monkeypatch.setattr(
+            "app.services.knowledge_agent.investigation_runner.run_investigation_controller",
+            controller,
+        )
+        monkeypatch.setattr(
+            "app.services.knowledge_agent.investigation_runner.search_confirmed_knowledge",
+            _scripted_search({"拒绝查询": [_search_result(entry)]}),
+        )
+
+        async def _denied_read_entries(db, ctx, entry_ids):
+            return ReadEntriesOutput(denied_entry_ids=list(entry_ids))
+
+        monkeypatch.setattr(
+            "app.services.knowledge_agent.investigation_runner.read_entries",
+            _denied_read_entries,
+        )
+
+        await execute_run(db, run)
+        await db.commit()
+        _investigation, _rounds, queries = await _load_investigation(db, run.id)
+        counts = json.loads(queries[0].result_counts_json)
+        assert counts["denied"] == 1
+        assert counts["unavailable"] == 0
 
 
 @pytest.mark.asyncio
@@ -992,9 +1110,43 @@ async def test_investigation_insufficient_keeps_gaps_and_partial(monkeypatch) ->
             "app.services.knowledge_agent.investigation_runner.search_confirmed_knowledge",
             _scripted_search({"闭水试验持续多久": [_search_result(entry)]}),
         )
+        async def _gap_synthesis(
+            db,
+            workspace_id,
+            query,
+            scope_label,
+            entries,
+            *,
+            purpose=None,
+            synthesis_context=None,
+        ):
+            handle = entries[0]["evidences"][0]["handle"]
+            return (
+                KnowledgeAnswerDraft(
+                    answer="现有知识只确认了闭水时长，放水时机仍缺少来源。",
+                    citations=[KnowledgeCitationDraft(evidence_handle=handle)],
+                    core_question_answered=True,
+                    coverage_complete=False,
+                    gaps=[
+                        KnowledgeEvidenceSummaryDraft(
+                            summary="放水时机无来源",
+                            evidence_handles=[],
+                        )
+                    ],
+                ),
+                StageMeta(
+                    purpose=purpose or "synthesis",
+                    provider="llm",
+                    model="fake-synthesis",
+                    is_fallback=False,
+                    error=None,
+                    duration_ms=1,
+                ),
+            )
+
         monkeypatch.setattr(
             "app.services.knowledge_agent.investigation_runner.run_knowledge_answer_agent",
-            _synthesis_agent(),
+            _gap_synthesis,
         )
 
         await execute_run(db, run)
@@ -1002,12 +1154,13 @@ async def test_investigation_insufficient_keeps_gaps_and_partial(monkeypatch) ->
         run = await db.get(KnowledgeAgentRun, run.id)
         investigation, _rounds, _queries = await _load_investigation(db, run.id)
         assert investigation.stop_reason == STOP_REASON_INSUFFICIENT
-        # 搜索前控制器的缺口不是终态事实；最终综合只保留已校验答案的摘要。
-        assert json.loads(investigation.gaps_summary) == []
+        assert json.loads(investigation.gaps_summary) == ["放水时机无来源"]
         summary = json.loads(run.investigation_summary)
-        assert summary["gaps"] == []
+        assert summary["gaps"] == ["放水时机无来源"]
         answer = json.loads(run.answer_json)
         assert answer["citations"]
+        assert answer["status"] == "partial"
+        assert answer["gaps"] == ["放水时机无来源"]
 
 
 @pytest.mark.asyncio

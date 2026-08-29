@@ -19,7 +19,7 @@ from app.agents.investigation import (
 )
 from app.agents.knowledge_agent import ANSWER_PROMPT_VERSION, run_knowledge_answer_agent
 from app.core.config import get_settings
-from app.models import Entry
+from app.models import Entry, KnowledgeAgentEvidence
 from app.models.knowledge_agent import (
     ANSWER_MODE_AUTO,
     ANSWER_MODE_INVESTIGATE,
@@ -64,6 +64,7 @@ from app.services.knowledge_agent.ledger import (
     LedgerEntryRef,
     LedgerEvidenceRef,
     dedupe_proposed_queries,
+    evidence_quote_key,
     normalize_query_text,
     query_fingerprint,
     rebuild_ledger,
@@ -359,6 +360,9 @@ async def _execute_query_round(
                 round_number=round_number,
                 query_sequence=query_row.sequence,
             )
+        # search 及模型调用留痕可能写入主会话。下一条 Query 会通过独立短会话
+        # 更新 Run 步骤；先释放当前写事务，避免 SQLite 的单写者锁互相阻塞。
+        await db.commit()
         candidate_ids = list(
             dict.fromkeys(
                 item.entry_id
@@ -456,7 +460,7 @@ async def _execute_query_round(
         entries = await read_entries(db, ctx, selected_ids)
         read_duration_ms = int((perf_counter() - started) * 1000)
         entries_by_id = {item.entry_id: item for item in entries.items}
-        owner_by_entry = dict(selected_entries)
+        owner_by_entry = {entry_id: sequence for sequence, entry_id in selected_entries}
         for entry_id in entries.denied_entry_ids:
             sequence = owner_by_entry.get(entry_id)
             if sequence is not None:
@@ -527,7 +531,7 @@ async def _execute_query_round(
     accepted_evidence_per_query: defaultdict[int, int] = defaultdict(int)
     accepted_evidence_per_entry: defaultdict[int, int] = defaultdict(int)
     seen_quotes = {
-        (ref.entry_id, " ".join(ref.quote.split()).casefold()) for ref in ledger.evidences.values()
+        evidence_quote_key(ref.entry_id, ref.quote) for ref in ledger.evidences.values()
     }
     seen_sources = {(ref.entry_id, ref.source_id) for ref in ledger.evidences.values()}
     while (
@@ -599,10 +603,17 @@ async def _execute_query_round(
             for row in citable:
                 if ledger.distinct_evidence_count() >= investigation.max_evidence:
                     break
-                quote_key = (row.entry_id, " ".join((row.quote or "").split()).casefold())
+                quote_key = evidence_quote_key(row.entry_id, row.quote or "")
                 source_key = (row.entry_id, row.source_id)
                 if source_key in seen_sources or quote_key in seen_quotes:
                     query_stats[query_row.sequence]["deduped"] += 1
+                    if source_key not in seen_sources:
+                        # read_source_evidence 为核验通过的候选创建了临时 Evidence；
+                        # 等价 quote 未被账本接纳时必须在同一事务删除，不能让
+                        # 它在崩溃恢复时作为可引用 Evidence 重新进入账本。
+                        persisted = await db.get(KnowledgeAgentEvidence, row.evidence_id)
+                        if persisted is not None:
+                            await db.delete(persisted)
                     continue
                 if ledger.add_evidence(
                     LedgerEvidenceRef(
@@ -723,7 +734,12 @@ async def _synthesize_investigation_answer(
     )
     await db.commit()
 
-    answer, ref_stats = await build_validated_answer(db, run.id, draft)
+    answer, ref_stats = await build_validated_answer(
+        db,
+        run.id,
+        draft,
+        verifiable_gaps=ledger.gaps,
+    )
     factual_without_refs = not draft.insufficient and ref_stats.valid_count == 0
     if ref_stats.discarded_count > 0:
         await record_reference_validation(
@@ -779,6 +795,9 @@ async def execute_investigation(
     await db.commit()
 
     ledger = await rebuild_ledger(db, investigation, run.id)
+    # rebuild_ledger 会清理旧版本可能提交的重复/超预算 Evidence；在后续
+    # 独立进度会话写入前提交清理，保持 SQLite 事务边界明确。
+    await db.commit()
     # 恢复：把重建出的已发现 Entry 回填到工具上下文，保证后续读取与综合授权
     for entry_id in ledger.discovered_entries:
         ctx.discovered_entry_ids.add(entry_id)

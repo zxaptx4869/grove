@@ -1,5 +1,6 @@
 import { act, cleanup, fireEvent, render, waitFor } from "@testing-library/react-native";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { StyleSheet } from "react-native";
 
 import { knowledgeAgentApi } from "@/src/knowledge-agent/api";
 import { AnswerCard } from "@/src/knowledge-agent/components/AnswerCard";
@@ -59,12 +60,14 @@ jest.mock("react-native-safe-area-context", () => {
 const queryClients: QueryClient[] = [];
 
 afterEach(async () => {
+  // 先卸载订阅 QueryClient 的组件，再取消/清空查询；否则 cancelQueries 的
+  // 通知可能在组件仍挂载时跨出 act 边界，形成偶发的 React 测试警告。
+  cleanup();
   await act(async () => {
     await Promise.all(queryClients.map((client) => client.cancelQueries()));
-    // Query 通知经由零延迟任务批量投递；卸载前在 act 内排空该批次。
+    // Query 通知经由零延迟任务批量投递；在 act 内排空该批次。
     await new Promise<void>((resolve) => setTimeout(resolve, 0));
   });
-  cleanup();
   for (const client of queryClients) {
     client.clear();
   }
@@ -421,6 +424,8 @@ test("历史 Sheet 展示范围、最近 Run 状态并支持选择/新建", asyn
 test("无历史对话时进入本地 draft 空态，可输入", async () => {
   const view = await render(<ConversationScreen />, { wrapper });
   expect(await view.findByText("和你的知识一起想")).toBeOnTheScreen();
+  const thread = view.getByLabelText("知识 Agent 对话");
+  expect(StyleSheet.flatten(thread.props.contentContainerStyle).paddingBottom).toBe(18);
   const input = view.getByLabelText("对话输入");
   await fireEvent.changeText(input, "  闭水试验多久？  ");
   expect(view.getByLabelText("发送").props.accessibilityState.disabled).toBe(false);

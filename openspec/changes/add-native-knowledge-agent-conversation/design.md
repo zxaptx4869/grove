@@ -173,7 +173,7 @@ investigation summary 以「深度查找 · N 轮 / M 次查询」和停止原�
 
 ### 15. 每个平台只有一个键盘避让负责人
 
-Android 使用 `softwareKeyboardLayoutMode=resize`，由系统调整可用高度；Composer 不再加完整 `keyboardHeight` padding，也不以额外 LayoutAnimation 掩盖重复布局。iOS 由 `KeyboardAvoidingView`（padding）和安全区负责，底栏在键盘可见时隐藏；ScrollView 的底部空白根据 Composer、Safe Area、Tab Bar 与当前平台可用高度动态计算，不再固定 154px。多行高度变化、发送、模式切换和键盘开闭共享同一布局来源，保持末条消息与 Composer 可见。
+Android 使用 `softwareKeyboardLayoutMode=resize`，由系统调整可用高度；Composer 不再加完整 `keyboardHeight` padding，也不以额外 LayoutAnimation 掩盖重复布局。iOS 由 `KeyboardAvoidingView`（padding）和安全区负责，底栏在键盘可见时隐藏。Composer 作为 `KeyboardAvoidingView` 内 ScrollView 的正常布局兄弟节点，以自身真实高度动态压缩消息区；消息内容只保留稳定阅读间距，不再额外预留固定 154px/96px Composer 高度。多行高度变化、发送、模式切换和键盘开闭共享同一布局来源，保持末条消息与 Composer 可见。
 
 本机缺少原生模拟器时，不把 Web 预览视为验收；实现后仅记录未验证项，保留 iOS/Android 模拟器或真机对 390×844、360×800、412×915、动态字号及 reduce-motion 的补验责任。
 
@@ -184,6 +184,12 @@ Source 候选只是读取尝试，不等于已消耗的 Evidence。全局选择�
 最终 citations 先按当前 Run Evidence handle 去重；coverage 的数量统计只使用该去重后的集合。模型给出的 coverage/gaps 仅能作为候选摘要：每条最终 coverage/gap 必须关联至少一个最终有效 Evidence handle，或在服务器可验证的“缺失维度”集合中存在；无法关联的模型自由摘要不持久化。模型缺省结构字段时，服务端以实际 citations/Entry 生成最小 coverage，并以账本中可验证的未满足维度生成 gaps，不能默认“完整、无缺口”。
 
 移动端取消错误使用 `{ runId, message }` 绑定，只有活动 Run 的 id 相同才显示；切换会话、建立草稿或提交新 Run 时清理旧错误。partial、fallback、failed 与 cancelled 共用“重新提问”入口，但每次均创建新的 `client_message_id`，不把正常重新提问误作取消或幂等重放。
+
+多 Query 搜索每条 Query 在 embedding/rerank 调用留痕后提交主会话，下一条 Query 才允许独立短会话更新 Run 进度；这样既保留跨会话取消可见性，也不让 SQLite 主会话写锁阻塞进度更新。Entry 的 Query 归属统一保存为 `entry_id → query_sequence`，denied/unavailable 审计必须回到真实拥有者。
+
+Evidence 在核验工具内生成后仍需经过账本接纳；同 Entry 重复来源或等价 quote 未被接纳时，临时 Evidence 在同一事务删除。恢复同时以相同来源/quote 去重键和固化 `max_evidence` 稳定清理旧版本遗留行，再重建账本，避免崩溃前后预算与综合上下文漂移。最终 gap 若没有 Evidence，必须与账本最近一轮的可验证缺失维度文本一致；模型自由生成且既无有效句柄、又不在该集合中的 gap 被丢弃。
+
+移动端 `partial` 的固定说明只表达“仍有未覆盖或失效内容”；真实模型/工具降级继续由独立 `fallback_summary` 说明，不能把正常知识缺口误报为执行故障。
 
 ## Risks / Trade-offs
 

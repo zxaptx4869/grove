@@ -10,7 +10,7 @@
 - Run 42～46 的共同症状是 12 条预算被首条 Query、重复 Source/quote 消耗，而不是“12 条本身一定不够”。优化后默认仍保持 12：定向调查/Runner 回归证明多 Query 轮转、硬上限与终态引用仍成立，尚无新的真实 Run 数据证明分配消除浪费后仍需上调。后续真机/生产验证应记录实际引用数、跨 Query 覆盖与 gaps 后再重估。
 - `answer.status` 由后端最终引用校验和结构化核心覆盖评估产生：有效核心回答为 completed；有用引用但明确缺口/部分引用失效为 partial；无足够核心 Evidence 为 insufficient。Run 执行状态和 stop_reason 不再重分类回答状态。终态 coverage/gaps/conflicts 只取最终有效 citation，不再复用控制器搜索前计划。
 - 回答模型 prompt 要求正文首句直接回答，并把状态、范围、来源、预算、轮次、停止原因和 coverage/gaps 留给结构化卡片。原生端已删除 insufficient → partial 的自行改写。
-- Android 继续由 `softwareKeyboardLayoutMode=resize` 负责可用高度，删除完整 keyboardHeight padding 与 LayoutAnimation；iOS 通过 KeyboardAvoidingView + Safe Area 避让。消息区底部预留改为动态 Composer/Safe Area 空间（96px + inset），不再保留 154px 固定值。
+- Android 继续由 `softwareKeyboardLayoutMode=resize` 负责可用高度，删除完整 keyboardHeight padding 与 LayoutAnimation；iOS 通过 KeyboardAvoidingView + Safe Area 避让。Composer 以正常布局真实高度压缩消息区，消息内容不再重复预留 154px/96px 固定空间。
 - Bottom Sheet 统一使用 Sheet 内 ScrollView；draft 范围保存 projectName；轮询直接拿到终态会覆盖旧 processing Run；取消失败在过程卡持久显示并可重试；partial/fallback/failed/cancelled 均保留重新提问或恢复入口。Jest 已移除 forceExit，并用 fake timer 清理和 QueryClient cancel/clear 修复真实测试句柄。
 
 ## 0.1 2026-08-29 审查回归修复
@@ -20,17 +20,28 @@
 - partial、可恢复 fallback、failed、cancelled 均显示重新提问；取消错误绑定原 `runId`，切换会话、新建草稿或提交新 Run 时清理，不能泄漏到后续活动卡。
 - 组件测试清理时先 unmount、再 cancel/clear QueryClient，并等待 409 刷新完成；取消错误测试使用 fake timer 后显式清理。全量 Jest 不再产生 act 警告、不会因未释放句柄延迟退出。
 
+## 0.2 2026-08-29 真实运行与恢复一致性修复
+
+- 真实 Run 47 在两条调查 Query 间复现 `sqlite3.OperationalError: database is locked`：第一条搜索的 embedding/rerank 调用留痕让主会话持有写锁，下一条 Query 的独立 `update_run_step` 无法写入。现在每条搜索留痕后立即提交主会话；回归测试使用两条 Query、四条真实 ModelInvocation 写入验证不再锁库。
+- Entry 拒绝/不可用的 Query 归属修正为 `entry_id → query_sequence`，定向测试验证 denied 计入实际拥有者。
+- 等价 quote 未被账本接纳时，在同一事务删除工具创建的临时 Evidence；恢复时再以同一来源/quote 去重键和固化 `max_evidence` 清理旧版本已提交脏行。恢复测试模拟两条重复 Evidence 已提交，重建后数据库与账本均稳定为 1 条且不超预算。
+- 最终 gaps 可使用有效 Evidence，或与账本可验证缺失维度精确匹配；模型自由缺口仍被丢弃。调查测试验证“放水时机无来源”进入 answer、Investigation 与移动摘要，并把回答判为 partial。
+- 移动端 partial 固定文案不再默认宣称检索/证据降级；真实降级继续由 `fallback_summary` 单独说明。Composer 作为 ScrollView 的正常布局兄弟节点按真实高度压缩消息区，删除固定 `96 + inset` 重复预留，仅保留 18px 阅读间距。
+- 修复组件测试清理顺序：先卸载 QueryClient 订阅组件，再取消与清空查询。全量 Jest 46 项通过，无 act 警告或延迟退出。
+- Run 47 是修复前失败记录；本轮以同事务边界的 SQLite 自动化回归验证修复，尚未创建新的真实模型生产 Run，留给用户验收时复测。
+
 ## 1. 后端自动化验证
 
-- `cd backend && .venv/bin/python -m pytest -W error`：388 项通过。
+- `cd backend && .venv/bin/python -m pytest -W error`：390 项通过。
 - `cd backend && .venv/bin/ruff check app tests`：通过。
 - 覆盖：Entry 硬预算（单轮批量、恢复剩余预算）、逐 Query 审计增量、同范围 no-op、
   最近页优先分页（首页/尾页/相同时间戳/无重复遗漏）、消息页规范化 Runs、
-  列表批量最近 Run（查询次数=1）、citation 快照与删除后保留、双边冲突与旧响应兼容。
+  列表批量最近 Run（查询次数=1）、citation 快照与删除后保留、双边冲突与旧响应兼容、
+  SQLite 多 Query 模型留痕事务边界、拒绝归属、重复 Evidence 恢复清理与可信缺失维度。
 
 ## 2. 移动端自动化验证
 
-- `cd mobile && npm test -- --runInBand`：45 个测试通过；Jest 不再配置 `forceExit`，无 act 警告或延迟退出。测试 QueryClient 在清理时先卸载组件，再取消查询并清空 cache；轮询和取消错误测试使用 fake timer 后显式清理。
+- `cd mobile && npm test -- --runInBand`：46 个测试通过；Jest 不再配置 `forceExit`，无 act 警告或延迟退出。测试 QueryClient 在清理时先卸载组件，再取消查询并清空 cache；轮询和取消错误测试使用 fake timer 后显式清理。
 - `cd mobile && npm run lint`：通过。
 - `cd mobile && npm run typecheck`：通过。
 - `npx expo export --platform ios`：成功（Hermes bundle）。

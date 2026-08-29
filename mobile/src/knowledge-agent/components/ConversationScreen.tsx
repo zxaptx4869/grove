@@ -11,7 +11,7 @@ import {
   Text,
   View,
 } from "react-native";
-import { SafeAreaView, useSafeAreaInsets } from "react-native-safe-area-context";
+import { SafeAreaView } from "react-native-safe-area-context";
 import { useQuery } from "@tanstack/react-query";
 
 import { getProjects } from "@/src/api";
@@ -44,7 +44,6 @@ const SUGGESTIONS = [
 export function ConversationScreen() {
   const { token } = useAuth();
   const controller = useConversationController(token);
-  const insets = useSafeAreaInsets();
   const [text, setText] = useState("");
   const [historyOpen, setHistoryOpen] = useState(false);
   const [scopeOpen, setScopeOpen] = useState(false);
@@ -140,10 +139,7 @@ export function ConversationScreen() {
         <ScrollView
           ref={scrollRef}
           style={styles.thread}
-          contentContainerStyle={[
-            styles.threadContent,
-            { paddingBottom: 96 + insets.bottom },
-          ]}
+          contentContainerStyle={styles.threadContent}
           onScroll={handleScroll}
           scrollEventThrottle={100}
           keyboardShouldPersistTaps="handled"
@@ -469,7 +465,9 @@ const styles = StyleSheet.create({
     borderRadius: 9,
   },
   thread: { flex: 1 },
-  threadContent: { paddingHorizontal: 16, paddingTop: 18 },
+  // Composer 是 KeyboardAvoidingView 内的正常布局兄弟节点，会按自身真实高度
+  // 动态压缩消息区；这里只保留阅读呼吸空间，不能再重复预留固定 Composer 高度。
+  threadContent: { paddingHorizontal: 16, paddingTop: 18, paddingBottom: 18 },
   intro: { paddingTop: 44 },
   introMark: {
     width: 38,

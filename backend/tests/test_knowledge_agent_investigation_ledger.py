@@ -8,6 +8,7 @@ from sqlalchemy import select
 
 from app.db.session import async_session_factory
 from app.models import (
+    EntrySourceEvidence,
     KnowledgeAgentEvidence,
     KnowledgeAgentToolCall,
     KnowledgeConversation,
@@ -262,6 +263,111 @@ async def test_tool_records_round_attribution_and_idempotent_evidence() -> None:
             )
         ).scalars().all()
         assert len(count) == 1
+
+
+@pytest.mark.asyncio
+async def test_rebuild_ledger_cleans_committed_duplicate_evidence() -> None:
+    """恢复按稳定去重键清理旧脏行，重复 quote 不重新计费或突破预算。"""
+    async with async_session_factory() as db:
+        user = await create_user(db, "重复恢复")
+        workspace = await create_workspace(db, user)
+        project = await create_project(db, workspace, "重复恢复项目")
+        node = await create_child_node(db, project, "施工")
+        source_a, attachment_a = await create_source_attachment(
+            db,
+            workspace,
+            project,
+            title="来源甲",
+            text_content="闭水试验通常持续 24 小时。",
+        )
+        source_b, attachment_b = await create_source_attachment(
+            db,
+            workspace,
+            project,
+            title="来源乙",
+            text_content="闭水试验通常持续 24 小时。",
+        )
+        entry = await create_entry_with_evidence(
+            db,
+            project,
+            node,
+            source_a,
+            attachment_a,
+            title="闭水试验",
+            quote="闭水试验通常持续 24 小时",
+        )
+        db.add(
+            EntrySourceEvidence(
+                entry_id=entry.id,
+                source_id=source_b.id,
+                attachment_id=attachment_b.id,
+                quote="闭水试验通常持续 24 小时",
+            )
+        )
+        conversation = KnowledgeConversation(
+            workspace_id=workspace.id,
+            owner_user_id=user.id,
+            scope_type=SCOPE_WORKSPACE,
+            title="重复恢复对话",
+        )
+        db.add(conversation)
+        await db.flush()
+        _message, run = await submit_message(
+            db,
+            conversation,
+            KnowledgeRunSubmitRequest(
+                client_message_id=f"duplicate-{uuid.uuid4().hex[:8]}",
+                message="闭水试验多久？",
+            ),
+        )
+        investigation = KnowledgeInvestigation(
+            run_id=run.id,
+            conversation_id=conversation.id,
+            workspace_id=workspace.id,
+            owner_user_id=user.id,
+            scope_type=SCOPE_WORKSPACE,
+            project_id=None,
+            project_name=None,
+            objective="闭水试验多久？",
+            requested_answer_mode=ANSWER_MODE_INVESTIGATE,
+            actual_answer_mode=ANSWER_MODE_INVESTIGATE,
+            max_evidence=1,
+        )
+        db.add(investigation)
+        await db.flush()
+        ctx = RunToolContext(
+            run_id=run.id,
+            workspace_id=workspace.id,
+            owner_user_id=user.id,
+            scope_type=SCOPE_WORKSPACE,
+            project_id=None,
+            project_name=None,
+            discovered_entry_ids={entry.id},
+        )
+        result = await read_source_evidence(
+            db,
+            ctx,
+            entry.id,
+            [source_a.id, source_b.id],
+            round_number=1,
+            query_sequence=1,
+        )
+        assert len([item for item in result.items if item.citable]) == 2
+        # 模拟旧实现把内存账本拒绝的重复行也提交，然后 Worker 恢复。
+        await db.commit()
+
+        ledger = await rebuild_ledger(db, investigation, run.id)
+        await db.commit()
+        rows = (
+            await db.execute(
+                select(KnowledgeAgentEvidence).where(
+                    KnowledgeAgentEvidence.run_id == run.id
+                )
+            )
+        ).scalars().all()
+        assert ledger.distinct_evidence_count() == 1
+        assert ledger.distinct_evidence_count() <= investigation.max_evidence
+        assert len(rows) == 1
 
 
 @pytest.mark.asyncio

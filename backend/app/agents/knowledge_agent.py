@@ -31,7 +31,7 @@ class KnowledgeConflictDraft(BaseModel):
 
 
 class KnowledgeEvidenceSummaryDraft(BaseModel):
-    """终态覆盖或缺口候选；必须关联最终输出中的 Evidence 句柄。"""
+    """终态覆盖或缺口候选；服务端会复核句柄或可信缺失维度。"""
 
     summary: str = ""
     evidence_handles: list[str] = []
@@ -77,9 +77,11 @@ KNOWLEDGE_ANSWER_SYSTEM_PROMPT = (
     "7. 范围、来源数、部分结果、预算、轮次、停止原因和 coverage/gaps 由结构化卡片展示，"
     "不要在正文重复。只在多维长回答时先给一至两句有实际信息的结论摘要。"
     "\n"
-    "8. 请给出 core_question_answered、coverage_complete、coverage 与 gaps。coverage/gaps 的"
-    "每一项必须包含 summary 和用于支持该项的 evidence_handles，且句柄只能使用最终回答"
-    "实际采用的当前 Run Evidence；无法关联句柄的摘要不要输出。边缘证据不能视为已回答核心问题。"
+    "8. 请给出 core_question_answered、coverage_complete、coverage 与 gaps。coverage 的每一项"
+    "必须包含 summary 和用于支持该项的 evidence_handles，且句柄只能使用最终回答实际采用的"
+    "当前 Run Evidence。gap 若对应综合上下文中列出的未解决缺口，必须原样使用该缺口文本，"
+    "可以不附 Evidence；其他 gap 必须关联用于证明其边界的最终 Evidence。"
+    "边缘证据不能视为已回答核心问题。"
 )
 
 

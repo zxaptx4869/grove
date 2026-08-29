@@ -87,3 +87,10 @@
 - [x] 12.2 对最终 citation 去重，并将终态 coverage/gaps 收敛到可关联最终有效 Evidence 或可验证缺失维度的摘要；补充模型漏填摘要、重复句柄和终态缺口测试。
 - [x] 12.3 为 partial 与可恢复 fallback 提供重新提问入口；将取消错误绑定到 Run 并在会话、新草稿和新 Run 边界清理，补充组件与 controller 测试。
 - [x] 12.4 运行后端定向/全量 pytest 与 ruff、移动端 Jest/lint/typecheck、OpenSpec strict 及 `git diff --check`，更新 validation，完成本地提交但不 archive/push/merge。
+
+## 13. 真实运行与恢复一致性修复
+
+- [x] 13.1 修复多 Query 调查在 SQLite 下的事务边界，确保模型调用留痕不会阻塞独立 Run 进度会话；修正 Entry 到 Query 的审计归属，并补充包含 embedding/rerank 留痕的多查询回归测试。
+- [x] 13.2 让 Evidence 的持久化集合与实际接纳账本一致；等价 quote/重复来源被拒绝后不得在恢复时重新进入账本，恢复后仍遵守固化 Evidence 硬预算，并补充中断恢复测试。
+- [x] 13.3 将终态 gaps 同时约束到有效 Evidence 与服务端可验证缺失维度；移动端区分正常未覆盖与真实 fallback 降级，并让 Composer 通过正常布局动态占位、移除消息区固定重复预留，补充后端和移动端回归测试。
+- [x] 13.4 运行后端定向/全量 pytest 与 ruff、移动端 Jest/lint/typecheck、OpenSpec strict、`git diff --check`，更新 validation，完成本地提交但不 archive/push/merge。

@@ -74,7 +74,7 @@ export function presentAnswer(
       return {
         status,
         headline: "部分结果",
-        note: "部分检索或证据步骤降级，保留的有效内容与引用如下。",
+        note: "已回答当前知识能够确认的部分，仍有未覆盖或失效内容。",
         tone: "risk",
       };
     case "insufficient":

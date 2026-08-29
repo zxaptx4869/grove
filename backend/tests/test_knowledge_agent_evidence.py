@@ -328,6 +328,30 @@ async def test_build_validated_answer_keeps_only_evidence_linked_terminal_summar
         assert missing_assessment.status == "partial"
         assert missing_assessment.coverage == ["当前回答采用 1 条核验证据，涉及 1 条正式知识"]
 
+        verified_missing, _ = await build_validated_answer(
+            db,
+            run.id,
+            KnowledgeAnswerDraft(
+                answer="闭水时长已有依据，但放水时机没有正式知识支持。",
+                citations=[KnowledgeCitationDraft(evidence_handle=evidence.handle)],
+                core_question_answered=True,
+                coverage_complete=False,
+                gaps=[
+                    KnowledgeEvidenceSummaryDraft(
+                        summary="放水时机缺少正式知识",
+                        evidence_handles=[],
+                    ),
+                    KnowledgeEvidenceSummaryDraft(
+                        summary="模型自由生成的缺口",
+                        evidence_handles=[],
+                    ),
+                ],
+            ),
+            verifiable_gaps=["放水时机缺少正式知识"],
+        )
+        assert verified_missing.status == "partial"
+        assert verified_missing.gaps == ["放水时机缺少正式知识"]
+
 
 @pytest.mark.asyncio
 async def test_build_validated_answer_all_invalid_becomes_insufficient() -> None:

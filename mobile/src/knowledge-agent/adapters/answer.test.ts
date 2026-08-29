@@ -65,3 +65,17 @@ test("insufficient 无引用时仍显示知识不足", () => {
   expect(presentation.status).toBe("insufficient");
   expect(presentation.headline).toBe("知识不足");
 });
+
+test("partial 说明未覆盖内容但不默认宣称发生降级", () => {
+  const answer: KnowledgeAnswer = {
+    answer: "现有知识确认了清洁频率，但没有覆盖耗材成本。",
+    status: "partial",
+    insufficientNote: null,
+    citations: [],
+    conflicts: [],
+  };
+  const presentation = presentAnswer(answer, "completed");
+  expect(presentation.headline).toBe("部分结果");
+  expect(presentation.note).toContain("未覆盖或失效内容");
+  expect(presentation.note).not.toContain("降级");
+});

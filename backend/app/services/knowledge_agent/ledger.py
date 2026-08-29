@@ -45,6 +45,11 @@ def query_fingerprint(text: str) -> str:
     return hashlib.sha256(normalize_query_text(text).encode("utf-8")).hexdigest()
 
 
+def evidence_quote_key(entry_id: int, quote: str) -> tuple[int, str]:
+    """规范化 Evidence quote 去重键；执行与恢复必须使用同一规则。"""
+    return entry_id, " ".join(str(quote).split()).casefold()
+
+
 def dedupe_proposed_queries(
     proposed: list[str],
     executed_hashes: set[str],
@@ -340,17 +345,40 @@ async def rebuild_ledger(
                 gaps=gaps,
                 conflicts=conflicts,
             )
+    seen_sources: set[tuple[int, int]] = set()
+    seen_quotes: set[tuple[int, str]] = set()
     for evidence in evidences:
+        entry_id = evidence.entry_id or 0
+        source_key = (
+            (entry_id, evidence.source_id)
+            if evidence.source_id is not None
+            else None
+        )
+        quote_key = evidence_quote_key(entry_id, evidence.quote)
+        duplicate = (
+            (source_key is not None and source_key in seen_sources)
+            or quote_key in seen_quotes
+        )
+        over_budget = ledger.distinct_evidence_count() >= investigation.max_evidence
+        if duplicate or over_budget:
+            # 旧执行可能在内存账本拒绝候选后仍提交了可引用行。恢复时按与
+            # 正常执行相同的稳定顺序清理，避免重复项重新计费或突破硬预算。
+            await db.delete(evidence)
+            continue
         ledger.add_evidence(
             LedgerEvidenceRef(
                 evidence_id=evidence.id,
                 handle=evidence.handle,
-                entry_id=evidence.entry_id or 0,
+                entry_id=entry_id,
                 source_id=evidence.source_id or 0,
                 source_title=evidence.source_title or "",
                 attachment_id=evidence.attachment_id,
-                quote=evidence.quote[:LEDGER_QUOTE_CHARS],
+                quote=evidence.quote,
                 round_number=evidence.round_number or 0,
             )
         )
+        if source_key is not None:
+            seen_sources.add(source_key)
+        seen_quotes.add(quote_key)
+    await db.flush()
     return ledger

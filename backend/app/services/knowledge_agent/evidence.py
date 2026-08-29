@@ -29,15 +29,26 @@ class ReferenceValidationStats:
     discarded_count: int = 0
 
 
-def _summary_items(values: list[object], evidence_handles: set[str]) -> list[str]:
-    """只保留能回溯到最终采用 Evidence 的终态摘要。"""
+def _clean_summary(value: object) -> str:
+    """规范化终态摘要文本，供可信集合匹配与去重。"""
+    return " ".join(str(value).split())[:160]
+
+
+def _summary_items(
+    values: list[object],
+    evidence_handles: set[str],
+    *,
+    verifiable_missing: set[str] | None = None,
+) -> list[str]:
+    """保留可回溯 Evidence 或匹配服务端缺失维度集合的终态摘要。"""
     result: list[str] = []
+    allowed_missing = verifiable_missing or set()
     for value in values:
         summary = getattr(value, "summary", "")
         handles = set(getattr(value, "evidence_handles", []))
-        if not handles.intersection(evidence_handles):
+        text = _clean_summary(summary)
+        if not handles.intersection(evidence_handles) and text not in allowed_missing:
             continue
-        text = " ".join(str(summary).split())[:160]
         if text and text not in result:
             result.append(text)
         if len(result) >= 5:
@@ -197,6 +208,8 @@ async def build_validated_answer(
     db: AsyncSession,
     run_id: int,
     draft,
+    *,
+    verifiable_gaps: list[str] | None = None,
 ) -> tuple[KnowledgeAnswerOut, ReferenceValidationStats]:
     """把回答草稿转换为最终回答：只保留本 Run 可引用句柄，丢弃模型自由内容。
 
@@ -250,7 +263,16 @@ async def build_validated_answer(
         if conflict.citation_b is not None
     )
     coverage = _summary_items(getattr(draft, "coverage", []), output_evidence_handles)
-    gaps = _summary_items(getattr(draft, "gaps", []), output_evidence_handles)
+    trusted_gaps = {
+        text
+        for value in (verifiable_gaps or [])
+        if (text := _clean_summary(value))
+    }
+    gaps = _summary_items(
+        getattr(draft, "gaps", []),
+        output_evidence_handles,
+        verifiable_missing=trusted_gaps,
+    )
     core_question_answered = getattr(draft, "core_question_answered", None)
     coverage_complete = getattr(draft, "coverage_complete", None)
     assessment_missing = core_question_answered is None or coverage_complete is None
@@ -270,6 +292,8 @@ async def build_validated_answer(
     if citations and not coverage:
         entry_count = len({citation.entry_id for citation in citations})
         coverage = [f"当前回答采用 {len(citations)} 条核验证据，涉及 {entry_count} 条正式知识"]
+    if coverage_complete is not True and not gaps and trusted_gaps:
+        gaps = list(sorted(trusted_gaps))[:5]
     if status == "partial" and not gaps:
         gaps = ["当前 Run 的有效证据尚未完整覆盖核心问题"]
     if status == "insufficient" and not gaps:
