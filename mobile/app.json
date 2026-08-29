@@ -20,7 +20,8 @@
     "android": {
       "adaptiveIcon": {
         "backgroundColor": "#F7F8F7"
-      }
+      },
+      "softwareKeyboardLayoutMode": "resize"
     }
   }
 }

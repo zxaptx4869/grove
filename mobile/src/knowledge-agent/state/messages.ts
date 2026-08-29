@@ -28,11 +28,6 @@ function dedupeById(items: KnowledgeMessage[]): KnowledgeMessage[] {
   return result;
 }
 
-/** 去重时保留后出现的版本（同一消息以较晚数据为准）。 */
-function dedupeByIdPreferLast(items: KnowledgeMessage[]): KnowledgeMessage[] {
-  return [...dedupeById([...items].reverse())].reverse();
-}
-
 function mergeRuns(
   runsById: Map<number, KnowledgeRun>,
   runs: KnowledgeRun[],
@@ -67,8 +62,11 @@ export function prependOlderPage(
   state: MessageThreadState,
   page: KnowledgeMessagePage,
 ): MessageThreadState {
-  // 更早页整体插到当前消息之前；重复消息只保留先出现（更晚）的一条
-  const merged = dedupeByIdPreferLast([...page.items, ...state.items]);
+  // 更早页整体插到当前消息之前：重复消息保留现有（更晚）版本及其位置，
+  // 只把旧页独有的消息前置，不改变已有消息的相对顺序。
+  const existingIds = new Set(state.items.map((item) => item.id));
+  const pageOnly = page.items.filter((item) => !existingIds.has(item.id));
+  const merged = [...pageOnly, ...state.items];
   return {
     items: merged,
     runsById: mergeRuns(state.runsById, page.runs),
@@ -81,8 +79,14 @@ export function upsertMessage(
   state: MessageThreadState,
   message: KnowledgeMessage,
 ): MessageThreadState {
-  const items = dedupeByIdPreferLast([...state.items, message]);
-  return { ...state, items };
+  const index = state.items.findIndex((item) => item.id === message.id);
+  if (index >= 0) {
+    // 同一消息已存在：原位替换内容，不改变消息顺序
+    const items = [...state.items];
+    items[index] = message;
+    return { ...state, items };
+  }
+  return { ...state, items: [...state.items, message] };
 }
 
 export function upsertRun(

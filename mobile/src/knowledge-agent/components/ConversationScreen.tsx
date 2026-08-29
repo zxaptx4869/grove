@@ -104,6 +104,7 @@ export function ConversationScreen() {
       <KeyboardAvoidingView
         style={styles.page}
         behavior={Platform.OS === "ios" ? "padding" : undefined}
+        keyboardVerticalOffset={Platform.OS === "ios" ? insets.top : 0}
       >
         <View style={styles.header}>
           <View style={styles.brandMark}>

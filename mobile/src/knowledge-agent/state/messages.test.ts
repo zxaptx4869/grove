@@ -1,7 +1,9 @@
 import {
   applyRecentPage,
+  composeThread,
   emptyThread,
   prependOlderPage,
+  upsertMessage,
   threadFromPage,
 } from "@/src/knowledge-agent/state/messages";
 import type {
@@ -109,4 +111,44 @@ test("同 id Run 以服务端更新的 updated_at 为准", () => {
   );
   expect(second.runsById.get(9)?.updatedAt).toBe("2026-08-02T00:00:00Z");
   expect(second.runsById.size).toBe(1);
+});
+
+test("upsertMessage 已存在时原位替换，不改变消息顺序", () => {
+  const state = threadFromPage(
+    page([message(1, "一"), message(2, "二"), message(3, "三")], null),
+  );
+  const updated = upsertMessage(state, message(2, "二（新版本）"));
+  expect(updated.items.map((item) => item.id)).toEqual([1, 2, 3]);
+  expect(updated.items.find((item) => item.id === 2)?.content).toBe(
+    "二（新版本）",
+  );
+  const appended = upsertMessage(state, message(4, "四"));
+  expect(appended.items.map((item) => item.id)).toEqual([1, 2, 3, 4]);
+});
+
+test("两轮对话顺序保持 用户→回答→用户→回答，不因提交回填乱序", () => {
+  const recent = page(
+    [
+      message(1, "第一轮问题", 10),
+      message(2, "第一轮回答", 10),
+      message(3, "第二轮问题", 11),
+      message(4, "第二轮回答", 11),
+    ],
+    null,
+    [run(10, "t1"), run(11, "t1")],
+  );
+  // 模拟第二轮提交时把用户消息回填进 extraMessages（与最近页重复）
+  const thread = composeThread(
+    recent,
+    [],
+    new Map(),
+    [message(3, "第二轮问题", 11)],
+  );
+  expect(thread.items.map((item) => item.id)).toEqual([1, 2, 3, 4]);
+  expect(thread.items.map((item) => item.content)).toEqual([
+    "第一轮问题",
+    "第一轮回答",
+    "第二轮问题",
+    "第二轮回答",
+  ]);
 });
