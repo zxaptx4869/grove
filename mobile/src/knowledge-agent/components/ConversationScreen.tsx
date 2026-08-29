@@ -1,10 +1,8 @@
 import { useCallback, useRef, useState } from "react";
 import {
   ActivityIndicator,
-  KeyboardAvoidingView,
   NativeScrollEvent,
   NativeSyntheticEvent,
-  Platform,
   Pressable,
   ScrollView,
   StyleSheet,
@@ -25,6 +23,7 @@ import { ModeSheet } from "@/src/knowledge-agent/components/ModeSheet";
 import { ProcessCard } from "@/src/knowledge-agent/components/ProcessCard";
 import { ScopeSheet } from "@/src/knowledge-agent/components/ScopeSheet";
 import { useConversationController } from "@/src/knowledge-agent/hooks/useConversationController";
+import { useKeyboardHeight } from "@/src/knowledge-agent/hooks/useKeyboardHeight";
 import { scopeLabel } from "@/src/knowledge-agent/adapters/scope";
 import type {
   KnowledgeMessage,
@@ -44,6 +43,7 @@ export function ConversationScreen() {
   const { token } = useAuth();
   const controller = useConversationController(token);
   const insets = useSafeAreaInsets();
+  const keyboardHeight = useKeyboardHeight();
   const [text, setText] = useState("");
   const [historyOpen, setHistoryOpen] = useState(false);
   const [scopeOpen, setScopeOpen] = useState(false);
@@ -101,11 +101,7 @@ export function ConversationScreen() {
 
   return (
     <SafeAreaView edges={["top"]} style={styles.page}>
-      <KeyboardAvoidingView
-        style={styles.page}
-        behavior={Platform.OS === "ios" ? "padding" : undefined}
-        keyboardVerticalOffset={Platform.OS === "ios" ? insets.top : 0}
-      >
+      <View style={styles.page}>
         <View style={styles.header}>
           <View style={styles.brandMark}>
             <Text style={styles.brandText}>G</Text>
@@ -252,18 +248,20 @@ export function ConversationScreen() {
           )}
         </ScrollView>
 
-        <Composer
-          value={text}
-          onChangeText={setText}
-          onSend={handleSend}
-          modes={controller.modes}
-          onOpenModes={() => setModeOpen(true)}
-          onRemoveContextOverride={() => controller.setContextMode("auto")}
-          onRemoveAnswerOverride={() => controller.setAnswerMode("auto")}
-          submitting={submitting}
-          disabled={controller.initialLoading}
-        />
-      </KeyboardAvoidingView>
+        <View style={{ paddingBottom: keyboardHeight }}>
+          <Composer
+            value={text}
+            onChangeText={setText}
+            onSend={handleSend}
+            modes={controller.modes}
+            onOpenModes={() => setModeOpen(true)}
+            onRemoveContextOverride={() => controller.setContextMode("auto")}
+            onRemoveAnswerOverride={() => controller.setAnswerMode("auto")}
+            submitting={submitting}
+            disabled={controller.initialLoading}
+          />
+        </View>
+      </View>
 
       <HistorySheet
         visible={historyOpen}
