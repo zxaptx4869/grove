@@ -14,10 +14,10 @@
 
 ## 3. 引用与冲突展示契约
 
-- [ ] 3.1 为 `KnowledgeRunCitationOut` 返回 Evidence 创建时保存的 project_id、project_name、node_path 快照；验证 Workspace 回答中不同项目引用可独立归属，删除当前 Entry/Source 后历史快照仍可展示。
-- [ ] 3.2 为冲突项增加完整的 `citation_a` 与 `citation_b`，两侧均含 Source、quote、Entry 与项目/目录快照，同时保留既有兼容字段；补充双边 Evidence、对象已删除和旧响应兼容测试。
-- [ ] 3.3 更新回答 schema、组装器和 API 测试，确认 insufficient、partial、fallback 与普通 completed 回答均不因新增字段改变既有语义。
-- [ ] 3.4 运行 `cd backend && .venv/bin/python -m pytest tests/test_reader_qa.py tests/test_knowledge_agent_runs.py -W error && .venv/bin/ruff check app tests`，通过后完成一次本地提交。
+- [x] 3.1 为 `KnowledgeRunCitationOut` 返回 Evidence 创建时保存的 project_id、project_name、node_path 快照；验证 Workspace 回答中不同项目引用可独立归属，删除当前 Entry/Source 后历史快照仍可展示。
+- [x] 3.2 为冲突项增加完整的 `citation_a` 与 `citation_b`，两侧均含 Source、quote、Entry 与项目/目录快照，同时保留既有兼容字段；补充双边 Evidence、对象已删除和旧响应兼容测试。
+- [x] 3.3 更新回答 schema、组装器和 API 测试，确认 insufficient、partial、fallback 与普通 completed 回答均不因新增字段改变既有语义。
+- [x] 3.4 运行 `cd backend && .venv/bin/python -m pytest tests/test_reader_qa.py tests/test_knowledge_agent_runs.py -W error && .venv/bin/ruff check app tests`，通过后完成一次本地提交。
 
 ## 4. 原生 Agent 客户端骨架
 

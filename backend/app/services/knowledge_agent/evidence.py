@@ -169,6 +169,9 @@ def _citation_out(row: KnowledgeAgentEvidence) -> KnowledgeRunCitationOut:
         source_title=row.source_title or "已删除来源",
         attachment_id=row.attachment_id,
         quote=row.quote,
+        project_id=row.project_id,
+        project_name=row.project_name,
+        node_path=row.node_path,
     )
 
 
@@ -212,6 +215,8 @@ async def build_validated_answer(
                 evidence_id_b=right.id,
                 entry_id_b=right.entry_id or 0,
                 entry_title_b=right.entry_title or "已删除 Entry",
+                citation_a=_citation_out(left),
+                citation_b=_citation_out(right),
             )
         )
 

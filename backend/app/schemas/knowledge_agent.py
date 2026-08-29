@@ -123,10 +123,18 @@ class KnowledgeRunCitationOut(BaseModel):
     source_title: str
     attachment_id: int | None = None
     quote: str
+    # Evidence 创建时保存的归属与目录快照：对象后来变化/删除不影响历史回答
+    project_id: int | None = None
+    project_name: str | None = None
+    node_path: str | None = None
 
 
 class KnowledgeConflictOut(BaseModel):
-    """由不同有效 Evidence 支持的冲突展示。"""
+    """由不同有效 Evidence 支持的冲突展示。
+
+    `citation_a` / `citation_b` 携带双方完整可展示 Evidence；旧响应可能只有
+    兼容的扁平字段，客户端按缺失兜底展示。
+    """
 
     summary: str
     evidence_id_a: int
@@ -135,6 +143,8 @@ class KnowledgeConflictOut(BaseModel):
     evidence_id_b: int
     entry_id_b: int
     entry_title_b: str
+    citation_a: "KnowledgeRunCitationOut | None" = None
+    citation_b: "KnowledgeRunCitationOut | None" = None
 
 
 class KnowledgeAnswerOut(BaseModel):
