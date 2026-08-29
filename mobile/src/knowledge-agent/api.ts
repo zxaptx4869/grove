@@ -1,0 +1,149 @@
+/** 知识 Agent Bearer API 客户端：统一注入会话令牌并分类错误。 */
+
+import { request } from "@/src/api";
+import {
+  classifyKnowledgeAgentError,
+  KnowledgeAgentError,
+} from "@/src/knowledge-agent/errors";
+import type {
+  KnowledgeConversation,
+  KnowledgeMessagePage,
+  KnowledgeRun,
+  KnowledgeRunSubmit,
+  KnowledgeRunSubmitRequest,
+  KnowledgeScopeChangeRequest,
+} from "@/src/knowledge-agent/types";
+
+const MESSAGE_PAGE_LIMIT = 30;
+
+function serializeScope(
+  scope: KnowledgeScopeChangeRequest,
+): Record<string, unknown> {
+  return {
+    scope_type: scope.scopeType,
+    project_id: scope.projectId ?? null,
+  };
+}
+
+function serializeSubmit(
+  payload: KnowledgeRunSubmitRequest,
+): Record<string, unknown> {
+  return {
+    client_message_id: payload.clientMessageId,
+    message: payload.message,
+    context_mode: payload.contextMode,
+    answer_mode: payload.answerMode,
+  };
+}
+
+function withToken(
+  token: string | null,
+  run: (token: string) => Promise<unknown>,
+): Promise<unknown> {
+  if (!token) {
+    return Promise.reject(
+      new KnowledgeAgentError({
+        kind: "auth",
+        message: "登录已失效，请重新登录",
+        retryable: false,
+      }),
+    );
+  }
+  return run(token).catch((error: unknown) => {
+    throw classifyKnowledgeAgentError(error);
+  });
+}
+
+export const knowledgeAgentApi = {
+  listConversations(token: string): Promise<KnowledgeConversation[]> {
+    return withToken(token, (t) =>
+      request<KnowledgeConversation[]>("/api/knowledge-agent/conversations", {}, t),
+    ) as Promise<KnowledgeConversation[]>;
+  },
+
+  createConversation(
+    token: string,
+    scope: KnowledgeScopeChangeRequest,
+  ): Promise<KnowledgeConversation> {
+    return withToken(token, (t) =>
+      request<KnowledgeConversation>(
+        "/api/knowledge-agent/conversations",
+        { method: "POST", body: JSON.stringify(serializeScope(scope)) },
+        t,
+      ),
+    ) as Promise<KnowledgeConversation>;
+  },
+
+  getConversation(token: string, conversationId: number): Promise<KnowledgeConversation> {
+    return withToken(token, (t) =>
+      request<KnowledgeConversation>(
+        `/api/knowledge-agent/conversations/${conversationId}`,
+        {},
+        t,
+      ),
+    ) as Promise<KnowledgeConversation>;
+  },
+
+  changeScope(
+    token: string,
+    conversationId: number,
+    scope: KnowledgeScopeChangeRequest,
+  ): Promise<KnowledgeConversation> {
+    return withToken(token, (t) =>
+      request<KnowledgeConversation>(
+        `/api/knowledge-agent/conversations/${conversationId}/scope`,
+        { method: "PATCH", body: JSON.stringify(serializeScope(scope)) },
+        t,
+      ),
+    ) as Promise<KnowledgeConversation>;
+  },
+
+  listMessages(
+    token: string,
+    conversationId: number,
+    cursor: string | null,
+  ): Promise<KnowledgeMessagePage> {
+    const query = cursor
+      ? `?cursor=${encodeURIComponent(cursor)}&limit=${MESSAGE_PAGE_LIMIT}`
+      : `?limit=${MESSAGE_PAGE_LIMIT}`;
+    return withToken(token, (t) =>
+      request<KnowledgeMessagePage>(
+        `/api/knowledge-agent/conversations/${conversationId}/messages${query}`,
+        {},
+        t,
+      ),
+    ) as Promise<KnowledgeMessagePage>;
+  },
+
+  submitMessage(
+    token: string,
+    conversationId: number,
+    payload: KnowledgeRunSubmitRequest,
+  ): Promise<KnowledgeRunSubmit> {
+    return withToken(token, (t) =>
+      request<KnowledgeRunSubmit>(
+        `/api/knowledge-agent/conversations/${conversationId}/messages`,
+        { method: "POST", body: JSON.stringify(serializeSubmit(payload)) },
+        t,
+      ),
+    ) as Promise<KnowledgeRunSubmit>;
+  },
+
+  getRun(token: string, runId: number): Promise<KnowledgeRun> {
+    return withToken(token, (t) =>
+      request<KnowledgeRun>(`/api/knowledge-agent/runs/${runId}`, {}, t),
+    ) as Promise<KnowledgeRun>;
+  },
+
+  cancelRun(token: string, runId: number): Promise<KnowledgeRun> {
+    return withToken(token, (t) =>
+      request<KnowledgeRun>(
+        `/api/knowledge-agent/runs/${runId}/cancel`,
+        { method: "POST" },
+        t,
+      ),
+    ) as Promise<KnowledgeRun>;
+  },
+};
+
+export { MESSAGE_PAGE_LIMIT };

@@ -21,10 +21,10 @@
 
 ## 4. 原生 Agent 客户端骨架
 
-- [ ] 4.1 在 `mobile/` 安装并锁定 `expo-crypto` 与 React Native 测试依赖；建立 `src/knowledge-agent/` 的类型、API、query keys、hooks、展示适配器与组件目录，不复制 Web 组件或原型脚本。
-- [ ] 4.2 为 conversation、message page、run、answer、citation、conflict、investigation summary 建立与后端一致的 TypeScript 类型和 Bearer API 方法，统一鉴权失效、网络错误、409 与取消错误的可识别结果。
-- [ ] 4.3 建立 Conversation draft、稳定 `client_message_id`、一次性模式覆盖、活动 Run 和 AppState 的纯状态模型；使用 `expo-crypto` 生成幂等键，禁止以本地缓存代替服务端权威状态。
-- [ ] 4.4 为 API 序列化、最近页合并去重、draft 懒创建、幂等键复用、模式重置和错误分类补充单元测试，运行 `cd mobile && npm test -- --runInBand && npm run lint && npm run typecheck`，通过后完成一次本地提交。
+- [x] 4.1 在 `mobile/` 安装并锁定 `expo-crypto` 与 React Native 测试依赖；建立 `src/knowledge-agent/` 的类型、API、query keys、hooks、展示适配器与组件目录，不复制 Web 组件或原型脚本。
+- [x] 4.2 为 conversation、message page、run、answer、citation、conflict、investigation summary 建立与后端一致的 TypeScript 类型和 Bearer API 方法，统一鉴权失效、网络错误、409 与取消错误的可识别结果。
+- [x] 4.3 建立 Conversation draft、稳定 `client_message_id`、一次性模式覆盖、活动 Run 和 AppState 的纯状态模型；使用 `expo-crypto` 生成幂等键，禁止以本地缓存代替服务端权威状态。
+- [x] 4.4 为 API 序列化、最近页合并去重、draft 懒创建、幂等键复用、模式重置和错误分类补充单元测试，运行 `cd mobile && npm test -- --runInBand && npm run lint && npm run typecheck`，通过后完成一次本地提交。
 
 ## 5. 会话、历史与范围界面
 
