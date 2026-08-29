@@ -264,7 +264,12 @@ async def list_messages(
     limit: int = 30,
 ) -> tuple[list[KnowledgeMessage], str | None]:
     """游标分页读取消息：无 cursor 返回最近一页且页内按时间正序；
-    游标使用不透明 before 语义加载更早消息。"""
+    游标使用不透明 before 语义加载更早消息。
+
+    游标编码为消息 id，before 过滤依赖「id 与 (created_at, id) 同序」这一不变量：
+    消息在事务内按创建顺序自增写入，created_at 与 id 保持单调一致；若未来引入
+    批量回填或显式 created_at，需要把游标升级为 (created_at, id) 组合键。
+    """
     limit = max(1, min(limit, 100))
     cursor_id = _decode_cursor(cursor)
     stmt = (
@@ -357,13 +362,6 @@ async def change_scope(
     提交与对话当前 Workspace/项目完全相同的范围时幂等返回当前对话，
     不更新最近活动时间、不关闭活动工作集、不追加 scope_change 系统消息。
     """
-    active = await active_run_for_conversation(db, conversation.id)
-    if active is not None:
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
-            detail="对话存在进行中的问答，请等待完成或取消后再切换范围",
-        )
-
     project = await _validate_project(db, conversation.workspace_id, payload.project_id)
     if payload.scope_type == SCOPE_PROJECT and project is None:
         raise HTTPException(
@@ -372,11 +370,20 @@ async def change_scope(
         )
     new_project_id = payload.project_id if payload.scope_type == SCOPE_PROJECT else None
 
+    # 同范围幂等 no-op 优先于活动 Run 检查：相同范围不构成“切换”，
+    # 活动 Run 期间提交相同范围同样返回当前对话且不产生事件。
     if (
         conversation.scope_type == payload.scope_type
         and conversation.project_id == new_project_id
     ):
         return conversation, None
+
+    active = await active_run_for_conversation(db, conversation.id)
+    if active is not None:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="对话存在进行中的问答，请等待完成或取消后再切换范围",
+        )
 
     old_scope_type = conversation.scope_type
     old_project_name = None

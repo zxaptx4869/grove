@@ -7,6 +7,7 @@ import { CitationSheet } from "@/src/knowledge-agent/components/CitationSheet";
 import { Composer } from "@/src/knowledge-agent/components/Composer";
 import { ConversationScreen } from "@/src/knowledge-agent/components/ConversationScreen";
 import { HistorySheet } from "@/src/knowledge-agent/components/HistorySheet";
+import { ProcessCard } from "@/src/knowledge-agent/components/ProcessCard";
 import { DEFAULT_MODES } from "@/src/knowledge-agent/state/modes";
 import type {
   KnowledgeAnswer,
@@ -211,13 +212,14 @@ test("五种回答状态区分展示，知识不足不显示成功文案", async
     "clarification",
   ];
   for (const status of statuses) {
+    const citationsFor = status === "insufficient" ? [] : [citation(1)];
     const view = await render(
       <AnswerCard
         run={run(1, "completed", {
           answer: "正文内容",
           status,
           insufficientNote: "没有足够证据",
-          citations: [citation(1)],
+          citations: citationsFor,
           conflicts: [],
         })}
         scopeLabel="全部知识"
@@ -238,6 +240,44 @@ test("五种回答状态区分展示，知识不足不显示成功文案", async
     }
     await view.unmount();
   }
+});
+
+test("insufficient 但有引用与实质内容时按部分结果展示并保留引用", async () => {
+  const view = await render(
+    <AnswerCard
+      run={run(1, "completed", {
+        answer: "厨房推荐使用 4000K 色温。",
+        status: "insufficient",
+        insufficientNote: "调查因证据预算停止。",
+        citations: [citation(1)],
+        conflicts: [],
+      })}
+      scopeLabel="全部知识"
+      onCitationPress={jest.fn()}
+      onRetry={jest.fn()}
+    />,
+    { wrapper },
+  );
+  expect(view.getAllByText("部分结果").length).toBeGreaterThan(0);
+  expect(view.getByText("综合回答")).toBeOnTheScreen();
+  expect(view.getByLabelText("查看引用：Entry 1")).toBeOnTheScreen();
+});
+
+test("过程卡轮询失败显示就地重试", async () => {
+  const onRetry = jest.fn();
+  const view = await render(
+    <ProcessCard
+      run={run(9, "processing", null)}
+      scopeLabel="全部知识"
+      cancelling={false}
+      pollingError="连接超时，请检查网络后重试"
+      onCancel={jest.fn()}
+      onRetryPolling={onRetry}
+    />,
+  );
+  expect(view.getByText(/状态更新失败/)).toBeOnTheScreen();
+  await fireEvent.press(view.getByLabelText("重试获取回答状态"));
+  expect(onRetry).toHaveBeenCalled();
 });
 
 test("冲突卡并列展示双边完整 citation 与项目归属", async () => {

@@ -357,6 +357,46 @@ async def test_scope_change_same_scope_is_noop() -> None:
 
 
 @pytest.mark.asyncio
+async def test_scope_change_same_scope_during_active_run_is_noop() -> None:
+    """活动 Run 期间提交相同范围仍为幂等 no-op，不返回 409、不产生事件。"""
+    async with async_session_factory() as db:
+        user = await _user(db, "活动同范围")
+        workspace = await _workspace_for(db, user)
+        conversation = await create_conversation(
+            db,
+            workspace.id,
+            user.id,
+            KnowledgeConversationCreate(scope_type="workspace"),
+        )
+        await submit_message(
+            db,
+            conversation,
+            KnowledgeRunSubmitRequest(
+                client_message_id="active-same-1",
+                message="进行中的问题",
+            ),
+        )
+        await db.commit()
+
+        returned, event = await change_scope(
+            db,
+            conversation,
+            KnowledgeScopeChangeRequest(scope_type="workspace"),
+        )
+        assert returned.id == conversation.id
+        assert event is None
+        count = (
+            await db.execute(
+                select(func.count())
+                .select_from(KnowledgeMessage)
+                .where(KnowledgeMessage.conversation_id == conversation.id)
+            )
+        ).scalar_one()
+        # 用户消息 + 助手占位，未新增 scope_change
+        assert count == 2
+
+
+@pytest.mark.asyncio
 async def test_message_cursor_pagination() -> None:
     """游标分页：无 cursor 返回最近一页，页内正序，向前加载不重复不跳过。"""
     async with async_session_factory() as db:

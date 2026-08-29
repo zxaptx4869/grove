@@ -1,5 +1,4 @@
 import {
-  Keyboard,
   Pressable,
   StyleSheet,
   Text,
@@ -89,7 +88,6 @@ export function Composer({
           disabled={!canSend}
           onPress={() => {
             if (canSend) {
-              Keyboard.dismiss();
               onSend();
             }
           }}

@@ -204,17 +204,21 @@ describe("useConversationController", () => {
 
     const rendered = await renderController();
     await waitFor(() => expect(rendered.result.current.initialLoading).toBe(false));
+    let firstResult: boolean | undefined;
     await act(async () => {
-      await rendered.result.current.submit("问题");
+      firstResult = await rendered.result.current.submit("问题");
     });
 
+    expect(firstResult).toBe(false);
     expect(rendered.result.current.pending?.conversationId).toBe(20);
     expect(rendered.result.current.pending?.clientMessageId).toBe("test-client-id");
     expect(rendered.result.current.submitError).not.toBeNull();
 
+    let retryResult: boolean | undefined;
     await act(async () => {
-      await rendered.result.current.retrySubmit();
+      retryResult = await rendered.result.current.retrySubmit();
     });
+    expect(retryResult).toBe(true);
     expect(api.createConversation).toHaveBeenCalledTimes(1);
     expect(api.submitMessage).toHaveBeenCalledTimes(2);
     const firstCall = api.submitMessage.mock.calls[0];

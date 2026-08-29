@@ -17,6 +17,7 @@ import {
   type BadgeTone,
 } from "@/src/knowledge-agent/components/ui";
 import {
+  cleanAnswerText,
   investigationSummaryLine,
   presentAnswer,
   stopReasonLabel,
@@ -228,9 +229,14 @@ export function AnswerCard({
     presentation.tone === "positive" ? "confirmed" : presentation.tone;
   const workspaceScope = run.scopeType === "workspace";
   const citations = answer?.citations ?? [];
-  const distinctProjects = Array.from(
-    new Set(citations.map((citation) => citation.projectName).filter(Boolean)),
-  ) as string[];
+  const projectCounts = new Map<string, number>();
+  for (const citation of citations) {
+    if (!citation.projectName) continue;
+    projectCounts.set(
+      citation.projectName,
+      (projectCounts.get(citation.projectName) ?? 0) + 1,
+    );
+  }
 
   return (
     <>
@@ -284,7 +290,7 @@ export function AnswerCard({
               </Text>
             )}
             {answer && answer.answer.trim() !== "" && (
-              <Text style={styles.answerBody}>{answer.answer}</Text>
+              <Text style={styles.answerBody}>{cleanAnswerText(answer.answer)}</Text>
             )}
             {fallback.hasFallback && (
               <View style={styles.fallbackBox}>
@@ -297,13 +303,13 @@ export function AnswerCard({
             )}
             <InvestigationSummary run={run} />
             {workspaceScope &&
-              distinctProjects.length > 0 &&
-              distinctProjects.map((projectName) => (
+              projectCounts.size > 0 &&
+              [...projectCounts.entries()].map(([projectName, count]) => (
                 <View key={projectName} style={styles.projectHit}>
-                  <Text style={styles.projectHitTitle}>命中项目：{projectName}</Text>
-                  <Text style={styles.projectHitCopy}>
-                    当前结论的主要证据来源
+                  <Text style={styles.projectHitTitle}>
+                    命中项目：{projectName}
                   </Text>
+                  <Text style={styles.projectHitCopy}>{count} 条引用</Text>
                 </View>
               ))}
             <CitationStrip

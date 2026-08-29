@@ -77,9 +77,12 @@ export function ConversationScreen() {
       controller.pending.phase === "submitting");
 
   const handleSend = useCallback(() => {
-    void controller.submit(text).then(() => {
-      setText("");
-      scrollRef.current?.scrollToEnd({ animated: true });
+    void controller.submit(text).then((submitted) => {
+      // 只有确定成功才清空输入与滚动；失败时保留文本便于就地修改重试
+      if (submitted) {
+        setText("");
+        scrollRef.current?.scrollToEnd({ animated: true });
+      }
     });
   }, [controller, text]);
 
@@ -163,6 +166,15 @@ export function ConversationScreen() {
             <View style={styles.inlineError}>
               <Text style={styles.inlineErrorTitle}>对话列表加载失败</Text>
               <Text style={styles.inlineErrorCopy}>{controller.conversationsError}</Text>
+              <Pressable
+                accessibilityRole="button"
+                accessibilityLabel="重试加载对话列表"
+                onPress={controller.retryConversations}
+                style={styles.retryButton}
+              >
+                <AgentIcon name="retry" size={16} color={theme.green} />
+                <Text style={styles.retryText}>重试</Text>
+              </Pressable>
             </View>
           )}
           {draftIntroVisible && (
@@ -202,6 +214,25 @@ export function ConversationScreen() {
               <Text style={styles.inlineErrorCopy}>{controller.messagesError}</Text>
             </View>
           )}
+          {controller.loadingOlder && (
+            <View style={styles.centerState}>
+              <ActivityIndicator color={theme.green} />
+              <Text style={styles.centerStateText}>正在加载更早消息…</Text>
+            </View>
+          )}
+          {controller.olderError !== null && (
+            <View style={styles.inlineError}>
+              <Text style={styles.inlineErrorCopy}>{controller.olderError}</Text>
+              <Pressable
+                accessibilityRole="button"
+                accessibilityLabel="重试加载更早消息"
+                onPress={() => void controller.loadOlderMessages()}
+                style={styles.retryButton}
+              >
+                <Text style={styles.retryText}>重试</Text>
+              </Pressable>
+            </View>
+          )}
           {threadHasMessages &&
             controller.thread.items.map((message) => (
               <ThreadMessage
@@ -209,7 +240,9 @@ export function ConversationScreen() {
                 message={message}
                 run={controller.thread.runsById.get(message.runId ?? -1) ?? null}
                 cancelling={controller.cancelling}
+                pollingError={controller.runPollingError}
                 onCancelRun={controller.requestCancelRun}
+                onRetryPolling={controller.retryRunPolling}
                 onRetryRun={(runId) => void controller.retryRun(runId)}
                 onCitationPress={setCitation}
               />
@@ -241,25 +274,6 @@ export function ConversationScreen() {
               </Pressable>
             </View>
           )}
-          {controller.loadingOlder && (
-            <View style={styles.centerState}>
-              <ActivityIndicator color={theme.green} />
-              <Text style={styles.centerStateText}>正在加载更早消息…</Text>
-            </View>
-          )}
-          {controller.olderError !== null && (
-            <View style={styles.inlineError}>
-              <Text style={styles.inlineErrorCopy}>{controller.olderError}</Text>
-              <Pressable
-                accessibilityRole="button"
-                accessibilityLabel="重试加载更早消息"
-                onPress={() => void controller.loadOlderMessages()}
-                style={styles.retryButton}
-              >
-                <Text style={styles.retryText}>重试</Text>
-              </Pressable>
-            </View>
-          )}
         </ScrollView>
 
         <View style={{ paddingBottom: keyboardHeight }}>
@@ -272,7 +286,9 @@ export function ConversationScreen() {
             onRemoveContextOverride={() => controller.setContextMode("auto")}
             onRemoveAnswerOverride={() => controller.setAnswerMode("auto")}
             submitting={submitting}
-            disabled={controller.initialLoading}
+            disabled={
+              controller.initialLoading || controller.conversationsError !== null
+            }
           />
         </View>
       </View>
@@ -329,14 +345,18 @@ function ThreadMessage({
   message,
   run,
   cancelling,
+  pollingError,
   onCancelRun,
+  onRetryPolling,
   onRetryRun,
   onCitationPress,
 }: {
   message: KnowledgeMessage;
   run: KnowledgeRun | null;
   cancelling: boolean;
+  pollingError: string | null;
   onCancelRun: () => void;
+  onRetryPolling: () => void;
   onRetryRun: (runId: number) => void;
   onCitationPress: (citation: KnowledgeRunCitation) => void;
 }) {
@@ -380,7 +400,9 @@ function ThreadMessage({
           run={run}
           scopeLabel={runScope}
           cancelling={cancelling}
+          pollingError={pollingError}
           onCancel={onCancelRun}
+          onRetryPolling={onRetryPolling}
         />
       ) : (
         <AnswerCard

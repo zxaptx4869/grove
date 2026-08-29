@@ -10,12 +10,16 @@ export function ProcessCard({
   run,
   scopeLabel,
   cancelling,
+  pollingError,
   onCancel,
+  onRetryPolling,
 }: {
   run: KnowledgeRun;
   scopeLabel: string;
   cancelling: boolean;
+  pollingError: string | null;
   onCancel: () => void;
+  onRetryPolling: () => void;
 }) {
   const step = presentRunStep(run);
   const eyebrow =
@@ -36,7 +40,23 @@ export function ProcessCard({
           <AgentIcon name="folder" size={14} color={theme.muted} />
           <Text style={styles.scopeText}>检索范围：{scopeLabel}</Text>
         </View>
-        {!cancelling && (
+        {pollingError !== null && (
+          <View style={styles.pollingErrorBox}>
+            <Text style={styles.pollingErrorText}>状态更新失败：{pollingError}</Text>
+            <Pressable
+              accessibilityRole="button"
+              accessibilityLabel="重试获取回答状态"
+              onPress={onRetryPolling}
+              style={({ pressed }) => [
+                styles.cancel,
+                pressed && styles.cancelPressed,
+              ]}
+            >
+              <Text style={styles.cancelText}>重试</Text>
+            </Pressable>
+          </View>
+        )}
+        {!cancelling && pollingError === null && (
           <Pressable
             accessibilityRole="button"
             accessibilityLabel="取消当前回答"
@@ -92,4 +112,11 @@ const styles = StyleSheet.create({
   },
   cancelPressed: { opacity: 0.9 },
   cancelText: { fontSize: 13, fontWeight: "600", color: theme.ink },
+  pollingErrorBox: { marginTop: 12 },
+  pollingErrorText: {
+    color: theme.error,
+    fontSize: 12,
+    lineHeight: 19,
+    marginBottom: 8,
+  },
 });

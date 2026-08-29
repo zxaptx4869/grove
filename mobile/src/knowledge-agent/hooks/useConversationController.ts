@@ -59,6 +59,7 @@ export interface ConversationController {
   changeScope: (scope: KnowledgeScopeChangeRequest) => Promise<void>;
   switchToConversation: (conversationId: number) => void;
   startNewConversation: () => void;
+  retryConversations: () => void;
   thread: MessageThreadState;
   messagesLoading: boolean;
   messagesError: string | null;
@@ -71,11 +72,13 @@ export interface ConversationController {
   setContextMode: (mode: ContextMode) => void;
   setAnswerMode: (mode: AnswerMode) => void;
   setModes: (modes: ModeSelection) => void;
-  submit: (text: string) => Promise<void>;
-  retrySubmit: () => Promise<void>;
-  retryRun: (runId: number) => Promise<void>;
+  submit: (text: string) => Promise<boolean>;
+  retrySubmit: () => Promise<boolean>;
+  retryRun: (runId: number) => Promise<boolean>;
   activeRun: KnowledgeRun | null;
   runPolling: boolean;
+  runPollingError: string | null;
+  retryRunPolling: () => void;
   cancelling: boolean;
   requestCancelRun: () => void;
   appActive: boolean;
@@ -274,8 +277,8 @@ export function useConversationController(
   }, [token, selectedConversationId, loadingOlder, thread.nextCursor]);
 
   const performSubmission = useCallback(
-    async (submission: PendingSubmission) => {
-      if (!token) return;
+    async (submission: PendingSubmission): Promise<boolean> => {
+      if (!token) return false;
       setSubmitError(null);
       let current = submission;
       try {
@@ -319,6 +322,7 @@ export function useConversationController(
         void queryClient.invalidateQueries({
           queryKey: knowledgeAgentKeys.conversations(),
         });
+        return true;
       } catch (error) {
         const classified = classifyKnowledgeAgentError(error);
         if (classified.kind === "conflict") {
@@ -337,6 +341,7 @@ export function useConversationController(
           void queryClient.invalidateQueries({
             queryKey: knowledgeAgentKeys.conversations(),
           });
+          return false;
         } else if (
           classified.kind === "network" ||
           classified.kind === "server" ||
@@ -345,9 +350,11 @@ export function useConversationController(
           // 结果未知：保留对话 id、文本与同一幂等键，等待用户重试
           setPending(current);
           setSubmitError(classified.message);
+          return false;
         } else {
           setPending(null);
           setSubmitError(classified.message);
+          return false;
         }
       }
     },
@@ -355,39 +362,39 @@ export function useConversationController(
   );
 
   const submit = useCallback(
-    async (rawText: string) => {
+    async (rawText: string): Promise<boolean> => {
       const text = rawText.trim();
-      if (!text || pending || !token) return;
+      if (!text || pending || !token) return false;
       const submission = createPendingSubmission({
         text,
         contextMode: modesRef.current.contextMode,
         answerMode: modesRef.current.answerMode,
       });
       setPending(submission);
-      await performSubmission(submission);
+      return performSubmission(submission);
     },
     [pending, token, performSubmission],
   );
 
   const retrySubmit = useCallback(async () => {
-    if (!pending || !canRetrySubmission(pending)) return;
-    await performSubmission(pending);
+    if (!pending || !canRetrySubmission(pending)) return false;
+    return performSubmission(pending);
   }, [pending, performSubmission]);
 
   const retryRun = useCallback(
-    async (runId: number) => {
-      if (pending || !token) return;
+    async (runId: number): Promise<boolean> => {
+      if (pending || !token) return false;
       const userMessage = thread.items.find(
         (message) => message.runId === runId && message.role === "user",
       );
-      if (!userMessage) return;
+      if (!userMessage) return false;
       const submission = createPendingSubmission({
         text: userMessage.content,
         contextMode: modesRef.current.contextMode,
         answerMode: modesRef.current.answerMode,
       });
       setPending(submission);
-      await performSubmission(submission);
+      return performSubmission(submission);
     },
     [pending, token, thread.items, performSubmission],
   );
@@ -523,6 +530,9 @@ export function useConversationController(
     changeScope,
     switchToConversation,
     startNewConversation,
+    retryConversations: () => {
+      void conversationsQuery.refetch();
+    },
     thread,
     messagesLoading: recentPageQuery.isLoading,
     messagesError: recentPageQuery.isError
@@ -542,6 +552,12 @@ export function useConversationController(
     retryRun,
     activeRun,
     runPolling: Boolean(runQuery.data && isRunActive(runQuery.data.status)),
+    runPollingError: runQuery.isError
+      ? toUserErrorMessage(runQuery.error)
+      : null,
+    retryRunPolling: () => {
+      void runQuery.refetch();
+    },
     cancelling: cancelMutation.isPending || Boolean(activeRun?.cancelRequested),
     requestCancelRun,
     appActive,

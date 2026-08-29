@@ -27,6 +27,24 @@ const STOP_REASON_LABELS: Record<InvestigationStopReason, string> = {
   failed: "调查执行失败",
 };
 
+/** 受限的 Markdown 标记清洗：不渲染任意 Markdown/HTML，只去掉常见标记符号。
+ *
+ * 后端回答模型可能输出 `**加粗**`、`## 标题`、`- 列表` 等标记；原生 Text
+ * 不解析 Markdown，直接展示会裸露星号和井号。这里保留换行与内容顺序，
+ * 只移除标记字符，不引入任何富文本渲染。
+ */
+export function cleanAnswerText(text: string): string {
+  return text
+    .replace(/\*\*([^*]+)\*\*/g, "$1")
+    .replace(/(^|\n)[ \t]*#{1,6}[ \t]+/g, "$1")
+    .replace(/(^|\n)[ \t]*[-*][ \t]+/g, "$1")
+    .replace(/(^|\n)[ \t]*\d+[.、][ \t]+/g, "$1")
+    .replace(/\*([^*]+)\*/g, "$1")
+    .replace(/[ \t]+\n/g, "\n")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
+}
+
 export function stopReasonLabel(reason: InvestigationStopReason | null | undefined): string | null {
   return reason ? STOP_REASON_LABELS[reason] ?? "已停止调查" : null;
 }
@@ -44,6 +62,23 @@ export function presentAnswer(
     };
   }
   const status = answer?.status ?? "failed";
+  // 契约上是 insufficient，但回答包含有效引用与实质内容时，按「部分结果」
+  // 展示并保留预算/缺口说明，避免与下方完整回答自相矛盾；完全无引用仍为知识不足。
+  if (
+    status === "insufficient" &&
+    answer !== null &&
+    answer.citations.length > 0 &&
+    answer.answer.trim() !== ""
+  ) {
+    return {
+      status: "partial",
+      headline: "部分结果",
+      note:
+        answer.insufficientNote ??
+        "当前知识存在缺口，以下为已有证据范围内的有效内容。",
+      tone: "risk",
+    };
+  }
   switch (status) {
     case "completed":
       return {

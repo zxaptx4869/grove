@@ -73,8 +73,8 @@ function withToken(
   return run(token)
     .then((result) => normalizePayload(result))
     .catch((error: unknown) => {
-    throw classifyKnowledgeAgentError(error);
-  });
+      throw classifyKnowledgeAgentError(error);
+    });
 }
 
 export const knowledgeAgentApi = {

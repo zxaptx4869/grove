@@ -22,11 +22,12 @@ test("401 鉴权失效、409 冲突、404 与网络错误分类", () => {
   expect(network.retryable).toBe(true);
 });
 
-test("AbortError 视为取消而非网络失败", () => {
+test("AbortError（请求超时）按可重试网络错误展示", () => {
   const aborted = new DOMException("Aborted", "AbortError");
   const classified = classifyKnowledgeAgentError(aborted);
-  expect(classified.kind).toBe("cancelled");
-  expect(classified.retryable).toBe(false);
+  expect(classified.kind).toBe("network");
+  expect(classified.retryable).toBe(true);
+  expect(classified.message).toContain("超时");
 });
 
 test("KnowledgeAgentError 保持原分类", () => {

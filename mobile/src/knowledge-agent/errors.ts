@@ -47,10 +47,12 @@ export function classifyKnowledgeAgentError(
 ): KnowledgeAgentError {
   if (error instanceof KnowledgeAgentError) return error;
   if (isAbortError(error)) {
+    // 当前客户端没有用户主动取消的请求；AbortError 全部来自 12s 超时，
+    // 按可重试的网络类错误展示，避免把超时误报成“请求已取消”。
     return new KnowledgeAgentError({
-      kind: "cancelled",
-      message: "请求已取消",
-      retryable: false,
+      kind: "network",
+      message: "连接超时，请检查网络后重试",
+      retryable: true,
     });
   }
   const status = (error as { status?: unknown })?.status;
