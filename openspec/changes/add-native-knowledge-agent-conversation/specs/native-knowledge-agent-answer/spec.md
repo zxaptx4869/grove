@@ -110,6 +110,10 @@
 - **WHEN** answer.status 为 partial，或 fallback_summary 指示已有有效结果但可通过新 Run 补查
 - **THEN** 页面提供重新提问或适配的恢复入口，不自行把 insufficient 改写为 partial
 
+#### Scenario: partial 或 fallback 重新提问
+- **WHEN** 用户从 partial 或带可恢复 fallback 的回答选择重新提问
+- **THEN** 客户端以原问题创建新的 Run，并保留旧回答和旧引用快照
+
 ### Requirement: 长内容 Sheet 可滚动且恢复对话
 原生 App MUST 让 History、Scope、Mode 与 Citation Bottom Sheet 的长内容在 Sheet 内独立滚动，并在关闭后恢复原对话阅读状态；Sheet 不得因长项目名、引用原文、错误或选项列表遮挡关闭操作或 Composer。
 

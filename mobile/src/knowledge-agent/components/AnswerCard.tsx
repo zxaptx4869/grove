@@ -229,6 +229,10 @@ export function AnswerCard({
     presentation.tone === "positive" ? "confirmed" : presentation.tone;
   const workspaceScope = run.scopeType === "workspace";
   const citations = answer?.citations ?? [];
+  const canRetry =
+    presentation.status === "failed" ||
+    presentation.status === "partial" ||
+    fallback.hasFallback;
   const projectCounts = new Map<string, number>();
   for (const citation of citations) {
     if (!citation.projectName) continue;
@@ -318,7 +322,7 @@ export function AnswerCard({
               onCitationPress={onCitationPress}
             />
             <ScopeStamp label={scopeLabel} />
-            {presentation.status === "failed" && (
+            {canRetry && (
               <View style={styles.inlineActions}>
                 <AppButton
                   label="重新提问"

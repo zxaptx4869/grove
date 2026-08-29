@@ -411,6 +411,41 @@ describe("useConversationController", () => {
       jest.useRealTimers();
     }
   });
+
+  test("取消错误仅保留给原 Run，切换会话后清理", async () => {
+    jest.useFakeTimers();
+    const restoreAppState = mockAppStateActive();
+    try {
+      api.listConversations.mockResolvedValue([conversation(1), conversation(2)]);
+      api.getConversation.mockResolvedValue(conversation(1));
+      api.listMessages.mockResolvedValue({
+        items: [message(1, "user", 9, "问题"), message(2, "assistant", 9)],
+        nextCursor: null,
+        runs: [run(9, "processing")],
+      });
+      api.getRun.mockResolvedValue(run(9, "processing"));
+      api.cancelRun.mockRejectedValue(new Error("取消请求失败"));
+
+      const rendered = await renderController();
+      await waitFor(() => expect(rendered.result.current.activeRun?.id).toBe(9));
+      await act(async () => {
+        rendered.result.current.requestCancelRun();
+      });
+      await waitFor(() => {
+        expect(rendered.result.current.cancelError).toContain("取消请求失败");
+      });
+
+      await act(async () => {
+        rendered.result.current.switchToConversation(2);
+      });
+      expect(rendered.result.current.cancelError).toBeNull();
+      await rendered.unmount();
+    } finally {
+      restoreAppState();
+      jest.clearAllTimers();
+      jest.useRealTimers();
+    }
+  });
 });
 
 function mockAppStateActive() {

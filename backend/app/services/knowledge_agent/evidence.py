@@ -29,11 +29,15 @@ class ReferenceValidationStats:
     discarded_count: int = 0
 
 
-def _summary_items(values: list[str]) -> list[str]:
-    """规范化模型给出的结构化覆盖摘要，避免空白或超长过程说明持久化。"""
+def _summary_items(values: list[object], evidence_handles: set[str]) -> list[str]:
+    """只保留能回溯到最终采用 Evidence 的终态摘要。"""
     result: list[str] = []
     for value in values:
-        text = " ".join(str(value).split())[:160]
+        summary = getattr(value, "summary", "")
+        handles = set(getattr(value, "evidence_handles", []))
+        if not handles.intersection(evidence_handles):
+            continue
+        text = " ".join(str(summary).split())[:160]
         if text and text not in result:
             result.append(text)
         if len(result) >= 5:
@@ -204,17 +208,16 @@ async def build_validated_answer(
     handles.extend(item.evidence_handle_b for item in draft.conflicts)
     unique_handles = list(dict.fromkeys(handles))
     resolved = await resolve_evidence_handles(db, run_id, handles)
+    citation_handles = list(dict.fromkeys(item.evidence_handle for item in draft.citations))
     citations = [
-        _citation_out(resolved[item.evidence_handle])
-        for item in draft.citations
-        if item.evidence_handle in resolved
+        _citation_out(resolved[handle]) for handle in citation_handles if handle in resolved
     ]
 
     conflicts: list[KnowledgeConflictOut] = []
     for conflict in draft.conflicts:
         left = resolved.get(conflict.evidence_handle_a)
         right = resolved.get(conflict.evidence_handle_b)
-        if left is None or right is None:
+        if left is None or right is None or left.id == right.id:
             continue
         conflicts.append(
             KnowledgeConflictOut(
@@ -235,19 +238,31 @@ async def build_validated_answer(
         valid_count=len(resolved),
         discarded_count=len(unique_handles) - len(resolved),
     )
-    coverage = _summary_items(getattr(draft, "coverage", []))
-    gaps = _summary_items(getattr(draft, "gaps", []))
-    core_question_answered = bool(getattr(draft, "core_question_answered", True))
-    coverage_complete = bool(getattr(draft, "coverage_complete", True))
+    output_evidence_handles = {citation.evidence_handle for citation in citations}
+    output_evidence_handles.update(
+        conflict.citation_a.evidence_handle
+        for conflict in conflicts
+        if conflict.citation_a is not None
+    )
+    output_evidence_handles.update(
+        conflict.citation_b.evidence_handle
+        for conflict in conflicts
+        if conflict.citation_b is not None
+    )
+    coverage = _summary_items(getattr(draft, "coverage", []), output_evidence_handles)
+    gaps = _summary_items(getattr(draft, "gaps", []), output_evidence_handles)
+    core_question_answered = getattr(draft, "core_question_answered", None)
+    coverage_complete = getattr(draft, "coverage_complete", None)
+    assessment_missing = core_question_answered is None or coverage_complete is None
     if stats.valid_count == 0:
         # 事实性回答但没有一个可引用句柄：不得保持 completed
         status = "insufficient"
         citations = []
         conflicts = []
-    elif draft.insufficient or not core_question_answered:
+    elif draft.insufficient or core_question_answered is False:
         # 边缘 Evidence 不能因存在零散引用伪装为有用的部分结果。
         status = "insufficient"
-    elif stats.discarded_count > 0 or not coverage_complete or gaps:
+    elif stats.discarded_count > 0 or assessment_missing or coverage_complete is False or gaps:
         # 部分句柄失效：保留有效引用并标记 partial
         status = "partial"
     else:

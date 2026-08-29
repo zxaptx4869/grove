@@ -86,6 +86,11 @@ export interface ConversationController {
   appActive: boolean;
 }
 
+interface RunCancelError {
+  runId: number;
+  message: string;
+}
+
 function sameScope(
   left: KnowledgeScopeChangeRequest,
   right: KnowledgeScopeChangeRequest,
@@ -127,7 +132,7 @@ export function useConversationController(
   const [scopeError, setScopeError] = useState<string | null>(null);
   const [olderError, setOlderError] = useState<string | null>(null);
   const [loadingOlder, setLoadingOlder] = useState(false);
-  const [cancelError, setCancelError] = useState<string | null>(null);
+  const [cancelError, setCancelError] = useState<RunCancelError | null>(null);
   const previousRunStatusRef = useRef<RunStatus | null>(null);
   const modesRef = useRef<ModeSelection>(DEFAULT_MODES);
   useEffect(() => {
@@ -295,6 +300,7 @@ export function useConversationController(
     async (submission: PendingSubmission): Promise<boolean> => {
       if (!token) return false;
       setSubmitError(null);
+      setCancelError(null);
       let current = submission;
       try {
         // 目标对话：优先复用提交中已固化的 conversation_id（网络重试路径），
@@ -488,6 +494,7 @@ export function useConversationController(
     setSubmitError(null);
     setModesState(DEFAULT_MODES);
     setScopeError(null);
+    setCancelError(null);
     setExplicitChoice(conversationId);
   }, []);
 
@@ -499,6 +506,7 @@ export function useConversationController(
     setSubmitError(null);
     setModesState(DEFAULT_MODES);
     setScopeError(null);
+    setCancelError(null);
     setExplicitChoice("draft");
   }, []);
 
@@ -519,7 +527,7 @@ export function useConversationController(
       })
       .catch((error) => {
         // 取消失败保留在 Run 卡，用户可原操作重试。
-        setCancelError(toUserErrorMessage(error));
+        setCancelError({ runId: activeRunId, message: toUserErrorMessage(error) });
       });
   }, [activeRunId, cancelMutation, queryClient]);
 
@@ -580,7 +588,8 @@ export function useConversationController(
       void runQuery.refetch();
     },
     cancelling: cancelMutation.isPending || Boolean(activeRun?.cancelRequested),
-    cancelError,
+    cancelError:
+      cancelError?.runId === activeRun?.id ? (cancelError?.message ?? null) : null,
     requestCancelRun,
     appActive,
   };

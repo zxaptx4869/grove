@@ -27,6 +27,10 @@
 - **WHEN** 多条查询得到同一 Entry、相同或等价 quote，或同一来源的重复候选
 - **THEN** 系统合并或限额该重复成本、保留全部可追溯关联，并把预算留给不同的可接纳 Evidence
 
+#### Scenario: 候选读取后不可接纳
+- **WHEN** 已选择的 Source 因不可引用、同 Entry 重复来源或等价 quote 被拒绝，且仍有预算和稳定排序后的候选
+- **THEN** 系统继续选择替补候选；只有实际写入当前 Run 账本的 Evidence 才消耗 Evidence、Query 和 Entry 的接纳配额
+
 #### Scenario: 真实冲突保留双边证据
 - **WHEN** 不同 Entry/Source 的相反主张均形成当前 Run 可核验证据候选
 - **THEN** 系统不因普通重复去重删除任一方，并在单项限额内为双方保留可选名额

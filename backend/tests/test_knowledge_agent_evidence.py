@@ -7,6 +7,7 @@ from app.agents.knowledge_agent import (
     KnowledgeAnswerDraft,
     KnowledgeCitationDraft,
     KnowledgeConflictDraft,
+    KnowledgeEvidenceSummaryDraft,
 )
 from app.db.session import async_session_factory
 from app.models import (
@@ -215,6 +216,7 @@ async def test_build_validated_answer_drops_fake_handles_and_quotes() -> None:
             answer="闭水试验通常持续 24 小时。",
             citations=[
                 KnowledgeCitationDraft(evidence_handle=evidence.handle),
+                KnowledgeCitationDraft(evidence_handle=evidence.handle),
                 KnowledgeCitationDraft(evidence_handle="ev_other_run"),
                 KnowledgeCitationDraft(evidence_handle="ev_unknown"),
             ],
@@ -231,6 +233,100 @@ async def test_build_validated_answer_drops_fake_handles_and_quotes() -> None:
         assert stats.requested_count == 3
         assert stats.valid_count == 1
         assert stats.discarded_count == 2
+
+
+@pytest.mark.asyncio
+async def test_build_validated_answer_keeps_only_evidence_linked_terminal_summary() -> None:
+    """覆盖与缺口必须关联最终采用的 Evidence，重复句柄不夸大计数。"""
+    async with async_session_factory() as db:
+        user = await create_user(db, "终态摘要")
+        workspace = await create_workspace(db, user)
+        project = await create_project(db, workspace, "摘要项目")
+        node = await create_child_node(db, project, "施工")
+        source, attachment = await create_source_attachment(
+            db, workspace, project, text_content="闭水试验通常持续 24 小时。"
+        )
+        entry = await create_entry_with_evidence(
+            db,
+            project,
+            node,
+            source,
+            attachment,
+            quote="闭水试验通常持续 24 小时",
+        )
+        conversation = KnowledgeConversation(
+            workspace_id=workspace.id,
+            owner_user_id=user.id,
+            scope_type="workspace",
+            title="终态摘要测试",
+        )
+        db.add(conversation)
+        await db.flush()
+        run = KnowledgeAgentRun(
+            conversation_id=conversation.id,
+            workspace_id=workspace.id,
+            owner_user_id=user.id,
+            scope_type="workspace",
+            status=RUN_PROCESSING,
+            active_slot="active",
+            max_retries=1,
+        )
+        db.add(run)
+        await db.flush()
+        evidence = await _evidence_row(
+            db,
+            run_id=run.id,
+            entry=entry,
+            project=project,
+            source=source,
+            attachment=attachment,
+            entry_evidence=await _entry_evidence(db, entry.id, source.id),
+            quote="闭水试验通常持续 24 小时",
+        )
+        await db.commit()
+
+        draft = KnowledgeAnswerDraft(
+            answer="闭水试验通常持续 24 小时。",
+            citations=[
+                KnowledgeCitationDraft(evidence_handle=evidence.handle),
+                KnowledgeCitationDraft(evidence_handle=evidence.handle),
+            ],
+            coverage=[
+                KnowledgeEvidenceSummaryDraft(
+                    summary="已覆盖闭水时长", evidence_handles=[evidence.handle]
+                ),
+                KnowledgeEvidenceSummaryDraft(
+                    summary="模型自由覆盖结论", evidence_handles=["ev_unknown"]
+                ),
+            ],
+            gaps=[
+                KnowledgeEvidenceSummaryDraft(
+                    summary="放水时机尚缺证据", evidence_handles=[evidence.handle]
+                ),
+                KnowledgeEvidenceSummaryDraft(
+                    summary="不可验证缺口", evidence_handles=["ev_unknown"]
+                ),
+            ],
+            coverage_complete=False,
+        )
+        answer, stats = await build_validated_answer(db, run.id, draft)
+
+        assert answer.status == "partial"
+        assert len(answer.citations) == 1
+        assert stats.requested_count == 1
+        assert answer.coverage == ["已覆盖闭水时长"]
+        assert answer.gaps == ["放水时机尚缺证据"]
+
+        missing_assessment, _ = await build_validated_answer(
+            db,
+            run.id,
+            KnowledgeAnswerDraft(
+                answer="闭水试验通常持续 24 小时。",
+                citations=[KnowledgeCitationDraft(evidence_handle=evidence.handle)],
+            ),
+        )
+        assert missing_assessment.status == "partial"
+        assert missing_assessment.coverage == ["当前回答采用 1 条核验证据，涉及 1 条正式知识"]
 
 
 @pytest.mark.asyncio
@@ -434,6 +530,8 @@ async def test_citation_snapshots_survive_object_deletion() -> None:
                 KnowledgeCitationDraft(evidence_handle=evidence_a.handle),
                 KnowledgeCitationDraft(evidence_handle=evidence_b.handle),
             ],
+            core_question_answered=True,
+            coverage_complete=True,
         )
         answer, _stats = await build_validated_answer(db, run.id, draft)
         assert answer.status == "completed"
@@ -589,6 +687,8 @@ async def test_conflict_returns_both_full_citations() -> None:
                     summary="24 小时与 48 小时两种来源口径不一致",
                 )
             ],
+            core_question_answered=True,
+            coverage_complete=True,
         )
         answer, _stats = await build_validated_answer(db, run.id, draft)
         assert answer.status == "completed"

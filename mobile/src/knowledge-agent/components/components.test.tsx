@@ -1,4 +1,4 @@
-import { act, fireEvent, render } from "@testing-library/react-native";
+import { act, cleanup, fireEvent, render, waitFor } from "@testing-library/react-native";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 
 import { knowledgeAgentApi } from "@/src/knowledge-agent/api";
@@ -60,6 +60,7 @@ const queryClients: QueryClient[] = [];
 
 afterEach(async () => {
   await act(async () => {
+    cleanup();
     await Promise.all(queryClients.map((client) => client.cancelQueries()));
   });
   for (const client of queryClients) {
@@ -266,6 +267,65 @@ test("insufficient 带引用时仍遵循后端知识不足状态", async () => {
   expect(view.getByLabelText("查看引用：Entry 1")).toBeOnTheScreen();
 });
 
+test("partial 与可恢复 fallback 都提供重新提问", async () => {
+  const partialRetry = jest.fn();
+  const partial = await render(
+    <AnswerCard
+      run={run(1, "partial", {
+        answer: "闭水试验已有时长证据。",
+        status: "partial",
+        insufficientNote: null,
+        citations: [citation(1)],
+        conflicts: [],
+      })}
+      scopeLabel="全部知识"
+      onCitationPress={jest.fn()}
+      onRetry={partialRetry}
+    />,
+    { wrapper },
+  );
+  await fireEvent.press(partial.getByLabelText("重新提问"));
+  expect(partialRetry).toHaveBeenCalledTimes(1);
+  await partial.unmount();
+
+  const fallbackRetry = jest.fn();
+  const fallback = await render(
+    <AnswerCard
+      run={run(
+        2,
+        "completed",
+        {
+          answer: "闭水试验通常持续 24 小时。",
+          status: "completed",
+          insufficientNote: null,
+          citations: [citation(2)],
+          conflicts: [],
+        },
+        {
+          fallbackSummary: {
+            hasFallback: true,
+            stages: [
+              {
+                isFallback: true,
+                purpose: "embedding",
+                provider: "test",
+                model: null,
+                error: null,
+              },
+            ],
+          },
+        },
+      )}
+      scopeLabel="全部知识"
+      onCitationPress={jest.fn()}
+      onRetry={fallbackRetry}
+    />,
+    { wrapper },
+  );
+  await fireEvent.press(fallback.getByLabelText("重新提问"));
+  expect(fallbackRetry).toHaveBeenCalledTimes(1);
+});
+
 test("过程卡轮询失败显示就地重试", async () => {
   const onRetry = jest.fn();
   const view = await render(
@@ -462,4 +522,8 @@ test("活动 Run 409 时显示冲突说明且不保留发送中气泡与重试",
   expect(view.getByText(/已有进行中的回答/)).toBeOnTheScreen();
   expect(view.queryByLabelText("重试发送")).toBeNull();
   expect(view.queryByText("发送中…")).toBeNull();
+  await waitFor(() => {
+    expect(api.getConversation).toHaveBeenCalledWith("token", 10);
+    expect(api.listMessages).toHaveBeenCalledWith("token", 10, null);
+  });
 });

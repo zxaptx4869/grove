@@ -523,105 +523,112 @@ async def _execute_query_round(
             continue
         for source in item.sources:
             source_queues[sequence].append((entry_id, int(source["source_id"])))
-    selected_sources: list[tuple[int, int, int]] = []
-    selected_source_keys: set[tuple[int, int]] = set()
-    selected_evidence_per_query: defaultdict[int, int] = defaultdict(int)
-    selected_evidence_per_entry: defaultdict[int, int] = defaultdict(int)
-    while len(selected_sources) < evidence_budget and any(source_queues.values()):
-        progress = False
-        for query_row in query_rows:
-            queue = source_queues[query_row.sequence]
-            while queue and queue[0] in selected_source_keys:
-                queue.popleft()
-                query_stats[query_row.sequence]["deduped"] += 1
-            if (
-                not queue
-                or selected_evidence_per_query[query_row.sequence] >= evidence_limit_per_query
-            ):
-                continue
-            entry_id, source_id = queue[0]
-            if selected_evidence_per_entry[entry_id] >= evidence_limit_per_entry:
-                queue.popleft()
-                query_stats[query_row.sequence]["limited"] += 1
-                continue
-            queue.popleft()
-            selected_sources.append((query_row.sequence, entry_id, source_id))
-            selected_source_keys.add((entry_id, source_id))
-            selected_evidence_per_query[query_row.sequence] += 1
-            selected_evidence_per_entry[entry_id] += 1
-            progress = True
-            if len(selected_sources) >= evidence_budget:
-                break
-        if not progress:
-            evidence_limit_per_query += 1
-            evidence_limit_per_entry += 1
-
+    attempted_source_keys: set[tuple[int, int]] = set()
+    accepted_evidence_per_query: defaultdict[int, int] = defaultdict(int)
+    accepted_evidence_per_entry: defaultdict[int, int] = defaultdict(int)
     seen_quotes = {
         (ref.entry_id, " ".join(ref.quote.split()).casefold()) for ref in ledger.evidences.values()
     }
     seen_sources = {(ref.entry_id, ref.source_id) for ref in ledger.evidences.values()}
-    for sequence, entry_id, source_id in selected_sources:
-        await _check_cancelled(run.id)
-        started = perf_counter()
-        evidence_result = await read_source_evidence(
-            db, ctx, entry_id, [source_id], round_number=round_number, query_sequence=sequence
-        )
-        duration_ms = int((perf_counter() - started) * 1000)
-        citable = [
-            row for row in evidence_result.items if row.citable and row.evidence_id is not None
-        ]
-        unavailable = [row for row in evidence_result.items if not row.citable]
-        await record_tool_result(
-            db,
-            run_id=run.id,
-            tool_name="read_source_evidence",
-            params={
-                "entry_id": entry_id,
-                "source_ids": [source_id],
-                "round": round_number,
-                "query_sequence": sequence,
-            },
-            result={
-                "total": len(evidence_result.items),
-                "citable": len(citable),
-                "denied": 0,
-                "unavailable": len(unavailable),
-            },
-            duration_ms=duration_ms,
-            investigation_id=investigation.id,
-            round_number=round_number,
-            query_sequence=sequence,
-        )
-        for row in unavailable:
-            query_stats[sequence]["unavailable"] += 1
-            ledger.add_unavailable(
-                kind="evidence",
-                obj_id=row.source_id,
-                reason=row.reason or row.status,
-                round_number=round_number,
-            )
-        for row in citable:
-            quote_key = (row.entry_id, " ".join((row.quote or "").split()).casefold())
-            source_key = (row.entry_id, row.source_id)
-            if source_key in seen_sources or quote_key in seen_quotes:
-                query_stats[sequence]["deduped"] += 1
+    while (
+        ledger.distinct_evidence_count() < investigation.max_evidence
+        and any(source_queues.values())
+    ):
+        attempted = False
+        for query_row in query_rows:
+            queue = source_queues[query_row.sequence]
+            while queue and queue[0] in attempted_source_keys:
+                queue.popleft()
+                query_stats[query_row.sequence]["deduped"] += 1
+            if (
+                not queue
+                or accepted_evidence_per_query[query_row.sequence] >= evidence_limit_per_query
+            ):
                 continue
-            if ledger.add_evidence(
-                LedgerEvidenceRef(
-                    evidence_id=row.evidence_id,
-                    handle=row.evidence_handle or "",
-                    entry_id=row.entry_id,
-                    source_id=row.source_id,
-                    source_title=row.source_title,
-                    attachment_id=row.attachment_id,
-                    quote=row.quote or "",
+            entry_id, source_id = queue[0]
+            if accepted_evidence_per_entry[entry_id] >= evidence_limit_per_entry:
+                continue
+            queue.popleft()
+            attempted_source_keys.add((entry_id, source_id))
+            attempted = True
+            await _check_cancelled(run.id)
+            started = perf_counter()
+            evidence_result = await read_source_evidence(
+                db,
+                ctx,
+                entry_id,
+                [source_id],
+                round_number=round_number,
+                query_sequence=query_row.sequence,
+            )
+            duration_ms = int((perf_counter() - started) * 1000)
+            citable = [
+                row for row in evidence_result.items if row.citable and row.evidence_id is not None
+            ]
+            unavailable = [row for row in evidence_result.items if not row.citable]
+            await record_tool_result(
+                db,
+                run_id=run.id,
+                tool_name="read_source_evidence",
+                params={
+                    "entry_id": entry_id,
+                    "source_ids": [source_id],
+                    "round": round_number,
+                    "query_sequence": query_row.sequence,
+                },
+                result={
+                    "total": len(evidence_result.items),
+                    "citable": len(citable),
+                    "denied": 0,
+                    "unavailable": len(unavailable),
+                },
+                duration_ms=duration_ms,
+                investigation_id=investigation.id,
+                round_number=round_number,
+                query_sequence=query_row.sequence,
+            )
+            for row in unavailable:
+                query_stats[query_row.sequence]["unavailable"] += 1
+                ledger.add_unavailable(
+                    kind="evidence",
+                    obj_id=row.source_id,
+                    reason=row.reason or row.status,
                     round_number=round_number,
                 )
-            ):
-                query_stats[sequence]["evidence_added"] += 1
-                seen_sources.add(source_key)
-                seen_quotes.add(quote_key)
-        await db.commit()
+            accepted_from_candidate = 0
+            for row in citable:
+                if ledger.distinct_evidence_count() >= investigation.max_evidence:
+                    break
+                quote_key = (row.entry_id, " ".join((row.quote or "").split()).casefold())
+                source_key = (row.entry_id, row.source_id)
+                if source_key in seen_sources or quote_key in seen_quotes:
+                    query_stats[query_row.sequence]["deduped"] += 1
+                    continue
+                if ledger.add_evidence(
+                    LedgerEvidenceRef(
+                        evidence_id=row.evidence_id,
+                        handle=row.evidence_handle or "",
+                        entry_id=row.entry_id,
+                        source_id=row.source_id,
+                        source_title=row.source_title,
+                        attachment_id=row.attachment_id,
+                        quote=row.quote or "",
+                        round_number=round_number,
+                    )
+                ):
+                    query_stats[query_row.sequence]["evidence_added"] += 1
+                    accepted_from_candidate += 1
+                    seen_sources.add(source_key)
+                    seen_quotes.add(quote_key)
+            if accepted_from_candidate:
+                accepted_evidence_per_query[query_row.sequence] += accepted_from_candidate
+                accepted_evidence_per_entry[entry_id] += accepted_from_candidate
+            await db.commit()
+            if ledger.distinct_evidence_count() >= investigation.max_evidence:
+                break
+        if not attempted:
+            evidence_limit_per_query += 1
+            evidence_limit_per_entry += 1
 
     for query_row in query_rows:
         stats = query_stats[query_row.sequence]

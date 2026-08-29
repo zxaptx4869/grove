@@ -23,6 +23,10 @@
 - **WHEN** 模型输出其他 Run、范围外、未知或不可引用的 Evidence 句柄
 - **THEN** 该引用被丢弃，不进入响应
 
+#### Scenario: 重复引用不重复计数
+- **WHEN** 模型多次返回同一个当前 Run Evidence 句柄
+- **THEN** 响应只保留一条 citation，coverage 的 Evidence 数量按去重后的有效 citation 计算
+
 #### Scenario: 丢弃部分非法引用
 - **WHEN** 模型同时输出当前 Run 有效句柄和历史、范围外或未知句柄
 - **THEN** 系统仅保留有效引用并将回答与 Run 标记为 `partial`
@@ -68,6 +72,10 @@
 #### Scenario: 部分 citation 校验失效
 - **WHEN** 生成后部分引用被丢弃但仍保留足以组成有用答案的其他有效引用
 - **THEN** 系统按剩余有效 Evidence 重建 coverage/gaps，并在仍有明确缺口时返回 `partial` 而非 `insufficient`
+
+#### Scenario: 模型未提供终态摘要
+- **WHEN** 回答模型未提供 coverage/gaps，或其摘要不能关联最终有效 Evidence 或可验证缺失维度
+- **THEN** 服务端使用去重后的 citation、Entry 与账本可验证缺口生成或过滤终态摘要，不以模型默认值宣称完整覆盖或无缺口
 
 ### Requirement: 回答正文直接服务问题
 系统 MUST 在回答生成 prompt 和结构化输出职责中要求正文首句直接给出事实、推荐、主要差异或操作步骤；正文 MUST NOT 复述用户问题，或使用不增加信息的“关于这个问题”“根据当前已确认知识”“以下是基于正式知识”等开场。范围、来源数、部分结果、预算、轮次、停止原因和 coverage/gaps MUST 由回答卡或调查摘要呈现，不能以长篇重复进入正文。

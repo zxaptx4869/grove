@@ -211,6 +211,8 @@ def _dynamic_answer_agent():
             KnowledgeAnswerDraft(
                 answer="基于已有证据的回答。",
                 citations=[KnowledgeCitationDraft(evidence_handle=handle)] if handle else [],
+                core_question_answered=True,
+                coverage_complete=True,
             ),
             StageMeta(
                 purpose="answer",
@@ -271,6 +273,8 @@ async def test_runner_normal_completion_with_verified_citation(monkeypatch) -> N
             answer="闭水试验通常持续 24 小时。",
             citations=[KnowledgeCitationDraft(evidence_handle=handle)],
             conflicts=[],
+            core_question_answered=True,
+            coverage_complete=True,
         )
         monkeypatch.setattr(
             "app.services.knowledge_agent.runner.run_knowledge_answer_agent",

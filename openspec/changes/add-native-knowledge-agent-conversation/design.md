@@ -177,6 +177,14 @@ Android 使用 `softwareKeyboardLayoutMode=resize`，由系统调整可用高度
 
 本机缺少原生模拟器时，不把 Web 预览视为验收；实现后仅记录未验证项，保留 iOS/Android 模拟器或真机对 390×844、360×800、412×915、动态字号及 reduce-motion 的补验责任。
 
+### 16. 调查预算按实际接纳兑现，终态摘要与恢复状态按实体绑定
+
+Source 候选只是读取尝试，不等于已消耗的 Evidence。全局选择维持每 Query、Entry 与来源的公平上限，但只在 `ledger.add_evidence` 成功后计入已接纳数量；不可引用、同 Entry 重复 Source 或等价 quote 被拒绝时，继续从同一稳定候选队列选择替补，直到实际 Evidence 达到硬上限或候选耗尽。这样不突破服务端预算，也不会因首个失效候选让后续有效 Source 永久失去机会。
+
+最终 citations 先按当前 Run Evidence handle 去重；coverage 的数量统计只使用该去重后的集合。模型给出的 coverage/gaps 仅能作为候选摘要：每条最终 coverage/gap 必须关联至少一个最终有效 Evidence handle，或在服务器可验证的“缺失维度”集合中存在；无法关联的模型自由摘要不持久化。模型缺省结构字段时，服务端以实际 citations/Entry 生成最小 coverage，并以账本中可验证的未满足维度生成 gaps，不能默认“完整、无缺口”。
+
+移动端取消错误使用 `{ runId, message }` 绑定，只有活动 Run 的 id 相同才显示；切换会话、建立草稿或提交新 Run 时清理旧错误。partial、fallback、failed 与 cancelled 共用“重新提问”入口，但每次均创建新的 `client_message_id`，不把正常重新提问误作取消或幂等重放。
+
 ## Risks / Trade-offs
 
 - [轮询增加请求和电量] → 仅前台活动 Run 轮询，终态/后台立即停止，恢复时一次 refetch；后续有真实压力再评估推送或长连接。
@@ -190,6 +198,9 @@ Android 使用 `softwareKeyboardLayoutMode=resize`，由系统调整可用高度
 - [去重错误掩盖真实冲突] → 只合并相同 Entry 或等价内容的重复候选；不同 Entry/Source 的相反主张保留双边 Evidence 名额。
 - [状态判定过严或过松] → 用核心维度、最终有效引用和明确 gaps 的表驱动测试覆盖预算停止、边缘证据、无证据和部分引用失效。
 - [iOS/Android 键盘策略分叉] → 各平台仅保留一个布局负责人，并以原生设备矩阵验收，不用动画或 Web 截图掩盖。
+- [候选失效使预算虚耗] → 配额只按实际写入的 Evidence 计数；拒绝候选后从稳定队列补位，并用硬预算回归测试保证不超限。
+- [模型摘要漏填或夸大覆盖] → coverage/gaps 与最终 citations/可验证缺口建立关联，模型字段仅为候选；去重引用后再统计来源数。
+- [移动端错误跨 Run 泄漏] → 取消错误绑定 runId，并在会话/新 Run 边界清理；组件测试覆盖切换和重新提问。
 - [原型功能丰富导致用户期待写操作] → 正式 UI 不展示未实现按钮，Non-Goals 与空栏目说明保持明确。
 - [citation 新字段与旧数据删除] → 使用 Evidence 创建时快照；已删除对象仍展示快照标题/quote，当前对象跳转不可用时明确说明。
 

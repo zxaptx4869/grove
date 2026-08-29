@@ -13,9 +13,16 @@
 - Android 继续由 `softwareKeyboardLayoutMode=resize` 负责可用高度，删除完整 keyboardHeight padding 与 LayoutAnimation；iOS 通过 KeyboardAvoidingView + Safe Area 避让。消息区底部预留改为动态 Composer/Safe Area 空间（96px + inset），不再保留 154px 固定值。
 - Bottom Sheet 统一使用 Sheet 内 ScrollView；draft 范围保存 projectName；轮询直接拿到终态会覆盖旧 processing Run；取消失败在过程卡持久显示并可重试；partial/fallback/failed/cancelled 均保留重新提问或恢复入口。Jest 已移除 forceExit，并用 fake timer 清理和 QueryClient cancel/clear 修复真实测试句柄。
 
+## 0.1 2026-08-29 审查回归修复
+
+- Evidence 候选仅在 `ledger.add_evidence` 成功后消耗 Query/Entry 配额。不可引用、重复 Source 或等价 quote 被拒绝后，按同一稳定队列继续读取替补候选；定向测试验证前序不可读 Source 不会阻止后续可核验 Source 填满 1 条硬预算。
+- 回答模型的 coverage/gaps 改为 `{ summary, evidence_handles }`。服务端只持久化能关联最终输出 Evidence 的条目；重复 citation handle 去重后才计算来源数。模型漏填核心/完整性评估时，带引用回答安全降为 partial，而非默认 completed。
+- partial、可恢复 fallback、failed、cancelled 均显示重新提问；取消错误绑定原 `runId`，切换会话、新建草稿或提交新 Run 时清理，不能泄漏到后续活动卡。
+- 组件测试清理时先 unmount、再 cancel/clear QueryClient，并等待 409 刷新完成；取消错误测试使用 fake timer 后显式清理。全量 Jest 不再产生 act 警告、不会因未释放句柄延迟退出。
+
 ## 1. 后端自动化验证
 
-- `cd backend && .venv/bin/python -m pytest -W error`：386 项通过（为避免本机单命令 30 秒输出窗口，按测试文件分两批完整执行：197 + 189）。
+- `cd backend && .venv/bin/python -m pytest -W error`：388 项通过。
 - `cd backend && .venv/bin/ruff check app tests`：通过。
 - 覆盖：Entry 硬预算（单轮批量、恢复剩余预算）、逐 Query 审计增量、同范围 no-op、
   最近页优先分页（首页/尾页/相同时间戳/无重复遗漏）、消息页规范化 Runs、
@@ -23,7 +30,7 @@
 
 ## 2. 移动端自动化验证
 
-- `cd mobile && npm test -- --runInBand`：43 个测试通过；Jest 不再配置 `forceExit`，测试 QueryClient 在清理时取消查询并清空 cache，轮询测试使用 fake timer 后显式清理。
+- `cd mobile && npm test -- --runInBand`：45 个测试通过；Jest 不再配置 `forceExit`，无 act 警告或延迟退出。测试 QueryClient 在清理时先卸载组件，再取消查询并清空 cache；轮询和取消错误测试使用 fake timer 后显式清理。
 - `cd mobile && npm run lint`：通过。
 - `cd mobile && npm run typecheck`：通过。
 - `npx expo export --platform ios`：成功（Hermes bundle）。

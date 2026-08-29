@@ -9,6 +9,7 @@ from app.agents.investigation import InvestigationControllerDraft
 from app.agents.knowledge_agent import KnowledgeConflictDraft
 from app.db.session import async_session_factory
 from app.models import (
+    EntrySourceEvidence,
     KnowledgeAgentRun,
     KnowledgeInvestigation,
     KnowledgeInvestigationQuery,
@@ -201,6 +202,8 @@ def _synthesis_agent():
                 conflicts=[],
                 insufficient=False,
                 insufficient_note=None,
+                core_question_answered=True,
+                coverage_complete=True,
             ),
             StageMeta(
                 purpose=purpose or "synthesis",
@@ -774,6 +777,77 @@ async def test_investigation_entry_budget_admits_only_remaining_in_batch(
         assert counts["hits"] == 4
         assert counts["new_entries"] == 4
         assert counts["entries_added"] == 2
+
+
+@pytest.mark.asyncio
+async def test_investigation_invalid_source_candidate_is_replaced_with_next_source(
+    monkeypatch,
+) -> None:
+    """不可引用 Source 不预占 Evidence 配额，稳定队列会读取后续可用候选。"""
+    from app.core.config import get_settings
+
+    async with async_session_factory() as db:
+        user = await create_user(db, "Evidence 补位")
+        workspace = await create_workspace(db, user)
+        project = await create_project(db, workspace, "补位项目")
+        node = await create_child_node(db, project, "施工")
+        unavailable_source, unavailable_attachment = await create_source_attachment(
+            db, workspace, project, title="不可读来源"
+        )
+        valid_source, valid_attachment = await create_source_attachment(
+            db,
+            workspace,
+            project,
+            title="可读来源",
+            text_content="闭水试验通常持续 24 小时。",
+        )
+        entry = await create_entry_with_evidence(
+            db,
+            project,
+            node,
+            unavailable_source,
+            unavailable_attachment,
+            title="闭水试验",
+            quote="闭水试验通常持续 24 小时",
+        )
+        db.add(
+            EntrySourceEvidence(
+                entry_id=entry.id,
+                source_id=valid_source.id,
+                attachment_id=valid_attachment.id,
+                quote="闭水试验通常持续 24 小时",
+            )
+        )
+        await db.flush()
+        _conversation, run = await _investigation_run(db, user, workspace)
+        await db.commit()
+
+        controller, _calls = _controller_sequence(
+            [InvestigationControllerDraft(action=INVESTIGATION_ACTION_SEARCH, queries=["闭水试验"])]
+        )
+        monkeypatch.setattr(
+            "app.services.knowledge_agent.investigation_runner.run_investigation_controller",
+            controller,
+        )
+        monkeypatch.setattr(
+            "app.services.knowledge_agent.investigation_runner.search_confirmed_knowledge",
+            _scripted_search({"闭水试验": [_search_result(entry)]}),
+        )
+        monkeypatch.setattr(
+            "app.services.knowledge_agent.investigation_runner.run_knowledge_answer_agent",
+            _synthesis_agent(),
+        )
+        settings = get_settings()
+        monkeypatch.setattr(settings, "knowledge_agent_investigation_max_evidence", 1)
+
+        await execute_run(db, run)
+        await db.commit()
+        investigation, _rounds, queries = await _load_investigation(db, run.id)
+        assert investigation.citable_evidence_count == 1
+        assert investigation.stop_reason == STOP_REASON_EVIDENCE_BUDGET
+        counts = json.loads(queries[0].result_counts_json)
+        assert counts["unavailable"] == 1
+        assert counts["evidence_added"] == 1
 
 
 @pytest.mark.asyncio

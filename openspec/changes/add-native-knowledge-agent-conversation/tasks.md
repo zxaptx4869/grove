@@ -80,3 +80,10 @@
 - [x] 11.5 修复移动端 answer 状态直通、首次终态轮询归并、取消持久错误与重试、partial/fallback 恢复入口、draft 项目名和四类长 Bottom Sheet 滚动；移除 Jest forceExit 并修复实际 act 警告或未释放 handle。
 - [x] 11.6 按平台收敛键盘避让：Android `resize` 不重复补偿键盘高度，iOS 采用原生避让和安全区，动态替代 154px 空白；为键盘开闭、多行增长、发送、模式切换、前台恢复和状态卡补充组件测试。
 - [x] 11.7 运行后端全量 pytest/ruff、调查/Runner/Evidence/回答状态定向测试，移动端无 forceExit 的全量 Jest/lint/typecheck 与组件/controller/adapter 测试，`git diff --check`、当前 change strict 与全库 strict；更新 validation.md 的真实数量和原生未验证项，完成可验证段落的本地提交，不 archive/push/merge。
+
+## 12. 审查回归修复
+
+- [x] 12.1 将 Evidence 公平配额改为只在实际写入账本后消耗；对不可引用、重复 Source/quote 候选按稳定顺序补位，并补充预算不浪费且不超限的调查/恢复测试。
+- [x] 12.2 对最终 citation 去重，并将终态 coverage/gaps 收敛到可关联最终有效 Evidence 或可验证缺失维度的摘要；补充模型漏填摘要、重复句柄和终态缺口测试。
+- [x] 12.3 为 partial 与可恢复 fallback 提供重新提问入口；将取消错误绑定到 Run 并在会话、新草稿和新 Run 边界清理，补充组件与 controller 测试。
+- [x] 12.4 运行后端定向/全量 pytest 与 ruff、移动端 Jest/lint/typecheck、OpenSpec strict 及 `git diff --check`，更新 validation，完成本地提交但不 archive/push/merge。

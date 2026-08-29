@@ -17,6 +17,7 @@
 - 修复真实调查中首条查询垄断 Evidence 的问题：先汇总各查询候选，再以确定性的全局选择、维度覆盖、单项限额与来源/quote 去重分配硬预算；只读取仍可能被接纳的 Evidence，保留恢复、取消、审计及 Workspace/项目隔离边界。
 - 统一后端 `completed` / `partial` / `insufficient` 回答语义，基于最终有效引用与实际缺口生成终态 coverage/gaps；回答正文直接回答问题，状态、范围、调查预算与过程信息分别交由结构化区域呈现。
 - 修复原生端键盘二次避让、不可滚动的长 Bottom Sheet、draft 项目名称丢失、首次轮询终态未清理活动 Run、取消错误吞没、partial/fallback 缺少恢复入口，以及 Jest `forceExit` 掩盖异步资源泄漏的问题。
+- 修复审查确认的回归边界：不可引用或重复 Evidence 候选不得预占并浪费预算；终态 coverage/gaps 必须能回溯到最终有效 Evidence；同一 Evidence 不得在引用或覆盖统计中重复计数；取消错误仅属于发起取消的 Run，且 partial/fallback 必须可重新提问。
 - 按现有移动 Agent 原型实现正式原生组件，并记录本次只读能力对原型中未来写操作、静态业务状态与引用布局的有意裁剪。
 
 ### Non-Goals
