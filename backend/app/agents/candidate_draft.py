@@ -21,6 +21,7 @@ from app.services.knowledge_agent.observability import StageMeta
 logger = logging.getLogger(__name__)
 
 CANDIDATE_DRAFT_PROMPT_VERSION = "v1"
+MAX_DRAFT_CONTENT_CHARS = 8000
 
 
 class CandidateDraftOutput(BaseModel):
@@ -82,6 +83,18 @@ def _format_context(
     return "\n".join(parts)
 
 
+def _clip_draft_text(text: str, limit: int = MAX_DRAFT_CONTENT_CHARS) -> str:
+    """确定性截断草稿正文：优先在换行处截断，保证不超过 schema 上限。"""
+    stripped = text.strip()
+    if len(stripped) <= limit:
+        return stripped
+    cut = stripped[:limit]
+    newline = cut.rfind("\n")
+    if newline >= limit // 2:
+        cut = cut[:newline]
+    return cut.rstrip()
+
+
 def seed_draft_from_answer(
     *,
     question: str,
@@ -92,7 +105,7 @@ def seed_draft_from_answer(
     title = (original_answer.strip().splitlines() or [""])[0][:50] or "整理知识草稿"
     return CandidateDraftOutput(
         title=title,
-        content=original_answer.strip() or "（原回答为空，请编辑后确认）",
+        content=_clip_draft_text(original_answer) or "（原回答为空，请编辑后确认）",
         main_type="knowledge",
         info_nature=None,
         selected_evidence_handles=list(handles),

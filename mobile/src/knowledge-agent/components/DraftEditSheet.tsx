@@ -14,17 +14,13 @@ import { SafeAreaView, useSafeAreaInsets } from "react-native-safe-area-context"
 
 import { AgentIcon } from "@/src/knowledge-agent/components/AgentIcon";
 import { AppButton } from "@/src/knowledge-agent/components/ui";
+import {
+  DRAFT_MAIN_TYPES,
+  DRAFT_MAIN_TYPE_LABELS,
+} from "@/src/knowledge-agent/draftTypes";
 import { useKeyboardHeight } from "@/src/knowledge-agent/hooks/useKeyboardHeight";
 import type { KnowledgeCandidateDraft } from "@/src/knowledge-agent/types";
 import { theme } from "@/src/theme";
-
-const MAIN_TYPES = ["knowledge", "method", "parameter", "reminder"] as const;
-const MAIN_TYPE_LABELS: Record<string, string> = {
-  knowledge: "知识",
-  method: "方法",
-  parameter: "参数",
-  reminder: "提醒",
-};
 
 /** 可滚动编辑 Sheet：长标题/正文、多行键盘、类型选择与保存。 */
 export function DraftEditSheet({
@@ -144,14 +140,14 @@ function EditForm({
         />
         <Text style={[styles.fieldLabel, styles.fieldGap]}>类型建议</Text>
         <View style={styles.typeRow}>
-          {MAIN_TYPES.map((type) => {
+          {DRAFT_MAIN_TYPES.map((type) => {
             const selected = mainType === type;
             return (
               <Pressable
                 key={type}
                 accessibilityRole="radio"
                 accessibilityState={{ checked: selected }}
-                accessibilityLabel={`类型：${MAIN_TYPE_LABELS[type]}`}
+                accessibilityLabel={`类型：${DRAFT_MAIN_TYPE_LABELS[type]}`}
                 onPress={() => setMainType(type)}
                 style={({ pressed }) => [
                   styles.typeChip,
@@ -165,7 +161,7 @@ function EditForm({
                     selected && styles.typeChipTextActive,
                   ]}
                 >
-                  {MAIN_TYPE_LABELS[type]}
+                  {DRAFT_MAIN_TYPE_LABELS[type]}
                 </Text>
               </Pressable>
             );

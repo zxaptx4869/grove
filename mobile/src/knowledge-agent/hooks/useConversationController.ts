@@ -94,6 +94,7 @@ export interface ConversationController {
     draftId: number,
     fields: KnowledgeDraftEditRequest,
   ) => Promise<boolean>;
+  clearDraftEditError: () => void;
   draftEditBusy: boolean;
   draftEditError: string | null;
   confirmDraft: (draftId: number) => Promise<boolean>;
@@ -587,6 +588,10 @@ export function useConversationController(
     [token, draftEditBusy],
   );
 
+  const clearDraftEditError = useCallback(() => {
+    setDraftEditError(null);
+  }, []);
+
   const confirmDraft = useCallback(
     async (draftId: number): Promise<boolean> => {
       if (!token || confirmingDraftId !== null) return false;
@@ -627,8 +632,20 @@ export function useConversationController(
           // 结果未知：保留幂等键，提供重试
           setDraftConfirmError(classified.message);
         } else {
+          // 409/404 等确定性拒绝：清键并刷新，以服务端 Draft/Candidate 为权威
           pendingConfirmsRef.current.delete(draftId);
           setDraftConfirmError(classified.message);
+          if (selectedConversationId !== null) {
+            void queryClient.invalidateQueries({
+              queryKey: knowledgeAgentKeys.messages(selectedConversationId),
+            });
+            void queryClient.invalidateQueries({
+              queryKey: knowledgeAgentKeys.conversation(selectedConversationId),
+            });
+            void queryClient.invalidateQueries({
+              queryKey: knowledgeAgentKeys.conversations(),
+            });
+          }
         }
         return false;
       }
@@ -858,6 +875,7 @@ export function useConversationController(
     draftActionError,
     retryDraftAction,
     editDraft,
+    clearDraftEditError,
     draftEditBusy,
     draftEditError,
     confirmDraft,

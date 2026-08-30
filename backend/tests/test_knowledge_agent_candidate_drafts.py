@@ -1507,3 +1507,108 @@ async def test_draft_operation_does_not_advance_working_set() -> None:
             .all()
         )
         assert versions == []
+
+
+@pytest.mark.asyncio
+async def test_confirm_same_operation_key_on_other_draft_conflicts() -> None:
+    """同一对话内把确认幂等键复用到另一草稿：稳定 409，不产生 500 或重复对象。"""
+    from fastapi import HTTPException
+
+    async with async_session_factory() as db:
+        user = await create_user(db, "同键")
+        workspace = await create_workspace(db, user)
+        workspace_id = workspace.id
+        project = await create_project(db, workspace, "同键项目")
+        conversation, source_run, _entry, _source, _attachment, evidence = (
+            await _answer_run_with_evidence(db, user, workspace, project)
+        )
+        _m1, run1, draft1 = await submit_draft_candidate(
+            db,
+            conversation,
+            _draft_action(source_run_id=source_run.id, client_message_id="dup-a"),
+        )
+        await db.commit()
+        await execute_draft_candidate_run(db, run1)
+        await db.commit()
+        _m2, run2, draft2 = await submit_draft_candidate(
+            db,
+            conversation,
+            _draft_action(source_run_id=source_run.id, client_message_id="dup-b"),
+        )
+        await db.commit()
+        await execute_draft_candidate_run(db, run2)
+        await db.commit()
+        for draft in (draft1, draft2):
+            draft.title = "标题"
+            draft.content = "内容"
+            draft.status = DRAFT_DRAFT
+            draft.evidence_handles_json = __import__("json").dumps([evidence.handle])
+        await db.commit()
+
+        key = "same-key-across-drafts"
+        confirmed, candidate = await confirm_draft(db, draft1, key)
+        await db.commit()
+        assert confirmed.status == DRAFT_CONFIRMED
+        with pytest.raises(HTTPException) as exc_info:
+            await confirm_draft(db, draft2, key)
+        assert exc_info.value.status_code == 409
+        await db.rollback()
+    # 409 分支在服务内回滚会过期本会话对象：用独立会话核对不产生重复对象
+    async with async_session_factory() as check_db:
+        sources = (
+            (
+                await check_db.execute(
+                    select(Source).where(Source.workspace_id == workspace_id)
+                )
+            )
+            .scalars()
+            .all()
+        )
+        assert len(sources) == 2  # 原始回答来源 + 唯一虚拟来源
+
+
+def test_seed_draft_truncates_overlong_answer() -> None:
+    """超长原回答的 seed 草稿不超过内容上限，不再抛校验异常。"""
+    from app.agents.candidate_draft import (
+        MAX_DRAFT_CONTENT_CHARS,
+        seed_draft_from_answer,
+    )
+
+    overlong = "长" * (MAX_DRAFT_CONTENT_CHARS + 500)
+    seed = seed_draft_from_answer(
+        question="问题",
+        original_answer=overlong,
+        handles=["ev_1"],
+    )
+    assert len(seed.content) <= MAX_DRAFT_CONTENT_CHARS
+    assert seed.selected_evidence_handles == ["ev_1"]
+
+
+@pytest.mark.asyncio
+async def test_failed_draft_run_exposes_fallback_summary() -> None:
+    """草稿失败路径在 Run 上聚合可识别的降级阶段，不伪装正常。"""
+    async with async_session_factory() as db:
+        user = await create_user(db, "失败可观测")
+        workspace = await create_workspace(db, user)
+        project = await create_project(db, workspace, "失败项目")
+        conversation, source_run, _entry, _source, attachment, _evidence = (
+            await _answer_run_with_evidence(db, user, workspace, project)
+        )
+        message, run, draft = await submit_draft_candidate(
+            db,
+            conversation,
+            _draft_action(source_run_id=source_run.id),
+        )
+        # 让证据失效，走失败路径（模型不可用时本应走 seed 成功路径）
+        attachment.text_content = "证据已失效，指纹不再匹配。"
+        await db.commit()
+        await execute_draft_candidate_run(db, run)
+        await db.commit()
+        await db.refresh(run)
+        await db.refresh(draft)
+        assert run.status == RUN_FAILED
+        assert run.fallback_summary is not None
+        summary = __import__("json").loads(run.fallback_summary)
+        assert summary["has_fallback"] is True
+        assert summary["stages"][0]["is_fallback"] is True
+        assert "purpose" in summary["stages"][0]

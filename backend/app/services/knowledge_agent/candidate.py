@@ -81,7 +81,9 @@ from app.services.knowledge_agent.evidence import (
     locate_verified_quote,
 )
 from app.services.knowledge_agent.observability import (
+    next_tool_sequence,
     record_model_invocation,
+    record_tool_call,
     run_fallback_summary,
 )
 from app.services.knowledge_agent.runner import RunCancelled
@@ -398,7 +400,7 @@ async def submit_draft_candidate(
     source_run, answer = await get_source_run_for_draft(
         db, conversation, payload.source_run_id
     )
-    projects, _fixed = await available_target_projects(db, source_run, answer)
+    projects, _ = await available_target_projects(db, source_run, answer)
     project_ids = {project.id for project in projects}
 
     if conversation.scope_type == SCOPE_PROJECT:
@@ -711,6 +713,22 @@ async def _fail_draft_run(
         run.current_step = None
         run.active_slot = None
         run.error = error
+        # 失败阶段可观测：不依赖是否已产生模型调用，明确标记受影响阶段
+        run.fallback_summary = json.dumps(
+            {
+                "has_fallback": True,
+                "stages": [
+                    {
+                        "purpose": "draft_candidate",
+                        "is_fallback": True,
+                        "provider": None,
+                        "model": None,
+                        "error": error,
+                    }
+                ],
+            },
+            ensure_ascii=False,
+        )
     if draft.status not in DRAFT_TERMINAL_STATUSES:
         draft.status = DRAFT_FAILED
         draft.error = error
@@ -911,6 +929,8 @@ async def confirm_draft(
     并发：状态过渡 UPDATE 加唯一约束保证最多创建一个 Candidate；
     Evidence 失效返回 409，Draft 保持可编辑状态，不用历史快照写入。
     """
+    # 回滚会过期会话内对象：提前固化主键，恢复路径用本地值避免同步重载
+    draft_id = draft.id
     if draft.status == DRAFT_CONFIRMED and draft.confirmed_candidate_id is not None:
         candidate = await db.get(Candidate, draft.confirmed_candidate_id)
         if candidate is not None:
@@ -926,23 +946,40 @@ async def confirm_draft(
             detail="草稿标题或内容为空，无法确认",
         )
 
-    locked = (
-        await db.execute(
-            update(KnowledgeCandidateDraft)
-            .where(
-                KnowledgeCandidateDraft.id == draft.id,
-                KnowledgeCandidateDraft.status == DRAFT_DRAFT,
-                KnowledgeCandidateDraft.confirmed_candidate_id.is_(None),
+    try:
+        locked = (
+            await db.execute(
+                update(KnowledgeCandidateDraft)
+                .where(
+                    KnowledgeCandidateDraft.id == draft_id,
+                    KnowledgeCandidateDraft.status == DRAFT_DRAFT,
+                    KnowledgeCandidateDraft.confirmed_candidate_id.is_(None),
+                )
+                .values(
+                    status="confirming",
+                    client_operation_id=client_operation_id,
+                )
             )
-            .values(
-                status="confirming",
-                client_operation_id=client_operation_id,
-            )
-        )
-    ).rowcount
+        ).rowcount
+    except IntegrityError as exc:
+        # 同一对话内幂等键已被其他草稿占用：稳定冲突而非 500
+        await db.rollback()
+        fresh = await db.get(KnowledgeCandidateDraft, draft_id)
+        if (
+            fresh is not None
+            and fresh.status == DRAFT_CONFIRMED
+            and fresh.confirmed_candidate_id is not None
+        ):
+            candidate = await db.get(Candidate, fresh.confirmed_candidate_id)
+            if candidate is not None:
+                return fresh, candidate
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="确认请求冲突，请刷新后重试",
+        ) from exc
     if locked != 1:
         await db.rollback()
-        fresh = await db.get(KnowledgeCandidateDraft, draft.id)
+        fresh = await db.get(KnowledgeCandidateDraft, draft_id)
         if (
             fresh is not None
             and fresh.status == DRAFT_CONFIRMED
@@ -962,7 +999,7 @@ async def confirm_draft(
         # 只恢复本 Draft 的状态，不整会话回滚（避免过期其他已加载对象）
         await db.execute(
             update(KnowledgeCandidateDraft)
-            .where(KnowledgeCandidateDraft.id == draft.id)
+            .where(KnowledgeCandidateDraft.id == draft_id)
             .values(status=DRAFT_DRAFT, client_operation_id=None)
         )
         await db.flush()
@@ -977,7 +1014,7 @@ async def confirm_draft(
     if source_run is None:
         await db.execute(
             update(KnowledgeCandidateDraft)
-            .where(KnowledgeCandidateDraft.id == draft.id)
+            .where(KnowledgeCandidateDraft.id == draft_id)
             .values(status=DRAFT_DRAFT, client_operation_id=None)
         )
         await db.flush()
@@ -1025,7 +1062,7 @@ async def confirm_draft(
         await db.commit()
     except IntegrityError as exc:
         await db.rollback()
-        fresh = await db.get(KnowledgeCandidateDraft, draft.id)
+        fresh = await db.get(KnowledgeCandidateDraft, draft_id)
         if (
             fresh is not None
             and fresh.status == DRAFT_CONFIRMED
@@ -1041,12 +1078,39 @@ async def confirm_draft(
 
     # Candidate 已创建：目录推荐/关系判断失败不影响待确认 Candidate，
     # 只暴露真实 pending 或失败状态，不把辅助阶段伪装为正常。
+    route_ok = True
     try:
         await route_source(db, candidate.source_id)
         await route_relations(db, candidate.source_id)
         await db.commit()
     except Exception as exc:  # noqa: BLE001
         await db.rollback()
+        route_ok = False
         logger.warning("候选确认后路由/关系判断失败，Candidate 保持待确认：%s", exc)
+    try:
+        sequence = await next_tool_sequence(db, draft.operation_run_id)
+        await record_tool_call(
+            db,
+            run_id=draft.operation_run_id,
+            sequence=sequence,
+            tool_name="draft_confirm_route",
+            status="ok" if route_ok else "error",
+            params_summary=json.dumps(
+                {"candidate_id": candidate.id}, ensure_ascii=False
+            ),
+            result_summary=json.dumps(
+                {
+                    "routing_status": candidate.routing_status,
+                    "relation_status": candidate.relation_status,
+                },
+                ensure_ascii=False,
+            ),
+            error=None if route_ok else "目录推荐/关系判断失败，Candidate 保持待确认",
+            duration_ms=0,
+        )
+        await db.commit()
+    except Exception as exc:  # noqa: BLE001
+        # 可观测记录失败不影响已创建的待确认 Candidate
+        logger.warning("候选确认路由可观测记录失败：%s", exc)
     await db.refresh(draft)
     return draft, candidate

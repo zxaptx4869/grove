@@ -2,6 +2,7 @@ import { Pressable, StyleSheet, Text, View } from "react-native";
 
 import { AgentIcon } from "@/src/knowledge-agent/components/AgentIcon";
 import { AppButton, Badge, Card, CardBody, Eyebrow } from "@/src/knowledge-agent/components/ui";
+import { draftMainTypeLabel } from "@/src/knowledge-agent/draftTypes";
 import type {
   KnowledgeCandidateDraft,
   KnowledgeRun,
@@ -98,7 +99,9 @@ export function DraftCard({
         {draft.mainType !== null && (
           <View style={styles.metaRow}>
             <AgentIcon name="book" size={14} color={theme.muted} />
-            <Text style={styles.metaText}>类型建议：{draft.mainType}</Text>
+            <Text style={styles.metaText}>
+              类型建议：{draftMainTypeLabel(draft.mainType)}
+            </Text>
           </View>
         )}
         {draft.generationDegraded && (
@@ -120,7 +123,12 @@ export function DraftCard({
             disabled={confirming}
             onPress={onConfirm}
           />
-          <AppButton label="取消" variant="ghost" onPress={onCancel} />
+          <AppButton
+            label="取消"
+            variant="ghost"
+            disabled={confirming}
+            onPress={onCancel}
+          />
         </View>
       </CardBody>
     </Card>
@@ -188,11 +196,9 @@ export function DraftReceiptCard({
 export function DraftFailedCard({
   draft,
   onRetry,
-  onCancel,
 }: {
   draft: KnowledgeCandidateDraft;
   onRetry: () => void;
-  onCancel: () => void;
 }) {
   if (draft.status === "cancelled") {
     return (
@@ -234,7 +240,6 @@ export function DraftFailedCard({
         </Text>
         <View style={styles.actions}>
           <AppButton label="重新整理" variant="primary" onPress={onRetry} />
-          <AppButton label="取消" variant="ghost" onPress={onCancel} />
         </View>
       </CardBody>
     </Card>

@@ -302,7 +302,10 @@ export function ConversationScreen() {
                 onCitationPress={setCitation}
                 draft={controller.draftByRunId(message.runId ?? -1)}
                 confirmingDraftId={controller.confirmingDraftId}
-                onEditDraft={setEditDraftId}
+                onEditDraft={(draftId) => {
+                  controller.clearDraftEditError();
+                  setEditDraftId(draftId);
+                }}
                 onConfirmDraft={setConfirmDraftId}
                 onCancelDraft={(draftId) => void controller.cancelDraft(draftId)}
                 onRetryDraft={(sourceRunId, targetProjectId) =>
@@ -604,7 +607,6 @@ function ThreadMessage({
                 onRetryDraft(draft.sourceRunId, draft.targetProjectId);
               }
             }}
-            onCancel={() => onCancelDraft(draft.id)}
           />
         </View>
       );

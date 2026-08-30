@@ -613,7 +613,7 @@ test("草稿卡使用 AI 建议语义并展示目标项目与来源摘要", asyn
   expect(view.getByText("卫生间防水施工与验收要点")).toBeOnTheScreen();
   expect(view.getByText(/目标项目：新房装修/)).toBeOnTheScreen();
   expect(view.getByText(/1 条核验证据/)).toBeOnTheScreen();
-  expect(view.getByText("类型建议：knowledge")).toBeOnTheScreen();
+  expect(view.getByText("类型建议：知识")).toBeOnTheScreen();
   await fireEvent.press(view.getByText("编辑并检查"));
   expect(onEdit).toHaveBeenCalled();
   await fireEvent.press(view.getByText("创建待确认知识"));
@@ -636,6 +636,22 @@ test("降级草稿显示明确降级说明", async () => {
     { wrapper },
   );
   expect(view.getByText(/草稿生成已降级/)).toBeOnTheScreen();
+});
+
+test("确认中草稿卡禁用取消，避免取消与确认竞态", async () => {
+  const onCancel = jest.fn();
+  const view = await render(
+    <DraftCard
+      draft={draftFixture()}
+      confirming
+      onEdit={jest.fn()}
+      onConfirm={jest.fn()}
+      onCancel={onCancel}
+    />,
+    { wrapper },
+  );
+  await fireEvent.press(view.getByText("取消"));
+  expect(onCancel).not.toHaveBeenCalled();
 });
 
 test("生成过程卡只展示可验证阶段并可取消", async () => {
@@ -676,13 +692,13 @@ test("失败草稿保留错误与重试入口", async () => {
     <DraftFailedCard
       draft={draftFixture({ status: "failed", error: "证据当前无法重新核验" })}
       onRetry={onRetry}
-      onCancel={jest.fn()}
     />,
     { wrapper },
   );
   expect(view.getByText(/证据当前无法重新核验/)).toBeOnTheScreen();
   await fireEvent.press(view.getByText("重新整理"));
   expect(onRetry).toHaveBeenCalled();
+  expect(view.queryByText("取消")).toBeNull();
 });
 
 test("目标项目 Sheet 只列出项目，不展示目录节点", async () => {
