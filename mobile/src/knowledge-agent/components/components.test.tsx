@@ -17,13 +17,26 @@ import { DraftConfirmSheet } from "@/src/knowledge-agent/components/DraftConfirm
 import { DraftEditSheet } from "@/src/knowledge-agent/components/DraftEditSheet";
 import { HistorySheet } from "@/src/knowledge-agent/components/HistorySheet";
 import { ProcessCard } from "@/src/knowledge-agent/components/ProcessCard";
+import { RevisionConfirmSheet } from "@/src/knowledge-agent/components/RevisionConfirmSheet";
+import { RevisionDiffScreen } from "@/src/knowledge-agent/components/RevisionDiffScreen";
+import {
+  RevisionDraftCard,
+  RevisionDraftFailedCard,
+  RevisionProcessCard,
+  RevisionReceiptCard,
+} from "@/src/knowledge-agent/components/RevisionDraftCard";
+import { RevisionEditSheet } from "@/src/knowledge-agent/components/RevisionEditSheet";
+import { RevisionInstructionSheet } from "@/src/knowledge-agent/components/RevisionInstructionSheet";
+import { RevisionUndoSheet } from "@/src/knowledge-agent/components/RevisionUndoSheet";
 import { TargetProjectSheet } from "@/src/knowledge-agent/components/TargetProjectSheet";
+import type { RevisionTarget } from "@/src/knowledge-agent/adapters/answer";
 import { DEFAULT_MODES } from "@/src/knowledge-agent/state/modes";
 import type {
   KnowledgeAnswer,
   KnowledgeCandidateDraft,
   KnowledgeConflict,
   KnowledgeConversation,
+  KnowledgeEntryRevisionDraft,
   KnowledgeRun,
   KnowledgeRunCitation,
 } from "@/src/knowledge-agent/types";
@@ -222,6 +235,52 @@ function draftFixture(
     confirmedCandidateId: null,
     routingStatus: null,
     relationStatus: null,
+    error: null,
+    createdAt: "2026-08-29T10:00:00Z",
+    updatedAt: "2026-08-29T10:00:00Z",
+    ...overrides,
+  };
+}
+
+function revisionDraftFixture(
+  overrides: Partial<KnowledgeEntryRevisionDraft> = {},
+): KnowledgeEntryRevisionDraft {
+  return {
+    id: 30,
+    conversationId: 1,
+    operationRunId: 40,
+    sourceRunId: 5,
+    targetEntryId: 1,
+    targetProjectId: 1,
+    targetProjectName: "新房装修",
+    instruction: "补充适用条件",
+    status: "draft",
+    title: "闭水试验完成后再验收防水层（含适用条件）",
+    content: "闭水试验应持续观察水位与楼下顶面。",
+    mainType: "method",
+    infoNature: "advice",
+    applicableCondition: "材料说明未覆盖时按现场条件确认",
+    note: null,
+    changeSummary: "补充适用条件与观察要求",
+    reason: "依据防水验收记录原文",
+    selectedEvidenceHandles: ["ev_1"],
+    evidenceSummaries: [
+      {
+        handle: "ev_1",
+        entryId: 1,
+        entryTitle: "闭水试验",
+        sourceId: 1,
+        sourceTitle: "防水验收记录.md",
+        quote: "闭水期间应持续观察水位变化",
+      },
+    ],
+    changedFields: [
+      { field: "content", label: "核心内容", before: "旧内容", after: "新内容" },
+      { field: "applicable_condition", label: "适用条件", before: null, after: "按现场条件" },
+    ],
+    generationDegraded: false,
+    generationError: null,
+    execution: null,
     error: null,
     createdAt: "2026-08-29T10:00:00Z",
     updatedAt: "2026-08-29T10:00:00Z",
@@ -530,6 +589,17 @@ test("引用 Sheet 分区展示 Entry、项目/目录、Source 原文快照", as
         sourceTitle: "验收记录.md",
         quote: "闭水期间应持续观察水位变化",
       })}
+      revisionTargets={[
+        {
+          entryId: 3,
+          entryTitle: "闭水试验时长",
+          projectId: 1,
+          projectName: "新房装修",
+          nodePath: "施工 / 防水",
+        },
+      ]}
+      sourceRunId={9}
+      onRevise={jest.fn()}
       onClose={onClose}
     />,
   );
@@ -539,6 +609,7 @@ test("引用 Sheet 分区展示 Entry、项目/目录、Source 原文快照", as
   expect(view.getByText(/“闭水期间应持续观察水位变化”/)).toBeOnTheScreen();
   expect(view.getByText(/Source：验收记录\.md/)).toBeOnTheScreen();
   expect(view.getByText("查看当前知识（暂不可用）")).toBeOnTheScreen();
+  expect(view.getByText("修订这条知识")).toBeOnTheScreen();
   await fireEvent.press(view.getAllByLabelText("关闭")[0]);
   expect(onClose).toHaveBeenCalled();
 });
@@ -880,4 +951,246 @@ test("编辑 Sheet 可编辑标题、正文与类型并保存", async () => {
   await fireEvent.press(view.getByLabelText("类型：方法"));
   await fireEvent.press(view.getByText("保存编辑"));
   expect(onSave).toHaveBeenCalledWith("新标题", "新内容", "method");
+});
+
+test("修订草稿卡区分 AI 建议语义并展示目标、变化字段与来源数量", async () => {
+  const onEdit = jest.fn();
+  const view = await render(
+    <RevisionDraftCard
+      draft={revisionDraftFixture()}
+      confirming={false}
+      onEdit={onEdit}
+      onConfirm={jest.fn()}
+      onCancel={jest.fn()}
+    />,
+    { wrapper },
+  );
+  expect(view.getByText("可编辑知识草稿")).toBeOnTheScreen();
+  expect(view.getByText("AI 建议 · 待确认")).toBeOnTheScreen();
+  expect(view.getByText(/变化字段：2 项/)).toBeOnTheScreen();
+  expect(view.getByText(/1 条核验证据/)).toBeOnTheScreen();
+  // 不出现 Candidate 回执语义
+  expect(view.queryByText("已创建待确认知识")).toBeNull();
+  await fireEvent.press(view.getByText("编辑并检查"));
+  expect(onEdit).toHaveBeenCalled();
+});
+
+test("修订草稿生成过程卡可取消且不宣称已修改", async () => {
+  const onCancel = jest.fn();
+  const view = await render(
+    <RevisionProcessCard
+      run={run(40, "processing", null, { runKind: "entry_revision" })}
+      cancelling={false}
+      onCancel={onCancel}
+    />,
+    { wrapper },
+  );
+  expect(view.getByText("正在生成修订草稿")).toBeOnTheScreen();
+  expect(view.getByText(/确认前不会修改正式知识/)).toBeOnTheScreen();
+  await fireEvent.press(view.getByLabelText("取消修订"));
+  expect(onCancel).toHaveBeenCalled();
+});
+
+test("applied 回执展示正式知识已更新、版本与撤销；undone 收敛为已撤销", async () => {
+  const onUndo = jest.fn();
+  const appliedView = await render(
+    <RevisionReceiptCard
+      draft={revisionDraftFixture({
+        status: "applied",
+        execution: {
+          id: 9,
+          draftId: 30,
+          entryId: 1,
+          status: "applied",
+          beforeVersionNumber: 1,
+          afterVersionNumber: 2,
+          addedEvidenceCount: 1,
+          error: null,
+          undoneAt: null,
+          createdAt: "2026-08-29T10:00:00Z",
+          updatedAt: "2026-08-29T10:00:00Z",
+        },
+      })}
+      undoing={false}
+      undoError={null}
+      onViewDiff={jest.fn()}
+      onUndo={onUndo}
+      onRetryUndo={jest.fn()}
+    />,
+    { wrapper },
+  );
+  expect(appliedView.getByText("正式知识已更新")).toBeOnTheScreen();
+  expect(appliedView.getByText(/已更新至版本 2/)).toBeOnTheScreen();
+  await fireEvent.press(appliedView.getByText("撤销"));
+  expect(onUndo).toHaveBeenCalled();
+
+  const undoneView = await render(
+    <RevisionReceiptCard
+      draft={revisionDraftFixture({
+        status: "undone",
+        execution: {
+          id: 9,
+          draftId: 30,
+          entryId: 1,
+          status: "undone",
+          beforeVersionNumber: 1,
+          afterVersionNumber: 2,
+          addedEvidenceCount: 1,
+          error: null,
+          undoneAt: "2026-08-29T10:01:00Z",
+          createdAt: "2026-08-29T10:00:00Z",
+          updatedAt: "2026-08-29T10:01:00Z",
+        },
+      })}
+      undoing={false}
+      undoError={null}
+      onViewDiff={jest.fn()}
+      onUndo={jest.fn()}
+      onRetryUndo={jest.fn()}
+    />,
+    { wrapper },
+  );
+  expect(undoneView.getByText("操作已撤销 · 审计记录保留")).toBeOnTheScreen();
+  expect(undoneView.getByText("查看恢复结果")).toBeOnTheScreen();
+  expect(undoneView.queryByText("撤销")).toBeNull();
+});
+
+test("修订失败卡保留错误与重新修订入口，取消卡不再提供重试", async () => {
+  const onRetry = jest.fn();
+  const failedView = await render(
+    <RevisionDraftFailedCard
+      draft={revisionDraftFixture({ status: "failed", error: "模型不可用" })}
+      onRetry={onRetry}
+    />,
+    { wrapper },
+  );
+  expect(failedView.getByText("模型不可用")).toBeOnTheScreen();
+  await fireEvent.press(failedView.getByText("重新修订"));
+  expect(onRetry).toHaveBeenCalled();
+
+  const cancelledView = await render(
+    <RevisionDraftFailedCard
+      draft={revisionDraftFixture({ status: "cancelled" })}
+      onRetry={jest.fn()}
+    />,
+    { wrapper },
+  );
+  expect(cancelledView.getByText("已取消修订")).toBeOnTheScreen();
+  expect(cancelledView.queryByText("重新修订")).toBeNull();
+});
+
+test("修订指令 Sheet 空指令禁用提交，展示目标与后果", async () => {
+  const onSubmit = jest.fn();
+  const target: RevisionTarget = {
+    entryId: 1,
+    entryTitle: "闭水试验完成后再验收防水层",
+    projectId: 1,
+    projectName: "新房装修",
+    nodePath: "施工 / 防水",
+  };
+  const view = await render(
+    <RevisionInstructionSheet
+      visible
+      target={target}
+      sourceRunId={5}
+      submitting={false}
+      error={null}
+      onSubmit={onSubmit}
+      onClose={jest.fn()}
+    />,
+    { wrapper },
+  );
+  expect(view.getByText("闭水试验完成后再验收防水层")).toBeOnTheScreen();
+  expect(view.getByText(/确认前不会写入/)).toBeOnTheScreen();
+  const submit = view.getByLabelText("提交修订");
+  expect(submit.props.accessibilityState?.disabled).toBe(true);
+  await fireEvent.changeText(view.getByLabelText("修订要求"), "补充适用条件");
+  await fireEvent.press(view.getByLabelText("提交修订"));
+  expect(onSubmit).toHaveBeenCalledWith(5, 1, "补充适用条件");
+});
+
+test("修订确认 Sheet 明确更新 1 条正式知识，确认中禁用主按钮", async () => {
+  const onConfirm = jest.fn();
+  const view = await render(
+    <RevisionConfirmSheet
+      visible
+      draft={revisionDraftFixture()}
+      confirming
+      error={null}
+      onConfirm={onConfirm}
+      onClose={jest.fn()}
+    />,
+    { wrapper },
+  );
+  expect(view.getByText(/将更新 1 条正式知识并追加版本/)).toBeOnTheScreen();
+  await fireEvent.press(view.getByText("确认中…"));
+  expect(onConfirm).not.toHaveBeenCalled();
+});
+
+test("撤销 Sheet 二次确认，冲突时禁用撤销并展示原因", async () => {
+  const onUndo = jest.fn();
+  const view = await render(
+    <RevisionUndoSheet
+      visible
+      draft={revisionDraftFixture({ status: "applied" })}
+      undoing={false}
+      error="知识后来发生了变化，不能自动撤销"
+      onUndo={onUndo}
+      onClose={jest.fn()}
+    />,
+    { wrapper },
+  );
+  expect(view.getByText("恢复操作前状态")).toBeOnTheScreen();
+  expect(view.getByText(/审计记录不会删除/)).toBeOnTheScreen();
+  expect(view.getByText(/知识后来发生了变化/)).toBeOnTheScreen();
+  await fireEvent.press(view.getByText("撤销操作"));
+  expect(onUndo).not.toHaveBeenCalled();
+});
+
+test("全屏差异审阅按字段展示原内容/建议内容并可确认", async () => {
+  const onConfirm = jest.fn();
+  const view = await render(
+    <RevisionDiffScreen
+      visible
+      draft={revisionDraftFixture()}
+      onConfirm={onConfirm}
+      onClose={jest.fn()}
+    />,
+    { wrapper },
+  );
+  expect(view.getByText("审阅完整差异")).toBeOnTheScreen();
+  expect(view.getByText("核心内容")).toBeOnTheScreen();
+  expect(view.getByText("旧内容")).toBeOnTheScreen();
+  expect(view.getByText("新内容")).toBeOnTheScreen();
+  expect(view.getByText("防水验收记录.md")).toBeOnTheScreen();
+  await fireEvent.press(view.getByText("确认修改"));
+  expect(onConfirm).toHaveBeenCalled();
+});
+
+test("修订编辑 Sheet 可编辑长正文与变更摘要并保存", async () => {
+  const onSave = jest.fn();
+  const view = await render(
+    <RevisionEditSheet
+      visible
+      draft={revisionDraftFixture()}
+      saving={false}
+      error={null}
+      onSave={onSave}
+      onClose={jest.fn()}
+    />,
+    { wrapper },
+  );
+  const titleInput = view.getByLabelText("修订后标题");
+  const contentInput = view.getByLabelText("修订后核心内容");
+  await fireEvent.changeText(titleInput, "修订后标题");
+  await fireEvent.changeText(contentInput, "修订后正文");
+  await fireEvent.changeText(view.getByLabelText("变更摘要"), "修订摘要");
+  await fireEvent.press(view.getByText("保存编辑"));
+  expect(onSave).toHaveBeenCalledWith(
+    expect.objectContaining({
+      title: "修订后标题",
+      content: "修订后正文",
+      changeSummary: "修订摘要",
+    }),
+  );
 });

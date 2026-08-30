@@ -75,14 +75,14 @@
 
 ## 9. 原生修订界面与原型对齐
 
-- [ ] 9.1 在当前有效 Citation Sheet 中增加 target 明确的“修订这条知识”，失效快照/非 Entry/不可写状态隐藏或禁用；保留引用阅读主流程
-- [ ] 9.2 实现可滚动 Revision Instruction Sheet：Entry 标题、项目/目录、当前摘要、非空指令、提交/关闭、键盘与焦点恢复
-- [ ] 9.3 实现 Revision Draft Card 与编辑 Sheet：AI 建议语义、目标、变更字段、来源、长字段编辑、生成/失败/取消状态
-- [ ] 9.4 实现单 Entry 全屏差异审阅：按字段展示原值/候选值、未变字段收敛、来源可达、返回状态与长内容滚动
-- [ ] 9.5 实现确认 Sheet、执行中状态与 applied 回执：更新 1 条正式知识、版本、来源增量、查看 Entry/差异和撤销边界
-- [ ] 9.6 实现撤销二次确认、undoing、undone、后续版本冲突和失败重试；不得出现多 Entry 合并/冲突保留/重复标记文案
-- [ ] 9.7 补组件测试：Candidate 与 Revision 文案区分、44×44 触控、accessibility label、Sheet/Overlay 关闭、长内容滚动、键盘布局和各错误终态
-- [ ] 9.8 运行移动端全量 Jest（不得 `--forceExit`）、lint、typecheck 与 iOS/Android Expo export，完成本地提交 `feat: 实现原生端单条知识修订体验`
+- [x] 9.1 在当前有效 Citation Sheet 中增加 target 明确的“修订这条知识”，失效快照/非 Entry/不可写状态隐藏或禁用；保留引用阅读主流程
+- [x] 9.2 实现可滚动 Revision Instruction Sheet：Entry 标题、项目/目录、当前摘要、非空指令、提交/关闭、键盘与焦点恢复
+- [x] 9.3 实现 Revision Draft Card 与编辑 Sheet：AI 建议语义、目标、变更字段、来源、长字段编辑、生成/失败/取消状态
+- [x] 9.4 实现单 Entry 全屏差异审阅：按字段展示原值/候选值、未变字段收敛、来源可达、返回状态与长内容滚动
+- [x] 9.5 实现确认 Sheet、执行中状态与 applied 回执：更新 1 条正式知识、版本、来源增量、查看 Entry/差异和撤销边界
+- [x] 9.6 实现撤销二次确认、undoing、undone、后续版本冲突和失败重试；不得出现多 Entry 合并/冲突保留/重复标记文案
+- [x] 9.7 补组件测试：Candidate 与 Revision 文案区分、44×44 触控、accessibility label、Sheet/Overlay 关闭、长内容滚动、键盘布局和各错误终态
+- [x] 9.8 运行移动端全量 Jest（不得 `--forceExit`）、lint、typecheck 与 iOS/Android Expo export，完成本地提交 `feat: 实现原生端单条知识修订体验`
 
 ## 10. 全链路验证与收尾
 

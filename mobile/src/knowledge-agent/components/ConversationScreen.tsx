@@ -31,6 +31,17 @@ import { DraftEditSheet } from "@/src/knowledge-agent/components/DraftEditSheet"
 import { HistorySheet } from "@/src/knowledge-agent/components/HistorySheet";
 import { ModeSheet } from "@/src/knowledge-agent/components/ModeSheet";
 import { ProcessCard } from "@/src/knowledge-agent/components/ProcessCard";
+import { RevisionDiffScreen } from "@/src/knowledge-agent/components/RevisionDiffScreen";
+import {
+  RevisionDraftCard,
+  RevisionDraftFailedCard,
+  RevisionProcessCard,
+  RevisionReceiptCard,
+} from "@/src/knowledge-agent/components/RevisionDraftCard";
+import { RevisionConfirmSheet } from "@/src/knowledge-agent/components/RevisionConfirmSheet";
+import { RevisionEditSheet } from "@/src/knowledge-agent/components/RevisionEditSheet";
+import { RevisionInstructionSheet } from "@/src/knowledge-agent/components/RevisionInstructionSheet";
+import { RevisionUndoSheet } from "@/src/knowledge-agent/components/RevisionUndoSheet";
 import { ScopeSheet } from "@/src/knowledge-agent/components/ScopeSheet";
 import {
   TargetProjectSheet,
@@ -39,10 +50,15 @@ import {
 import { useConversationController } from "@/src/knowledge-agent/hooks/useConversationController";
 import { useKeyboardHeight } from "@/src/knowledge-agent/hooks/useKeyboardHeight";
 import { draftActionEligibility } from "@/src/knowledge-agent/adapters/answer";
+import {
+  revisionEligibility,
+  type RevisionTarget,
+} from "@/src/knowledge-agent/adapters/answer";
 import { scopeLabel } from "@/src/knowledge-agent/adapters/scope";
 import { toUserErrorMessage } from "@/src/knowledge-agent/errors";
 import type {
   KnowledgeCandidateDraft,
+  KnowledgeEntryRevisionDraft,
   KnowledgeMessage,
   KnowledgeRun,
   KnowledgeRunCitation,
@@ -77,13 +93,24 @@ export function ConversationScreen() {
   const [historyOpen, setHistoryOpen] = useState(false);
   const [scopeOpen, setScopeOpen] = useState(false);
   const [modeOpen, setModeOpen] = useState(false);
-  const [citation, setCitation] = useState<KnowledgeRunCitation | null>(null);
+  const [citationContext, setCitationContext] = useState<{
+    citation: KnowledgeRunCitation;
+    run: KnowledgeRun;
+  } | null>(null);
   const [targetProject, setTargetProject] = useState<{
     sourceRunId: number;
     options: DraftTargetOption[];
   } | null>(null);
   const [editDraftId, setEditDraftId] = useState<number | null>(null);
   const [confirmDraftId, setConfirmDraftId] = useState<number | null>(null);
+  // ---- 单 Entry 修订界面状态 ----
+  const [revisionTarget, setRevisionTarget] = useState<RevisionTarget | null>(
+    null,
+  );
+  const [revisionEditId, setRevisionEditId] = useState<number | null>(null);
+  const [revisionConfirmId, setRevisionConfirmId] = useState<number | null>(null);
+  const [revisionUndoId, setRevisionUndoId] = useState<number | null>(null);
+  const [revisionDiffId, setRevisionDiffId] = useState<number | null>(null);
   const scrollRef = useRef<ScrollView>(null);
   // 是否靠近消息底部：进入对话定位到底部，且新消息到达时若用户仍靠近底部则跟随滚动；
   // 用户向上翻阅历史时保持不动，不做跳底。
@@ -183,6 +210,22 @@ export function ConversationScreen() {
     [controller],
   );
 
+  const handleRevise = useCallback((target: RevisionTarget) => {
+    controller.clearRevisionEditError();
+    setRevisionTarget(target);
+  }, [controller]);
+
+  const handleRevisionSubmit = useCallback(
+    (sourceRunId: number, targetEntryId: number, instruction: string) => {
+      void controller.submitEntryRevision(sourceRunId, targetEntryId, instruction).then(
+        (submitted) => {
+          if (submitted) setRevisionTarget(null);
+        },
+      );
+    },
+    [controller],
+  );
+
   const editingDraft =
     editDraftId !== null ? controller.draftsById.get(editDraftId) ?? null : null;
   const confirmingDraft =
@@ -193,6 +236,28 @@ export function ConversationScreen() {
   const editError = controller.draftEditError;
   const confirmSaving = controller.confirmingDraftId !== null;
   const confirmError = controller.draftConfirmError;
+  const editingRevisionDraft =
+    revisionEditId !== null
+      ? controller.revisionDraftsById.get(revisionEditId) ?? null
+      : null;
+  const confirmingRevisionDraft =
+    revisionConfirmId !== null
+      ? controller.revisionDraftsById.get(revisionConfirmId) ?? null
+      : null;
+  const undoingRevisionDraft =
+    revisionUndoId !== null
+      ? controller.revisionDraftsById.get(revisionUndoId) ?? null
+      : null;
+  const diffDraft =
+    revisionDiffId !== null
+      ? controller.revisionDraftsById.get(revisionDiffId) ?? null
+      : null;
+  const revisionSaving = controller.revisionEditBusy;
+  const revisionEditError = controller.revisionEditError;
+  const revisionConfirming = controller.confirmingRevisionDraftId !== null;
+  const revisionConfirmError = controller.revisionConfirmError;
+  const revisionUndoing = controller.undoingRevisionDraftId !== null;
+  const revisionUndoError = controller.revisionUndoError;
 
   const threadHasMessages = controller.thread.items.length > 0;
   const conversationKey = controller.isDraft
@@ -352,7 +417,9 @@ export function ConversationScreen() {
                 onCancelRun={controller.requestCancelRun}
                 onRetryPolling={controller.retryRunPolling}
                 onRetryRun={(runId) => void controller.retryRun(runId)}
-                onCitationPress={setCitation}
+                onCitationPress={(citation, run) =>
+                  setCitationContext({ citation, run })
+                }
                 onRefineQuestion={(run) => {
                   const userMessage = controller.thread.items.find(
                     (item) => item.runId === run.id && item.role === "user",
@@ -363,6 +430,7 @@ export function ConversationScreen() {
                   }
                 }}
                 draft={controller.draftByRunId(message.runId ?? -1)}
+                revisionDraft={controller.revisionDraftByRunId(message.runId ?? -1)}
                 confirmingDraftId={controller.confirmingDraftId}
                 onEditDraft={(draftId) => {
                   controller.clearDraftEditError();
@@ -373,6 +441,31 @@ export function ConversationScreen() {
                 onRetryDraft={(sourceRunId, targetProjectId) =>
                   void controller.submitDraftAction(sourceRunId, targetProjectId)
                 }
+                confirmingRevisionDraftId={controller.confirmingRevisionDraftId}
+                undoingRevisionDraftId={controller.undoingRevisionDraftId}
+                revisionUndoError={controller.revisionUndoError}
+                onRetryUndoRevision={(draftId) =>
+                  void controller.retryUndoEntryRevision(draftId)
+                }
+                onEditRevision={(draftId) => {
+                  controller.clearRevisionEditError();
+                  setRevisionEditId(draftId);
+                }}
+                onConfirmRevision={setRevisionConfirmId}
+                onUndoRevision={setRevisionUndoId}
+                onViewRevisionDiff={setRevisionDiffId}
+                onCancelRevision={(draftId) =>
+                  void controller.cancelEntryRevision(draftId)
+                }
+                onRetryRevision={(draft) => {
+                  if (draft.sourceRunId !== null && draft.targetEntryId !== null) {
+                    void controller.submitEntryRevision(
+                      draft.sourceRunId,
+                      draft.targetEntryId,
+                      draft.instruction,
+                    );
+                  }
+                }}
                 onOrganize={handleOrganize}
               />
             ))}
@@ -426,6 +519,33 @@ export function ConversationScreen() {
             <View style={styles.inlineError}>
               <Text style={styles.inlineErrorTitle}>取消未完成</Text>
               <Text style={styles.inlineErrorCopy}>{controller.draftCancelError}</Text>
+            </View>
+          )}
+          {controller.revisionActionError !== null && (
+            <View style={styles.inlineError}>
+              <Text style={styles.inlineErrorTitle}>修订未完成</Text>
+              <Text style={styles.inlineErrorCopy}>
+                {controller.revisionActionError}
+              </Text>
+              {controller.revisionActionPending && (
+                <Pressable
+                  accessibilityRole="button"
+                  accessibilityLabel="重试修订"
+                  onPress={() => void controller.retryEntryRevision()}
+                  style={styles.retryButton}
+                >
+                  <AgentIcon name="retry" size={16} color={theme.green} />
+                  <Text style={styles.retryText}>重试修订</Text>
+                </Pressable>
+              )}
+            </View>
+          )}
+          {controller.revisionCancelError !== null && (
+            <View style={styles.inlineError}>
+              <Text style={styles.inlineErrorTitle}>取消修订未完成</Text>
+              <Text style={styles.inlineErrorCopy}>
+                {controller.revisionCancelError}
+              </Text>
             </View>
           )}
         </ScrollView>
@@ -492,7 +612,15 @@ export function ConversationScreen() {
         onChange={(modes) => controller.setModes(modes)}
         onClose={() => setModeOpen(false)}
       />
-      <CitationSheet citation={citation} onClose={() => setCitation(null)} />
+      <CitationSheet
+        citation={citationContext?.citation ?? null}
+        sourceRunId={citationContext?.run.id ?? null}
+        revisionTargets={
+          citationContext ? revisionEligibility(citationContext.run).targets : []
+        }
+        onRevise={handleRevise}
+        onClose={() => setCitationContext(null)}
+      />
       <TargetProjectSheet
         visible={targetProject !== null}
         options={targetProject?.options ?? []}
@@ -532,6 +660,68 @@ export function ConversationScreen() {
         }}
         onClose={() => setConfirmDraftId(null)}
       />
+      <RevisionInstructionSheet
+        visible={revisionTarget !== null}
+        target={revisionTarget}
+        sourceRunId={citationContext?.run.id ?? null}
+        submitting={controller.revisionActionPending}
+        error={controller.revisionActionError}
+        onSubmit={handleRevisionSubmit}
+        onClose={() => setRevisionTarget(null)}
+      />
+      <RevisionEditSheet
+        visible={editingRevisionDraft !== null}
+        draft={editingRevisionDraft}
+        saving={revisionSaving}
+        error={revisionEditError}
+        onSave={(fields) => {
+          if (editingRevisionDraft === null) return;
+          void controller
+            .editEntryRevision(editingRevisionDraft.id, fields)
+            .then((saved) => {
+              if (saved) setRevisionEditId(null);
+            });
+        }}
+        onClose={() => setRevisionEditId(null)}
+      />
+      <RevisionDiffScreen
+        visible={diffDraft !== null}
+        draft={diffDraft}
+        onConfirm={() => {
+          if (diffDraft === null) return;
+          setRevisionDiffId(null);
+          setRevisionConfirmId(diffDraft.id);
+        }}
+        onClose={() => setRevisionDiffId(null)}
+      />
+      <RevisionConfirmSheet
+        visible={confirmingRevisionDraft !== null}
+        draft={confirmingRevisionDraft}
+        confirming={revisionConfirming}
+        error={revisionConfirmError}
+        onConfirm={() => {
+          if (confirmingRevisionDraft === null) return;
+          void controller
+            .confirmEntryRevision(confirmingRevisionDraft.id)
+            .then((confirmed) => {
+              if (confirmed) setRevisionConfirmId(null);
+            });
+        }}
+        onClose={() => setRevisionConfirmId(null)}
+      />
+      <RevisionUndoSheet
+        visible={undoingRevisionDraft !== null}
+        draft={undoingRevisionDraft}
+        undoing={revisionUndoing}
+        error={revisionUndoError}
+        onUndo={() => {
+          if (undoingRevisionDraft === null) return;
+          void controller.undoEntryRevision(undoingRevisionDraft.id).then((undone) => {
+            if (undone) setRevisionUndoId(null);
+          });
+        }}
+        onClose={() => setRevisionUndoId(null)}
+      />
     </SafeAreaView>
   );
 }
@@ -548,12 +738,23 @@ function ThreadMessage({
   onCitationPress,
   onRefineQuestion,
   draft,
+  revisionDraft,
   confirmingDraftId,
   onEditDraft,
   onConfirmDraft,
   onCancelDraft,
   onRetryDraft,
   onOrganize,
+  confirmingRevisionDraftId,
+  undoingRevisionDraftId,
+  revisionUndoError,
+  onRetryUndoRevision,
+  onEditRevision,
+  onConfirmRevision,
+  onUndoRevision,
+  onViewRevisionDiff,
+  onCancelRevision,
+  onRetryRevision,
 }: {
   message: KnowledgeMessage;
   run: KnowledgeRun | null;
@@ -563,15 +764,26 @@ function ThreadMessage({
   onCancelRun: () => void;
   onRetryPolling: () => void;
   onRetryRun: (runId: number) => void;
-  onCitationPress: (citation: KnowledgeRunCitation) => void;
+  onCitationPress: (citation: KnowledgeRunCitation, run: KnowledgeRun) => void;
   onRefineQuestion: (run: KnowledgeRun) => void;
   draft: KnowledgeCandidateDraft | null;
+  revisionDraft: KnowledgeEntryRevisionDraft | null;
   confirmingDraftId: number | null;
   onEditDraft: (draftId: number) => void;
   onConfirmDraft: (draftId: number) => void;
   onCancelDraft: (draftId: number) => void;
   onRetryDraft: (sourceRunId: number, targetProjectId: number | null) => void;
   onOrganize: (run: KnowledgeRun) => void;
+  confirmingRevisionDraftId: number | null;
+  undoingRevisionDraftId: number | null;
+  revisionUndoError: string | null;
+  onRetryUndoRevision: (draftId: number) => void;
+  onEditRevision: (draftId: number) => void;
+  onConfirmRevision: (draftId: number) => void;
+  onUndoRevision: (draftId: number) => void;
+  onViewRevisionDiff: (draftId: number) => void;
+  onCancelRevision: (draftId: number) => void;
+  onRetryRevision: (draft: KnowledgeEntryRevisionDraft) => void;
 }) {
   if (message.messageType === "scope_change") {
     return (
@@ -682,6 +894,110 @@ function ThreadMessage({
       );
     }
   }
+  if (run?.runKind === "entry_revision") {
+    if (isRunActive(run.status) || revisionDraft?.status === "generating") {
+      return (
+        <View>
+          <View style={styles.agentLabel}>
+            <View style={styles.agentDot}>
+              <Text style={styles.agentDotText}>G</Text>
+            </View>
+            <Text style={styles.agentLabelText}>知识 Agent</Text>
+          </View>
+          <RevisionProcessCard
+            run={run}
+            cancelling={cancelling}
+            onCancel={onCancelRun}
+          />
+        </View>
+      );
+    }
+    if (revisionDraft === null) {
+      return (
+        <View>
+          <View style={styles.agentLabel}>
+            <View style={styles.agentDot}>
+              <Text style={styles.agentDotText}>G</Text>
+            </View>
+            <Text style={styles.agentLabelText}>知识 Agent</Text>
+          </View>
+          {message.content.trim() !== "" && (
+            <View style={styles.legacyAnswer}>
+              <Text style={styles.legacyAnswerText}>{message.content}</Text>
+            </View>
+          )}
+        </View>
+      );
+    }
+    if (
+      revisionDraft.status === "applied" ||
+      revisionDraft.status === "undone"
+    ) {
+      return (
+        <View>
+          <View style={styles.agentLabel}>
+            <View style={styles.agentDot}>
+              <Text style={styles.agentDotText}>G</Text>
+            </View>
+            <Text style={styles.agentLabelText}>知识 Agent</Text>
+          </View>
+          <RevisionReceiptCard
+            draft={revisionDraft}
+            undoing={undoingRevisionDraftId === revisionDraft.id}
+            undoError={
+              undoingRevisionDraftId === revisionDraft.id
+                ? revisionUndoError
+                : null
+            }
+            onViewDiff={() => onViewRevisionDiff(revisionDraft.id)}
+            onUndo={() => onUndoRevision(revisionDraft.id)}
+            onRetryUndo={() => onRetryUndoRevision(revisionDraft.id)}
+          />
+        </View>
+      );
+    }
+    if (
+      revisionDraft.status === "draft" ||
+      revisionDraft.status === "confirming"
+    ) {
+      return (
+        <View>
+          <View style={styles.agentLabel}>
+            <View style={styles.agentDot}>
+              <Text style={styles.agentDotText}>G</Text>
+            </View>
+            <Text style={styles.agentLabelText}>知识 Agent</Text>
+          </View>
+          <RevisionDraftCard
+            draft={revisionDraft}
+            confirming={confirmingRevisionDraftId === revisionDraft.id}
+            onEdit={() => onEditRevision(revisionDraft.id)}
+            onConfirm={() => onConfirmRevision(revisionDraft.id)}
+            onCancel={() => onCancelRevision(revisionDraft.id)}
+          />
+        </View>
+      );
+    }
+    if (
+      revisionDraft.status === "failed" ||
+      revisionDraft.status === "cancelled"
+    ) {
+      return (
+        <View>
+          <View style={styles.agentLabel}>
+            <View style={styles.agentDot}>
+              <Text style={styles.agentDotText}>G</Text>
+            </View>
+            <Text style={styles.agentLabelText}>知识 Agent</Text>
+          </View>
+          <RevisionDraftFailedCard
+            draft={revisionDraft}
+            onRetry={() => onRetryRevision(revisionDraft)}
+          />
+        </View>
+      );
+    }
+  }
   return (
     <View>
       <View style={styles.agentLabel}>
@@ -710,7 +1026,7 @@ function ThreadMessage({
         <AnswerCard
           run={run}
           scopeLabel={runScope}
-          onCitationPress={onCitationPress}
+          onCitationPress={(citation) => onCitationPress(citation, run)}
           onOrganize={onOrganize}
           onRefineQuestion={onRefineQuestion}
           onRetry={() => {
