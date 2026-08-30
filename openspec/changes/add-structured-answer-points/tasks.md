@@ -21,8 +21,8 @@
 
 ## 4. 验证与记录
 
-- [ ] 4.1 运行后端全量 `cd backend && .venv/bin/python -m pytest -W error` 与 `cd backend && .venv/bin/ruff check app tests`，确认全量通过。
-- [ ] 4.2 运行移动端全量 `cd mobile && npm test -- --runInBand && npm run lint && npx tsc --noEmit`，并执行 `cd mobile && npx expo export --platform ios` 与 `npx expo export --platform android`。
-- [ ] 4.3 运行 `openspec validate add-structured-answer-points --strict`、`openspec validate --all --strict` 与 `git diff --check`。
-- [ ] 4.4 真机验证要点卡在 390×844 主视口（并检查 360×800 / 412×915）的层级、间距、编号、来源 chip 与滚动；若无法真机验证，在 validation 中如实记录，不宣称已验收。
-- [ ] 4.5 将真实测试数量、真机/截图结果与未验证项写入 `validation/validation.md`，完成本地提交，停留当前特性分支等待确认。
+- [x] 4.1 运行后端全量 `cd backend && .venv/bin/python -m pytest -W error` 与 `cd backend && .venv/bin/ruff check app tests`，确认全量通过。
+- [x] 4.2 运行移动端全量 `cd mobile && npm test -- --runInBand && npm run lint && npx tsc --noEmit`，并执行 `cd mobile && npx expo export --platform ios` 与 `npx expo export --platform android`。
+- [x] 4.3 运行 `openspec validate add-structured-answer-points --strict`、`openspec validate --all --strict` 与 `git diff --check`。
+- [x] 4.4 真机验证要点卡在 390×844 主视口（并检查 360×800 / 412×915）的层级、间距、编号、来源 chip 与滚动；若无法真机验证，在 validation 中如实记录，不宣称已验收。
+- [x] 4.5 将真实测试数量、真机/截图结果与未验证项写入 `validation/validation.md`，完成本地提交，停留当前特性分支等待确认。
