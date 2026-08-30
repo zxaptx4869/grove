@@ -359,7 +359,12 @@ async def build_validated_answer(
     core_question_answered = getattr(draft, "core_question_answered", None)
     coverage_complete = getattr(draft, "coverage_complete", None)
     assessment_missing = core_question_answered is None or coverage_complete is None
-    if stats.valid_count == 0:
+    if points and not citations:
+        # 全部要点被丢弃（正文为空或句柄失效）：没有可核验内容，不得保持 completed
+        status = "insufficient"
+        citations = []
+        conflicts = []
+    elif stats.valid_count == 0:
         # 事实性回答但没有一个可引用句柄：不得保持 completed
         status = "insufficient"
         citations = []
@@ -390,7 +395,7 @@ async def build_validated_answer(
         status=status,
         insufficient_note=draft.insufficient_note
         if draft.insufficient
-        else ("全部引用被丢弃，无法提供带证据的确定结论" if stats.valid_count == 0 else None),
+        else ("全部引用被丢弃，无法提供带证据的确定结论" if not citations else None),
         points=[
             KnowledgeAnswerPointOut(
                 section=sanitize_answer_text(point.section) if point.section else None,
