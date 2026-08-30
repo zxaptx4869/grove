@@ -21,12 +21,12 @@
 
 ## 4. 草稿生成 Agent 与受控 operation Run
 
-- [ ] 4.1 定义 PydanticAI 候选草稿输入/输出、独立 prompt version 与依赖：只暴露原问题、原回答编辑上下文、目标项目、受限 Evidence 句柄/原文，输出 title/content/main_type/info_nature/selected handles，不允许项目或数据库对象写入参数。
-- [ ] 4.2 实现显式 `draft_candidate` 提交流程：同事务创建可见用户消息、助手占位、`run_kind=draft_candidate` waiting Run 与 generating Draft，复用 Conversation 活动槽与 `client_message_id` 幂等；普通消息始终创建 answer Run。
-- [ ] 4.3 扩展 Worker 领取与执行分发，operation Run 只执行 Evidence 复验、草稿生成、句柄白名单校验和终态提交，不执行上下文决策、answer mode、搜索、调查或工作集推进。
-- [ ] 4.4 实现 operation Run 的取消、租约恢复、重试上限与原子终态；恢复复用同一 Run/Draft，失败/取消不创建 Source/Candidate，也不推进工作集。
-- [ ] 4.5 记录草稿模型 provider/model/fallback/error/usage/duration 与受影响阶段；实现明确的确定性 seed 降级或稳定失败语义，禁止把无模型或非法 schema 标为正常成功。
-- [ ] 4.6 为成功、partial 只用有效证据、无引用拒绝、非法句柄、模型失败/降级、取消、恢复、活动 Run 409、重复提交和工作集不变补充测试；运行 `cd backend && .venv/bin/python -m pytest tests/test_knowledge_agent_candidate_drafts.py tests/test_knowledge_agent_runner.py -W error && .venv/bin/ruff check app tests`，通过后本地提交。
+- [x] 4.1 定义 PydanticAI 候选草稿输入/输出、独立 prompt version 与依赖：只暴露原问题、原回答编辑上下文、目标项目、受限 Evidence 句柄/原文，输出 title/content/main_type/info_nature/selected handles，不允许项目或数据库对象写入参数。
+- [x] 4.2 实现显式 `draft_candidate` 提交流程：同事务创建可见用户消息、助手占位、`run_kind=draft_candidate` waiting Run 与 generating Draft，复用 Conversation 活动槽与 `client_message_id` 幂等；普通消息始终创建 answer Run。
+- [x] 4.3 扩展 Worker 领取与执行分发，operation Run 只执行 Evidence 复验、草稿生成、句柄白名单校验和终态提交，不执行上下文决策、answer mode、搜索、调查或工作集推进。
+- [x] 4.4 实现 operation Run 的取消、租约恢复、重试上限与原子终态；恢复复用同一 Run/Draft，失败/取消不创建 Source/Candidate，也不推进工作集。
+- [x] 4.5 记录草稿模型 provider/model/fallback/error/usage/duration 与受影响阶段；实现明确的确定性 seed 降级或稳定失败语义，禁止把无模型或非法 schema 标为正常成功。
+- [x] 4.6 为成功、partial 只用有效证据、无引用拒绝、非法句柄、模型失败/降级、取消、恢复、活动 Run 409、重复提交和工作集不变补充测试；运行 `cd backend && .venv/bin/python -m pytest tests/test_knowledge_agent_candidate_drafts.py tests/test_knowledge_agent_runner.py -W error && .venv/bin/ruff check app tests`，通过后本地提交。
 
 ## 5. Conversation / Draft API 与历史归并
 

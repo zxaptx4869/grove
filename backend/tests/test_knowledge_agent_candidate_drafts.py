@@ -36,6 +36,7 @@ from app.models import (
     WorkspaceMember,
 )
 from app.models.knowledge_agent import (
+    DRAFT_CANCELLED,
     DRAFT_CONFIRMED,
     DRAFT_DRAFT,
     DRAFT_FAILED,
@@ -1248,3 +1249,261 @@ async def test_confirm_routing_failure_keeps_pending_candidate(monkeypatch) -> N
         assert candidate.status == "pending"
         assert candidate.routing_status == "pending"
         assert candidate.relation_status == "pending"
+
+
+@pytest.mark.asyncio
+async def test_submit_draft_idempotent_duplicate_client_message() -> None:
+    """相同 client_message_id 重放返回同一 Run/Draft，不创建第二个对象。"""
+    async with async_session_factory() as db:
+        user = await create_user(db, "幂等")
+        workspace = await create_workspace(db, user)
+        project = await create_project(db, workspace, "幂等项目")
+        conversation, source_run, _entry, _source, _attachment, _evidence = (
+            await _answer_run_with_evidence(db, user, workspace, project)
+        )
+        await db.commit()
+        action = _draft_action(source_run_id=source_run.id, client_message_id="dup-action-1")
+        first_message, first_run, first_draft = await submit_draft_candidate(
+            db,
+            conversation,
+            action,
+        )
+        await db.commit()
+        second_message, second_run, second_draft = await submit_draft_candidate(
+            db,
+            conversation,
+            action,
+        )
+        await db.commit()
+        assert second_message.id == first_message.id
+        assert second_run.id == first_run.id
+        assert second_draft.id == first_draft.id
+        drafts = (
+            (
+                await db.execute(
+                    select(KnowledgeCandidateDraft).where(
+                        KnowledgeCandidateDraft.conversation_id == conversation.id
+                    )
+                )
+            )
+            .scalars()
+            .all()
+        )
+        assert len(drafts) == 1
+
+
+@pytest.mark.asyncio
+async def test_submit_draft_active_run_conflict() -> None:
+    """对话已有活动 Run 时提交草稿动作返回 409，不创建消息或 Draft。"""
+    from fastapi import HTTPException
+
+    async with async_session_factory() as db:
+        user = await create_user(db, "冲突")
+        workspace = await create_workspace(db, user)
+        project = await create_project(db, workspace, "冲突项目")
+        conversation, source_run, _entry, _source, _attachment, _evidence = (
+            await _answer_run_with_evidence(db, user, workspace, project)
+        )
+        active_run = KnowledgeAgentRun(
+            conversation_id=conversation.id,
+            workspace_id=workspace.id,
+            owner_user_id=user.id,
+            scope_type=SCOPE_PROJECT,
+            project_id=project.id,
+            status=RUN_WAITING,
+            active_slot="active",
+            max_retries=1,
+        )
+        db.add(active_run)
+        await db.commit()
+        with pytest.raises(HTTPException) as exc_info:
+            await submit_draft_candidate(
+                db,
+                conversation,
+                _draft_action(source_run_id=source_run.id),
+            )
+        assert exc_info.value.status_code == 409
+        drafts = (
+            (
+                await db.execute(
+                    select(KnowledgeCandidateDraft).where(
+                        KnowledgeCandidateDraft.conversation_id == conversation.id
+                    )
+                )
+            )
+            .scalars()
+            .all()
+        )
+        assert drafts == []
+
+
+@pytest.mark.asyncio
+async def test_cancel_waiting_draft_run_marks_draft_cancelled() -> None:
+    """取消 waiting 草稿 Run：Run 与 Draft 同时进入 cancelled，不创建对象。"""
+    from app.services.knowledge_agent.runs import cancel_run
+
+    async with async_session_factory() as db:
+        user = await create_user(db, "取消")
+        workspace = await create_workspace(db, user)
+        project = await create_project(db, workspace, "取消项目")
+        conversation, source_run, _entry, _source, _attachment, _evidence = (
+            await _answer_run_with_evidence(db, user, workspace, project)
+        )
+        message, run, draft = await submit_draft_candidate(
+            db,
+            conversation,
+            _draft_action(source_run_id=source_run.id),
+        )
+        await db.commit()
+        await cancel_run(db, run)
+        await db.commit()
+        await db.refresh(run)
+        await db.refresh(draft)
+        assert run.status == "cancelled"
+        assert draft.status == DRAFT_CANCELLED
+        assert run.active_slot is None
+
+
+@pytest.mark.asyncio
+async def test_worker_cancel_processing_draft_run_marks_draft_cancelled() -> None:
+    """Worker 在处理边界识别取消：Draft 同步 cancelled，不创建知识对象。"""
+    from app.knowledge_agent_worker import process_one_run
+    from tests.test_knowledge_agent_worker import _cancel_other_waiting_runs
+
+    async with async_session_factory() as db:
+        user = await create_user(db, "取消执行")
+        workspace = await create_workspace(db, user)
+        project = await create_project(db, workspace, "取消执行项目")
+        conversation, source_run, _entry, _source, _attachment, _evidence = (
+            await _answer_run_with_evidence(db, user, workspace, project)
+        )
+        message, run, draft = await submit_draft_candidate(
+            db,
+            conversation,
+            _draft_action(source_run_id=source_run.id),
+        )
+        await db.commit()
+        await _cancel_other_waiting_runs(db, keep_run_id=run.id)
+        run.status = RUN_WAITING
+        run.cancel_requested = True
+        await db.commit()
+        assert await process_one_run() is True
+        async with async_session_factory() as check_db:
+            checked_run = await check_db.get(KnowledgeAgentRun, run.id)
+            checked_draft = await check_db.get(KnowledgeCandidateDraft, draft.id)
+            assert checked_run.status == "cancelled"
+            assert checked_run.active_slot is None
+            assert checked_draft.status == DRAFT_CANCELLED
+
+
+@pytest.mark.asyncio
+async def test_worker_recovery_reuses_same_draft() -> None:
+    """租约超时恢复草稿 Run：重新入队同一 Run/Draft，不创建第二个 Draft。"""
+    from datetime import UTC, datetime, timedelta
+
+    from app.knowledge_agent_worker import recover_stale_runs
+
+    async with async_session_factory() as db:
+        user = await create_user(db, "恢复")
+        workspace = await create_workspace(db, user)
+        project = await create_project(db, workspace, "恢复项目")
+        conversation, source_run, _entry, _source, _attachment, _evidence = (
+            await _answer_run_with_evidence(db, user, workspace, project)
+        )
+        message, run, draft = await submit_draft_candidate(
+            db,
+            conversation,
+            _draft_action(source_run_id=source_run.id),
+        )
+        run.status = "processing"
+        run.claimed_at = datetime.now(UTC) - timedelta(days=1)
+        await db.commit()
+        draft_id = draft.id
+        run_id = run.id
+        await db.commit()
+
+        recovered = await recover_stale_runs()
+        assert recovered == 1
+        async with async_session_factory() as check_db:
+            checked_run = await check_db.get(KnowledgeAgentRun, run_id)
+            assert checked_run.status == RUN_WAITING
+            assert checked_run.retry_count == 1
+            drafts = (
+                (
+                    await check_db.execute(
+                        select(KnowledgeCandidateDraft).where(
+                            KnowledgeCandidateDraft.operation_run_id == run_id
+                        )
+                    )
+                )
+                .scalars()
+                .all()
+            )
+            assert len(drafts) == 1
+            assert drafts[0].id == draft_id
+
+
+@pytest.mark.asyncio
+async def test_partial_source_run_with_valid_citation_allows_draft() -> None:
+    """partial 回答仍含有效引用：允许整理，只采用可核验部分。"""
+    from app.models.knowledge_agent import RUN_PARTIAL
+
+    async with async_session_factory() as db:
+        user = await create_user(db, "部分")
+        workspace = await create_workspace(db, user)
+        project = await create_project(db, workspace, "部分项目")
+        conversation, source_run, _entry, _source, _attachment, _evidence = (
+            await _answer_run_with_evidence(db, user, workspace, project)
+        )
+        source_run.status = RUN_PARTIAL
+        answer = KnowledgeAnswerOut.model_validate_json(source_run.answer_json)
+        answer.gaps = ["闭水时长上限未覆盖"]
+        source_run.answer_json = answer.model_dump_json()
+        await db.commit()
+        message, run, draft = await submit_draft_candidate(
+            db,
+            conversation,
+            _draft_action(source_run_id=source_run.id),
+        )
+        await db.commit()
+        assert run.status == RUN_WAITING
+        assert draft.status == DRAFT_GENERATING
+
+
+@pytest.mark.asyncio
+async def test_draft_operation_does_not_advance_working_set() -> None:
+    """草稿操作不创建/推进工作集版本，不影响普通问答上下文。"""
+    from app.models import KnowledgeContextVersion
+
+    async with async_session_factory() as db:
+        user = await create_user(db, "工作集")
+        workspace = await create_workspace(db, user)
+        project = await create_project(db, workspace, "工作集项目")
+        conversation, source_run, _entry, _source, _attachment, evidence = (
+            await _answer_run_with_evidence(db, user, workspace, project)
+        )
+        message, run, draft = await submit_draft_candidate(
+            db,
+            conversation,
+            _draft_action(source_run_id=source_run.id),
+        )
+        await db.commit()
+        draft.title = "闭水试验要点"
+        draft.content = "闭水试验通常持续 24 小时。"
+        draft.status = DRAFT_DRAFT
+        draft.evidence_handles_json = __import__("json").dumps([evidence.handle])
+        await db.commit()
+        await confirm_draft(db, draft, f"op-{uuid.uuid4().hex[:8]}")
+        await db.commit()
+        versions = (
+            (
+                await db.execute(
+                    select(KnowledgeContextVersion).where(
+                        KnowledgeContextVersion.conversation_id == conversation.id
+                    )
+                )
+            )
+            .scalars()
+            .all()
+        )
+        assert versions == []
