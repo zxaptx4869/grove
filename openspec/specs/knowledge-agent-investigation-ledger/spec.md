@@ -19,11 +19,15 @@ TBD - created by archiving change add-knowledge-agent-bounded-investigation. Upd
 - **THEN** 账本拒绝加入该对象并记录不可用结果
 
 ### Requirement: 轮次与查询过程完整留痕
-系统 MUST 按稳定轮次和顺序保存控制器动作、合法查询、查询规范化指纹、执行状态、结果计数、覆盖/缺口/冲突摘要及相关模型/工具调用归属；同一调查的轮次号和规范化查询 MUST 唯一。
+系统 MUST 按稳定轮次和顺序保存控制器动作、合法查询、查询规范化指纹、执行状态、每条 Query 自身的命中/新增 Entry/新增 Evidence/拒绝/不可用计数、Round 累计增量、覆盖/缺口/冲突摘要及相关模型/工具调用归属；同一调查的轮次号和规范化查询 MUST 唯一，Query 计数 MUST NOT 混入同轮其他查询的累计结果。
 
 #### Scenario: 成功提交调查轮次
-- **WHEN** 一轮控制器和工具执行完成
-- **THEN** 系统原子保存该轮动作、实际查询、增量计数、观察摘要与调用归属
+- **WHEN** 一轮控制器和多个查询执行完成
+- **THEN** 系统原子保存该轮动作、实际查询、Round 汇总增量、观察摘要与调用归属
+
+#### Scenario: 每条查询保存自身增量
+- **WHEN** 同一轮第一条查询新增 2 条 Entry、第二条新增 1 条
+- **THEN** 两条 Query 分别记录 2 和 1，Round 记录总计 3，不把第二条写成累计 3
 
 #### Scenario: 重复写入同一查询
 - **WHEN** 恢复或并发路径尝试在同一调查写入相同规范化查询
@@ -31,7 +35,7 @@ TBD - created by archiving change add-knowledge-agent-bounded-investigation. Upd
 
 #### Scenario: 工具部分失败
 - **WHEN** 某查询的批量工具调用部分成功、部分失败
-- **THEN** 账本分别记录成功增量、不可用对象和 partial 状态，而不把整轮伪装成完全正常
+- **THEN** 该 Query 记录自身成功增量、不可用对象和 partial 状态，Round 汇总所有查询结果但不把整轮伪装成完全正常
 
 ### Requirement: 已发现集合跨轮次去重并可重建
 系统 MUST 基于已提交查询结果和 Evidence 重建当前 Run 的已发现集合，并按 Entry、Source/Attachment 与 Evidence 身份去重；后续轮次 MUST 能使用先前轮次发现的合法 Entry，但 MUST 重新复验其当前范围与可用性。
@@ -81,4 +85,15 @@ TBD - created by archiving change add-knowledge-agent-bounded-investigation. Upd
 #### Scenario: 调查正常完成
 - **WHEN** Investigation 进入完成或不足终态
 - **THEN** 系统只提交回答、引用和 Run 内审计状态，不自动写入正式知识
+
+### Requirement: 候选分配可恢复且可审计
+系统 MUST 为每轮保存或可确定性重建查询候选、规范化去重键、全局选择顺序、限额/去重拒绝原因和实际读取的 Evidence；恢复 MUST 使用已经提交的候选分配结果或同一稳定规则，不得因重新执行改变预算归属。账本 MUST 继续只保存当前 Run 证据与过程元数据，不得把候选或过程摘要写入正式 Entry。
+
+#### Scenario: 恢复已形成候选池的轮次
+- **WHEN** Worker 在候选选择后、部分 Evidence 读取前中断并恢复
+- **THEN** 系统从已提交账本重建剩余候选与预算，不重复读取或重复计费，最终计数不超过快照
+
+#### Scenario: 审计重复和限额拒绝
+- **WHEN** 候选因同 Entry/等价 quote/重复来源或单项限额未被接纳
+- **THEN** 对应 Query/Round 审计可识别拒绝类别和实际增量，但仍可追溯其原始查询与对象关联
 

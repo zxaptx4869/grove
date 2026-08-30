@@ -50,9 +50,15 @@
 - **WHEN** 当前 Run 存在由不同有效 Evidence 支持的矛盾 Entry
 - **THEN** 回答返回冲突双方各自的完整 citation，客户端可分别展示 Source 原文而不按 evidence_id 猜测
 
+#### Scenario: 展示有证据的冲突
+- **WHEN** 当前 Run 存在由不同有效 Evidence 支持的矛盾 Entry
+- **THEN** 回答并列展示冲突双方、观点和各自引用，且不替用户裁决
+
 #### Scenario: 冲突一方证据不可用
 - **WHEN** 疑似冲突的一方无法形成可引用 Evidence
 - **THEN** 回答将其标记为待核验或未解决缺口，不返回伪造的双边冲突对象
+
+## ADDED Requirements
 
 ### Requirement: 回答状态与终态覆盖由最终有效 Evidence 决定
 系统 MUST 在服务端最终组装回答时，以当前 Run 实际采用且通过校验的 citations、核心问题维度、终态 gaps 与可核验证冲突权威生成 `answer.status`、coverage、gaps 与 conflicts。`completed` MUST 表示核心问题已有充分有效引用支持；`partial` MUST 表示仍有用正文和有效引用、但存在影响完整性的明确缺口；`insufficient` MUST 表示没有足够证据形成有用回答或核心问题基本无法回答。Run 生命周期和 `stop_reason` MUST NOT 直接决定 `answer.status`，搜索前控制器计划 MUST NOT 伪装为终态 coverage/gaps。

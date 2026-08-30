@@ -19,6 +19,10 @@
 - **WHEN** 已形成的当前 Run 可引用 Evidence 达到固化上限
 - **THEN** 系统不继续读取超额 Evidence、以 `evidence_budget` 停止并进入最终综合
 
+#### Scenario: 达到对象或证据预算
+- **WHEN** 调查达到固化的不同 Entry 或 Evidence 上限
+- **THEN** 系统不再读取超额对象，以对应的 `entry_budget` 或 `evidence_budget` 原因确定性停止
+
 #### Scenario: 多查询公平竞争 Evidence
 - **WHEN** 同一轮多个合法查询都产生可读取候选且第一条查询单独即可填满剩余预算
 - **THEN** 系统先给每个有候选的查询分配受限保留名额，再以稳定轮转选择剩余名额，第一条查询不得因返回顺序独占预算
