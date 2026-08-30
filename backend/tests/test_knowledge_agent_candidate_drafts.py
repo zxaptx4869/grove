@@ -23,6 +23,7 @@ from app.models import (
     Attachment,
     Candidate,
     Entry,
+    EntrySourceEvidence,
     KnowledgeAgentEvidence,
     KnowledgeAgentRun,
     KnowledgeCandidateDraft,
@@ -840,6 +841,119 @@ async def test_execute_draft_run_success_with_whitelisted_handles(monkeypatch) -
         assert draft.title == "闭水试验 24 小时"
         assert evidence.handle in draft.evidence_handles_json
         assert draft.confirmed_candidate_id is None
+
+
+@pytest.mark.asyncio
+async def test_execute_draft_uses_all_valid_run_evidence_not_only_citations(
+    monkeypatch,
+) -> None:
+    """草稿白名单覆盖本 Run 全部有效证据：未被回答引用的有效句柄也能进入草稿。"""
+    from app.agents.candidate_draft import CandidateDraftOutput
+
+    captured: dict = {}
+
+    async def _fake_agent(
+        db,
+        workspace_id,
+        *,
+        question,
+        original_answer,
+        target_project_label,
+        evidences,
+    ):
+        captured["handles"] = sorted(item["handle"] for item in evidences)
+        # 选择回答未引用的第二条证据句柄
+        target = (
+            "ev_uncited"
+            if any(item["handle"] == "ev_uncited" for item in evidences)
+            else ""
+        )
+        return (
+            CandidateDraftOutput(
+                title="厨房柜体板材选择建议",
+                content="厨卫柜体选多层板，耐水不容易发霉。",
+                main_type="knowledge",
+                info_nature=None,
+                selected_evidence_handles=[target] if target else [],
+            ),
+            StageMeta(
+                purpose="draft_candidate",
+                provider="llm",
+                model="fake-draft",
+                is_fallback=False,
+                error=None,
+                duration_ms=1,
+            ),
+        )
+
+    monkeypatch.setattr(
+        "app.services.knowledge_agent.candidate.run_candidate_draft_agent",
+        _fake_agent,
+    )
+    from app.services.knowledge_agent.observability import StageMeta
+
+    async with async_session_factory() as db:
+        user = await create_user(db, "全证据")
+        workspace = await create_workspace(db, user)
+        project = await create_project(db, workspace, "全证据项目")
+        conversation, source_run, entry, _source_a, attachment_a, cited = (
+            await _answer_run_with_evidence(db, user, workspace, project)
+        )
+        # 第二条未引用的有效证据：同一 Entry 的另一个来源
+        source_b, attachment_b = await create_source_attachment(
+            db,
+            workspace,
+            project,
+            title="板材避坑指南",
+            text_content="厨卫柜体选多层板，耐水不容易发霉。",
+        )
+        db.add(
+            EntrySourceEvidence(
+                entry_id=entry.id,
+                source_id=source_b.id,
+                attachment_id=attachment_b.id,
+                quote="厨卫柜体选多层板",
+            )
+        )
+        await db.flush()
+        db.add(
+            KnowledgeAgentEvidence(
+                run_id=source_run.id,
+                handle="ev_uncited",
+                entry_id=entry.id,
+                project_id=project.id,
+                source_id=source_b.id,
+                attachment_id=attachment_b.id,
+                entry_title=entry.title,
+                project_name=project.name,
+                source_title=source_b.title,
+                quote="厨卫柜体选多层板",
+                content_fingerprint=attachment_fingerprint(
+                    attachment_b.text_content or ""
+                ),
+                purpose="answer",
+                is_citable=True,
+            )
+        )
+        # 让最终回答只引用第一条证据，第二条保持有效但不被引用
+        answer = KnowledgeAnswerOut.model_validate_json(source_run.answer_json)
+        for citation in answer.citations:
+            citation.evidence_handle = cited.handle
+        source_run.answer_json = answer.model_dump_json()
+        await db.commit()
+
+        _m, run, draft = await submit_draft_candidate(
+            db,
+            conversation,
+            _draft_action(source_run_id=source_run.id),
+        )
+        await db.commit()
+        await execute_draft_candidate_run(db, run)
+        await db.commit()
+        await db.refresh(draft)
+        assert draft.status == DRAFT_DRAFT
+        assert "ev_uncited" in draft.evidence_handles_json
+        assert captured["handles"] == sorted([cited.handle, "ev_uncited"])
 
 
 @pytest.mark.asyncio

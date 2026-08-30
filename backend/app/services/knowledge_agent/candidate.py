@@ -152,6 +152,26 @@ async def evidence_rows_for_handles(
     return list(rows)
 
 
+async def evidence_rows_for_run(
+    db: AsyncSession,
+    source_run_id: int,
+) -> list[KnowledgeAgentEvidence]:
+    """加载来源 Run 的全部可引用 Evidence 行。"""
+    rows = (
+        (
+            await db.execute(
+                select(KnowledgeAgentEvidence).where(
+                    KnowledgeAgentEvidence.run_id == source_run_id,
+                    KnowledgeAgentEvidence.is_citable.is_(True),
+                )
+            )
+        )
+        .scalars()
+        .all()
+    )
+    return list(rows)
+
+
 async def get_source_run_for_draft(
     db: AsyncSession,
     conversation,
@@ -319,6 +339,32 @@ async def validate_citations_evidence_for_project(
         )
     ]
     return valid
+
+
+async def valid_evidence_for_project(
+    db: AsyncSession,
+    *,
+    source_run: KnowledgeAgentRun,
+    target_project_id: int,
+) -> list[KnowledgeAgentEvidence]:
+    """目标项目内当前仍可核验的全部本 Run Evidence。
+
+    草稿生成使用整轮有效证据而非仅最终 citations：回答模型偶尔漏挂引用，
+    若白名单只取 citations，正文里有依据的关键结论会被草稿丢弃（实测
+    「厨房柜体用多层板」因未挂引用而消失）。白名单仍是服务端核验过的
+    当前证据，模型依旧不能编造。
+    """
+    rows = await evidence_rows_for_run(db, source_run.id)
+    return [
+        row
+        for row in rows
+        if await _validate_evidence_current(
+            db,
+            workspace_id=source_run.workspace_id,
+            target_project_id=target_project_id,
+            evidence=row,
+        )
+    ]
 
 
 def _load_handles(raw: str | None) -> list[str]:
@@ -586,16 +632,11 @@ async def execute_draft_candidate_run(db: AsyncSession, run: KnowledgeAgentRun) 
     if answer is None or not answer.citations:
         await _fail_draft_run(db, run, draft, "来源回答没有最终有效引用")
         return
-    try:
-        valid = await validate_citations_evidence_for_project(
-            db,
-            source_run=source_run,
-            answer=answer,
-            target_project_id=draft.target_project_id,
-        )
-    except DraftEvidenceInvalid as exc:
-        await _fail_draft_run(db, run, draft, f"证据当前无法重新核验：{exc}")
-        return
+    valid = await valid_evidence_for_project(
+        db,
+        source_run=source_run,
+        target_project_id=draft.target_project_id,
+    )
     if not valid:
         await _fail_draft_run(db, run, draft, "目标项目当前没有可核验的来源证据")
         return
