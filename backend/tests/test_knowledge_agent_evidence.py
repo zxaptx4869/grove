@@ -23,6 +23,7 @@ from app.services.knowledge_agent.evidence import (
     create_answer_evidence,
     locate_verified_quote,
     resolve_evidence_handles,
+    sanitize_answer_text,
 )
 from tests._knowledge_agent_fixtures import (
     create_child_node,
@@ -156,6 +157,26 @@ async def test_resolve_handles_only_current_run() -> None:
         )
         assert set(resolved) == {evidence_a.handle}
         assert evidence_b.handle not in resolved
+
+
+def test_sanitize_answer_text_removes_leaked_handles() -> None:
+    """正文中误写入的 ev_ 句柄（含括号包裹）会被清洗，正常内容保留。"""
+    dirty = (
+        "六种常见板材的结构与特点（ev_1c8f81ddf8e14cce87475e6af9df3c30）："
+        "实木板整木裁切（ev_09d30d52bd184b33b901af05d687d113）"
+        "欧松板稳定不易变形 ev_87dce3bbe7c2492ea76061fbd7b9104a。"
+    )
+    cleaned = sanitize_answer_text(dirty)
+    assert "ev_" not in cleaned
+    assert "六种常见板材的结构与特点" in cleaned
+    assert "欧松板稳定不易变形" in cleaned
+    assert "实木板整木裁切" in cleaned
+
+
+def test_sanitize_answer_text_keeps_normal_text() -> None:
+    """没有句柄的正文原样保留，不误伤内容。"""
+    text = "ENF≤0.025mg/m³，国产正规品牌已足够安全。"
+    assert sanitize_answer_text(text) == text
 
 
 @pytest.mark.asyncio

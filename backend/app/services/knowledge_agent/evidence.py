@@ -2,6 +2,7 @@
 
 import hashlib
 import logging
+import re
 import uuid
 from dataclasses import dataclass
 
@@ -18,6 +19,19 @@ from app.schemas.knowledge_agent import (
 from app.services.evidence_normalize import normalize_evidence_quote
 
 logger = logging.getLogger(__name__)
+
+_EVIDENCE_HANDLE_IN_TEXT = re.compile(
+    r"[（(]\s*ev_[0-9a-f]{32}\s*[）)]|ev_[0-9a-f]{32}"
+)
+
+
+def sanitize_answer_text(text: str) -> str:
+    """移除模型误写入正文的 Evidence 句柄（`ev_` + 32 位十六进制）。
+
+    句柄只应出现在结构化的 citations/conflicts 字段；模型偶尔会把句柄
+    当成内联引用写进正文，展示层与后续草稿都不应看到这些标识。
+    """
+    return _EVIDENCE_HANDLE_IN_TEXT.sub("", text)
 
 
 @dataclass
@@ -299,7 +313,7 @@ async def build_validated_answer(
     if status == "insufficient" and not gaps:
         gaps = [draft.insufficient_note or "当前 Run 证据不足以回答核心问题"]
     return KnowledgeAnswerOut(
-        answer=draft.answer,
+        answer=sanitize_answer_text(draft.answer),
         status=status,
         insufficient_note=draft.insufficient_note
         if draft.insufficient

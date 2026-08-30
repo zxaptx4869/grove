@@ -87,6 +87,9 @@ KNOWLEDGE_ANSWER_SYSTEM_PROMPT = (
     "只要你能基于证据直接回答核心问题的任何一部分，就必须 core_question_answered=True 且"
     "insufficient=False，已确认部分用 coverage 表达、未覆盖部分用 gaps 表达，"
     "不得用 insufficient 掩盖已有的可确认结论。"
+    "\n"
+    "10. 正文中绝对禁止出现 ev_ 开头的句柄字符串或任何引用标识；引用只通过结构化的"
+    "citations/conflicts 字段表达，不得在内联文本中追加句柄、编号或括号标记。"
 )
 
 
