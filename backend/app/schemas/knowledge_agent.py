@@ -20,12 +20,23 @@ RunStatus = Literal[
     "cancelled",
 ]
 
+RunKind = Literal["answer", "draft_candidate"]
+
 AnswerStatus = Literal[
     "completed",
     "partial",
     "insufficient",
     "failed",
     "clarification",
+]
+
+DraftStatus = Literal[
+    "generating",
+    "draft",
+    "confirming",
+    "confirmed",
+    "cancelled",
+    "failed",
 ]
 ContextMode = Literal["auto", "continue", "new_topic"]
 ContextDecision = Literal["continue", "new_topic", "clarify"]
@@ -195,6 +206,10 @@ class KnowledgeRunOut(BaseModel):
 
     id: int
     conversation_id: int
+    # 操作类型：普通问答（answer）或受控候选草稿（draft_candidate）
+    run_kind: RunKind = "answer"
+    # 操作 Run 锚定的来源回答 Run（仅 draft_candidate 使用）
+    source_run_id: int | None = None
     status: RunStatus
     current_step: str | None = None
     scope_type: KnowledgeScopeType

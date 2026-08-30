@@ -301,6 +301,8 @@ def run_out(run: KnowledgeAgentRun) -> KnowledgeRunOut:
     return KnowledgeRunOut(
         id=run.id,
         conversation_id=run.conversation_id,
+        run_kind=run.run_kind,
+        source_run_id=run.source_run_id,
         status=run.status,
         current_step=run.current_step,
         scope_type=run.scope_type,

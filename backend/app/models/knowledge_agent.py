@@ -30,6 +30,7 @@ from app.db.session import Base
 
 if TYPE_CHECKING:
     from app.models.entry import Entry
+    from app.models.extraction import Candidate
     from app.models.project import Project
     from app.models.source import Attachment, Source
     from app.models.user import User
@@ -62,6 +63,32 @@ RUN_TERMINAL_STATUSES = {RUN_COMPLETED, RUN_PARTIAL, RUN_FAILED, RUN_CANCELLED}
 
 # 单活动 Run 的唯一槽位值；终态置空释放槽位
 ACTIVE_SLOT = "active"
+
+# ---- Run 类型：普通问答与受控候选草稿操作 ----
+RUN_KIND_ANSWER = "answer"
+RUN_KIND_DRAFT_CANDIDATE = "draft_candidate"
+RUN_KINDS = (RUN_KIND_ANSWER, RUN_KIND_DRAFT_CANDIDATE)
+
+# ---- Candidate Draft 状态 ----
+DRAFT_GENERATING = "generating"
+DRAFT_DRAFT = "draft"
+DRAFT_CONFIRMING = "confirming"
+DRAFT_CONFIRMED = "confirmed"
+DRAFT_CANCELLED = "cancelled"
+DRAFT_FAILED = "failed"
+DRAFT_STATUSES = (
+    DRAFT_GENERATING,
+    DRAFT_DRAFT,
+    DRAFT_CONFIRMING,
+    DRAFT_CONFIRMED,
+    DRAFT_CANCELLED,
+    DRAFT_FAILED,
+)
+DRAFT_TERMINAL_STATUSES = {
+    DRAFT_CONFIRMED,
+    DRAFT_CANCELLED,
+    DRAFT_FAILED,
+}
 
 # ---- 上下文模式与决策 ----
 CONTEXT_MODE_AUTO = "auto"
@@ -114,6 +141,11 @@ STEP_ROUND_SEARCH = "round_search"
 STEP_ROUND_EVIDENCE = "round_evidence"
 STEP_SYNTHESIZE = "synthesize"
 
+# ---- Run 步骤（候选草稿操作分支） ----
+STEP_DRAFT_VERIFY_EVIDENCE = "draft_verify_evidence"
+STEP_DRAFT_GENERATE = "draft_generate"
+STEP_DRAFT_VALIDATE = "draft_validate"
+
 # ---- 模型调用用途 ----
 PURPOSE_CONTEXT_DECISION = "context_decision"
 PURPOSE_EMBEDDING = "embedding"
@@ -122,6 +154,7 @@ PURPOSE_ANSWER = "answer"
 PURPOSE_ANSWER_MODE_ROUTE = "answer_mode_route"
 PURPOSE_INVESTIGATION_CONTROLLER = "investigation_controller"
 PURPOSE_SYNTHESIS = "synthesis"
+PURPOSE_DRAFT_CANDIDATE = "draft_candidate"
 
 # ---- 调查状态 ----
 INVESTIGATION_STATUS_ACTIVE = "active"
@@ -262,6 +295,17 @@ class KnowledgeAgentRun(Base):
         index=True,
         nullable=False,
     )
+    # Run 类型：answer（默认，普通只读问答）或 draft_candidate（受控候选草稿操作）
+    run_kind: Mapped[str] = mapped_column(
+        String(16), default=RUN_KIND_ANSWER, server_default=RUN_KIND_ANSWER, nullable=False
+    )
+    # 操作 Run 锚定的来源回答 Run（仅 draft_candidate 使用；自引用外键）
+    source_run_id: Mapped[int | None] = mapped_column(
+        BigInteger,
+        ForeignKey("knowledge_agent_runs.id", ondelete="SET NULL"),
+        index=True,
+        nullable=True,
+    )
     workspace_id: Mapped[int] = mapped_column(
         BigInteger, ForeignKey("workspaces.id", ondelete="CASCADE"), index=True, nullable=False
     )
@@ -355,6 +399,111 @@ class KnowledgeAgentRun(Base):
         back_populates="run",
         cascade="all, delete-orphan",
         uselist=False,
+    )
+
+
+class KnowledgeCandidateDraft(Base):
+    """锚定回答 Run 的候选草稿：Agent 只生成草稿，用户确认后才创建 Candidate。
+
+    约束与语义：
+    - operation_run_id 唯一：一个操作 Run 至多一个 Draft，崩溃恢复复用同一 Draft；
+    - confirmed_candidate_id 唯一：确认结果只能写一次，重复确认返回同一 Candidate；
+    - (conversation_id, client_operation_id) 唯一：稳定幂等键只在一个对话内生效；
+    - target_project_id/name 为生成时快照，历史恢复不随对话当前范围漂移；
+    - evidence_handles_json 只保存服务端允许集合内的句柄，客户端不可编辑。
+    """
+
+    __tablename__ = "knowledge_candidate_drafts"
+    __table_args__ = (
+        UniqueConstraint(
+            "operation_run_id",
+            name="uq_knowledge_candidate_draft_operation_run",
+        ),
+        UniqueConstraint(
+            "confirmed_candidate_id",
+            name="uq_knowledge_candidate_draft_candidate",
+        ),
+        UniqueConstraint(
+            "conversation_id",
+            "client_operation_id",
+            name="uq_knowledge_candidate_draft_operation_key",
+        ),
+        Index(
+            "ix_knowledge_candidate_draft_status",
+            "status",
+            "created_at",
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(
+        BigInteger().with_variant(Integer, "sqlite"), primary_key=True, autoincrement=True
+    )
+    workspace_id: Mapped[int] = mapped_column(
+        BigInteger, ForeignKey("workspaces.id", ondelete="CASCADE"), index=True, nullable=False
+    )
+    owner_user_id: Mapped[int] = mapped_column(
+        BigInteger, ForeignKey("users.id", ondelete="CASCADE"), index=True, nullable=False
+    )
+    conversation_id: Mapped[int] = mapped_column(
+        BigInteger,
+        ForeignKey("knowledge_conversations.id", ondelete="CASCADE"),
+        index=True,
+        nullable=False,
+    )
+    operation_run_id: Mapped[int] = mapped_column(
+        BigInteger,
+        ForeignKey("knowledge_agent_runs.id", ondelete="CASCADE"),
+        index=True,
+        nullable=False,
+    )
+    source_run_id: Mapped[int | None] = mapped_column(
+        BigInteger,
+        ForeignKey("knowledge_agent_runs.id", ondelete="SET NULL"),
+        index=True,
+        nullable=True,
+    )
+    # 目标项目快照：草稿生成后不随对话范围切换变化
+    target_project_id: Mapped[int | None] = mapped_column(
+        BigInteger, ForeignKey("projects.id", ondelete="SET NULL"), index=True, nullable=True
+    )
+    target_project_name: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    status: Mapped[str] = mapped_column(
+        String(16), default=DRAFT_GENERATING, nullable=False
+    )
+    # 草稿字段：generating 期间为空，生成成功进入 draft 后填充
+    title: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    content: Mapped[str | None] = mapped_column(Text, nullable=True)
+    main_type: Mapped[str | None] = mapped_column(String(16), nullable=True)
+    info_nature: Mapped[str | None] = mapped_column(String(16), nullable=True)
+    # JSON：采用的服务端 Evidence 句柄（白名单校验后保存）
+    evidence_handles_json: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # JSON：生成可观测信息（provider/model/fallback/error/duration/prompt_version/usage）
+    generation_meta_json: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # 确认幂等键：首次确认事务内写入；重复确认按 confirmed_candidate_id 重放
+    client_operation_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    confirmed_candidate_id: Mapped[int | None] = mapped_column(
+        BigInteger,
+        ForeignKey("candidates.id", ondelete="SET NULL"),
+        index=True,
+        nullable=True,
+    )
+    error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False
+    )
+
+    conversation: Mapped["KnowledgeConversation"] = relationship()
+    operation_run: Mapped["KnowledgeAgentRun"] = relationship(
+        foreign_keys=[operation_run_id]
+    )
+    source_run: Mapped["KnowledgeAgentRun | None"] = relationship(
+        foreign_keys=[source_run_id]
+    )
+    confirmed_candidate: Mapped["Candidate | None"] = relationship(
+        foreign_keys=[confirmed_candidate_id]
     )
 
 
