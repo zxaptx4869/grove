@@ -85,6 +85,9 @@ export function ConversationScreen() {
   const [editDraftId, setEditDraftId] = useState<number | null>(null);
   const [confirmDraftId, setConfirmDraftId] = useState<number | null>(null);
   const scrollRef = useRef<ScrollView>(null);
+  // 是否靠近消息底部：进入对话定位到底部，且新消息到达时若用户仍靠近底部则跟随滚动；
+  // 用户向上翻阅历史时保持不动，不做跳底。
+  const nearBottomRef = useRef(true);
 
   const projectsQuery = useQuery({
     queryKey: ["projects"],
@@ -116,12 +119,22 @@ export function ConversationScreen() {
 
   const handleScroll = useCallback(
     (event: NativeSyntheticEvent<NativeScrollEvent>) => {
-      if (event.nativeEvent.contentOffset.y < 40) {
+      const { contentOffset, layoutMeasurement, contentSize } = event.nativeEvent;
+      nearBottomRef.current =
+        contentOffset.y + layoutMeasurement.height >= contentSize.height - 80;
+      if (contentOffset.y < 40) {
         void controller.loadOlderMessages();
       }
     },
     [controller],
   );
+
+  const handleContentSizeChange = useCallback(() => {
+    // 进入对话时内容首次布局完成即定位到最近消息；之后仅在用户靠近底部时跟随新内容
+    if (nearBottomRef.current) {
+      scrollRef.current?.scrollToEnd({ animated: false });
+    }
+  }, []);
 
   const handleScopeChange = useCallback(
     (scope: KnowledgeScopeChangeRequest) => {
@@ -218,6 +231,7 @@ export function ConversationScreen() {
           style={styles.thread}
           contentContainerStyle={styles.threadContent}
           onScroll={handleScroll}
+          onContentSizeChange={handleContentSizeChange}
           scrollEventThrottle={100}
           keyboardShouldPersistTaps="handled"
           accessibilityLabel="知识 Agent 对话"
