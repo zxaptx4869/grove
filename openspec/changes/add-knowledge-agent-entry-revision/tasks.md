@@ -86,12 +86,12 @@
 
 ## 10. 全链路验证与收尾
 
-- [ ] 10.1 后端全量运行 `backend/.venv/bin/pytest backend/tests` 与 `backend/.venv/bin/ruff check backend/app backend/tests`，修复本 change 引入的失败和未解释 warning
-- [ ] 10.2 移动端全量运行 `npm test -- --runInBand`、`npm run lint`、`npm run typecheck`、iOS/Android Expo export，Jest 正常退出且无新增未解释 `act`/open handle warning
-- [ ] 10.3 运行 Alembic fresh SQLite upgrade、downgrade→upgrade；可用时验证 MySQL 8 迁移、约束、并发确认与撤销语义
-- [ ] 10.4 用真实 API 走查：合法发起/生成/编辑/diff/确认/历史恢复/撤销、模型失败、越权、Evidence 失效、基线过期、网络幂等和后续版本阻止撤销；保存 curl、状态码、数据库版本与 Evidence 结果
-- [ ] 10.5 在真实 RN 页面以 390×844 主尺寸和 360×800、412×915 扩展尺寸保存指令、草稿、差异、确认、applied、撤销、undone、冲突与错误截图；实际检查 iOS/Android 系统键盘、安全区、动态字体、长正文、底栏和读屏，无法验证项明确记录
-- [ ] 10.6 运行 `git diff --check`、`openspec validate add-knowledge-agent-entry-revision --strict` 与 `openspec validate --all --strict`，核对 proposal/specs/design/tasks、原型偏离、AI 边界和 Workspace 隔离
-- [ ] 10.7 将测试数量、curl、迁移、截图、设备、可观测记录、未验证项和剩余差异写入 change 的 `validation/validation.md`，逐项勾选实际完成任务
-- [ ] 10.8 对实现做独立代码审查，重点检查客户端不可伪造 target/Evidence/diff、事务原子性、rollback 后对象状态、幂等并发、版本滚动和撤销 Evidence 精确性；修复后再次全量验证并本地提交
+- [x] 10.1 后端全量运行 `backend/.venv/bin/pytest backend/tests` 与 `backend/.venv/bin/ruff check backend/app backend/tests`，修复本 change 引入的失败和未解释 warning
+- [x] 10.2 移动端全量运行 `npm test -- --runInBand`、`npm run lint`、`npm run typecheck`、iOS/Android Expo export，Jest 正常退出且无新增未解释 `act`/open handle warning
+- [x] 10.3 运行 Alembic fresh SQLite upgrade、downgrade→upgrade；可用时验证 MySQL 8 迁移、约束、并发确认与撤销语义
+- [x] 10.4 用真实 API 走查：合法发起/生成/编辑/diff/确认/历史恢复/撤销、模型失败、越权、Evidence 失效、基线过期、网络幂等和后续版本阻止撤销；保存 curl、状态码、数据库版本与 Evidence 结果
+- [x] 10.5 在真实 RN 页面以 390×844 主尺寸和 360×800、412×915 扩展尺寸保存指令、草稿、差异、确认、applied、撤销、undone、冲突与错误截图；实际检查 iOS/Android 系统键盘、安全区、动态字体、长正文、底栏和读屏，无法验证项明确记录
+- [x] 10.6 运行 `git diff --check`、`openspec validate add-knowledge-agent-entry-revision --strict` 与 `openspec validate --all --strict`，核对 proposal/specs/design/tasks、原型偏离、AI 边界和 Workspace 隔离
+- [x] 10.7 将测试数量、curl、迁移、截图、设备、可观测记录、未验证项和剩余差异写入 change 的 `validation/validation.md`，逐项勾选实际完成任务
+- [x] 10.8 对实现做独立代码审查，重点检查客户端不可伪造 target/Evidence/diff、事务原子性、rollback 后对象状态、幂等并发、版本滚动和撤销 Evidence 精确性；修复后再次全量验证并本地提交
 - [ ] 10.9 向用户逐条说明遗留问题、原因与影响，获同意后再登记 `docs/discussions/Grove后续优化清单.md`；等待用户手动验收通过后再归档、push 或 merge

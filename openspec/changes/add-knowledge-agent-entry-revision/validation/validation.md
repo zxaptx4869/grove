@@ -93,3 +93,99 @@ safe-bottom 计入底栏与全屏 footer；触控目标不小于 44x44；
 有意偏离（与 design.md 一致）：不显示多对象计数；不显示重复/冲突影响对象；
 执行过程收敛为三项可验证阶段；撤销存在后续版本时不可用并展示冲突说明；
 修订必须从 Entry 目标动作发起，不自动识别写意图。
+
+## 10. 全链路验证结果
+
+### 10.1 后端全量
+
+- `backend/.venv/bin/pytest backend/tests`：491 项收集，全部通过
+  （开工基线 440 项，新增 51 项修订相关测试）。
+- `backend/.venv/bin/ruff check backend/app backend/tests`：通过。
+
+### 10.2 移动端全量
+
+- `npm test -- --runInBand`：10 套件 / 93 项，全部通过（开工基线 74 项）。
+- `npm run lint`：通过。
+- `npm run typecheck`：通过。
+- `npx expo export --platform ios --platform android`：iOS/Android bundle
+  均导出成功（入口 bundle 3.2MB/2.9MB）。
+- Expo Web 冒烟：`expo start --web` 返回 200（仅辅助，不替代真机验收）。
+
+### 10.3 迁移
+
+- fresh SQLite `alembic upgrade head`：成功（含本 change 新表）。
+- `downgrade -1` → `upgrade head`：成功，修订表可重建，既有表保留。
+- 本机无 MySQL 8 环境：MySQL 迁移/并发语义未实测，已通过
+  SQLite/MySQL 兼容写法（batch_alter_table、BigInteger variant、circular FK
+  分步建立）与模型测试覆盖，正式 MySQL 验收列为未验证项。
+
+### 10.4 真实 API curl 走查（临时数据库）
+
+在临时 SQLite 库启动真实后端（uvicorn + 进程内 Worker），记录结果：
+
+| 步骤 | 结果 |
+|---|---|
+| 注册 / 项目 / 节点 / 来源 / 归档 Entry | 201 / 201 / 201 / 201 / 200 |
+| 修订提交（新 client_message_id） | 201，draft=generating，target_entry_id 正确 |
+| 修订提交重放（同 client_message_id） | 200，返回同一 draft_id |
+| 消息页归并 | items=2、runs=1、entry_revision_drafts=1 |
+| Worker 生成（无模型密钥） | draft=failed，error=“未配置文本模型密钥”，无伪草稿 |
+| 编辑草稿 | 200，服务端 changed_fields 含 title/content/main_type/info_nature/applicable_condition |
+| 确认（client_operation_id=wc-confirm-1） | 200，draft=applied，execution=applied，after_version=2，Entry 标题已更新 |
+| Entry 版本列表 | [(2, knowledge_agent_revision, 按用户要求改写), (1, created)] |
+| 撤销（wc-undo-1） | 200，draft/execution=undone，Entry 恢复到版本 1 内容 |
+| 撤销重放（同 undo 键） | 200，返回同一 execution_id，不追加第二个恢复版本 |
+| 第二次确认后桌面编辑 → 撤销 | 409，detail=“知识后来发生了变化，不能自动撤销；请到版本历史处理” |
+| 其他用户读取/撤销草稿 | 404（不暴露存在性） |
+| 未登录访问新端点 | 401 |
+
+数据库审计快照（临时库）：
+
+- executions：[(1, undone, before=1, after=2, added_evidence=[]),
+  (2, applied, before=3, after=4, added_evidence=[])]；
+- entry_versions 变更类型序列：created → knowledge_agent_revision → restored →
+  knowledge_agent_revision → edited；
+- entry_source_evidences 共 2 条（采用证据与既有等价，去重复用，未重复建行）。
+
+### 10.5 设备截图与系统能力走查
+
+- 本机无 Xcode / Android SDK / 已连接设备，无法在真实 iOS/Android 页面完成
+  390×844、360×800、412×915 截图与系统键盘、安全区、动态字体、读屏实测。
+- 已通过 iOS/Android Expo export 验证 bundle 可构建；通过组件测试覆盖
+  44×44 触控、accessibility label、长内容滚动、Sheet 关闭与错误终态语义；
+  Expo Web 冒烟返回 200（仅辅助）。
+- 真实设备截图与系统能力走查列为未验证项，需用户在有模拟器/真机的环境验收。
+
+### 10.6 规格与差异检查
+
+- `git diff --check`：通过。
+- `openspec validate add-knowledge-agent-entry-revision --strict`：valid。
+- `openspec validate --all --strict`：47 项通过。
+
+### 10.8 独立代码审查结论
+
+重点核查项与结论：
+
+1. 客户端不可伪造 target/Evidence/diff：修订动作只接受 source_run_id +
+   target_entry_id + instruction；目标与允许 Evidence 由服务端从最终 citations
+   解析并重验；diff 由服务端按 base snapshot 计算；编辑 schema 使用
+   `extra="forbid"` 拒绝受保护字段。✓
+2. 事务原子性：确认与撤销均在单事务内完成字段/版本/Evidence/Execution/状态
+   写入，任一步异常整体回滚；工具调用记录在事务后独立提交，失败不伪装成功。✓
+3. rollback 后对象状态：基线过期/Evidence 失效/无差异路径显式把 Draft 恢复为
+   draft 并提交，避免停留在 confirming；undo 失败保持 applied 且可重试。✓
+4. 幂等与并发：submit 按 client_message_id 重放；确认按条件 UPDATE +
+   Execution.draft_id 唯一键；撤销按 undo_client_operation_id 唯一键 +
+   after fingerprint/版本双重校验；并发重放返回同一对象。✓
+5. 版本滚动与撤销 Evidence 精确性：撤销使用 Execution.before 快照而非可能被
+   滚动清理的旧 EntryVersion；只删除 added_evidence_ids 且仍属目标 Entry 的关系。✓
+6. 工作集与既有行为：entry_revision 分支不执行搜索/调查、不推进工作集；
+   既有 answer/draft_candidate/桌面编辑/AI 修订/版本恢复测试全量通过。✓
+
+### 剩余风险与未验证项
+
+- MySQL 8 迁移/并发语义未实测（本机无 MySQL）。
+- 真实 iOS/Android 设备截图、系统键盘、安全区、动态字体、读屏走查未完成。
+- 真实模型成功生成路径未在本机复现（无模型密钥）；已由测试内 fake agent
+  确定性覆盖，并实测了无模型时的失败/重试路径。
+- 撤销与「再次修订/版本恢复」竞争未做 MySQL 级并发压测；SQLite 语义已覆盖。

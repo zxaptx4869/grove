@@ -48,6 +48,7 @@ from app.models.knowledge_agent import (
     MESSAGE_TYPE_USER,
     REVISION_DRAFT_APPLIED,
     REVISION_DRAFT_CANCELLED,
+    REVISION_DRAFT_CONFIRMING,
     REVISION_DRAFT_DRAFT,
     REVISION_DRAFT_FAILED,
     REVISION_DRAFT_GENERATING,
@@ -1229,10 +1230,17 @@ async def _restore_revision_draft_editable(
     db: AsyncSession,
     draft_id: int,
 ) -> None:
-    """把 confirming 草稿恢复为可编辑，并提交恢复（避免停留在 confirming）。"""
+    """把 confirming 草稿恢复为可编辑，并提交恢复（避免停留在 confirming）。
+
+    仅当草稿仍为 confirming 时恢复：若用户已并发取消（cancelled）或已进入
+    其他终态，不覆写用户决定。
+    """
     await db.execute(
         update(KnowledgeEntryRevisionDraft)
-        .where(KnowledgeEntryRevisionDraft.id == draft_id)
+        .where(
+            KnowledgeEntryRevisionDraft.id == draft_id,
+            KnowledgeEntryRevisionDraft.status == REVISION_DRAFT_CONFIRMING,
+        )
         .values(status=REVISION_DRAFT_DRAFT, client_operation_id=None)
     )
     await db.commit()
@@ -1349,7 +1357,7 @@ async def confirm_entry_revision(
                     KnowledgeEntryRevisionDraft.execution_id.is_(None),
                 )
                 .values(
-                    status="confirming",
+                    status=REVISION_DRAFT_CONFIRMING,
                     client_operation_id=client_operation_id,
                 )
             )

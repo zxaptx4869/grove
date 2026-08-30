@@ -44,6 +44,7 @@ from app.schemas.knowledge_agent import (
     KnowledgeRunCitationOut,
 )
 from app.services.knowledge_agent.entry_revision import (
+    _restore_revision_draft_editable,
     cancel_revision_draft,
     confirm_entry_revision,
     edit_revision_draft,
@@ -1615,3 +1616,36 @@ async def test_undo_transaction_failure_keeps_applied(monkeypatch) -> None:
         fresh_draft = await db.get(KnowledgeEntryRevisionDraft, draft_id)
         assert fresh_draft is not None
         assert fresh_draft.status == "applied"
+
+
+@pytest.mark.asyncio
+async def test_confirm_failure_restore_does_not_overwrite_cancelled() -> None:
+    """确认校验失败恢复草稿时，不覆写用户并发取消的 cancelled 状态。"""
+    async with async_session_factory() as db:
+        user = await create_user(db, "取消竞态")
+        workspace = await create_workspace(db, user)
+        conversation, source_run, entry, _s, _a, evidence = (
+            await _answer_run_with_evidence(db, user, workspace)
+        )
+        _m, _run, draft = await submit_entry_revision(
+            db,
+            conversation,
+            _action(source_run_id=source_run.id, target_entry_id=entry.id),
+        )
+        await _draft_to_ready(db, draft, evidence)
+        await db.commit()
+        draft_id = draft.id
+
+        # 模拟确认已锁定 confirming，随后用户取消
+        draft.status = "confirming"
+        await db.commit()
+        await cancel_revision_draft(db, draft)
+        await db.commit()
+        assert draft.status == "cancelled"
+
+        # 确认流程的失败恢复不得把 cancelled 覆写回 draft
+        await _restore_revision_draft_editable(db, draft_id)
+        await db.commit()
+        fresh = await db.get(KnowledgeEntryRevisionDraft, draft_id)
+        assert fresh is not None
+        assert fresh.status == "cancelled"
