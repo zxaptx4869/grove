@@ -64,10 +64,15 @@ RUN_TERMINAL_STATUSES = {RUN_COMPLETED, RUN_PARTIAL, RUN_FAILED, RUN_CANCELLED}
 # 单活动 Run 的唯一槽位值；终态置空释放槽位
 ACTIVE_SLOT = "active"
 
-# ---- Run 类型：普通问答与受控候选草稿操作 ----
+# ---- Run 类型：普通问答、受控候选草稿与单 Entry 修订操作 ----
 RUN_KIND_ANSWER = "answer"
 RUN_KIND_DRAFT_CANDIDATE = "draft_candidate"
-RUN_KINDS = (RUN_KIND_ANSWER, RUN_KIND_DRAFT_CANDIDATE)
+RUN_KIND_ENTRY_REVISION = "entry_revision"
+RUN_KINDS = (
+    RUN_KIND_ANSWER,
+    RUN_KIND_DRAFT_CANDIDATE,
+    RUN_KIND_ENTRY_REVISION,
+)
 
 # ---- Candidate Draft 状态 ----
 DRAFT_GENERATING = "generating"
@@ -89,6 +94,40 @@ DRAFT_TERMINAL_STATUSES = {
     DRAFT_CANCELLED,
     DRAFT_FAILED,
 }
+
+# ---- Entry Revision Draft 状态 ----
+REVISION_DRAFT_GENERATING = "generating"
+REVISION_DRAFT_DRAFT = "draft"
+REVISION_DRAFT_CONFIRMING = "confirming"
+REVISION_DRAFT_APPLIED = "applied"
+REVISION_DRAFT_CANCELLED = "cancelled"
+REVISION_DRAFT_FAILED = "failed"
+REVISION_DRAFT_UNDONE = "undone"
+REVISION_DRAFT_STATUSES = (
+    REVISION_DRAFT_GENERATING,
+    REVISION_DRAFT_DRAFT,
+    REVISION_DRAFT_CONFIRMING,
+    REVISION_DRAFT_APPLIED,
+    REVISION_DRAFT_CANCELLED,
+    REVISION_DRAFT_FAILED,
+    REVISION_DRAFT_UNDONE,
+)
+REVISION_DRAFT_TERMINAL_STATUSES = {
+    REVISION_DRAFT_APPLIED,
+    REVISION_DRAFT_CANCELLED,
+    REVISION_DRAFT_FAILED,
+    REVISION_DRAFT_UNDONE,
+}
+
+# ---- Entry Revision Execution 状态 ----
+REVISION_EXECUTION_APPLIED = "applied"
+REVISION_EXECUTION_UNDOING = "undoing"
+REVISION_EXECUTION_UNDONE = "undone"
+REVISION_EXECUTION_STATUSES = (
+    REVISION_EXECUTION_APPLIED,
+    REVISION_EXECUTION_UNDOING,
+    REVISION_EXECUTION_UNDONE,
+)
 
 # ---- 上下文模式与决策 ----
 CONTEXT_MODE_AUTO = "auto"
@@ -146,6 +185,11 @@ STEP_DRAFT_VERIFY_EVIDENCE = "draft_verify_evidence"
 STEP_DRAFT_GENERATE = "draft_generate"
 STEP_DRAFT_VALIDATE = "draft_validate"
 
+# ---- Run 步骤（单 Entry 修订操作分支） ----
+STEP_REVISION_VERIFY_EVIDENCE = "revision_verify_evidence"
+STEP_REVISION_GENERATE = "revision_generate"
+STEP_REVISION_VALIDATE = "revision_validate"
+
 # ---- 模型调用用途 ----
 PURPOSE_CONTEXT_DECISION = "context_decision"
 PURPOSE_EMBEDDING = "embedding"
@@ -155,6 +199,7 @@ PURPOSE_ANSWER_MODE_ROUTE = "answer_mode_route"
 PURPOSE_INVESTIGATION_CONTROLLER = "investigation_controller"
 PURPOSE_SYNTHESIS = "synthesis"
 PURPOSE_DRAFT_CANDIDATE = "draft_candidate"
+PURPOSE_ENTRY_REVISION = "entry_revision"
 
 # ---- 调查状态 ----
 INVESTIGATION_STATUS_ACTIVE = "active"
@@ -295,14 +340,22 @@ class KnowledgeAgentRun(Base):
         index=True,
         nullable=False,
     )
-    # Run 类型：answer（默认，普通只读问答）或 draft_candidate（受控候选草稿操作）
+    # Run 类型：answer（默认，普通只读问答）、draft_candidate（受控候选草稿操作）
+    # 或 entry_revision（受控单 Entry 修订操作）
     run_kind: Mapped[str] = mapped_column(
         String(16), default=RUN_KIND_ANSWER, server_default=RUN_KIND_ANSWER, nullable=False
     )
-    # 操作 Run 锚定的来源回答 Run（仅 draft_candidate 使用；自引用外键）
+    # 操作 Run 锚定的来源回答 Run（仅 draft_candidate / entry_revision 使用；自引用外键）
     source_run_id: Mapped[int | None] = mapped_column(
         BigInteger,
         ForeignKey("knowledge_agent_runs.id", ondelete="SET NULL"),
+        index=True,
+        nullable=True,
+    )
+    # 操作 Run 锚定的目标正式 Entry（仅 entry_revision 使用）
+    target_entry_id: Mapped[int | None] = mapped_column(
+        BigInteger,
+        ForeignKey("entries.id", ondelete="SET NULL"),
         index=True,
         nullable=True,
     )
@@ -505,6 +558,220 @@ class KnowledgeCandidateDraft(Base):
     confirmed_candidate: Mapped["Candidate | None"] = relationship(
         foreign_keys=[confirmed_candidate_id]
     )
+
+
+class KnowledgeEntryRevisionDraft(Base):
+    """锚定回答与单条正式 Entry 的修订草稿：候选内容、基线快照与执行关联。
+
+    约束与语义：
+    - operation_run_id 唯一：一个操作 Run 至多一个草稿，崩溃恢复复用同一草稿；
+    - (conversation_id, client_operation_id) 唯一：确认幂等键只在一个对话内生效；
+    - target_entry_id/target_project_id 为生成时快照，历史恢复不随对话范围漂移；
+    - base_entry_json 与 base_entry_fingerprint 固化操作前 Entry 状态，服务端
+      用它计算差异与乐观并发校验，客户端不得编辑；
+    - allowed/selected Evidence 句柄只保存服务端允许集合内的值，客户端不可编辑。
+    """
+
+    __tablename__ = "knowledge_entry_revision_drafts"
+    __table_args__ = (
+        UniqueConstraint(
+            "operation_run_id",
+            name="uq_knowledge_entry_revision_draft_operation_run",
+        ),
+        UniqueConstraint(
+            "conversation_id",
+            "client_operation_id",
+            name="uq_knowledge_entry_revision_draft_operation_key",
+        ),
+        Index(
+            "ix_knowledge_entry_revision_draft_status",
+            "status",
+            "created_at",
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(
+        BigInteger().with_variant(Integer, "sqlite"), primary_key=True, autoincrement=True
+    )
+    workspace_id: Mapped[int] = mapped_column(
+        BigInteger, ForeignKey("workspaces.id", ondelete="CASCADE"), index=True, nullable=False
+    )
+    owner_user_id: Mapped[int] = mapped_column(
+        BigInteger, ForeignKey("users.id", ondelete="CASCADE"), index=True, nullable=False
+    )
+    conversation_id: Mapped[int] = mapped_column(
+        BigInteger,
+        ForeignKey("knowledge_conversations.id", ondelete="CASCADE"),
+        index=True,
+        nullable=False,
+    )
+    operation_run_id: Mapped[int] = mapped_column(
+        BigInteger,
+        ForeignKey("knowledge_agent_runs.id", ondelete="CASCADE"),
+        index=True,
+        nullable=False,
+    )
+    source_run_id: Mapped[int | None] = mapped_column(
+        BigInteger,
+        ForeignKey("knowledge_agent_runs.id", ondelete="SET NULL"),
+        index=True,
+        nullable=True,
+    )
+    # 目标 Entry 与项目快照：由来源回答最终 citations 服务端解析，客户端不可指定
+    target_entry_id: Mapped[int | None] = mapped_column(
+        BigInteger, ForeignKey("entries.id", ondelete="SET NULL"), index=True, nullable=True
+    )
+    target_project_id: Mapped[int | None] = mapped_column(
+        BigInteger, ForeignKey("projects.id", ondelete="SET NULL"), index=True, nullable=True
+    )
+    target_project_name: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    # 用户显式修订指令（非空；普通 Composer 不进入本流程）
+    instruction: Mapped[str] = mapped_column(Text, nullable=False)
+    # 不可变基线：操作前 Entry 字段 JSON 与规范化指纹、基线版本
+    base_entry_json: Mapped[str] = mapped_column(Text, nullable=False)
+    base_entry_fingerprint: Mapped[str] = mapped_column(String(64), nullable=False)
+    base_version_id: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    base_version_number: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    # 服务端允许集合与采用集合（JSON 句柄列表）
+    allowed_evidence_handles_json: Mapped[str | None] = mapped_column(Text, nullable=True)
+    selected_evidence_handles_json: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # 候选字段：generating 期间为空，生成成功进入 draft 后填充；用户可编辑
+    title: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    content: Mapped[str | None] = mapped_column(Text, nullable=True)
+    main_type: Mapped[str | None] = mapped_column(String(16), nullable=True)
+    info_nature: Mapped[str | None] = mapped_column(String(16), nullable=True)
+    applicable_condition: Mapped[str | None] = mapped_column(Text, nullable=True)
+    note: Mapped[str | None] = mapped_column(Text, nullable=True)
+    change_summary: Mapped[str | None] = mapped_column(Text, nullable=True)
+    reason: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # JSON：生成可观测信息（provider/model/fallback/error/duration/prompt_version）
+    generation_meta_json: Mapped[str | None] = mapped_column(Text, nullable=True)
+    status: Mapped[str] = mapped_column(
+        String(16), default=REVISION_DRAFT_GENERATING, nullable=False
+    )
+    # 确认幂等键：首次确认事务内写入；重复确认按 Execution 重放
+    client_operation_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    execution_id: Mapped[int | None] = mapped_column(
+        BigInteger,
+        ForeignKey("knowledge_entry_revision_executions.id", ondelete="SET NULL"),
+        index=True,
+        nullable=True,
+    )
+    error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False
+    )
+
+    conversation: Mapped["KnowledgeConversation"] = relationship()
+    operation_run: Mapped["KnowledgeAgentRun"] = relationship(
+        foreign_keys=[operation_run_id]
+    )
+    source_run: Mapped["KnowledgeAgentRun | None"] = relationship(
+        foreign_keys=[source_run_id]
+    )
+    target_entry: Mapped["Entry | None"] = relationship(
+        foreign_keys=[target_entry_id]
+    )
+    execution: Mapped["KnowledgeEntryRevisionExecution | None"] = relationship(
+        foreign_keys=[execution_id]
+    )
+
+
+class KnowledgeEntryRevisionExecution(Base):
+    """Knowledge Agent 修订确认/撤销的执行审计与条件恢复依据。
+
+    语义：
+    - draft_id 唯一：一次确认至多创建一条 Execution，重复确认按幂等键重放；
+    - (conversation_id, client_operation_id) 唯一：确认幂等键；
+    - (conversation_id, undo_client_operation_id) 唯一：撤销幂等键；
+    - before/after 快照与指纹由应用服务在事务内写入，撤销不依赖可能被滚动
+      清理的旧 EntryVersion；
+    - added_evidence_ids_json 只记录本次事务真实新增的 EntrySourceEvidence id，
+      撤销只删除这些仍属于目标 Entry 的关系。
+    """
+
+    __tablename__ = "knowledge_entry_revision_executions"
+    __table_args__ = (
+        UniqueConstraint(
+            "draft_id",
+            name="uq_knowledge_entry_revision_execution_draft",
+        ),
+        UniqueConstraint(
+            "conversation_id",
+            "client_operation_id",
+            name="uq_knowledge_entry_revision_execution_operation_key",
+        ),
+        UniqueConstraint(
+            "conversation_id",
+            "undo_client_operation_id",
+            name="uq_knowledge_entry_revision_execution_undo_key",
+        ),
+        Index(
+            "ix_knowledge_entry_revision_execution_status",
+            "status",
+            "created_at",
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(
+        BigInteger().with_variant(Integer, "sqlite"), primary_key=True, autoincrement=True
+    )
+    workspace_id: Mapped[int] = mapped_column(
+        BigInteger, ForeignKey("workspaces.id", ondelete="CASCADE"), index=True, nullable=False
+    )
+    owner_user_id: Mapped[int] = mapped_column(
+        BigInteger, ForeignKey("users.id", ondelete="CASCADE"), index=True, nullable=False
+    )
+    conversation_id: Mapped[int] = mapped_column(
+        BigInteger,
+        ForeignKey("knowledge_conversations.id", ondelete="CASCADE"),
+        index=True,
+        nullable=False,
+    )
+    draft_id: Mapped[int] = mapped_column(
+        BigInteger,
+        ForeignKey("knowledge_entry_revision_drafts.id", ondelete="CASCADE"),
+        index=True,
+        nullable=False,
+    )
+    entry_id: Mapped[int | None] = mapped_column(
+        BigInteger, ForeignKey("entries.id", ondelete="SET NULL"), index=True, nullable=True
+    )
+    client_operation_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    # 操作前/后字段快照与规范化指纹
+    before_entry_json: Mapped[str] = mapped_column(Text, nullable=False)
+    after_entry_json: Mapped[str] = mapped_column(Text, nullable=False)
+    before_fingerprint: Mapped[str] = mapped_column(String(64), nullable=False)
+    after_fingerprint: Mapped[str] = mapped_column(String(64), nullable=False)
+    # 操作前/后 Entry 版本（版本号与版本记录 id）
+    before_version_id: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    before_version_number: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    after_version_id: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    after_version_number: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    # JSON：本操作真实新增的 EntrySourceEvidence id 列表
+    added_evidence_ids_json: Mapped[str | None] = mapped_column(Text, nullable=True)
+    status: Mapped[str] = mapped_column(
+        String(16), default=REVISION_EXECUTION_APPLIED, nullable=False
+    )
+    # 撤销幂等键：首次撤销事务内写入；已 undone 重试返回同一结果
+    undo_client_operation_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    undone_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False
+    )
+
+    conversation: Mapped["KnowledgeConversation"] = relationship()
+    draft: Mapped["KnowledgeEntryRevisionDraft"] = relationship(
+        foreign_keys=[draft_id]
+    )
+    entry: Mapped["Entry | None"] = relationship(foreign_keys=[entry_id])
 
 
 class KnowledgeMessage(Base):

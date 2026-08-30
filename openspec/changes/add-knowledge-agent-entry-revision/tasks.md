@@ -1,20 +1,20 @@
 ## 1. 开工基线与视觉准备
 
-- [ ] 1.1 阅读 `AGENTS.md`、本 change 全部工件、相关主规格、产品专题和移动原型对应片段，使用 `openspec-apply-change` 与 `grove-ui-conventions`，确认本 change 只做单 Entry 修订与安全撤销
-- [ ] 1.2 开发前确认当前分支已吸收用户单独处理并合入 `main` 的三个前置修复；若尚未合入则停止并汇报，不在本 change 重复实现或绕开
-- [ ] 1.3 记录当前后端/移动测试数量、ruff、lint、typecheck 与 `openspec validate --all --strict` 基线，确认失败不是由本 change 引入后再继续
-- [ ] 1.4 提取移动原型中修订指令、草稿、完整差异、确认、回执和撤销的视觉基线，记录元素顺序、间距、徽标、按钮、长内容、键盘、安全区与本 change 有意偏离
-- [ ] 1.5 检查现有 Entry 版本、AI 修订、Candidate 应用、Evidence、项目上下文刷新和 embedding 标记服务，列出可复用函数与需抽取的边界，不通过内部 HTTP 复用
-- [ ] 1.6 完成基线与设计核对本地提交，提交信息使用 `docs: 核对知识 Agent 单条修订基线`
+- [x] 1.1 阅读 `AGENTS.md`、本 change 全部工件、相关主规格、产品专题和移动原型对应片段，使用 `openspec-apply-change` 与 `grove-ui-conventions`，确认本 change 只做单 Entry 修订与安全撤销
+- [x] 1.2 开发前确认当前分支已吸收用户单独处理并合入 `main` 的三个前置修复；若尚未合入则停止并汇报，不在本 change 重复实现或绕开
+- [x] 1.3 记录当前后端/移动测试数量、ruff、lint、typecheck 与 `openspec validate --all --strict` 基线，确认失败不是由本 change 引入后再继续
+- [x] 1.4 提取移动原型中修订指令、草稿、完整差异、确认、回执和撤销的视觉基线，记录元素顺序、间距、徽标、按钮、长内容、键盘、安全区与本 change 有意偏离
+- [x] 1.5 检查现有 Entry 版本、AI 修订、Candidate 应用、Evidence、项目上下文刷新和 embedding 标记服务，列出可复用函数与需抽取的边界，不通过内部 HTTP 复用
+- [x] 1.6 完成基线与设计核对本地提交，提交信息使用 `docs: 核对知识 Agent 单条修订基线`
 
 ## 2. 数据模型与迁移骨架
 
-- [ ] 2.1 新增 `KnowledgeEntryRevisionDraft` 模型、状态常量、owner/Workspace/Conversation/source Run/target Entry/基线/Evidence/候选字段/执行关联与时间字段
-- [ ] 2.2 新增 `KnowledgeEntryRevisionExecution` 模型，保存幂等键、before/after snapshot 与 fingerprint、前后版本、本操作新增 Evidence ids、applied/undone 状态和时间
-- [ ] 2.3 扩展 `KnowledgeAgentRun` 的 `entry_revision` 类型与 target_entry_id 关联，保持既有 answer/draft_candidate 数据默认和迁移兼容
-- [ ] 2.4 增加 SQLite/MySQL 兼容的 Alembic 迁移、唯一约束、外键和高频查询索引；upgrade/downgrade 不修改既有 Entry、Run 或 Candidate 数据
-- [ ] 2.5 补模型/迁移测试：合法状态、唯一 operation Run/Execution、会话内幂等键、Run 类型兼容、FK 行为、fresh SQLite 迁移和 downgrade→upgrade
-- [ ] 2.6 运行模型/迁移定向 pytest、ruff 与 `alembic upgrade head`，完成本地提交 `feat: 建立知识 Agent 单条修订数据骨架`
+- [x] 2.1 新增 `KnowledgeEntryRevisionDraft` 模型、状态常量、owner/Workspace/Conversation/source Run/target Entry/基线/Evidence/候选字段/执行关联与时间字段
+- [x] 2.2 新增 `KnowledgeEntryRevisionExecution` 模型，保存幂等键、before/after snapshot 与 fingerprint、前后版本、本操作新增 Evidence ids、applied/undone 状态和时间
+- [x] 2.3 扩展 `KnowledgeAgentRun` 的 `entry_revision` 类型与 target_entry_id 关联，保持既有 answer/draft_candidate 数据默认和迁移兼容
+- [x] 2.4 增加 SQLite/MySQL 兼容的 Alembic 迁移、唯一约束、外键和高频查询索引；upgrade/downgrade 不修改既有 Entry、Run 或 Candidate 数据
+- [x] 2.5 补模型/迁移测试：合法状态、唯一 operation Run/Execution、会话内幂等键、Run 类型兼容、FK 行为、fresh SQLite 迁移和 downgrade→upgrade
+- [x] 2.6 运行模型/迁移定向 pytest、ruff 与 `alembic upgrade head`，完成本地提交 `feat: 建立知识 Agent 单条修订数据骨架`
 
 ## 3. 显式动作、目标与 Evidence 校验
 
