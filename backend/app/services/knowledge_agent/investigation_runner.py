@@ -776,6 +776,96 @@ async def _synthesize_investigation_answer(
     return answer, run_status, cited_items
 
 
+async def _read_seed_evidence(
+    db,
+    *,
+    ctx: RunToolContext,
+    ledger: InvestigationLedger,
+    investigation: KnowledgeInvestigation,
+    seed_entries: list[Entry],
+) -> None:
+    """为工作集种子读取本 Run Evidence（round 0），并写入账本。
+
+    种子条目已加入已发现集合，但若从不读取其当前证据，综合阶段会因
+    「没有本 Run Evidence」而跳过它们——表现为“明明有相关内容却回答
+    没有”。预算上只受 max_evidence 约束，不占用轮次公平份额。
+    """
+    seen_quotes = {
+        evidence_quote_key(ref.entry_id, ref.quote) for ref in ledger.evidences.values()
+    }
+    seen_sources = {(ref.entry_id, ref.source_id) for ref in ledger.evidences.values()}
+    for seed in seed_entries:
+        if ledger.distinct_evidence_count() >= investigation.max_evidence:
+            break
+        await _check_cancelled(ctx.run_id)
+        entries = await read_entries(db, ctx, [seed.id])
+        if not entries.items:
+            continue
+        item = entries.items[0]
+        for source in item.sources:
+            if ledger.distinct_evidence_count() >= investigation.max_evidence:
+                break
+            source_id = int(source["source_id"])
+            result = await read_source_evidence(
+                db,
+                ctx,
+                item.entry_id,
+                [source_id],
+                round_number=0,
+                query_sequence=0,
+            )
+            citable = [
+                row for row in result.items if row.citable and row.evidence_id is not None
+            ]
+            await record_tool_result(
+                db,
+                run_id=ctx.run_id,
+                tool_name="read_source_evidence",
+                params={
+                    "entry_id": item.entry_id,
+                    "source_ids": [source_id],
+                    "round": 0,
+                    "query_sequence": 0,
+                    "seed": True,
+                },
+                result={
+                    "total": len(result.items),
+                    "citable": len(citable),
+                    "denied": 0,
+                    "unavailable": len(result.items) - len(citable),
+                },
+                duration_ms=0,
+                investigation_id=investigation.id,
+                round_number=0,
+                query_sequence=0,
+            )
+            for row in citable:
+                if ledger.distinct_evidence_count() >= investigation.max_evidence:
+                    break
+                quote_key = evidence_quote_key(row.entry_id, row.quote or "")
+                source_key = (row.entry_id, row.source_id)
+                if source_key in seen_sources or quote_key in seen_quotes:
+                    persisted = await db.get(KnowledgeAgentEvidence, row.evidence_id)
+                    if persisted is not None:
+                        await db.delete(persisted)
+                    continue
+                if ledger.add_evidence(
+                    LedgerEvidenceRef(
+                        evidence_id=row.evidence_id,
+                        handle=row.evidence_handle or "",
+                        entry_id=row.entry_id,
+                        source_id=row.source_id,
+                        source_title=row.source_title,
+                        attachment_id=row.attachment_id,
+                        quote=row.quote or "",
+                        round_number=0,
+                    )
+                ):
+                    seen_sources.add(source_key)
+                    seen_quotes.add(quote_key)
+        await db.commit()
+
+
 async def execute_investigation(
     db: AsyncSession,
     run,
@@ -812,6 +902,15 @@ async def execute_investigation(
                 round_number=0,
             )
         )
+
+    # 种子必须有本 Run Evidence：否则综合阶段会跳过它们（继续追问丢内容）
+    await _read_seed_evidence(
+        db,
+        ctx=ctx,
+        ledger=ledger,
+        investigation=investigation,
+        seed_entries=seed_entries,
+    )
 
     # 恢复：若上次执行已在停止检查点提交停止原因，直接进入综合，不重复轮次
     stop_reason: str | None = investigation.stop_reason

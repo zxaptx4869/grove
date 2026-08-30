@@ -13,6 +13,7 @@ from app.agents.knowledge_agent import (
 from app.db.session import async_session_factory
 from app.models import (
     EntrySourceEvidence,
+    KnowledgeAgentEvidence,
     KnowledgeAgentModelInvocation,
     KnowledgeAgentRun,
     KnowledgeInvestigation,
@@ -1554,3 +1555,92 @@ async def test_investigation_search_uses_original_query_not_normalized(
         await db.commit()
         # 控制器查询经校验去空白后为 "water test"，检索必须收到原文而非 "watertest"
         assert received_queries == ["water test"]
+
+
+@pytest.mark.asyncio
+async def test_investigation_reads_seed_evidence_into_ledger() -> None:
+    """工作集种子必须被读取本 Run Evidence 并写入账本，综合阶段才能引用。
+
+    回归场景：板材条目在工作集种子中，但本轮搜索只命中其他条目；此前种子
+    从未被读取 Evidence，综合阶段会跳过它们，回答“没有相关内容”。
+    """
+    from app.models.knowledge_agent import (
+        SCOPE_WORKSPACE,
+        KnowledgeInvestigation,
+    )
+    from app.services.knowledge_agent.investigation_runner import (
+        _read_seed_evidence,
+    )
+    from app.services.knowledge_agent.ledger import InvestigationLedger
+    from app.services.knowledge_agent.tools import RunToolContext
+
+    async with async_session_factory() as db:
+        user = await create_user(db, "种子证据")
+        workspace = await create_workspace(db, user)
+        project = await create_project(db, workspace, "种子项目")
+        node = await create_child_node(db, project, "施工")
+        source, attachment = await create_source_attachment(
+            db,
+            workspace,
+            project,
+            title="板材手册",
+            text_content="柜门优先选欧松板，厨卫柜体选多层板。",
+        )
+        seed_entry = await create_entry_with_evidence(
+            db,
+            project,
+            node,
+            source,
+            attachment,
+            title="柜门优先选欧松板",
+            content="柜门优先选欧松板，厨卫柜体选多层板。",
+            quote="柜门优先选欧松板",
+        )
+        _conversation, run = await _investigation_run(
+            db, user, workspace, "柜门用什么板材好？"
+        )
+        investigation = KnowledgeInvestigation(
+            run_id=run.id,
+            conversation_id=run.conversation_id,
+            workspace_id=run.workspace_id,
+            owner_user_id=run.owner_user_id,
+            scope_type=SCOPE_WORKSPACE,
+            objective="柜门用什么板材好？",
+            requested_answer_mode="investigate",
+            status="active",
+            max_evidence=12,
+        )
+        db.add(investigation)
+        await db.commit()
+
+        ctx = RunToolContext(
+            run_id=run.id,
+            workspace_id=run.workspace_id,
+            owner_user_id=run.owner_user_id,
+            scope_type=SCOPE_WORKSPACE,
+            project_id=None,
+            project_name=None,
+        )
+        ctx.discovered_entry_ids.add(seed_entry.id)
+        ledger = InvestigationLedger()
+        await _read_seed_evidence(
+            db,
+            ctx=ctx,
+            ledger=ledger,
+            investigation=investigation,
+            seed_entries=[seed_entry],
+        )
+        assert ledger.distinct_evidence_count() >= 1
+        evidence_refs = [
+            ref for ref in ledger.evidences.values() if ref.entry_id == seed_entry.id
+        ]
+        assert evidence_refs
+        # 证据已持久化为本 Run Evidence，崩溃恢复可重建
+        persisted = (
+            await db.execute(
+                select(KnowledgeAgentEvidence).where(
+                    KnowledgeAgentEvidence.run_id == run.id
+                )
+            )
+        ).scalars().all()
+        assert any(row.entry_id == seed_entry.id for row in persisted)
