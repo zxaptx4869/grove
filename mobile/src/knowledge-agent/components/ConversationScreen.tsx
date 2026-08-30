@@ -422,6 +422,12 @@ export function ConversationScreen() {
               )}
             </View>
           )}
+          {controller.draftCancelError !== null && (
+            <View style={styles.inlineError}>
+              <Text style={styles.inlineErrorTitle}>取消未完成</Text>
+              <Text style={styles.inlineErrorCopy}>{controller.draftCancelError}</Text>
+            </View>
+          )}
         </ScrollView>
 
         <View style={{ paddingBottom: keyboardHeight }}>

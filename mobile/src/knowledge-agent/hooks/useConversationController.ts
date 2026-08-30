@@ -103,6 +103,8 @@ export interface ConversationController {
   draftConfirmError: string | null;
   cancelDraft: (draftId: number) => Promise<boolean>;
   draftCancelBusy: boolean;
+  draftCancelError: string | null;
+  clearDraftCancelError: () => void;
   activeRun: KnowledgeRun | null;
   runPolling: boolean;
   runPollingError: string | null;
@@ -182,6 +184,7 @@ export function useConversationController(
   const [draftEditBusy, setDraftEditBusy] = useState(false);
   const [draftEditError, setDraftEditError] = useState<string | null>(null);
   const [draftCancelBusy, setDraftCancelBusy] = useState(false);
+  const [draftCancelError, setDraftCancelError] = useState<string | null>(null);
   const previousRunStatusRef = useRef<RunStatus | null>(null);
   const modesRef = useRef<ModeSelection>(DEFAULT_MODES);
   useEffect(() => {
@@ -665,6 +668,7 @@ export function useConversationController(
     async (draftId: number): Promise<boolean> => {
       if (!token || draftCancelBusy) return false;
       setDraftCancelBusy(true);
+      setDraftCancelError(null);
       try {
         const draft = await knowledgeAgentApi.cancelDraft(token, draftId);
         setThreadDrafts((previous) => new Map(previous).set(draft.id, draft));
@@ -678,12 +682,23 @@ export function useConversationController(
         return true;
       } catch (error) {
         setDraftCancelBusy(false);
-        setDraftEditError(toUserErrorMessage(error));
+        // 取消失败独立展示，不写入草稿编辑错误
+        setDraftCancelError(toUserErrorMessage(error));
+        if (selectedConversationId !== null) {
+          // 服务端状态仍是权威：刷新消息页，若已确认会显示回执
+          void queryClient.invalidateQueries({
+            queryKey: knowledgeAgentKeys.messages(selectedConversationId),
+          });
+        }
         return false;
       }
     },
     [token, draftCancelBusy, queryClient, selectedConversationId],
   );
+
+  const clearDraftCancelError = useCallback(() => {
+    setDraftCancelError(null);
+  }, []);
 
   const draftByRunId = useCallback(
     (runId: number): KnowledgeCandidateDraft | null => {
@@ -773,6 +788,7 @@ export function useConversationController(
     setConfirmingDraftId(null);
     setDraftConfirmError(null);
     setDraftEditError(null);
+    setDraftCancelError(null);
     setModesState(DEFAULT_MODES);
     setScopeError(null);
     setCancelError(null);
@@ -793,6 +809,7 @@ export function useConversationController(
     setConfirmingDraftId(null);
     setDraftConfirmError(null);
     setDraftEditError(null);
+    setDraftCancelError(null);
     setModesState(DEFAULT_MODES);
     setScopeError(null);
     setCancelError(null);
@@ -884,6 +901,8 @@ export function useConversationController(
     draftConfirmError,
     cancelDraft,
     draftCancelBusy,
+    draftCancelError,
+    clearDraftCancelError,
     activeRun,
     runPolling: Boolean(runQuery.data && isRunActive(runQuery.data.status)),
     runPollingError: runQuery.isError

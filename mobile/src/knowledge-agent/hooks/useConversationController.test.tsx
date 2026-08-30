@@ -758,6 +758,36 @@ describe("useConversationController", () => {
       content: "新内容",
     });
   });
+
+  test("取消草稿失败展示独立错误，不写入编辑错误", async () => {
+    api.listConversations.mockResolvedValue([conversation(1)]);
+    api.getConversation.mockResolvedValue(conversation(1));
+    api.listMessages.mockResolvedValue({
+      items: [
+        message(1, "user", 10, "整理成知识"),
+        message(2, "assistant", 10),
+      ],
+      nextCursor: null,
+      runs: [{ ...run(10, "completed"), runKind: "draft_candidate" }],
+      candidateDrafts: [draft(1, { status: "draft" })],
+    });
+    (api.cancelDraft as jest.Mock).mockRejectedValue(new Error("取消失败"));
+    const rendered = await renderController();
+    await waitFor(() =>
+      expect(rendered.result.current.draftsById.get(1)?.status).toBe("draft"),
+    );
+    await act(async () => {
+      const cancelled = await rendered.result.current.cancelDraft(1);
+      expect(cancelled).toBe(false);
+    });
+    expect(rendered.result.current.draftCancelError).toContain("取消失败");
+    expect(rendered.result.current.draftEditError).toBeNull();
+    await act(async () => {
+      rendered.result.current.clearDraftCancelError();
+    });
+    expect(rendered.result.current.draftCancelError).toBeNull();
+    await rendered.unmount();
+  });
 });
 
 function mockAppStateActive() {
