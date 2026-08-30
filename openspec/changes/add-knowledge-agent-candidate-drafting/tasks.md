@@ -38,11 +38,11 @@
 
 ## 6. 移动端领域层与恢复控制器
 
-- [ ] 6.1 扩展 TypeScript 类型、snake_case 适配、API、query keys 与错误分类，覆盖 Run kind、source Run、目标项目、Draft 状态、编辑、取消、确认和 Candidate 回执；不从回答正文解析写动作。
-- [ ] 6.2 在 answer adapter 中按结构化 status/citations/可选项目计算动作资格；completed/partial 有引用可整理，其余状态不暴露入口，partial 明确只整理有依据部分。
-- [ ] 6.3 扩展 Conversation controller：项目范围直接提交，Workspace 多项目先选目标；动作使用稳定 client_message_id，确认使用稳定 client_operation_id，未知结果重试复用原键并以服务端 Draft/Candidate 为权威。
-- [ ] 6.4 将 Draft 归并到 operation Run/message，生成中只在前台轮询，终态 refetch；后台、重启、历史分页、切换对话和范围切换后恢复 generating/draft/failed/cancelled/confirmed，不复制本地权威状态。
-- [ ] 6.5 为动作资格、目标项目、序列化、重复点击、活动 Run 409、未知确认结果、消息/Draft 去重、前后台与历史恢复补充 adapter/API/controller 测试；运行 `cd mobile && npm test -- --runInBand && npm run lint && npm run typecheck`，通过后本地提交。
+- [x] 6.1 扩展 TypeScript 类型、snake_case 适配、API、query keys 与错误分类，覆盖 Run kind、source Run、目标项目、Draft 状态、编辑、取消、确认和 Candidate 回执；不从回答正文解析写动作。
+- [x] 6.2 在 answer adapter 中按结构化 status/citations/可选项目计算动作资格；completed/partial 有引用可整理，其余状态不暴露入口，partial 明确只整理有依据部分。
+- [x] 6.3 扩展 Conversation controller：项目范围直接提交，Workspace 多项目先选目标；动作使用稳定 client_message_id，确认使用稳定 client_operation_id，未知结果重试复用原键并以服务端 Draft/Candidate 为权威。
+- [x] 6.4 将 Draft 归并到 operation Run/message，生成中只在前台轮询，终态 refetch；后台、重启、历史分页、切换对话和范围切换后恢复 generating/draft/failed/cancelled/confirmed，不复制本地权威状态。
+- [x] 6.5 为动作资格、目标项目、序列化、重复点击、活动 Run 409、未知确认结果、消息/Draft 去重、前后台与历史恢复补充 adapter/API/controller 测试；运行 `cd mobile && npm test -- --runInBand && npm run lint && npm run typecheck`，通过后本地提交。
 
 ## 7. 原生候选草稿界面与原型对齐
 

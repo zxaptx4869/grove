@@ -15,6 +15,17 @@ export interface AnswerPresentation {
   tone: "positive" | "risk" | "neutral";
 }
 
+export interface DraftActionEligibility {
+  eligible: boolean;
+  sourceRunId: number | null;
+  /** 可选目标项目（来自最终 citations 的项目归属，服务端会再次校验）。 */
+  projectOptions: { id: number; name: string | null }[];
+  /** 项目范围回答固定目标；Workspace 回答为 null。 */
+  fixedProjectId: number | null;
+  /** partial 回答只整理有依据部分。 */
+  note: string | null;
+}
+
 const STOP_REASON_LABELS: Record<InvestigationStopReason, string> = {
   controller_complete: "控制器已完成调查",
   insufficient: "当前知识不足以继续补充证据",
@@ -102,6 +113,36 @@ export function presentAnswer(
         tone: "risk",
       };
   }
+}
+
+export function draftActionEligibility(
+  run: KnowledgeRun,
+): DraftActionEligibility {
+  const answer = run.answer;
+  const status = answer?.status ?? null;
+  // 旧客户端/旧缓存可能缺少 runKind：默认视为普通 answer Run，保持兼容
+  const runKind = run.runKind ?? "answer";
+  const eligible =
+    runKind === "answer" &&
+    (status === "completed" || status === "partial") &&
+    (answer?.citations.length ?? 0) > 0;
+  const options = new Map<number, string | null>();
+  for (const citation of answer?.citations ?? []) {
+    if (citation.projectId && !options.has(citation.projectId)) {
+      options.set(citation.projectId, citation.projectName ?? null);
+    }
+  }
+  return {
+    eligible,
+    sourceRunId: eligible ? run.id : null,
+    projectOptions: [...options.entries()].map(([id, name]) => ({ id, name })),
+    fixedProjectId:
+      run.scopeType === "project" ? (run.projectId ?? null) : null,
+    note:
+      eligible && status === "partial"
+        ? "只整理有依据部分，未解决的缺口不会进入草稿。"
+        : null,
+  };
 }
 
 export function investigationSummaryLine(

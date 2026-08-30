@@ -6,6 +6,12 @@ import {
   KnowledgeAgentError,
 } from "@/src/knowledge-agent/errors";
 import type {
+  KnowledgeCandidateDraft,
+  KnowledgeDraftAction,
+  KnowledgeDraftActionRequest,
+  KnowledgeDraftConfirm,
+  KnowledgeDraftConfirmRequest,
+  KnowledgeDraftEditRequest,
   KnowledgeConversation,
   KnowledgeMessagePage,
   KnowledgeRun,
@@ -54,6 +60,35 @@ function serializeSubmit(
     message: payload.message,
     context_mode: payload.contextMode,
     answer_mode: payload.answerMode,
+  };
+}
+
+function serializeDraftAction(
+  payload: KnowledgeDraftActionRequest,
+): Record<string, unknown> {
+  return {
+    client_message_id: payload.clientMessageId,
+    source_run_id: payload.sourceRunId,
+    target_project_id: payload.targetProjectId ?? null,
+  };
+}
+
+function serializeDraftEdit(
+  payload: KnowledgeDraftEditRequest,
+): Record<string, unknown> {
+  return {
+    title: payload.title ?? null,
+    content: payload.content ?? null,
+    main_type: payload.mainType ?? null,
+    info_nature: payload.infoNature ?? null,
+  };
+}
+
+function serializeDraftConfirm(
+  payload: KnowledgeDraftConfirmRequest,
+): Record<string, unknown> {
+  return {
+    client_operation_id: payload.clientOperationId,
   };
 }
 
@@ -150,6 +185,68 @@ export const knowledgeAgentApi = {
         t,
       ),
     ) as Promise<KnowledgeRunSubmit>;
+  },
+
+  submitDraftAction(
+    token: string,
+    conversationId: number,
+    payload: KnowledgeDraftActionRequest,
+  ): Promise<KnowledgeDraftAction> {
+    return withToken(token, (t) =>
+      request<KnowledgeDraftAction>(
+        `/api/knowledge-agent/conversations/${conversationId}/drafts`,
+        { method: "POST", body: JSON.stringify(serializeDraftAction(payload)) },
+        t,
+      ),
+    ) as Promise<KnowledgeDraftAction>;
+  },
+
+  getDraft(token: string, draftId: number): Promise<KnowledgeCandidateDraft> {
+    return withToken(token, (t) =>
+      request<KnowledgeCandidateDraft>(
+        `/api/knowledge-agent/drafts/${draftId}`,
+        {},
+        t,
+      ),
+    ) as Promise<KnowledgeCandidateDraft>;
+  },
+
+  editDraft(
+    token: string,
+    draftId: number,
+    payload: KnowledgeDraftEditRequest,
+  ): Promise<KnowledgeCandidateDraft> {
+    return withToken(token, (t) =>
+      request<KnowledgeCandidateDraft>(
+        `/api/knowledge-agent/drafts/${draftId}`,
+        { method: "PATCH", body: JSON.stringify(serializeDraftEdit(payload)) },
+        t,
+      ),
+    ) as Promise<KnowledgeCandidateDraft>;
+  },
+
+  cancelDraft(token: string, draftId: number): Promise<KnowledgeCandidateDraft> {
+    return withToken(token, (t) =>
+      request<KnowledgeCandidateDraft>(
+        `/api/knowledge-agent/drafts/${draftId}/cancel`,
+        { method: "POST" },
+        t,
+      ),
+    ) as Promise<KnowledgeCandidateDraft>;
+  },
+
+  confirmDraft(
+    token: string,
+    draftId: number,
+    payload: KnowledgeDraftConfirmRequest,
+  ): Promise<KnowledgeDraftConfirm> {
+    return withToken(token, (t) =>
+      request<KnowledgeDraftConfirm>(
+        `/api/knowledge-agent/drafts/${draftId}/confirm`,
+        { method: "POST", body: JSON.stringify(serializeDraftConfirm(payload)) },
+        t,
+      ),
+    ) as Promise<KnowledgeDraftConfirm>;
   },
 
   getRun(token: string, runId: number): Promise<KnowledgeRun> {

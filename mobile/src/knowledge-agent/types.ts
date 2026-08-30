@@ -17,6 +17,16 @@ export type AnswerStatus =
   | "failed"
   | "clarification";
 
+export type RunKind = "answer" | "draft_candidate";
+
+export type DraftStatus =
+  | "generating"
+  | "draft"
+  | "confirming"
+  | "confirmed"
+  | "cancelled"
+  | "failed";
+
 export type ContextMode = "auto" | "continue" | "new_topic";
 export type ContextDecision = "continue" | "new_topic" | "clarify";
 export type AnswerMode = "auto" | "quick" | "investigate";
@@ -79,6 +89,7 @@ export interface KnowledgeMessagePage {
   items: KnowledgeMessage[];
   nextCursor: string | null;
   runs: KnowledgeRun[];
+  candidateDrafts: KnowledgeCandidateDraft[];
 }
 
 export interface KnowledgeRunCitation extends KnowledgeScope {
@@ -140,6 +151,9 @@ export interface InvestigationSummary {
 export interface KnowledgeRun extends KnowledgeScope {
   id: number;
   conversationId: number;
+  /** 旧客户端/历史缓存可能缺省：缺省按 answer 处理 */
+  runKind?: RunKind;
+  sourceRunId?: number | null;
   status: RunStatus;
   currentStep: string | null;
   userMessageId: number | null;
@@ -163,6 +177,77 @@ export interface KnowledgeRun extends KnowledgeScope {
   answer: KnowledgeAnswer | null;
   createdAt: string;
   updatedAt: string;
+}
+
+export interface KnowledgeDraftEvidence {
+  handle: string;
+  entryId: number;
+  entryTitle: string;
+  sourceId: number;
+  sourceTitle: string;
+  quote: string;
+}
+
+export interface KnowledgeCandidateDraft {
+  id: number;
+  conversationId: number;
+  operationRunId: number;
+  sourceRunId: number | null;
+  targetProjectId: number | null;
+  targetProjectName: string | null;
+  status: DraftStatus;
+  title: string | null;
+  content: string | null;
+  mainType: string | null;
+  infoNature: string | null;
+  evidenceHandles: string[];
+  evidenceSummaries: KnowledgeDraftEvidence[];
+  generationDegraded: boolean;
+  generationError: string | null;
+  confirmedCandidateId: number | null;
+  error: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface CandidateReceipt {
+  id: number;
+  title: string;
+  status: string;
+  sourceId: number;
+  routingStatus: string;
+  recommendedNodeId: number | null;
+  relationStatus: string;
+  relationTargetEntryId: number | null;
+  createdAt: string;
+}
+
+export interface KnowledgeDraftActionRequest {
+  clientMessageId: string;
+  sourceRunId: number;
+  targetProjectId?: number | null;
+}
+
+export interface KnowledgeDraftAction {
+  userMessage: KnowledgeMessage;
+  run: KnowledgeRun;
+  draft: KnowledgeCandidateDraft;
+}
+
+export interface KnowledgeDraftEditRequest {
+  title?: string | null;
+  content?: string | null;
+  mainType?: string | null;
+  infoNature?: string | null;
+}
+
+export interface KnowledgeDraftConfirmRequest {
+  clientOperationId: string;
+}
+
+export interface KnowledgeDraftConfirm {
+  draft: KnowledgeCandidateDraft;
+  candidate: CandidateReceipt;
 }
 
 export interface KnowledgeRunSubmitRequest {

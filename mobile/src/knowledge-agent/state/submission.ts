@@ -24,6 +24,11 @@ export function nextClientMessageId(random: () => string = Crypto.randomUUID): s
   return random();
 }
 
+/** 确认操作的稳定幂等键：首次生成后未知结果重试必须复用同一键。 */
+export function nextClientOperationId(random: () => string = Crypto.randomUUID): string {
+  return random();
+}
+
 export function createPendingSubmission(input: {
   text: string;
   contextMode: ContextMode;

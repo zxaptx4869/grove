@@ -23,12 +23,16 @@ import {
   attachConversation,
   canRetrySubmission,
   createPendingSubmission,
+  nextClientMessageId,
+  nextClientOperationId,
   type PendingSubmission,
 } from "@/src/knowledge-agent/state/submission";
 import type {
   AnswerMode,
   ContextMode,
+  KnowledgeCandidateDraft,
   KnowledgeConversation,
+  KnowledgeDraftEditRequest,
   KnowledgeMessage,
   KnowledgeMessagePage,
   KnowledgeRun,
@@ -76,6 +80,28 @@ export interface ConversationController {
   submit: (text: string) => Promise<boolean>;
   retrySubmit: () => Promise<boolean>;
   retryRun: (runId: number) => Promise<boolean>;
+  /** 候选草稿：按 id 与 operation Run id 检索，状态以服务端为权威 */
+  draftsById: Map<number, KnowledgeCandidateDraft>;
+  draftByRunId: (runId: number) => KnowledgeCandidateDraft | null;
+  submitDraftAction: (
+    sourceRunId: number,
+    targetProjectId?: number | null,
+  ) => Promise<boolean>;
+  draftActionPending: boolean;
+  draftActionError: string | null;
+  retryDraftAction: () => Promise<boolean>;
+  editDraft: (
+    draftId: number,
+    fields: KnowledgeDraftEditRequest,
+  ) => Promise<boolean>;
+  draftEditBusy: boolean;
+  draftEditError: string | null;
+  confirmDraft: (draftId: number) => Promise<boolean>;
+  retryConfirmDraft: (draftId: number) => Promise<boolean>;
+  confirmingDraftId: number | null;
+  draftConfirmError: string | null;
+  cancelDraft: (draftId: number) => Promise<boolean>;
+  draftCancelBusy: boolean;
   activeRun: KnowledgeRun | null;
   runPolling: boolean;
   runPollingError: string | null;
@@ -126,6 +152,9 @@ export function useConversationController(
     () => new Map(),
   );
   const [extraMessages, setExtraMessages] = useState<KnowledgeMessage[]>([]);
+  const [threadDrafts, setThreadDrafts] = useState<
+    Map<number, KnowledgeCandidateDraft>
+  >(() => new Map());
   const [pending, setPending] = useState<PendingSubmission | null>(null);
   const [submitError, setSubmitError] = useState<string | null>(null);
   const [modes, setModesState] = useState<ModeSelection>(DEFAULT_MODES);
@@ -133,6 +162,25 @@ export function useConversationController(
   const [olderError, setOlderError] = useState<string | null>(null);
   const [loadingOlder, setLoadingOlder] = useState(false);
   const [cancelError, setCancelError] = useState<RunCancelError | null>(null);
+  // ---- 候选草稿操作状态 ----
+  const [draftActionPending, setDraftActionPending] = useState(false);
+  const [draftActionError, setDraftActionError] = useState<string | null>(null);
+  const draftActionRef = useRef<{
+    clientMessageId: string;
+    sourceRunId: number;
+    targetProjectId: number | null;
+  } | null>(null);
+  // 稳定确认幂等键：网络结果未知时重试复用原键，服务端 Draft/Candidate 为权威
+  const pendingConfirmsRef = useRef<Map<number, string>>(new Map());
+  const [confirmingDraftId, setConfirmingDraftId] = useState<number | null>(
+    null,
+  );
+  const [draftConfirmError, setDraftConfirmError] = useState<string | null>(
+    null,
+  );
+  const [draftEditBusy, setDraftEditBusy] = useState(false);
+  const [draftEditError, setDraftEditError] = useState<string | null>(null);
+  const [draftCancelBusy, setDraftCancelBusy] = useState(false);
   const previousRunStatusRef = useRef<RunStatus | null>(null);
   const modesRef = useRef<ModeSelection>(DEFAULT_MODES);
   useEffect(() => {
@@ -204,8 +252,9 @@ export function useConversationController(
         olderPages,
         runOverrides,
         extraMessages,
+        threadDrafts,
       ),
-    [recentPageQuery.data, olderPages, runOverrides, extraMessages],
+    [recentPageQuery.data, olderPages, runOverrides, extraMessages, threadDrafts],
   );
 
   const baseActiveRun = useMemo(() => {
@@ -422,6 +471,213 @@ export function useConversationController(
     [pending, token, thread.items, performSubmission],
   );
 
+  const performDraftAction = useCallback(
+    async (
+      sourceRunId: number,
+      targetProjectId: number | null,
+      clientMessageId: string,
+    ): Promise<boolean> => {
+      if (!token || selectedConversationId === null) return false;
+      setDraftActionError(null);
+      try {
+        const result = await knowledgeAgentApi.submitDraftAction(
+          token,
+          selectedConversationId,
+          {
+            clientMessageId,
+            sourceRunId,
+            targetProjectId,
+          },
+        );
+        draftActionRef.current = null;
+        setDraftActionPending(false);
+        setExtraMessages((previous) => [...previous, result.userMessage]);
+        setRunOverrides((previous) => {
+          const next = new Map(previous);
+          next.set(result.run.id, result.run);
+          return next;
+        });
+        setThreadDrafts((previous) => new Map(previous).set(result.draft.id, result.draft));
+        void queryClient.invalidateQueries({
+          queryKey: knowledgeAgentKeys.messages(selectedConversationId),
+        });
+        void queryClient.invalidateQueries({
+          queryKey: knowledgeAgentKeys.conversation(selectedConversationId),
+        });
+        void queryClient.invalidateQueries({
+          queryKey: knowledgeAgentKeys.conversations(),
+        });
+        return true;
+      } catch (error) {
+        const classified = classifyKnowledgeAgentError(error);
+        if (classified.kind === "conflict") {
+          draftActionRef.current = null;
+          setDraftActionPending(false);
+          setDraftActionError(
+            "已有进行中的回答或整理，请等待完成或取消后再整理。",
+          );
+          if (selectedConversationId !== null) {
+            void queryClient.invalidateQueries({
+              queryKey: knowledgeAgentKeys.messages(selectedConversationId),
+            });
+          }
+          return false;
+        }
+        // 结果未知：保留同一幂等键等待重试
+        setDraftActionError(classified.message);
+        return false;
+      }
+    },
+    [token, selectedConversationId, queryClient],
+  );
+
+  const submitDraftAction = useCallback(
+    async (
+      sourceRunId: number,
+      targetProjectId?: number | null,
+    ): Promise<boolean> => {
+      if (draftActionPending || !token) return false;
+      setDraftActionPending(true);
+      const action = draftActionRef.current ?? {
+        clientMessageId: nextClientMessageId(),
+        sourceRunId,
+        targetProjectId: targetProjectId ?? null,
+      };
+      draftActionRef.current = action;
+      const submitted = await performDraftAction(
+        action.sourceRunId,
+        action.targetProjectId,
+        action.clientMessageId,
+      );
+      return submitted;
+    },
+    [draftActionPending, token, performDraftAction],
+  );
+
+  const retryDraftAction = useCallback(async (): Promise<boolean> => {
+    const action = draftActionRef.current;
+    if (!action || !token || !draftActionPending) return false;
+    setDraftActionPending(true);
+    return performDraftAction(
+      action.sourceRunId,
+      action.targetProjectId,
+      action.clientMessageId,
+    );
+  }, [token, draftActionPending, performDraftAction]);
+
+  const editDraft = useCallback(
+    async (
+      draftId: number,
+      fields: KnowledgeDraftEditRequest,
+    ): Promise<boolean> => {
+      if (!token || draftEditBusy) return false;
+      setDraftEditBusy(true);
+      setDraftEditError(null);
+      try {
+        const draft = await knowledgeAgentApi.editDraft(token, draftId, fields);
+        setThreadDrafts((previous) => new Map(previous).set(draft.id, draft));
+        setDraftEditBusy(false);
+        return true;
+      } catch (error) {
+        setDraftEditBusy(false);
+        setDraftEditError(toUserErrorMessage(error));
+        return false;
+      }
+    },
+    [token, draftEditBusy],
+  );
+
+  const confirmDraft = useCallback(
+    async (draftId: number): Promise<boolean> => {
+      if (!token || confirmingDraftId !== null) return false;
+      const operationId =
+        pendingConfirmsRef.current.get(draftId) ?? nextClientOperationId();
+      pendingConfirmsRef.current.set(draftId, operationId);
+      setConfirmingDraftId(draftId);
+      setDraftConfirmError(null);
+      try {
+        const result = await knowledgeAgentApi.confirmDraft(token, draftId, {
+          clientOperationId: operationId,
+        });
+        pendingConfirmsRef.current.delete(draftId);
+        setConfirmingDraftId(null);
+        setThreadDrafts((previous) =>
+          new Map(previous).set(result.draft.id, result.draft),
+        );
+        if (selectedConversationId !== null) {
+          void queryClient.invalidateQueries({
+            queryKey: knowledgeAgentKeys.messages(selectedConversationId),
+          });
+          void queryClient.invalidateQueries({
+            queryKey: knowledgeAgentKeys.conversation(selectedConversationId),
+          });
+          void queryClient.invalidateQueries({
+            queryKey: knowledgeAgentKeys.conversations(),
+          });
+        }
+        return true;
+      } catch (error) {
+        const classified = classifyKnowledgeAgentError(error);
+        setConfirmingDraftId(null);
+        if (
+          classified.kind === "network" ||
+          classified.kind === "server" ||
+          classified.kind === "cancelled"
+        ) {
+          // 结果未知：保留幂等键，提供重试
+          setDraftConfirmError(classified.message);
+        } else {
+          pendingConfirmsRef.current.delete(draftId);
+          setDraftConfirmError(classified.message);
+        }
+        return false;
+      }
+    },
+    [token, confirmingDraftId, queryClient, selectedConversationId],
+  );
+
+  const retryConfirmDraft = useCallback(
+    async (draftId: number): Promise<boolean> => {
+      if (!pendingConfirmsRef.current.has(draftId)) return false;
+      return confirmDraft(draftId);
+    },
+    [confirmDraft],
+  );
+
+  const cancelDraft = useCallback(
+    async (draftId: number): Promise<boolean> => {
+      if (!token || draftCancelBusy) return false;
+      setDraftCancelBusy(true);
+      try {
+        const draft = await knowledgeAgentApi.cancelDraft(token, draftId);
+        setThreadDrafts((previous) => new Map(previous).set(draft.id, draft));
+        pendingConfirmsRef.current.delete(draftId);
+        setDraftCancelBusy(false);
+        if (selectedConversationId !== null) {
+          void queryClient.invalidateQueries({
+            queryKey: knowledgeAgentKeys.messages(selectedConversationId),
+          });
+        }
+        return true;
+      } catch (error) {
+        setDraftCancelBusy(false);
+        setDraftEditError(toUserErrorMessage(error));
+        return false;
+      }
+    },
+    [token, draftCancelBusy, queryClient, selectedConversationId],
+  );
+
+  const draftByRunId = useCallback(
+    (runId: number): KnowledgeCandidateDraft | null => {
+      for (const draft of thread.draftsById.values()) {
+        if (draft.operationRunId === runId) return draft;
+      }
+      return null;
+    },
+    [thread.draftsById],
+  );
+
   const scopeMutation = useMutation({
     mutationFn: ({
       conversationId,
@@ -490,8 +746,16 @@ export function useConversationController(
     setOlderPages([]);
     setRunOverrides(new Map());
     setExtraMessages([]);
+    setThreadDrafts(new Map());
     setPending(null);
     setSubmitError(null);
+    setDraftActionPending(false);
+    setDraftActionError(null);
+    draftActionRef.current = null;
+    pendingConfirmsRef.current = new Map();
+    setConfirmingDraftId(null);
+    setDraftConfirmError(null);
+    setDraftEditError(null);
     setModesState(DEFAULT_MODES);
     setScopeError(null);
     setCancelError(null);
@@ -502,8 +766,16 @@ export function useConversationController(
     setOlderPages([]);
     setRunOverrides(new Map());
     setExtraMessages([]);
+    setThreadDrafts(new Map());
     setPending(null);
     setSubmitError(null);
+    setDraftActionPending(false);
+    setDraftActionError(null);
+    draftActionRef.current = null;
+    pendingConfirmsRef.current = new Map();
+    setConfirmingDraftId(null);
+    setDraftConfirmError(null);
+    setDraftEditError(null);
     setModesState(DEFAULT_MODES);
     setScopeError(null);
     setCancelError(null);
@@ -579,6 +851,21 @@ export function useConversationController(
     submit,
     retrySubmit,
     retryRun,
+    draftsById: thread.draftsById,
+    draftByRunId,
+    submitDraftAction,
+    draftActionPending,
+    draftActionError,
+    retryDraftAction,
+    editDraft,
+    draftEditBusy,
+    draftEditError,
+    confirmDraft,
+    retryConfirmDraft,
+    confirmingDraftId,
+    draftConfirmError,
+    cancelDraft,
+    draftCancelBusy,
     activeRun,
     runPolling: Boolean(runQuery.data && isRunActive(runQuery.data.status)),
     runPollingError: runQuery.isError

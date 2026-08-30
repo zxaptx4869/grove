@@ -5,6 +5,7 @@ import { AppState, type AppStateStatus } from "react-native";
 import { knowledgeAgentApi } from "@/src/knowledge-agent/api";
 import { useConversationController } from "@/src/knowledge-agent/hooks/useConversationController";
 import type {
+  KnowledgeCandidateDraft,
   KnowledgeConversation,
   KnowledgeMessage,
   KnowledgeRun,
@@ -24,6 +25,11 @@ jest.mock("@/src/knowledge-agent/api", () => ({
     submitMessage: jest.fn(),
     getRun: jest.fn(),
     cancelRun: jest.fn(),
+    submitDraftAction: jest.fn(),
+    getDraft: jest.fn(),
+    editDraft: jest.fn(),
+    cancelDraft: jest.fn(),
+    confirmDraft: jest.fn(),
   },
 }));
 
@@ -99,6 +105,8 @@ function run(
   return {
     id,
     conversationId: 1,
+    runKind: "answer",
+    sourceRunId: null,
     status,
     currentStep: status === "processing" ? "search" : null,
     scopeType: "workspace",
@@ -125,6 +133,69 @@ function run(
     answer: null,
     createdAt: updatedAt,
     updatedAt,
+  };
+}
+
+function draft(
+  id: number,
+  overrides: Partial<KnowledgeCandidateDraft> = {},
+): KnowledgeCandidateDraft {
+  return {
+    id,
+    conversationId: 1,
+    operationRunId: 10,
+    sourceRunId: 5,
+    targetProjectId: 1,
+    targetProjectName: "新房装修",
+    status: "generating",
+    title: null,
+    content: null,
+    mainType: null,
+    infoNature: null,
+    evidenceHandles: [],
+    evidenceSummaries: [],
+    generationDegraded: false,
+    generationError: null,
+    confirmedCandidateId: null,
+    error: null,
+    createdAt: "2026-08-29T10:00:00Z",
+    updatedAt: "2026-08-29T10:00:00Z",
+    ...overrides,
+  };
+}
+
+function answeredRun(
+  id: number,
+  status: "completed" | "partial",
+): KnowledgeRun {
+  return {
+    ...run(id, status),
+    runKind: "answer",
+    scopeType: "project",
+    projectId: 1,
+    projectName: "新房装修",
+    answer: {
+      answer: "闭水试验通常持续 24 小时。",
+      status,
+      insufficientNote: null,
+      citations: [
+        {
+          evidenceId: 11,
+          evidenceHandle: "ev_1",
+          entryId: 1,
+          entryTitle: "闭水试验",
+          sourceId: 1,
+          sourceTitle: "验收手册",
+          attachmentId: 1,
+          quote: "闭水试验通常持续 24 小时",
+          scopeType: "project",
+          projectId: 1,
+          projectName: "新房装修",
+          nodePath: "施工",
+        },
+      ],
+      conflicts: [],
+    },
   };
 }
 
@@ -160,7 +231,12 @@ describe("useConversationController", () => {
       userMessage: message(11, "user", 5, "问题内容"),
       run: run(5, "waiting"),
     });
-    api.listMessages.mockResolvedValue({ items: [], nextCursor: null, runs: [] });
+    api.listMessages.mockResolvedValue({
+      items: [],
+      nextCursor: null,
+      runs: [],
+      candidateDrafts: [],
+    });
 
     const rendered = await renderController();
     await waitFor(() => expect(rendered.result.current.initialLoading).toBe(false));
@@ -203,7 +279,12 @@ describe("useConversationController", () => {
         userMessage: message(21, "user", 6, "问题"),
         run: run(6, "waiting"),
       });
-    api.listMessages.mockResolvedValue({ items: [], nextCursor: null, runs: [] });
+    api.listMessages.mockResolvedValue({
+      items: [],
+      nextCursor: null,
+      runs: [],
+      candidateDrafts: [],
+    });
 
     const rendered = await renderController();
     await waitFor(() => expect(rendered.result.current.initialLoading).toBe(false));
@@ -235,7 +316,12 @@ describe("useConversationController", () => {
   test("已有对话时直接发送不创建新对话，连续追问进入同一对话", async () => {
     api.listConversations.mockResolvedValue([conversation(1)]);
     api.getConversation.mockResolvedValue(conversation(1));
-    api.listMessages.mockResolvedValue({ items: [], nextCursor: null, runs: [] });
+    api.listMessages.mockResolvedValue({
+      items: [],
+      nextCursor: null,
+      runs: [],
+      candidateDrafts: [],
+    });
     api.submitMessage.mockResolvedValue({
       userMessage: message(3, "user", 2, "第二轮问题"),
       run: run(2, "waiting"),
@@ -263,7 +349,12 @@ describe("useConversationController", () => {
     api.listConversations.mockResolvedValue([]);
     api.createConversation.mockResolvedValue(conversation(30));
     api.submitMessage.mockRejectedValue({ status: 409, message: "进行中" });
-    api.listMessages.mockResolvedValue({ items: [], nextCursor: null, runs: [] });
+    api.listMessages.mockResolvedValue({
+      items: [],
+      nextCursor: null,
+      runs: [],
+      candidateDrafts: [],
+    });
     api.getConversation.mockResolvedValue(conversation(30));
 
     const rendered = await renderController();
@@ -297,6 +388,7 @@ describe("useConversationController", () => {
         ],
         nextCursor: null,
         runs: [run(7, "processing")],
+        candidateDrafts: [],
       });
       api.getRun
         .mockResolvedValueOnce(run(7, "processing"))
@@ -348,6 +440,7 @@ describe("useConversationController", () => {
         items: [message(1, "user", 8, "问题"), message(2, "assistant", 8)],
         nextCursor: null,
         runs: [run(8, "processing")],
+        candidateDrafts: [],
       });
       api.getRun.mockResolvedValue(run(8, "processing"));
 
@@ -392,6 +485,7 @@ describe("useConversationController", () => {
         items: [message(1, "user", 9, "问题"), message(2, "assistant", 9)],
         nextCursor: null,
         runs: [run(9, "processing")],
+        candidateDrafts: [],
       });
       api.getRun.mockResolvedValue(run(9, "processing"));
       api.cancelRun.mockResolvedValue({ ...run(9, "processing"), cancelRequested: true });
@@ -422,6 +516,7 @@ describe("useConversationController", () => {
         items: [message(1, "user", 9, "问题"), message(2, "assistant", 9)],
         nextCursor: null,
         runs: [run(9, "processing")],
+        candidateDrafts: [],
       });
       api.getRun.mockResolvedValue(run(9, "processing"));
       api.cancelRun.mockRejectedValue(new Error("取消请求失败"));
@@ -445,6 +540,223 @@ describe("useConversationController", () => {
       jest.clearAllTimers();
       jest.useRealTimers();
     }
+  });
+
+  test("提交整理动作：可见消息、operation Run 与草稿进入线程", async () => {
+    api.listConversations.mockResolvedValue([conversation(1)]);
+    api.getConversation.mockResolvedValue(conversation(1));
+    api.listMessages.mockResolvedValue({
+      items: [
+        message(1, "user", 9, "闭水试验通常持续多久？"),
+        message(2, "assistant", 9),
+      ],
+      nextCursor: null,
+      runs: [answeredRun(9, "completed")],
+      candidateDrafts: [],
+    });
+    api.submitDraftAction.mockResolvedValue({
+      userMessage: message(3, "user", 10, "整理成知识（目标项目：新房装修）"),
+      run: { ...run(10, "waiting"), runKind: "draft_candidate", sourceRunId: 9 },
+      draft: draft(1),
+    });
+    const rendered = await renderController();
+    await waitFor(() =>
+      expect(rendered.result.current.thread.runsById.get(9)?.status).toBe(
+        "completed",
+      ),
+    );
+
+    await act(async () => {
+      const submitted = await rendered.result.current.submitDraftAction(9);
+      expect(submitted).toBe(true);
+    });
+
+    await waitFor(() => {
+      expect(rendered.result.current.draftsById.get(1)?.status).toBe(
+        "generating",
+      );
+      expect(rendered.result.current.draftByRunId(10)?.id).toBe(1);
+    });
+    expect(
+      rendered.result.current.thread.items.some(
+        (item) => item.content === "整理成知识（目标项目：新房装修）",
+      ),
+    ).toBe(true);
+    expect(api.submitDraftAction).toHaveBeenCalledWith(
+      "token",
+      1,
+      expect.objectContaining({
+        sourceRunId: 9,
+        clientMessageId: "test-client-id",
+      }),
+    );
+  });
+
+  test("整理动作 409 冲突：显示错误且不保留重试状态", async () => {
+    api.listConversations.mockResolvedValue([conversation(1)]);
+    api.getConversation.mockResolvedValue(conversation(1));
+    api.listMessages.mockResolvedValue({
+      items: [message(1, "user", 9), message(2, "assistant", 9)],
+      nextCursor: null,
+      runs: [answeredRun(9, "completed")],
+      candidateDrafts: [],
+    });
+    (api.submitDraftAction as jest.Mock).mockRejectedValueOnce({
+      status: 409,
+      message: "对话存在进行中的问答",
+    });
+    const rendered = await renderController();
+    await waitFor(() =>
+      expect(rendered.result.current.thread.runsById.get(9)?.status).toBe(
+        "completed",
+      ),
+    );
+    await act(async () => {
+      const submitted = await rendered.result.current.submitDraftAction(9);
+      expect(submitted).toBe(false);
+    });
+    expect(rendered.result.current.draftActionError).toContain("进行中的回答");
+    expect(rendered.result.current.draftActionPending).toBe(false);
+    expect(rendered.result.current.draftsById.size).toBe(0);
+  });
+
+  test("整理动作网络结果未知：重试复用同一幂等键", async () => {
+    api.listConversations.mockResolvedValue([conversation(1)]);
+    api.getConversation.mockResolvedValue(conversation(1));
+    api.listMessages.mockResolvedValue({
+      items: [message(1, "user", 9), message(2, "assistant", 9)],
+      nextCursor: null,
+      runs: [answeredRun(9, "completed")],
+      candidateDrafts: [],
+    });
+    (api.submitDraftAction as jest.Mock)
+      .mockRejectedValueOnce(new TypeError("Network request failed"))
+      .mockResolvedValueOnce({
+        userMessage: message(3, "user", 10),
+        run: { ...run(10, "waiting"), runKind: "draft_candidate" },
+        draft: draft(1),
+      });
+    const rendered = await renderController();
+    await waitFor(() =>
+      expect(rendered.result.current.thread.runsById.get(9)?.status).toBe(
+        "completed",
+      ),
+    );
+    await act(async () => {
+      const first = await rendered.result.current.submitDraftAction(9);
+      expect(first).toBe(false);
+    });
+    expect(rendered.result.current.draftActionError).toContain(
+      "Network request failed",
+    );
+    await act(async () => {
+      const retried = await rendered.result.current.retryDraftAction();
+      expect(retried).toBe(true);
+    });
+    expect(api.submitDraftAction).toHaveBeenCalledTimes(2);
+    const calls = (api.submitDraftAction as jest.Mock).mock.calls;
+    expect(calls[0][2].clientMessageId).toBe(calls[1][2].clientMessageId);
+  });
+
+  test("确认草稿未知结果重试复用同一幂等键并更新草稿状态", async () => {
+    api.listConversations.mockResolvedValue([conversation(1)]);
+    api.getConversation.mockResolvedValue(conversation(1));
+    api.listMessages.mockResolvedValue({
+      items: [
+        message(1, "user", 10, "整理成知识"),
+        message(2, "assistant", 10),
+      ],
+      nextCursor: null,
+      runs: [{ ...run(10, "completed"), runKind: "draft_candidate" }],
+      candidateDrafts: [
+        draft(1, {
+          status: "draft",
+          title: "闭水试验要点",
+          content: "闭水试验通常持续 24 小时。",
+          evidenceHandles: ["ev_1"],
+        }),
+      ],
+    });
+    (api.confirmDraft as jest.Mock)
+      .mockRejectedValueOnce(new TypeError("Network request failed"))
+      .mockResolvedValueOnce({
+        draft: draft(1, {
+          status: "confirmed",
+          title: "闭水试验要点",
+          content: "闭水试验通常持续 24 小时。",
+          confirmedCandidateId: 99,
+        }),
+        candidate: {
+          id: 99,
+          title: "闭水试验要点",
+          status: "pending",
+          sourceId: 12,
+          routingStatus: "pending",
+          relationStatus: "pending",
+          createdAt: "2026-08-29T10:00:00Z",
+        },
+      });
+    const rendered = await renderController();
+    await waitFor(() =>
+      expect(rendered.result.current.draftsById.get(1)?.status).toBe("draft"),
+    );
+    await act(async () => {
+      const first = await rendered.result.current.confirmDraft(1);
+      expect(first).toBe(false);
+    });
+    expect(rendered.result.current.draftConfirmError).toContain(
+      "Network request failed",
+    );
+    await act(async () => {
+      const retried = await rendered.result.current.retryConfirmDraft(1);
+      expect(retried).toBe(true);
+    });
+    await waitFor(() =>
+      expect(rendered.result.current.draftsById.get(1)?.status).toBe(
+        "confirmed",
+      ),
+    );
+    const calls = (api.confirmDraft as jest.Mock).mock.calls;
+    expect(calls[0][2].clientOperationId).toBe(calls[1][2].clientOperationId);
+  });
+
+  test("编辑草稿更新服务端权威 Draft", async () => {
+    api.listConversations.mockResolvedValue([conversation(1)]);
+    api.getConversation.mockResolvedValue(conversation(1));
+    api.listMessages.mockResolvedValue({
+      items: [
+        message(1, "user", 10, "整理成知识"),
+        message(2, "assistant", 10),
+      ],
+      nextCursor: null,
+      runs: [{ ...run(10, "completed"), runKind: "draft_candidate" }],
+      candidateDrafts: [
+        draft(1, {
+          status: "draft",
+          title: "原标题",
+          content: "原内容",
+        }),
+      ],
+    });
+    api.editDraft.mockResolvedValue(
+      draft(1, { status: "draft", title: "新标题", content: "新内容" }),
+    );
+    const rendered = await renderController();
+    await waitFor(() =>
+      expect(rendered.result.current.draftsById.get(1)?.title).toBe("原标题"),
+    );
+    await act(async () => {
+      const edited = await rendered.result.current.editDraft(1, {
+        title: "新标题",
+        content: "新内容",
+      });
+      expect(edited).toBe(true);
+    });
+    expect(rendered.result.current.draftsById.get(1)?.title).toBe("新标题");
+    expect(api.editDraft).toHaveBeenCalledWith("token", 1, {
+      title: "新标题",
+      content: "新内容",
+    });
   });
 });
 

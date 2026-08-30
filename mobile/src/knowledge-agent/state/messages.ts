@@ -1,6 +1,7 @@
 /** 消息页状态：最近页替换、向前分页 prepend 与按 id 去重。 */
 
 import type {
+  KnowledgeCandidateDraft,
   KnowledgeMessage,
   KnowledgeMessagePage,
   KnowledgeRun,
@@ -9,12 +10,19 @@ import type {
 export interface MessageThreadState {
   items: KnowledgeMessage[];
   runsById: Map<number, KnowledgeRun>;
+  draftsById: Map<number, KnowledgeCandidateDraft>;
   nextCursor: string | null;
   hasMore: boolean;
 }
 
 export function emptyThread(): MessageThreadState {
-  return { items: [], runsById: new Map(), nextCursor: null, hasMore: false };
+  return {
+    items: [],
+    runsById: new Map(),
+    draftsById: new Map(),
+    nextCursor: null,
+    hasMore: false,
+  };
 }
 
 function dedupeById(items: KnowledgeMessage[]): KnowledgeMessage[] {
@@ -46,6 +54,21 @@ function mergeRuns(
   return next;
 }
 
+function mergeDrafts(
+  draftsById: Map<number, KnowledgeCandidateDraft>,
+  drafts: KnowledgeCandidateDraft[],
+): Map<number, KnowledgeCandidateDraft> {
+  const next = new Map(draftsById);
+  for (const draft of drafts) {
+    const existing = next.get(draft.id);
+    // 服务端是权威状态：同 id 时以更新的 updated_at 为准
+    if (existing === undefined || draft.updatedAt >= existing.updatedAt) {
+      next.set(draft.id, draft);
+    }
+  }
+  return next;
+}
+
 export function applyRecentPage(
   state: MessageThreadState,
   page: KnowledgeMessagePage,
@@ -53,6 +76,7 @@ export function applyRecentPage(
   return {
     items: dedupeById(page.items),
     runsById: mergeRuns(state.runsById, page.runs),
+    draftsById: mergeDrafts(state.draftsById, page.candidateDrafts),
     nextCursor: page.nextCursor,
     hasMore: page.nextCursor !== null,
   };
@@ -70,6 +94,7 @@ export function prependOlderPage(
   return {
     items: merged,
     runsById: mergeRuns(state.runsById, page.runs),
+    draftsById: mergeDrafts(state.draftsById, page.candidateDrafts),
     nextCursor: page.nextCursor,
     hasMore: page.nextCursor !== null,
   };
@@ -96,6 +121,13 @@ export function upsertRun(
   return { ...state, runsById: mergeRuns(state.runsById, [run]) };
 }
 
+export function upsertDraft(
+  state: MessageThreadState,
+  draft: KnowledgeCandidateDraft,
+): MessageThreadState {
+  return { ...state, draftsById: mergeDrafts(state.draftsById, [draft]) };
+}
+
 export function threadFromPage(page: KnowledgeMessagePage): MessageThreadState {
   return applyRecentPage(emptyThread(), page);
 }
@@ -106,6 +138,7 @@ export function composeThread(
   olderPages: KnowledgeMessagePage[],
   runOverrides: Map<number, KnowledgeRun>,
   extraMessages: KnowledgeMessage[],
+  draftOverrides: Map<number, KnowledgeCandidateDraft> = new Map(),
 ): MessageThreadState {
   if (!recent) return emptyThread();
   let state = threadFromPage(recent);
@@ -117,6 +150,9 @@ export function composeThread(
   }
   for (const message of extraMessages) {
     state = upsertMessage(state, message);
+  }
+  for (const draft of draftOverrides.values()) {
+    state = upsertDraft(state, draft);
   }
   return state;
 }

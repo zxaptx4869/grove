@@ -4,9 +4,11 @@ import {
   emptyThread,
   prependOlderPage,
   upsertMessage,
+  upsertDraft,
   threadFromPage,
 } from "@/src/knowledge-agent/state/messages";
 import type {
+  KnowledgeCandidateDraft,
   KnowledgeMessage,
   KnowledgeMessagePage,
   KnowledgeRun,
@@ -41,6 +43,8 @@ function run(id: number, updatedAt: string): KnowledgeRun {
   return {
     id,
     conversationId: 1,
+    runKind: "answer",
+    sourceRunId: null,
     status: "completed",
     currentStep: null,
     scopeType: "workspace",
@@ -74,8 +78,38 @@ function page(
   items: KnowledgeMessage[],
   nextCursor: string | null,
   runs: KnowledgeRun[] = [],
+  candidateDrafts: KnowledgeCandidateDraft[] = [],
 ): KnowledgeMessagePage {
-  return { items, nextCursor, runs };
+  return { items, nextCursor, runs, candidateDrafts };
+}
+
+function draft(
+  id: number,
+  updatedAt: string,
+  overrides: Partial<KnowledgeCandidateDraft> = {},
+): KnowledgeCandidateDraft {
+  return {
+    id,
+    conversationId: 1,
+    operationRunId: 10,
+    sourceRunId: 5,
+    targetProjectId: 1,
+    targetProjectName: "新房装修",
+    status: "draft",
+    title: "闭水试验要点",
+    content: "闭水试验通常持续 24 小时。",
+    mainType: "knowledge",
+    infoNature: null,
+    evidenceHandles: ["ev_1"],
+    evidenceSummaries: [],
+    generationDegraded: false,
+    generationError: null,
+    confirmedCandidateId: null,
+    error: null,
+    createdAt: updatedAt,
+    updatedAt,
+    ...overrides,
+  };
 }
 
 test("最近页替换旧内容并按 id 去重", () => {
@@ -151,4 +185,37 @@ test("两轮对话顺序保持 用户→回答→用户→回答，不因提交�
     "第二轮问题",
     "第二轮回答",
   ]);
+});
+
+test("消息页草稿合并去重，同 id 以服务端更新的 updated_at 为准", () => {
+  const first = page(
+    [message(5, "五", 10)],
+    null,
+    [],
+    [draft(1, "2026-08-01T00:00:00Z")],
+  );
+  const state = applyRecentPage(emptyThread(), first);
+  expect(state.draftsById.get(1)?.title).toBe("闭水试验要点");
+
+  const second = page(
+    [message(5, "五", 10)],
+    null,
+    [],
+    [draft(1, "2026-08-02T00:00:00Z", { title: "新标题" })],
+  );
+  const next = applyRecentPage(state, second);
+  expect(next.draftsById.size).toBe(1);
+  expect(next.draftsById.get(1)?.title).toBe("新标题");
+});
+
+test("upsertDraft 覆盖同 id 草稿", () => {
+  const state = threadFromPage(
+    page([message(5, "五", 10)], null, [], [draft(1, "t1")]),
+  );
+  const updated = upsertDraft(
+    state,
+    draft(1, "t2", { status: "confirmed", confirmedCandidateId: 99 }),
+  );
+  expect(updated.draftsById.get(1)?.status).toBe("confirmed");
+  expect(updated.draftsById.get(1)?.confirmedCandidateId).toBe(99);
 });

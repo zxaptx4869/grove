@@ -36,10 +36,16 @@ jest.mock("@/src/knowledge-agent/api", () => ({
       items: [],
       nextCursor: null,
       runs: [],
+      candidateDrafts: [],
     }),
     submitMessage: jest.fn(),
     getRun: jest.fn(),
     cancelRun: jest.fn(),
+    submitDraftAction: jest.fn(),
+    getDraft: jest.fn(),
+    editDraft: jest.fn(),
+    cancelDraft: jest.fn(),
+    confirmDraft: jest.fn(),
   },
 }));
 
@@ -123,6 +129,8 @@ function run(
   return {
     id,
     conversationId: 1,
+    runKind: "answer",
+    sourceRunId: null,
     status,
     currentStep: null,
     scopeType: "workspace",

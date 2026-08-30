@@ -1,8 +1,64 @@
 import {
   cleanAnswerText,
+  draftActionEligibility,
   presentAnswer,
 } from "@/src/knowledge-agent/adapters/answer";
-import type { KnowledgeAnswer } from "@/src/knowledge-agent/types";
+import type { KnowledgeAnswer, KnowledgeRun } from "@/src/knowledge-agent/types";
+
+function run(
+  overrides: Partial<KnowledgeRun> = {},
+): KnowledgeRun {
+  return {
+    id: 1,
+    conversationId: 1,
+    runKind: "answer",
+    sourceRunId: null,
+    status: "completed",
+    currentStep: null,
+    scopeType: "project",
+    projectId: 1,
+    projectName: "新房装修",
+    userMessageId: 1,
+    assistantMessageId: 2,
+    cancelRequested: false,
+    retryCount: 0,
+    maxRetries: 1,
+    error: null,
+    requestContextMode: null,
+    contextDecision: null,
+    standaloneQuery: null,
+    topicLabel: null,
+    requestAnswerMode: null,
+    actualAnswerMode: null,
+    currentRound: 0,
+    inputContextVersionId: null,
+    outputContextVersionId: null,
+    contextDegraded: false,
+    fallbackSummary: null,
+    investigationSummary: null,
+    answer: null,
+    createdAt: "2026-08-29T10:00:00Z",
+    updatedAt: "2026-08-29T10:00:00Z",
+    ...overrides,
+  };
+}
+
+function citation(projectId: number, projectName: string) {
+  return {
+    evidenceId: projectId * 10,
+    evidenceHandle: `ev_${projectId}`,
+    entryId: projectId,
+    entryTitle: "闭水试验",
+    sourceId: 1,
+    sourceTitle: "验收手册",
+    attachmentId: 1,
+    quote: "闭水试验通常持续 24 小时",
+    scopeType: "project" as const,
+    projectId,
+    projectName,
+    nodePath: "施工",
+  };
+}
 
 test("cleanAnswerText 移除常见 Markdown 标记但保留换行与内容", () => {
   const text =
@@ -78,4 +134,125 @@ test("partial 说明未覆盖内容但不默认宣称发生降级", () => {
   expect(presentation.headline).toBe("部分结果");
   expect(presentation.note).toContain("未覆盖或失效内容");
   expect(presentation.note).not.toContain("降级");
+});
+
+test("completed 有引用的项目范围回答可整理，目标项目固定", () => {
+  const eligibility = draftActionEligibility(
+    run({
+      scopeType: "project",
+      projectId: 3,
+      projectName: "新房装修",
+      answer: {
+        answer: "闭水试验通常持续 24 小时。",
+        status: "completed",
+        insufficientNote: null,
+        citations: [citation(3, "新房装修")],
+        conflicts: [],
+      },
+    }),
+  );
+  expect(eligibility.eligible).toBe(true);
+  expect(eligibility.sourceRunId).toBe(1);
+  expect(eligibility.fixedProjectId).toBe(3);
+  expect(eligibility.projectOptions).toEqual([{ id: 3, name: "新房装修" }]);
+  expect(eligibility.note).toBeNull();
+});
+
+test("Workspace 多项目回答返回可选项目且不固定目标", () => {
+  const eligibility = draftActionEligibility(
+    run({
+      scopeType: "workspace",
+      projectId: null,
+      projectName: null,
+      answer: {
+        answer: "两条记录都确认了闭水时长。",
+        status: "completed",
+        insufficientNote: null,
+        citations: [citation(1, "项目甲"), citation(2, "项目乙")],
+        conflicts: [],
+      },
+    }),
+  );
+  expect(eligibility.eligible).toBe(true);
+  expect(eligibility.fixedProjectId).toBeNull();
+  expect(eligibility.projectOptions.map((item) => item.id)).toEqual([1, 2]);
+});
+
+test("partial 有引用可整理并说明只整理有依据部分", () => {
+  const eligibility = draftActionEligibility(
+    run({
+      status: "partial",
+      answer: {
+        answer: "已有知识确认了闭水时长。",
+        status: "partial",
+        insufficientNote: null,
+        citations: [citation(1, "项目甲")],
+        conflicts: [],
+      },
+    }),
+  );
+  expect(eligibility.eligible).toBe(true);
+  expect(eligibility.note).toContain("只整理有依据部分");
+});
+
+test("无引用或不可整理状态不暴露整理入口", () => {
+  const withoutCitations = draftActionEligibility(
+    run({
+      answer: {
+        answer: "没有引用。",
+        status: "completed",
+        insufficientNote: null,
+        citations: [],
+        conflicts: [],
+      },
+    }),
+  );
+  expect(withoutCitations.eligible).toBe(false);
+  expect(withoutCitations.sourceRunId).toBeNull();
+
+  const insufficient = draftActionEligibility(
+    run({
+      answer: {
+        answer: "知识不足。",
+        status: "insufficient",
+        insufficientNote: "无证据",
+        citations: [citation(1, "项目甲")],
+        conflicts: [],
+      },
+    }),
+  );
+  expect(insufficient.eligible).toBe(false);
+
+  const cancelled = draftActionEligibility(
+    run({
+      status: "cancelled",
+      answer: null,
+    }),
+  );
+  expect(cancelled.eligible).toBe(false);
+});
+
+test("draft_candidate Run 与旧缺省 runKind 都按只读回答判定", () => {
+  const draftRun = draftActionEligibility(
+    run({
+      runKind: "draft_candidate",
+      answer: null,
+    }),
+  );
+  expect(draftRun.eligible).toBe(false);
+
+  const legacyRun = draftActionEligibility(
+    run({
+      runKind: undefined,
+      sourceRunId: undefined,
+      answer: {
+        answer: "旧回答",
+        status: "completed",
+        insufficientNote: null,
+        citations: [citation(1, "项目甲")],
+        conflicts: [],
+      },
+    }),
+  );
+  expect(legacyRun.eligible).toBe(true);
 });
