@@ -329,7 +329,7 @@ test("insufficient 带引用时仍遵循后端知识不足状态", async () => {
   expect(view.getByLabelText("查看引用：Entry 1")).toBeOnTheScreen();
 });
 
-test("结构化要点渲染分组标题与行内上标、底部按序号来源", async () => {
+test("结构化要点渲染分组标题、连续编号与底部来源条", async () => {
   const onCitationPress = jest.fn();
   const view = await render(
     <AnswerCard
@@ -370,19 +370,18 @@ test("结构化要点渲染分组标题与行内上标、底部按序号来源",
   expect(view.getByText(/飘窗处预留插座。/)).toBeOnTheScreen();
   expect(view.getByText(/窗帘盒边预留电源。/)).toBeOnTheScreen();
   expect(view.getByText(/台面多留插座。/)).toBeOnTheScreen();
-  // 行内上标序号（1-20 用圈号），不裸露 Markdown 标记
-  expect(view.getAllByText("①").length).toBeGreaterThan(0);
-  expect(view.getAllByText("②").length).toBeGreaterThan(0);
-  expect(view.getAllByText("③").length).toBeGreaterThan(0);
+  // 每条要点左侧连续编号圆点，不裸露 Markdown 标记
+  expect(view.getByText("1")).toBeOnTheScreen();
+  expect(view.getByText("2")).toBeOnTheScreen();
+  expect(view.getByText("3")).toBeOnTheScreen();
   expect(view.queryByText(/\*\*/)).toBeNull();
-  // 底部按序号来源区，点击打开对应引用；同一 Evidence 只占一行
-  expect(view.getByLabelText("查看引用 ①：Entry 1")).toBeOnTheScreen();
-  expect(view.getByLabelText("查看引用 ③：Entry 3")).toBeOnTheScreen();
-  expect(view.getAllByLabelText("查看引用 ①：Entry 1").length).toBe(1);
-  await fireEvent.press(view.getByLabelText("查看引用 ②：Entry 2"));
+  // 底部统一来源条，点击打开对应引用
+  expect(view.getByLabelText("查看引用：Entry 1")).toBeOnTheScreen();
+  expect(view.getByLabelText("查看引用：Entry 3")).toBeOnTheScreen();
+  await fireEvent.press(view.getByLabelText("查看引用：Entry 2"));
   expect(onCitationPress).toHaveBeenCalledWith(citation(2));
-  // 不再渲染逐条来源 chip
-  expect(view.queryByLabelText("查看引用：Entry 1")).toBeNull();
+  // 不再渲染行内上标
+  expect(view.queryByText("①")).toBeNull();
   await view.unmount();
 });
 

@@ -11,13 +11,15 @@
 的历史回答回退到现有纯文本 + 底部来源条。不改变草稿/确认协议、正式 Entry 语义与 Web
 展示。
 
-## 真机反馈后的展示修订（2026-08-30）
+## 真机反馈后的展示修订（2026-08-30，两轮）
 
-首版实现为「每条要点下方一个来源 chip」，真机反馈在「一条要点 = 一条 Entry」时来源标题与
-要点内容高度重复、显得多余；按用户选择改为方案 B：每条要点正文后显示极小上标序号
-（1-20 用圈号，超过回退 `(n)`），底部来源区按序号列出可点击来源行（替代原 CitationStrip），
-同一 Evidence 只占一个序号。无 `points` 的历史回答仍保留纯文本 + CitationStrip 回退。
-相应更新了 `design.md` 决策 5 与 `native-knowledge-agent-answer` delta spec。
+- 第一版「每条要点下方一个来源 chip」：真机反馈在「一条要点 = 一条 Entry」时来源标题与
+  要点内容高度重复、显得多余；
+- 第二版「行内上标 + 底部按序号来源区」：真机反馈来源全部铺开太长，且用户希望保留每条
+  要点左侧的连续编号圆点；
+- 最终方案：分组标题 + 每条要点左侧连续编号圆点 + 正文，要点内不展示任何来源；底部统一
+  保留 `CitationStrip`「全部来源速览」（有 `points` 与无 `points` 一致）；逐条绑定只保留
+  在数据层。相应更新 `design.md` 决策 5 与 `native-knowledge-agent-answer` delta spec。
 
 ## 真实命令与结果
 
@@ -55,7 +57,7 @@ cd backend && .venv/bin/ruff check app tests
 
 ```bash
 cd mobile && npm test -- --runInBand
-# 10 suites / 73 tests passed（新增要点渲染与回退 2 项；含上标/来源区修订）
+# 10 suites / 73 tests passed（新增要点渲染与回退 2 项；含编号/来源条最终形态修订）
 
 cd mobile && npm run lint
 # 通过
