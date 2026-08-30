@@ -98,3 +98,12 @@ git diff --check
 - `answer` 文本由服务端从 `lead` + `points` 拼接，Web ReaderView 显示的文本风格与旧版
   基本一致（`**分组**` + `- 列表`），无需改动；
 - 同一条 Evidence 被多条要点引用时，扁平 `citations` 与底部来源条按证据去重展示。
+
+## 分支 code review 修复（2026-08-30）
+
+- 空正文要点（有句柄但 `text` 为空白）此前会进入输出 `points`，移动端渲染出空要点行；
+  现与拼接语义一致整条丢弃，并补充回归测试；
+- `points` 输出的 `text`/`section` 补充 strip 与句柄清洗，避免输出首尾空白或标题泄漏
+  句柄；
+- 回答 prompt v3 显式说明「answer 与顶层 citations 由服务端生成，引用只通过每个 point
+  的 evidence_handles 表达」，避免模型同时输出扁平 citations 造成统计口径不一致。

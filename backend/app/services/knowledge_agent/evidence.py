@@ -281,6 +281,9 @@ async def build_validated_answer(
         citations: list[KnowledgeRunCitationOut] = []
         seen_citations: set[int] = set()
         for point in points:
+            if not (point.text or "").strip():
+                # 空正文要点与拼接语义一致：整条丢弃，不产生空展示行
+                continue
             point_handles = list(
                 dict.fromkeys(
                     handle for handle in point.evidence_handles if handle in resolved
@@ -390,8 +393,8 @@ async def build_validated_answer(
         else ("全部引用被丢弃，无法提供带证据的确定结论" if stats.valid_count == 0 else None),
         points=[
             KnowledgeAnswerPointOut(
-                section=point.section,
-                text=sanitize_answer_text(point.text),
+                section=sanitize_answer_text(point.section) if point.section else None,
+                text=sanitize_answer_text(point.text.strip()),
                 citations=[
                     _citation_out(resolved[handle])
                     for handle in dict.fromkeys(point.evidence_handles)

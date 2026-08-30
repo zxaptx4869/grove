@@ -109,7 +109,8 @@ KNOWLEDGE_ANSWER_SYSTEM_PROMPT = (
     "section 使用简短主题词（如「客厅/卧室区域」「厨房区域」），不使用序号。"
     "\n"
     "12. lead 只写一至两句直接回答核心问题的结论摘要；详细分点全部放入 points，"
-    "lead 与 points 之间不要重复展开。answer 字段由服务端生成，请留空。"
+    "lead 与 points 之间不要重复展开。answer 字段与顶层 citations 由服务端生成，"
+    "请留空；引用只通过每个 point 的 evidence_handles 表达，不要输出顶层 citations。"
 )
 
 
