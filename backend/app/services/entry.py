@@ -882,3 +882,43 @@ async def apply_knowledge_agent_revision(
     await schedule_refresh(db, entry.project_id, refresh_reason)
     await mark_entry_embedding_pending(db, entry)
     return version, added_ids
+
+
+async def restore_entry_from_snapshot(
+    db: AsyncSession,
+    entry: Entry,
+    *,
+    snapshot: dict,
+    change_summary: str,
+) -> EntryVersion | None:
+    """按不可变快照恢复 Entry 字段与主目录，追加 restored 版本并调度刷新。
+
+    撤销语义复用：调用方必须先完成并发校验；快照来自 Execution 的 before
+    字段，不依赖可能被滚动清理的旧 EntryVersion。
+    """
+    values = {
+        field: snapshot.get(field) for field in (*_REQUIRED_FIELDS, *_NULLABLE_FIELDS)
+    }
+    changed = _apply_revision_fields(entry, values)
+    new_node_id = snapshot.get("node_id")
+    if new_node_id is not None and new_node_id != entry.node_id:
+        node = await db.get(Node, new_node_id)
+        if node is None or node.project_id != entry.project_id:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="版本目录节点无效",
+            )
+        entry.node_id = new_node_id
+        entry.node = node
+        changed = True
+    version = None
+    if changed:
+        version = await _snapshot_entry_version(
+            db,
+            entry,
+            VERSION_RESTORED,
+            change_summary,
+        )
+    await schedule_refresh(db, entry.project_id, "entry_restored")
+    await mark_entry_embedding_pending(db, entry)
+    return version

@@ -45,6 +45,8 @@ from app.schemas.knowledge_agent import (
     KnowledgeRevisionConfirmOut,
     KnowledgeRevisionConfirmRequest,
     KnowledgeRevisionDraftEditRequest,
+    KnowledgeRevisionUndoOut,
+    KnowledgeRevisionUndoRequest,
     KnowledgeRunObservabilityOut,
     KnowledgeRunOut,
     KnowledgeRunSubmitOut,
@@ -82,6 +84,7 @@ from app.services.knowledge_agent.entry_revision import (
     revision_drafts_out_batch,
     revision_entry_out,
     submit_entry_revision,
+    undo_entry_revision,
 )
 from app.services.knowledge_agent.runs import (
     cancel_run,
@@ -589,6 +592,35 @@ async def confirm_revision_draft_endpoint(
         db, entry, execution.after_version_number
     )
     return KnowledgeRevisionConfirmOut(
+        draft=draft_out,
+        execution=draft_out.execution or execution_out(execution),
+        entry=entry_out,
+    )
+
+
+@router.post(
+    "/entry-revision-drafts/{draft_id}/undo",
+    response_model=KnowledgeRevisionUndoOut,
+)
+async def undo_revision_draft_endpoint(
+    draft_id: int,
+    payload: KnowledgeRevisionUndoRequest,
+    db: DbSession,
+    user: CurrentUser,
+    workspace: CurrentWorkspace,
+) -> KnowledgeRevisionUndoOut:
+    """撤销已应用修订：恢复 before 快照、删除本操作新增证据、追加恢复版本。"""
+    draft = await get_owned_revision_draft(db, workspace.id, user.id, draft_id)
+    undone, execution, entry = await undo_entry_revision(
+        db,
+        draft,
+        payload.client_operation_id,
+    )
+    draft_out = (await revision_drafts_out_batch(db, [undone]))[0]
+    entry_out = await revision_entry_out(
+        db, entry, execution.before_version_number
+    )
+    return KnowledgeRevisionUndoOut(
         draft=draft_out,
         execution=draft_out.execution or execution_out(execution),
         entry=entry_out,

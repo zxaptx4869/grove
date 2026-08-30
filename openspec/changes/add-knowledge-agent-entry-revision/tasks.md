@@ -57,12 +57,12 @@
 
 ## 7. 并发安全撤销
 
-- [ ] 7.1 实现 Execution/Draft 条件状态转换和幂等 undo key，校验 after fingerprint 与最新 applied version；后续修改时稳定返回 409
-- [ ] 7.2 在单事务中恢复 before snapshot、只删除本操作新增且仍属目标 Entry 的 Evidence、追加 restored 版本、刷新 Project Context/embedding 并标记 undone
-- [ ] 7.3 撤销不得删除既有/等价复用/其他操作新增 Evidence；不得依赖已经可能被滚动清理的旧 EntryVersion 作为唯一 before 数据
-- [ ] 7.4 记录 undo 工具调用、结果与错误；失败保持 applied，已 undone 重试返回同一结果且不追加第二个恢复版本
-- [ ] 7.5 补成功撤销、重复撤销、响应未知重试、人工编辑/移动/再次修订/版本恢复阻止撤销、Evidence 精确删除、事务失败回滚和越权测试
-- [ ] 7.6 运行撤销定向测试与 ruff，完成本地提交 `feat: 支持知识 Agent 修订安全撤销`
+- [x] 7.1 实现 Execution/Draft 条件状态转换和幂等 undo key，校验 after fingerprint 与最新 applied version；后续修改时稳定返回 409
+- [x] 7.2 在单事务中恢复 before snapshot、只删除本操作新增且仍属目标 Entry 的 Evidence、追加 restored 版本、刷新 Project Context/embedding 并标记 undone
+- [x] 7.3 撤销不得删除既有/等价复用/其他操作新增 Evidence；不得依赖已经可能被滚动清理的旧 EntryVersion 作为唯一 before 数据
+- [x] 7.4 记录 undo 工具调用、结果与错误；失败保持 applied，已 undone 重试返回同一结果且不追加第二个恢复版本
+- [x] 7.5 补成功撤销、重复撤销、响应未知重试、人工编辑/移动/再次修订/版本恢复阻止撤销、Evidence 精确删除、事务失败回滚和越权测试
+- [x] 7.6 运行撤销定向测试与 ruff，完成本地提交 `feat: 支持知识 Agent 修订安全撤销`
 
 ## 8. 原生领域层与控制器
 

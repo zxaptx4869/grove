@@ -17,7 +17,7 @@ from datetime import UTC, datetime
 from time import perf_counter
 
 from fastapi import HTTPException, status
-from sqlalchemy import select, update
+from sqlalchemy import delete, select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -28,6 +28,7 @@ from app.agents.entry_revision import (
 from app.models import (
     Attachment,
     Entry,
+    EntrySourceEvidence,
     EntryVersion,
     KnowledgeAgentEvidence,
     KnowledgeAgentRun,
@@ -53,6 +54,8 @@ from app.models.knowledge_agent import (
     REVISION_DRAFT_TERMINAL_STATUSES,
     REVISION_DRAFT_UNDONE,
     REVISION_EXECUTION_APPLIED,
+    REVISION_EXECUTION_UNDOING,
+    REVISION_EXECUTION_UNDONE,
     RUN_CANCELLED,
     RUN_COMPLETED,
     RUN_FAILED,
@@ -77,6 +80,7 @@ from app.services.entry import (
     apply_knowledge_agent_revision,
     entry_baseline,
     entry_fingerprint,
+    restore_entry_from_snapshot,
 )
 from app.services.knowledge_agent.conversations import (
     DEFAULT_CONVERSATION_TITLE,
@@ -1585,5 +1589,225 @@ async def confirm_entry_revision(
     )
     await db.commit()
     await db.refresh(draft)
+    await db.refresh(entry)
+    return draft, execution, entry
+
+
+async def _revision_undo_tool(
+    db: AsyncSession,
+    run_id: int,
+    *,
+    status_code: str,
+    params: dict,
+    result: dict,
+    error: str | None,
+    duration_ms: int,
+) -> None:
+    """记录撤销工具调用的真实状态，失败不得伪装为 undone。"""
+    sequence = await next_tool_sequence(db, run_id)
+    await record_tool_call(
+        db,
+        run_id=run_id,
+        sequence=sequence,
+        tool_name="entry_revision_undo",
+        status=status_code,
+        params_summary=json.dumps(params, ensure_ascii=False),
+        result_summary=json.dumps(result, ensure_ascii=False),
+        error=error,
+        duration_ms=duration_ms,
+    )
+
+
+async def _parse_before_snapshot(
+    execution: KnowledgeEntryRevisionExecution,
+) -> dict:
+    """解析 Execution 的操作前快照。"""
+    try:
+        data = json.loads(execution.before_entry_json)
+    except (json.JSONDecodeError, TypeError):
+        data = {}
+    return data if isinstance(data, dict) else {}
+
+
+async def undo_entry_revision(
+    db: AsyncSession,
+    draft: KnowledgeEntryRevisionDraft,
+    client_operation_id: str,
+) -> tuple[KnowledgeEntryRevisionDraft, KnowledgeEntryRevisionExecution, Entry]:
+    """撤销本次修订：恢复 before 快照、删除本操作新增 Evidence、追加 restored 版本。
+
+    幂等：已 undone Execution 或相同撤销键重放返回同一结果；
+    并发安全：Entry 当前指纹必须仍等于 after_fingerprint 且最新版本仍为
+    after version；后续修改返回 409，不覆盖较新正式知识。
+    """
+    started = perf_counter()
+    execution = (
+        await db.get(KnowledgeEntryRevisionExecution, draft.execution_id)
+        if draft.execution_id
+        else None
+    )
+    if execution is None:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="修订尚未应用，无法撤销",
+        )
+    execution_id = execution.id
+    operation_run_id = draft.operation_run_id
+    entry_id = execution.entry_id
+
+    async def _replay_undone() -> tuple[
+        KnowledgeEntryRevisionDraft,
+        KnowledgeEntryRevisionExecution,
+        Entry,
+    ]:
+        fresh_execution = await db.get(
+            KnowledgeEntryRevisionExecution, execution_id
+        )
+        fresh_draft = await db.get(KnowledgeEntryRevisionDraft, draft.id)
+        entry = await db.get(Entry, entry_id) if entry_id else None
+        if (
+            fresh_execution is not None
+            and fresh_execution.status == REVISION_EXECUTION_UNDONE
+            and fresh_draft is not None
+            and entry is not None
+        ):
+            return fresh_draft, fresh_execution, entry
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="撤销正在处理或状态已变化，请刷新后重试",
+        )
+
+    if execution.status == REVISION_EXECUTION_UNDONE:
+        fresh_draft = await db.get(KnowledgeEntryRevisionDraft, draft.id)
+        entry = await db.get(Entry, entry_id) if entry_id else None
+        if fresh_draft is not None and entry is not None:
+            return fresh_draft, execution, entry
+    if execution.status != REVISION_EXECUTION_APPLIED:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="修订当前状态不可撤销，请刷新后重试",
+        )
+    if draft.status != REVISION_DRAFT_APPLIED:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="草稿当前状态不可撤销，请刷新后重试",
+        )
+
+    entry = await db.get(Entry, entry_id) if entry_id else None
+    if entry is None or entry.project_id != draft.target_project_id:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="目标知识当前不可用，无法撤销",
+        )
+
+    # 并发安全校验：当前字段指纹 == after 且最新版本 == after version
+    current_fp = entry_fingerprint(entry_baseline(entry))
+    version_id, version_number = await latest_entry_version(db, entry.id)
+    if (
+        current_fp != execution.after_fingerprint
+        or version_id != execution.after_version_id
+        or version_number != execution.after_version_number
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="知识后来发生了变化，不能自动撤销；请到版本历史处理",
+        )
+
+    try:
+        locked = (
+            await db.execute(
+                update(KnowledgeEntryRevisionExecution)
+                .where(
+                    KnowledgeEntryRevisionExecution.id == execution_id,
+                    KnowledgeEntryRevisionExecution.status
+                    == REVISION_EXECUTION_APPLIED,
+                    KnowledgeEntryRevisionExecution.undo_client_operation_id.is_(None),
+                )
+                .values(
+                    status=REVISION_EXECUTION_UNDOING,
+                    undo_client_operation_id=client_operation_id,
+                )
+            )
+        ).rowcount
+    except IntegrityError:
+        await db.rollback()
+        duration = int((perf_counter() - started) * 1000)
+        await _revision_undo_tool(
+            db,
+            operation_run_id,
+            status_code="error",
+            params={"execution_id": execution_id},
+            result={},
+            error="撤销幂等键冲突",
+            duration_ms=duration,
+        )
+        await db.commit()
+        return await _replay_undone()  # type: ignore[return-value]
+    if locked != 1:
+        await db.rollback()
+        return await _replay_undone()  # type: ignore[return-value]
+
+    # 单事务撤销：恢复字段 + 删除本操作新增证据 + 追加 restored 版本 + 状态终态
+    before = await _parse_before_snapshot(execution)
+    added_ids = _load_evidence_ids(execution.added_evidence_ids_json)
+    try:
+        restored_version = await restore_entry_from_snapshot(
+            db,
+            entry,
+            snapshot=before,
+            change_summary=(
+                f"撤销知识 Agent 修订"
+                f"（恢复版本 {execution.before_version_number or '—'}）"
+            ),
+        )
+        if added_ids:
+            await db.execute(
+                delete(EntrySourceEvidence).where(
+                    EntrySourceEvidence.id.in_(added_ids),
+                    EntrySourceEvidence.entry_id == entry.id,
+                )
+            )
+        execution.status = REVISION_EXECUTION_UNDONE
+        execution.undone_at = datetime.now(UTC)
+        execution.error = None
+        draft.status = REVISION_DRAFT_UNDONE
+        draft.error = None
+        await db.commit()
+    except IntegrityError as exc:
+        await db.rollback()
+        duration = int((perf_counter() - started) * 1000)
+        await _revision_undo_tool(
+            db,
+            operation_run_id,
+            status_code="error",
+            params={"execution_id": execution_id},
+            result={},
+            error="撤销事务冲突",
+            duration_ms=duration,
+        )
+        await db.commit()
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="撤销事务冲突，请刷新后重试",
+        ) from exc
+
+    duration = int((perf_counter() - started) * 1000)
+    await _revision_undo_tool(
+        db,
+        operation_run_id,
+        status_code="ok",
+        params={"execution_id": execution.id, "entry_id": entry.id},
+        result={
+            "restored_version_number": restored_version.version_number
+            if restored_version is not None
+            else None,
+            "removed_evidence_count": len(added_ids),
+        },
+        error=None,
+        duration_ms=duration,
+    )
+    await db.commit()
+    await db.refresh(draft)
+    await db.refresh(execution)
     await db.refresh(entry)
     return draft, execution, entry

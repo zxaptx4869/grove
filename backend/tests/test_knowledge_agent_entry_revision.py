@@ -49,6 +49,7 @@ from app.services.knowledge_agent.entry_revision import (
     edit_revision_draft,
     execute_entry_revision_run,
     submit_entry_revision,
+    undo_entry_revision,
 )
 from app.services.knowledge_agent.evidence import attachment_fingerprint
 from app.services.knowledge_agent.observability import StageMeta
@@ -1346,3 +1347,271 @@ async def test_confirm_records_tool_call_observability() -> None:
         assert confirm_calls[0].result_summary
         assert "after_version_number" in (confirm_calls[0].result_summary or "")
         assert confirm_calls[0].error is None
+
+
+@pytest.mark.asyncio
+async def test_undo_restores_before_snapshot_and_appends_restored_version() -> None:
+    """撤销恢复 before 快照、追加 restored 版本并标记 undone。"""
+    async with async_session_factory() as db:
+        user = await create_user(db, "撤销成功")
+        workspace = await create_workspace(db, user)
+        conversation, source_run, entry, _s, _a, evidence = (
+            await _answer_run_with_evidence(db, user, workspace)
+        )
+        _m, _run, draft = await submit_entry_revision(
+            db,
+            conversation,
+            _action(source_run_id=source_run.id, target_entry_id=entry.id),
+        )
+        await _draft_to_ready(db, draft, evidence)
+        await db.commit()
+        applied, execution, applied_entry = await confirm_entry_revision(
+            db, draft, "confirm-undo-1"
+        )
+        await db.commit()
+        assert applied_entry.title.startswith("闭水试验完成后再验收防水层（含适用条件）")
+
+        undone, undone_execution, restored_entry = await undo_entry_revision(
+            db, draft, "undo-key-1"
+        )
+        await db.commit()
+
+        assert undone.status == "undone"
+        assert undone_execution.status == "undone"
+        assert undone_execution.undone_at is not None
+        assert restored_entry.title == "闭水试验完成后再验收防水层"
+        assert restored_entry.content == CONTENT
+        assert restored_entry.main_type == "knowledge"
+
+        versions = (
+            await db.execute(
+                select(EntryVersion)
+                .where(EntryVersion.entry_id == entry.id)
+                .order_by(EntryVersion.version_number)
+            )
+        ).scalars().all()
+        change_types = [version.change_type for version in versions]
+        assert change_types == ["knowledge_agent_revision", "restored"]
+
+
+@pytest.mark.asyncio
+async def test_undo_idempotent_same_key_no_second_restored_version() -> None:
+    """重复撤销返回同一结果，不追加第二个恢复版本。"""
+    async with async_session_factory() as db:
+        user = await create_user(db, "撤销幂等")
+        workspace = await create_workspace(db, user)
+        conversation, source_run, entry, _s, _a, evidence = (
+            await _answer_run_with_evidence(db, user, workspace)
+        )
+        _m, _run, draft = await submit_entry_revision(
+            db,
+            conversation,
+            _action(source_run_id=source_run.id, target_entry_id=entry.id),
+        )
+        await _draft_to_ready(db, draft, evidence)
+        await db.commit()
+        await confirm_entry_revision(db, draft, "confirm-undo-2")
+        await db.commit()
+
+        first = await undo_entry_revision(db, draft, "undo-dup")
+        await db.commit()
+        second = await undo_entry_revision(db, draft, "undo-dup")
+        await db.commit()
+        assert second[1].id == first[1].id
+        assert second[0].status == "undone"
+        versions = (
+            await db.execute(
+                select(EntryVersion).where(EntryVersion.entry_id == entry.id)
+            )
+        ).scalars().all()
+        restored = [v for v in versions if v.change_type == "restored"]
+        assert len(restored) == 1
+
+
+@pytest.mark.asyncio
+async def test_undo_rejected_when_later_modification_exists() -> None:
+    """Entry 在应用后又被修改：撤销返回 409，不覆盖新内容。"""
+    async with async_session_factory() as db:
+        user = await create_user(db, "撤销冲突")
+        workspace = await create_workspace(db, user)
+        conversation, source_run, entry, _s, _a, evidence = (
+            await _answer_run_with_evidence(db, user, workspace)
+        )
+        _m, _run, draft = await submit_entry_revision(
+            db,
+            conversation,
+            _action(source_run_id=source_run.id, target_entry_id=entry.id),
+        )
+        await _draft_to_ready(db, draft, evidence)
+        await db.commit()
+        await confirm_entry_revision(db, draft, "confirm-undo-3")
+        await db.commit()
+        entry.content = "应用后的又一次人工编辑。"
+        await db.commit()
+
+        with pytest.raises(HTTPException) as exc:
+            await undo_entry_revision(db, draft, "undo-conflict")
+        assert exc.value.status_code == 409
+        assert "知识后来发生了变化" in exc.value.detail
+        await db.refresh(draft)
+        assert draft.status == "applied"
+        execution = await db.get(
+            KnowledgeEntryRevisionExecution, draft.execution_id
+        )
+        assert execution is not None
+        assert execution.status == "applied"
+
+
+@pytest.mark.asyncio
+async def test_undo_deletes_only_own_added_evidence() -> None:
+    """撤销只删除本操作新增且仍属目标 Entry 的 Evidence，保留既有与其他来源。"""
+    async with async_session_factory() as db:
+        user = await create_user(db, "撤销证据")
+        workspace = await create_workspace(db, user)
+        conversation, source_run, entry, source, _attachment, evidence = (
+            await _answer_run_with_evidence(db, user, workspace)
+        )
+        project = await db.get(Project, entry.project_id)
+        # 目标 Entry 预置一条既有证据（不同于回答引用）
+        pre_source, pre_attachment = await create_source_attachment(
+            db,
+            workspace,
+            project,
+            title="既有来源.md",
+            text_content="既有来源内容。",
+        )
+        pre_relation = EntrySourceEvidence(
+            entry_id=entry.id,
+            source_id=pre_source.id,
+            attachment_id=pre_attachment.id,
+            quote="既有来源内容。",
+        )
+        db.add(pre_relation)
+        await db.flush()
+        existing_ids_before = {
+            row.id
+            for row in (
+                await db.execute(
+                    select(EntrySourceEvidence).where(
+                        EntrySourceEvidence.entry_id == entry.id
+                    )
+                )
+            ).scalars().all()
+        }
+
+        # 回答引用指向第二条来源（目标 Entry 尚未关联）
+        second_source, second_attachment = await create_source_attachment(
+            db,
+            workspace,
+            project,
+            title="回答采用来源.md",
+            text_content="回答采用的核验原文内容。",
+        )
+        second_quote = "回答采用的核验原文内容。"
+        second_evidence = KnowledgeAgentEvidence(
+            run_id=source_run.id,
+            handle=f"ev_undo_{uuid.uuid4().hex[:8]}",
+            entry_id=entry.id,
+            project_id=project.id,
+            source_id=second_source.id,
+            attachment_id=second_attachment.id,
+            entry_title=entry.title,
+            project_name=project.name,
+            source_title=second_source.title,
+            quote=second_quote,
+            content_fingerprint=attachment_fingerprint(second_quote),
+            purpose="answer",
+            is_citable=True,
+        )
+        db.add(second_evidence)
+        await db.flush()
+        answer = KnowledgeAnswerOut(
+            answer="现有知识已确认；请补充核验原文。",
+            status="completed",
+            citations=[
+                KnowledgeRunCitationOut(
+                    evidence_id=second_evidence.id,
+                    evidence_handle=second_evidence.handle,
+                    entry_id=entry.id,
+                    entry_title=entry.title,
+                    source_id=second_source.id,
+                    source_title=second_source.title,
+                    attachment_id=second_attachment.id,
+                    quote=second_quote,
+                    project_id=project.id,
+                    project_name=project.name,
+                    node_path="根",
+                )
+            ],
+        )
+        source_run.answer_json = answer.model_dump_json()
+        await db.flush()
+
+        _m, _run, draft = await submit_entry_revision(
+            db,
+            conversation,
+            _action(source_run_id=source_run.id, target_entry_id=entry.id),
+        )
+        await _draft_to_ready(db, draft, second_evidence)
+        await db.commit()
+        _applied, execution, _applied_entry = await confirm_entry_revision(
+            db, draft, "confirm-undo-ev"
+        )
+        await db.commit()
+        added_ids = __import__("json").loads(execution.added_evidence_ids_json or "[]")
+        assert len(added_ids) == 1
+
+        await undo_entry_revision(db, draft, "undo-ev-key")
+        await db.commit()
+
+        relations = (
+            await db.execute(
+                select(EntrySourceEvidence).where(
+                    EntrySourceEvidence.entry_id == entry.id
+                )
+            )
+        ).scalars().all()
+        assert {relation.id for relation in relations} == existing_ids_before
+        assert not any(relation.id in added_ids for relation in relations)
+
+
+@pytest.mark.asyncio
+async def test_undo_transaction_failure_keeps_applied(monkeypatch) -> None:
+    """撤销事务中途失败整体回滚：Execution 保持 applied，可重试。"""
+    async with async_session_factory() as db:
+        user = await create_user(db, "撤销回滚")
+        workspace = await create_workspace(db, user)
+        conversation, source_run, entry, _s, _a, evidence = (
+            await _answer_run_with_evidence(db, user, workspace)
+        )
+        _m, _run, draft = await submit_entry_revision(
+            db,
+            conversation,
+            _action(source_run_id=source_run.id, target_entry_id=entry.id),
+        )
+        await _draft_to_ready(db, draft, evidence)
+        await db.commit()
+        await confirm_entry_revision(db, draft, "confirm-undo-fail")
+        await db.commit()
+        execution_id = draft.execution_id
+        draft_id = draft.id
+
+        async def _boom(db, entry, **kwargs):
+            raise RuntimeError("模拟撤销写入失败")
+
+        monkeypatch.setattr(
+            "app.services.knowledge_agent.entry_revision.restore_entry_from_snapshot",
+            _boom,
+        )
+        with pytest.raises(RuntimeError):
+            await undo_entry_revision(db, draft, "undo-fail-key")
+        await db.rollback()
+
+        execution = await db.get(KnowledgeEntryRevisionExecution, execution_id)
+        assert execution is not None
+        assert execution.status == "applied"
+        assert execution.undo_client_operation_id is None
+        assert execution.undone_at is None
+        fresh_draft = await db.get(KnowledgeEntryRevisionDraft, draft_id)
+        assert fresh_draft is not None
+        assert fresh_draft.status == "applied"

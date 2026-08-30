@@ -378,3 +378,119 @@ async def test_revision_confirm_via_api(client: httpx.AsyncClient) -> None:
     )
     assert replay.status_code == 200
     assert replay.json()["execution"]["id"] == body["execution"]["id"]
+
+
+@pytest.mark.asyncio
+async def test_revision_undo_via_api_and_cross_user_404(client: httpx.AsyncClient) -> None:
+    """撤销接口恢复 before 快照；其他用户撤销同一草稿返回 404。"""
+    await _register(client)
+    project = await _project(client, "修订撤销")
+    node = await _node(client, project["id"], "施工")
+    entry = await _entry(client, project["id"], node["id"], "闭水试验通常持续 24 小时")
+    source_run_id, _handle = await _completed_answer_run(client, project_id=project["id"])
+    conversation = (await client.get("/api/knowledge-agent/conversations")).json()[0]
+    submitted = await _revision_submit(
+        client,
+        conversation["id"],
+        source_run_id,
+        entry["id"],
+    )
+    draft_id = submitted.json()["draft"]["id"]
+    async with async_session_factory() as db:
+        draft = await db.get(KnowledgeEntryRevisionDraft, draft_id)
+        assert draft is not None
+        draft.status = "draft"
+        draft.title = "确认后的标题"
+        draft.content = "确认后的内容。"
+        draft.main_type = "method"
+        draft.change_summary = "修改标题与内容"
+        import json as _json
+
+        allowed = _json.loads(draft.allowed_evidence_handles_json or "[]")
+        draft.selected_evidence_handles_json = _json.dumps([allowed[0]])
+        await db.commit()
+
+    op_key = f"confirm-{uuid.uuid4().hex[:8]}"
+    confirmed = await client.post(
+        f"/api/knowledge-agent/entry-revision-drafts/{draft_id}/confirm",
+        json={"client_operation_id": op_key},
+    )
+    assert confirmed.status_code == 200
+    applied_title = confirmed.json()["entry"]["title"]
+    assert applied_title == "确认后的标题"
+
+    undo_key = f"undo-{uuid.uuid4().hex[:8]}"
+    undone = await client.post(
+        f"/api/knowledge-agent/entry-revision-drafts/{draft_id}/undo",
+        json={"client_operation_id": undo_key},
+    )
+    assert undone.status_code == 200, undone.text
+    body = undone.json()
+    assert body["draft"]["status"] == "undone"
+    assert body["execution"]["status"] == "undone"
+    assert body["entry"]["title"] == "闭水试验通常持续 24 小时"
+
+    replay = await client.post(
+        f"/api/knowledge-agent/entry-revision-drafts/{draft_id}/undo",
+        json={"client_operation_id": undo_key},
+    )
+    assert replay.status_code == 200
+    assert replay.json()["execution"]["id"] == body["execution"]["id"]
+
+    await _register(client)  # 第二个用户
+    cross = await client.post(
+        f"/api/knowledge-agent/entry-revision-drafts/{draft_id}/undo",
+        json={"client_operation_id": f"undo-{uuid.uuid4().hex[:8]}"},
+    )
+    assert cross.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_revision_undo_rejected_after_later_edit_via_api(
+    client: httpx.AsyncClient,
+) -> None:
+    """Entry 被后续编辑后撤销返回 409，回执保持 applied。"""
+    await _register(client)
+    project = await _project(client, "撤销冲突")
+    node = await _node(client, project["id"], "施工")
+    entry = await _entry(client, project["id"], node["id"], "闭水试验通常持续 24 小时")
+    source_run_id, _handle = await _completed_answer_run(client, project_id=project["id"])
+    conversation = (await client.get("/api/knowledge-agent/conversations")).json()[0]
+    submitted = await _revision_submit(
+        client,
+        conversation["id"],
+        source_run_id,
+        entry["id"],
+    )
+    draft_id = submitted.json()["draft"]["id"]
+    async with async_session_factory() as db:
+        draft = await db.get(KnowledgeEntryRevisionDraft, draft_id)
+        assert draft is not None
+        draft.status = "draft"
+        draft.title = "确认后的标题"
+        draft.content = "确认后的内容。"
+        draft.main_type = "method"
+        draft.change_summary = "修改标题与内容"
+        import json as _json
+
+        allowed = _json.loads(draft.allowed_evidence_handles_json or "[]")
+        draft.selected_evidence_handles_json = _json.dumps([allowed[0]])
+        await db.commit()
+
+    confirmed = await client.post(
+        f"/api/knowledge-agent/entry-revision-drafts/{draft_id}/confirm",
+        json={"client_operation_id": f"confirm-{uuid.uuid4().hex[:8]}"},
+    )
+    assert confirmed.status_code == 200
+    # 后续人工编辑 Entry
+    edit = await client.patch(f"/api/entries/{entry['id']}", json={"title": "后续编辑标题"})
+    assert edit.status_code == 200, edit.text
+
+    undone = await client.post(
+        f"/api/knowledge-agent/entry-revision-drafts/{draft_id}/undo",
+        json={"client_operation_id": f"undo-{uuid.uuid4().hex[:8]}"},
+    )
+    assert undone.status_code == 409
+    assert "知识后来发生了变化" in undone.text
+    draft = (await client.get(f"/api/knowledge-agent/entry-revision-drafts/{draft_id}")).json()
+    assert draft["status"] == "applied"
