@@ -340,6 +340,23 @@ export function ConversationScreen() {
               )}
             </View>
           )}
+          {controller.draftActionError !== null && (
+            <View style={styles.inlineError}>
+              <Text style={styles.inlineErrorTitle}>整理未完成</Text>
+              <Text style={styles.inlineErrorCopy}>{controller.draftActionError}</Text>
+              {controller.draftActionPending && (
+                <Pressable
+                  accessibilityRole="button"
+                  accessibilityLabel="重试整理"
+                  onPress={() => void controller.retryDraftAction()}
+                  style={styles.retryButton}
+                >
+                  <AgentIcon name="retry" size={16} color={theme.green} />
+                  <Text style={styles.retryText}>重试整理</Text>
+                </Pressable>
+              )}
+            </View>
+          )}
         </ScrollView>
 
         <View>

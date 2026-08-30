@@ -279,6 +279,13 @@ async def test_draft_edit_cancel_confirm_via_api(client: httpx.AsyncClient) -> N
     ).json()
     assert [row["id"] for row in entries] == [entry["id"]]
 
+    # 桌面确认台可查看新 Candidate（既有确认流程入口）
+    candidates = (
+        await client.get(f"/api/sources/{body['candidate']['source_id']}/candidates")
+    ).json()
+    assert any(row["id"] == candidate_id for row in candidates)
+    assert any(row["status"] == "pending" for row in candidates)
+
 
 @pytest.mark.asyncio
 async def test_draft_action_cross_workspace_404(client: httpx.AsyncClient) -> None:
