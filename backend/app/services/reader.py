@@ -5,7 +5,6 @@
 沿用节点级范围与自由 quote 引用，新能力按知识 Agent delta specs 实现。
 """
 
-import json
 import logging
 
 from fastapi import HTTPException, status
@@ -15,12 +14,7 @@ from sqlalchemy.orm import selectinload
 
 from app.agents.reader import ReaderCitationDraft, run_reader_agent
 from app.agents.semantic import run_semantic_agent
-from app.models import Attachment, Candidate, Entry, Extraction, Node, Project, Source
-from app.models.extraction import (
-    CANDIDATE_KIND_RECOMMENDED,
-    CANDIDATE_PENDING,
-    EXTRACTION_ACTIVE,
-)
+from app.models import Entry, Node, Project
 from app.schemas.candidate import CandidateOut
 from app.schemas.reader import (
     ReaderAnswerOut,
@@ -28,6 +22,10 @@ from app.schemas.reader import (
     ReaderCitationOut,
     ReaderConflictOut,
     ReaderSaveRequest,
+)
+from app.services.candidate_creation import (
+    SOURCE_KIND_READER,
+    create_candidate_from_answer,
 )
 from app.services.entry import entry_eager_options, list_entries_by_node
 from app.services.entry_relation import route_relations
@@ -218,7 +216,7 @@ async def save_answer_as_candidate(
     project_id: int,
     request: ReaderSaveRequest,
 ) -> CandidateOut:
-    """校验引用并创建虚拟 Source、Extraction 与待采纳 Candidate。"""
+    """校验引用后调用共享创建服务，保持旧 Reader 响应与语义兼容。"""
     project = await db.get(Project, project_id)
     if project is None or project.workspace_id != workspace_id:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="项目不存在")
@@ -240,35 +238,6 @@ async def save_answer_as_candidate(
                 detail="引用包含无效或越权的 Entry",
             )
 
-    source_title = f"AI 阅读问答：{(request.question or '').strip()[:40]}" or "AI 阅读问答"
-    source = Source(
-        workspace_id=workspace_id,
-        project_id=project_id,
-        title=source_title[:255],
-        note=request.question.strip(),
-    )
-    db.add(source)
-    await db.flush()
-    attachment = Attachment(
-        source_id=source.id,
-        kind="text",
-        position=0,
-        text_content=request.content,
-    )
-    db.add(attachment)
-    await db.flush()
-
-    extraction = Extraction(
-        source_id=source.id,
-        provider="reader",
-        model="reader",
-        prompt_version="v1",
-        status=EXTRACTION_ACTIVE,
-        discarded_count=0,
-    )
-    db.add(extraction)
-    await db.flush()
-
     evidence_refs: list[dict] = []
     for citation in request.citations:
         entry = entry_by_id[citation.entry_id]
@@ -288,26 +257,25 @@ async def save_answer_as_candidate(
             }
         )
 
-    candidate = Candidate(
-        extraction_id=extraction.id,
-        source_id=source.id,
-        candidate_kind=CANDIDATE_KIND_RECOMMENDED,
+    candidate = await create_candidate_from_answer(
+        db,
+        workspace_id=workspace_id,
+        project_id=project_id,
+        question=request.question,
         title=request.title,
         content=request.content,
-        main_type=request.main_type or "knowledge",
+        main_type=request.main_type,
         info_nature=request.info_nature,
-        applicable_condition=None,
-        note=None,
-        evidence_refs=json.dumps(evidence_refs, ensure_ascii=False),
+        evidence_refs=evidence_refs,
+        provider="reader",
+        model="reader",
+        prompt_version="v1",
+        source_kind=SOURCE_KIND_READER,
         reason="来自 AI 阅读回答",
-        risk_flags="[]",
-        status=CANDIDATE_PENDING,
     )
-    db.add(candidate)
-    await db.flush()
     try:
-        await route_source(db, source.id)
-        await route_relations(db, source.id)
+        await route_source(db, candidate.source_id)
+        await route_relations(db, candidate.source_id)
     except Exception as exc:  # noqa: BLE001
         logger.warning("保存候选后目录推荐/关系判断失败，候选保持待确认：%s", exc)
     await db.flush()

@@ -255,6 +255,94 @@ class KnowledgeRunSubmitOut(BaseModel):
     run: KnowledgeRunOut
 
 
+class KnowledgeDraftActionRequest(BaseModel):
+    """显式「整理成知识」动作：锚定本会话的来源回答 Run 与可选目标项目。"""
+
+    client_message_id: str = Field(min_length=1, max_length=64)
+    source_run_id: int
+    # Workspace 多项目回答必须先由用户选择目标项目；项目范围回答可不传（服务端固化）
+    target_project_id: int | None = None
+
+
+class KnowledgeDraftEvidenceOut(BaseModel):
+    """草稿采用的当前可核验 Evidence 摘要（服务端重验后输出）。"""
+
+    handle: str
+    entry_id: int
+    entry_title: str
+    source_id: int
+    source_title: str
+    quote: str
+
+
+class KnowledgeCandidateDraftOut(BaseModel):
+    """持久化候选草稿：AI 建议语义，客户端只读状态与可编辑字段。"""
+
+    id: int
+    conversation_id: int
+    operation_run_id: int
+    source_run_id: int | None = None
+    target_project_id: int | None = None
+    target_project_name: str | None = None
+    status: DraftStatus
+    title: str | None = None
+    content: str | None = None
+    main_type: str | None = None
+    info_nature: str | None = None
+    evidence_handles: list[str] = []
+    evidence_summaries: list[KnowledgeDraftEvidenceOut] = []
+    generation_degraded: bool = False
+    generation_error: str | None = None
+    confirmed_candidate_id: int | None = None
+    error: str | None = None
+    created_at: datetime
+    updated_at: datetime
+
+
+class KnowledgeDraftActionOut(BaseModel):
+    """草稿动作提交结果：可见用户消息、operation Run 与 generating Draft。"""
+
+    user_message: KnowledgeMessageOut
+    run: KnowledgeRunOut
+    draft: KnowledgeCandidateDraftOut
+
+
+class KnowledgeDraftEditRequest(BaseModel):
+    """编辑草稿允许字段；目标项目、source Run 与 Evidence 集合不可编辑。"""
+
+    title: str | None = Field(default=None, min_length=1, max_length=255)
+    content: str | None = Field(default=None, min_length=1, max_length=8000)
+    main_type: Literal["knowledge", "method", "parameter", "reminder"] | None = None
+    info_nature: Literal["fact", "experience", "advice", "speculation", "other"] | None = None
+
+
+class KnowledgeDraftConfirmRequest(BaseModel):
+    """确认草稿：只接收稳定幂等键，不接受任何自由引用字段。"""
+
+    client_operation_id: str = Field(min_length=1, max_length=64)
+
+
+class CandidateReceiptOut(BaseModel):
+    """确认后创建的待确认 Candidate 回执。"""
+
+    id: int
+    title: str
+    status: str
+    source_id: int
+    routing_status: str
+    recommended_node_id: int | None = None
+    relation_status: str
+    relation_target_entry_id: int | None = None
+    created_at: datetime
+
+
+class KnowledgeDraftConfirmOut(BaseModel):
+    """确认回执：Draft 进入 confirmed，Candidate 仍待确认、尚未写入正式知识。"""
+
+    draft: KnowledgeCandidateDraftOut
+    candidate: CandidateReceiptOut
+
+
 class KnowledgeToolCallOut(BaseModel):
     """工具调用可审计记录（脱敏摘要）。"""
 

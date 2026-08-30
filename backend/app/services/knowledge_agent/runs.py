@@ -12,6 +12,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.db.session import async_session_factory
 from app.models import (
     KnowledgeAgentRun,
+    KnowledgeCandidateDraft,
     KnowledgeConversation,
     KnowledgeMessage,
     Project,
@@ -20,12 +21,16 @@ from app.models.knowledge_agent import (
     ACTIVE_SLOT,
     CONTEXT_CLOSE_REASON_NEW_TOPIC,
     CONTEXT_MODE_NEW_TOPIC,
+    DRAFT_CANCELLED,
+    DRAFT_FAILED,
+    DRAFT_TERMINAL_STATUSES,
     MESSAGE_ROLE_ASSISTANT,
     MESSAGE_ROLE_USER,
     MESSAGE_TYPE_ASSISTANT,
     MESSAGE_TYPE_USER,
     RUN_CANCELLED,
     RUN_FAILED,
+    RUN_KIND_DRAFT_CANDIDATE,
     RUN_PROCESSING,
     RUN_TERMINAL_STATUSES,
     RUN_WAITING,
@@ -47,6 +52,26 @@ from app.services.knowledge_agent.working_set import (
 )
 
 logger = logging.getLogger(__name__)
+
+
+async def _sync_draft_status(
+    db: AsyncSession,
+    run: KnowledgeAgentRun,
+    *,
+    status: str,
+    error: str | None = None,
+) -> None:
+    """把操作 Run 的取消/失败同步到关联 Draft（终态 Draft 不覆盖）。"""
+    if run.run_kind != RUN_KIND_DRAFT_CANDIDATE:
+        return
+    await db.execute(
+        update(KnowledgeCandidateDraft)
+        .where(
+            KnowledgeCandidateDraft.operation_run_id == run.id,
+            KnowledgeCandidateDraft.status.notin_(DRAFT_TERMINAL_STATUSES),
+        )
+        .values(status=status, error=error)
+    )
 
 
 async def update_run_step(run_id: int, step: str) -> None:
@@ -344,6 +369,7 @@ async def cancel_run(db: AsyncSession, run: KnowledgeAgentRun) -> KnowledgeAgent
         run.current_step = None
         run.active_slot = None
         run.error = None
+    await _sync_draft_status(db, run, status=DRAFT_CANCELLED, error="用户取消")
     await db.flush()
     await db.refresh(run)
     return run
@@ -361,6 +387,7 @@ async def mark_run_failed(
     run.current_step = None
     run.active_slot = None
     run.error = error
+    await _sync_draft_status(db, run, status=DRAFT_FAILED, error=error)
     await db.flush()
 
 
@@ -401,4 +428,7 @@ async def finalize_cancelled(
     run.active_slot = None
     run.answer_json = None
     run.error = error
+    await _sync_draft_status(
+        db, run, status=DRAFT_CANCELLED, error=error or "运行中被取消"
+    )
     await db.flush()

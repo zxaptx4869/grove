@@ -6,18 +6,18 @@
 
 ## 2. Candidate Draft 数据模型与迁移
 
-- [ ] 2.1 为 `KnowledgeAgentRun` 增加向后兼容的 `run_kind` 与可选 `source_run_id`，为既有数据默认/回填 `answer`；增加 source Run 自引用、索引和合法值约束所需应用校验。
-- [ ] 2.2 新增 `KnowledgeCandidateDraft` 模型、状态常量、owner/Workspace/Conversation/operation Run/source Run/target project/草稿字段/Evidence JSON/生成元数据/confirmed Candidate 关联及并发幂等约束。
-- [ ] 2.3 编写并审查 Alembic 迁移，确认 SQLite upgrade 与生产 MySQL 8 的外键、唯一约束、默认值和回滚顺序兼容；运行 `cd backend && .venv/bin/alembic upgrade head`。
-- [ ] 2.4 为模型约束、既有 Run 回填、Draft 状态/唯一关系与迁移后 schema 增加测试，运行相应 pytest 与 `cd backend && .venv/bin/ruff check app tests`，通过后完成一次本地提交。
+- [x] 2.1 为 `KnowledgeAgentRun` 增加向后兼容的 `run_kind` 与可选 `source_run_id`，为既有数据默认/回填 `answer`；增加 source Run 自引用、索引和合法值约束所需应用校验。
+- [x] 2.2 新增 `KnowledgeCandidateDraft` 模型、状态常量、owner/Workspace/Conversation/operation Run/source Run/target project/草稿字段/Evidence JSON/生成元数据/confirmed Candidate 关联及并发幂等约束。
+- [x] 2.3 编写并审查 Alembic 迁移，确认 SQLite upgrade 与生产 MySQL 8 的外键、唯一约束、默认值和回滚顺序兼容；运行 `cd backend && .venv/bin/alembic upgrade head`。
+- [x] 2.4 为模型约束、既有 Run 回填、Draft 状态/唯一关系与迁移后 schema 增加测试，运行相应 pytest 与 `cd backend && .venv/bin/ruff check app tests`，通过后完成一次本地提交。
 
 ## 3. Run-backed Evidence 与共享 Candidate 创建服务
 
-- [ ] 3.1 从旧 Reader 保存逻辑抽取只接受已校验参数的虚拟 Source/Attachment/Extraction/pending Candidate 创建服务，保留原问题、原回答、编辑草稿、source Run 与目标项目溯源元数据，不通过内部 HTTP 复用。
-- [ ] 3.2 实现 source Run、最终 citations、目标项目和当前 Entry/Source/Attachment/quote/指纹的服务端解析与重验；Workspace 多项目返回可选项目，项目范围固定目标，客户端对象 ID/quote 不进入可信输入。
-- [ ] 3.3 让旧 `/reader/save-candidate` 完成原有校验后调用共享服务，保持响应、同步路由/关系建议和既有测试兼容；补充旧 Reader 与新服务事务失败不留半成品的测试。
-- [ ] 3.4 实现 Draft 确认事务与稳定 `client_operation_id` 幂等：并发最多创建一个 Source/Candidate，confirmed 重放返回同一对象，Evidence 失效返回 409，任何路径不创建/修改 Entry。
-- [ ] 3.5 覆盖跨用户/Workspace/Conversation/project、历史快照但当前来源失效、未知句柄、跨项目 Evidence、重复确认、并发确认及路由/关系受影响场景；运行 `cd backend && .venv/bin/python -m pytest tests/test_reader.py tests/test_knowledge_agent_candidate_drafts.py -W error`，通过后本地提交。
+- [x] 3.1 从旧 Reader 保存逻辑抽取只接受已校验参数的虚拟 Source/Attachment/Extraction/pending Candidate 创建服务，保留原问题、原回答、编辑草稿、source Run 与目标项目溯源元数据，不通过内部 HTTP 复用。
+- [x] 3.2 实现 source Run、最终 citations、目标项目和当前 Entry/Source/Attachment/quote/指纹的服务端解析与重验；Workspace 多项目返回可选项目，项目范围固定目标，客户端对象 ID/quote 不进入可信输入。
+- [x] 3.3 让旧 `/reader/save-candidate` 完成原有校验后调用共享服务，保持响应、同步路由/关系建议和既有测试兼容；补充旧 Reader 与新服务事务失败不留半成品的测试。
+- [x] 3.4 实现 Draft 确认事务与稳定 `client_operation_id` 幂等：并发最多创建一个 Source/Candidate，confirmed 重放返回同一对象，Evidence 失效返回 409，任何路径不创建/修改 Entry。
+- [x] 3.5 覆盖跨用户/Workspace/Conversation/project、历史快照但当前来源失效、未知句柄、跨项目 Evidence、重复确认、并发确认及路由/关系受影响场景；运行 `cd backend && .venv/bin/python -m pytest tests/test_reader.py tests/test_knowledge_agent_candidate_drafts.py -W error`，通过后本地提交。
 
 ## 4. 草稿生成 Agent 与受控 operation Run
 

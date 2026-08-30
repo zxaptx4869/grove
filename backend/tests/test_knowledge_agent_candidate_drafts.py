@@ -15,28 +15,60 @@ import uuid
 from pathlib import Path
 
 import pytest
+from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 
 from app.db.session import async_session_factory
 from app.models import (
+    Attachment,
+    Candidate,
+    Entry,
+    KnowledgeAgentEvidence,
     KnowledgeAgentRun,
     KnowledgeCandidateDraft,
     KnowledgeConversation,
+    KnowledgeMessage,
     Node,
     Project,
+    Source,
     User,
     Workspace,
     WorkspaceMember,
 )
 from app.models.knowledge_agent import (
+    DRAFT_CONFIRMED,
+    DRAFT_DRAFT,
+    DRAFT_FAILED,
     DRAFT_GENERATING,
     RUN_COMPLETED,
+    RUN_FAILED,
     RUN_KIND_ANSWER,
     RUN_KIND_DRAFT_CANDIDATE,
     RUN_WAITING,
+    SCOPE_PROJECT,
     SCOPE_WORKSPACE,
 )
+from app.schemas.knowledge_agent import (
+    KnowledgeAnswerOut,
+    KnowledgeDraftActionRequest,
+    KnowledgeRunCitationOut,
+)
+from app.services.candidate_creation import create_candidate_from_answer
+from app.services.knowledge_agent.candidate import (
+    confirm_draft,
+    execute_draft_candidate_run,
+    submit_draft_candidate,
+)
+from app.services.knowledge_agent.evidence import attachment_fingerprint
 from app.services.knowledge_agent.runs import run_out
+from tests._knowledge_agent_fixtures import (
+    create_child_node,
+    create_entry_with_evidence,
+    create_project,
+    create_source_attachment,
+    create_user,
+    create_workspace,
+)
 
 
 async def _user_and_workspace(db, prefix: str = "草稿") -> tuple[User, Workspace]:
@@ -372,3 +404,847 @@ def test_migration_upgrade_downgrade_upgrade_and_draft_columns(tmp_path: Path) -
         assert "knowledge_candidate_drafts" in tables
     finally:
         conn.close()
+
+
+async def _answer_run_with_evidence(
+    db,
+    user: User,
+    workspace: Workspace,
+    project: Project,
+    *,
+    scope_type: str = SCOPE_PROJECT,
+    question: str = "闭水试验通常持续多久？",
+    answer_text: str = "闭水试验通常持续 24 小时。",
+    quote: str = "闭水试验通常持续 24 小时",
+) -> tuple[
+    KnowledgeConversation,
+    KnowledgeAgentRun,
+    Entry,
+    Source,
+    Attachment,
+    KnowledgeAgentEvidence,
+]:
+    """创建带最终引用的已完成回答 Run（不经过 Worker，直接构造终态）。"""
+    source, attachment = await create_source_attachment(
+        db,
+        workspace,
+        project,
+        title="验收手册",
+        text_content=f"{quote}，验收前不得放水。",
+    )
+    node = await create_child_node(db, project, "施工")
+    entry = await create_entry_with_evidence(
+        db,
+        project,
+        node,
+        source,
+        attachment,
+        title="闭水试验",
+        content="闭水试验通常持续 24 小时。",
+        quote=quote,
+    )
+    conversation = KnowledgeConversation(
+        workspace_id=workspace.id,
+        owner_user_id=user.id,
+        scope_type=scope_type,
+        project_id=project.id if scope_type == SCOPE_PROJECT else None,
+        title="回答测试对话",
+    )
+    db.add(conversation)
+    await db.flush()
+    user_msg = KnowledgeMessage(
+        conversation_id=conversation.id,
+        role="user",
+        message_type="user",
+        content=question,
+        client_message_id="q-1",
+        scope_type=scope_type,
+        project_id=project.id if scope_type == SCOPE_PROJECT else None,
+        project_name=project.name,
+    )
+    db.add(user_msg)
+    await db.flush()
+    run = KnowledgeAgentRun(
+        conversation_id=conversation.id,
+        workspace_id=workspace.id,
+        owner_user_id=user.id,
+        scope_type=scope_type,
+        project_id=project.id if scope_type == SCOPE_PROJECT else None,
+        project_name=project.name,
+        user_message_id=user_msg.id,
+        status=RUN_COMPLETED,
+        run_kind=RUN_KIND_ANSWER,
+        max_retries=1,
+    )
+    db.add(run)
+    await db.flush()
+    evidence = KnowledgeAgentEvidence(
+        run_id=run.id,
+        handle=f"ev_{uuid.uuid4().hex}",
+        entry_id=entry.id,
+        project_id=project.id,
+        source_id=source.id,
+        attachment_id=attachment.id,
+        entry_title=entry.title,
+        project_name=project.name,
+        source_title=source.title,
+        node_path="施工",
+        quote=quote,
+        quote_start=0,
+        quote_end=len(quote),
+        content_fingerprint=attachment_fingerprint(attachment.text_content or ""),
+        purpose="answer",
+        is_citable=True,
+    )
+    db.add(evidence)
+    await db.flush()
+    assistant = KnowledgeMessage(
+        conversation_id=conversation.id,
+        role="assistant",
+        message_type="assistant",
+        content=answer_text,
+        run_id=run.id,
+        scope_type=scope_type,
+        project_id=project.id if scope_type == SCOPE_PROJECT else None,
+        project_name=project.name,
+    )
+    db.add(assistant)
+    await db.flush()
+    run.assistant_message_id = assistant.id
+    run.answer_json = KnowledgeAnswerOut(
+        answer=answer_text,
+        status="completed",
+        citations=[
+            KnowledgeRunCitationOut(
+                evidence_id=evidence.id,
+                evidence_handle=evidence.handle,
+                entry_id=entry.id,
+                entry_title=entry.title,
+                source_id=source.id,
+                source_title=source.title,
+                attachment_id=attachment.id,
+                quote=quote,
+                project_id=project.id,
+                project_name=project.name,
+                node_path="施工",
+            )
+        ],
+    ).model_dump_json()
+    await db.flush()
+    return conversation, run, entry, source, attachment, evidence
+
+
+def _draft_action(
+    *,
+    source_run_id: int,
+    target_project_id: int | None = None,
+    client_message_id: str | None = None,
+) -> KnowledgeDraftActionRequest:
+    return KnowledgeDraftActionRequest(
+        client_message_id=client_message_id or f"action-{uuid.uuid4().hex[:8]}",
+        source_run_id=source_run_id,
+        target_project_id=target_project_id,
+    )
+
+
+@pytest.mark.asyncio
+async def test_submit_draft_from_project_scope_answer() -> None:
+    """项目范围回答：固化目标项目，创建可见消息、operation Run 与 generating Draft。"""
+    async with async_session_factory() as db:
+        user = await create_user(db, "提交")
+        workspace = await create_workspace(db, user)
+        project = await create_project(db, workspace, "提交项目")
+        conversation, source_run, _entry, _source, _attachment, _evidence = (
+            await _answer_run_with_evidence(db, user, workspace, project)
+        )
+        await db.commit()
+
+        message, run, draft = await submit_draft_candidate(
+            db,
+            conversation,
+            _draft_action(source_run_id=source_run.id),
+        )
+        await db.commit()
+
+        assert message.role == "user"
+        assert "整理成知识" in message.content
+        assert run.run_kind == RUN_KIND_DRAFT_CANDIDATE
+        assert run.source_run_id == source_run.id
+        assert run.scope_type == SCOPE_PROJECT
+        assert run.project_id == project.id
+        assert run.status == RUN_WAITING
+        assert draft.status == DRAFT_GENERATING
+        assert draft.target_project_id == project.id
+        assert draft.source_run_id == source_run.id
+
+
+@pytest.mark.asyncio
+async def test_submit_workspace_single_project_prefills_target() -> None:
+    """Workspace 回答只命中一个项目：无需客户端传目标项目即可提交。"""
+    async with async_session_factory() as db:
+        user = await create_user(db, "提交")
+        workspace = await create_workspace(db, user)
+        project = await create_project(db, workspace, "唯一命中项目")
+        conversation, source_run, _entry, _source, _attachment, _evidence = (
+            await _answer_run_with_evidence(
+                db,
+                user,
+                workspace,
+                project,
+                scope_type=SCOPE_WORKSPACE,
+            )
+        )
+        await db.commit()
+
+        message, run, draft = await submit_draft_candidate(
+            db,
+            conversation,
+            _draft_action(source_run_id=source_run.id),
+        )
+        await db.commit()
+        assert run.project_id == project.id
+        assert draft.target_project_id == project.id
+
+
+@pytest.mark.asyncio
+async def test_submit_workspace_multi_project_requires_target_choice() -> None:
+    """Workspace 回答命中多个项目：未选择目标项目返回 422，选择后提交成功。"""
+    from fastapi import HTTPException
+
+    async with async_session_factory() as db:
+        user = await create_user(db, "提交")
+        workspace = await create_workspace(db, user)
+        first = await create_project(db, workspace, "项目甲")
+        second = await create_project(db, workspace, "项目乙")
+        # 两个项目各一条 Evidence 都进入同一回答引用
+        conversation, source_run, _e1, _s1, _a1, evidence_a = await _answer_run_with_evidence(
+            db,
+            user,
+            workspace,
+            first,
+            scope_type=SCOPE_WORKSPACE,
+            answer_text="两条记录都确认了闭水时长。",
+        )
+        source_b, attachment_b = await create_source_attachment(
+            db,
+            workspace,
+            second,
+            title="监理清单",
+            text_content="闭水试验建议 48 小时观察。",
+        )
+        node_b = await create_child_node(db, second, "施工")
+        entry_b = await create_entry_with_evidence(
+            db,
+            second,
+            node_b,
+            source_b,
+            attachment_b,
+            title="闭水试验乙",
+            content="闭水试验建议 48 小时观察。",
+            quote="闭水试验建议 48 小时观察",
+        )
+        evidence_b = KnowledgeAgentEvidence(
+            run_id=source_run.id,
+            handle=f"ev_{uuid.uuid4().hex}",
+            entry_id=entry_b.id,
+            project_id=second.id,
+            source_id=source_b.id,
+            attachment_id=attachment_b.id,
+            entry_title=entry_b.title,
+            project_name=second.name,
+            source_title=source_b.title,
+            quote="闭水试验建议 48 小时观察",
+            content_fingerprint=attachment_fingerprint(attachment_b.text_content or ""),
+            purpose="answer",
+            is_citable=True,
+        )
+        db.add(evidence_b)
+        await db.flush()
+        answer = KnowledgeAnswerOut.model_validate_json(source_run.answer_json)
+        answer.citations.append(
+            KnowledgeRunCitationOut(
+                evidence_id=evidence_b.id,
+                evidence_handle=evidence_b.handle,
+                entry_id=entry_b.id,
+                entry_title=entry_b.title,
+                source_id=source_b.id,
+                source_title=source_b.title,
+                attachment_id=attachment_b.id,
+                quote="闭水试验建议 48 小时观察",
+                project_id=second.id,
+                project_name=second.name,
+            )
+        )
+        source_run.answer_json = answer.model_dump_json()
+        await db.commit()
+
+        with pytest.raises(HTTPException) as exc_info:
+            await submit_draft_candidate(
+                db,
+                conversation,
+                _draft_action(source_run_id=source_run.id),
+            )
+        assert exc_info.value.status_code == 422
+
+        message, run, draft = await submit_draft_candidate(
+            db,
+            conversation,
+            _draft_action(source_run_id=source_run.id, target_project_id=second.id),
+        )
+        await db.commit()
+        assert run.project_id == second.id
+        assert draft.target_project_id == second.id
+        assert draft.target_project_name == "项目乙"
+
+
+@pytest.mark.asyncio
+async def test_submit_rejects_ineligible_and_cross_conversation_source() -> None:
+    """无引用/未完成来源回答拒绝；跨对话 source_run_id 一律 404。"""
+    from fastapi import HTTPException
+
+    async with async_session_factory() as db:
+        user = await create_user(db, "提交")
+        workspace = await create_workspace(db, user)
+        project = await create_project(db, workspace, "拒绝项目")
+        conversation, source_run, _entry, _source, _attachment, _evidence = (
+            await _answer_run_with_evidence(db, user, workspace, project)
+        )
+        # 来源回答改为无引用
+        source_run.answer_json = KnowledgeAnswerOut(
+            answer="没有引用。", status="insufficient", insufficient_note="无证据"
+        ).model_dump_json()
+        await db.commit()
+        with pytest.raises(HTTPException) as exc_info:
+            await submit_draft_candidate(
+                db,
+                conversation,
+                _draft_action(source_run_id=source_run.id),
+            )
+        assert exc_info.value.status_code == 409
+
+        # 跨对话来源 Run
+        other_conversation = KnowledgeConversation(
+            workspace_id=workspace.id,
+            owner_user_id=user.id,
+            scope_type=SCOPE_PROJECT,
+            project_id=project.id,
+            title="另一对话",
+        )
+        db.add(other_conversation)
+        await db.commit()
+        with pytest.raises(HTTPException) as exc_info:
+            await submit_draft_candidate(
+                db,
+                other_conversation,
+                _draft_action(source_run_id=source_run.id),
+            )
+        assert exc_info.value.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_submit_rejects_cross_workspace_target_project() -> None:
+    """越权 target_project_id 返回 404，不暴露对象是否存在。"""
+    from fastapi import HTTPException
+
+    async with async_session_factory() as db:
+        user = await create_user(db, "提交")
+        workspace = await create_workspace(db, user)
+        project = await create_project(db, workspace, "目标项目")
+        conversation, source_run, _entry, _source, _attachment, _evidence = (
+            await _answer_run_with_evidence(
+                db,
+                user,
+                workspace,
+                project,
+                scope_type=SCOPE_WORKSPACE,
+            )
+        )
+        other_user = await create_user(db, "他人")
+        other_workspace = await create_workspace(db, other_user)
+        foreign_project = await create_project(db, other_workspace, "他人项目")
+        await db.commit()
+        with pytest.raises(HTTPException) as exc_info:
+            await submit_draft_candidate(
+                db,
+                conversation,
+                _draft_action(
+                    source_run_id=source_run.id,
+                    target_project_id=foreign_project.id,
+                ),
+            )
+        assert exc_info.value.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_execute_draft_run_success_with_whitelisted_handles(monkeypatch) -> None:
+    """模型返回合法句柄：Draft 进入 draft，Run completed，句柄白名单校验。"""
+    from app.agents.candidate_draft import CandidateDraftOutput
+
+    async def _fake_agent(
+        db,
+        workspace_id,
+        *,
+        question,
+        original_answer,
+        target_project_label,
+        evidences,
+    ):
+        handles = [item["handle"] for item in evidences]
+        return (
+            CandidateDraftOutput(
+                title="闭水试验 24 小时",
+                content="闭水试验通常持续 24 小时，验收前不得放水。",
+                main_type="knowledge",
+                info_nature="fact",
+                selected_evidence_handles=handles,
+            ),
+            StageMeta(
+                purpose="draft_candidate",
+                provider="llm",
+                model="fake-draft",
+                is_fallback=False,
+                error=None,
+                duration_ms=1,
+            ),
+        )
+
+    monkeypatch.setattr(
+        "app.services.knowledge_agent.candidate.run_candidate_draft_agent",
+        _fake_agent,
+    )
+    from app.services.knowledge_agent.observability import StageMeta
+
+    async with async_session_factory() as db:
+        user = await create_user(db, "执行")
+        workspace = await create_workspace(db, user)
+        project = await create_project(db, workspace, "执行项目")
+        conversation, source_run, _entry, _source, _attachment, evidence = (
+            await _answer_run_with_evidence(db, user, workspace, project)
+        )
+        message, run, draft = await submit_draft_candidate(
+            db,
+            conversation,
+            _draft_action(source_run_id=source_run.id),
+        )
+        await db.commit()
+
+        await execute_draft_candidate_run(db, run)
+        await db.commit()
+
+        await db.refresh(run)
+        await db.refresh(draft)
+        assert run.status == RUN_COMPLETED
+        assert run.active_slot is None
+        assert draft.status == DRAFT_DRAFT
+        assert draft.title == "闭水试验 24 小时"
+        assert evidence.handle in draft.evidence_handles_json
+        assert draft.confirmed_candidate_id is None
+
+
+@pytest.mark.asyncio
+async def test_execute_draft_run_unknown_handle_fails(monkeypatch) -> None:
+    """模型返回未知句柄：丢弃后不足一条，草稿失败且不创建任何对象。"""
+    from app.agents.candidate_draft import CandidateDraftOutput
+
+    async def _fake_agent(
+        db,
+        workspace_id,
+        *,
+        question,
+        original_answer,
+        target_project_label,
+        evidences,
+    ):
+        return (
+            CandidateDraftOutput(
+                title="越权草稿",
+                content="混入其他项目证据。",
+                main_type="knowledge",
+                info_nature=None,
+                selected_evidence_handles=["ev_unknown"],
+            ),
+            StageMeta(
+                purpose="draft_candidate",
+                provider="llm",
+                model="fake-draft",
+                is_fallback=False,
+                error=None,
+                duration_ms=1,
+            ),
+        )
+
+    monkeypatch.setattr(
+        "app.services.knowledge_agent.candidate.run_candidate_draft_agent",
+        _fake_agent,
+    )
+    from app.services.knowledge_agent.observability import StageMeta
+
+    async with async_session_factory() as db:
+        user = await create_user(db, "执行")
+        workspace = await create_workspace(db, user)
+        project = await create_project(db, workspace, "执行项目")
+        conversation, source_run, _entry, _source, _attachment, _evidence = (
+            await _answer_run_with_evidence(db, user, workspace, project)
+        )
+        message, run, draft = await submit_draft_candidate(
+            db,
+            conversation,
+            _draft_action(source_run_id=source_run.id),
+        )
+        await db.commit()
+        await execute_draft_candidate_run(db, run)
+        await db.refresh(run)
+        await db.refresh(draft)
+        assert run.status == RUN_FAILED
+        assert draft.status == DRAFT_FAILED
+        assert "未返回任何有效证据句柄" in (draft.error or "")
+
+
+@pytest.mark.asyncio
+async def test_execute_draft_run_model_unavailable_uses_seed(monkeypatch) -> None:
+    """模型不可用：确定性 seed 草稿 + 显式降级标识，只绑定有效 Evidence。"""
+    from app.services.knowledge_agent.observability import StageMeta
+
+    async def _fake_agent(
+        db,
+        workspace_id,
+        *,
+        question,
+        original_answer,
+        target_project_label,
+        evidences,
+    ):
+        return (
+            None,
+            StageMeta(
+                purpose="draft_candidate",
+                provider="offline",
+                model=None,
+                is_fallback=True,
+                error="未配置文本模型密钥",
+                duration_ms=1,
+            ),
+        )
+
+    monkeypatch.setattr(
+        "app.services.knowledge_agent.candidate.run_candidate_draft_agent",
+        _fake_agent,
+    )
+    async with async_session_factory() as db:
+        user = await create_user(db, "执行")
+        workspace = await create_workspace(db, user)
+        project = await create_project(db, workspace, "执行项目")
+        conversation, source_run, _entry, _source, _attachment, evidence = (
+            await _answer_run_with_evidence(db, user, workspace, project)
+        )
+        message, run, draft = await submit_draft_candidate(
+            db,
+            conversation,
+            _draft_action(source_run_id=source_run.id),
+        )
+        await db.commit()
+        await execute_draft_candidate_run(db, run)
+        await db.commit()
+        await db.refresh(run)
+        await db.refresh(draft)
+        assert run.status == RUN_COMPLETED
+        assert draft.status == DRAFT_DRAFT
+        assert draft.generation_meta_json
+        meta = __import__("json").loads(draft.generation_meta_json)
+        assert meta["is_fallback"] is True
+        assert evidence.handle in draft.evidence_handles_json
+        assert "降级" not in draft.title  # seed 标题来自原回答首句
+
+
+@pytest.mark.asyncio
+async def test_execute_draft_run_evidence_invalid_fails() -> None:
+    """生成阶段 Evidence 失效：Run/Draft 失败，不创建无来源草稿。"""
+    async with async_session_factory() as db:
+        user = await create_user(db, "执行")
+        workspace = await create_workspace(db, user)
+        project = await create_project(db, workspace, "执行项目")
+        conversation, source_run, _entry, _source, attachment, _evidence = (
+            await _answer_run_with_evidence(db, user, workspace, project)
+        )
+        message, run, draft = await submit_draft_candidate(
+            db,
+            conversation,
+            _draft_action(source_run_id=source_run.id),
+        )
+        # 生成前来源原文被修改，指纹不再匹配
+        attachment.text_content = "闭水试验建议 48 小时观察。"
+        await db.commit()
+        await execute_draft_candidate_run(db, run)
+        await db.refresh(run)
+        await db.refresh(draft)
+        assert run.status == RUN_FAILED
+        assert draft.status == DRAFT_FAILED
+        assert "没有可核验的来源证据" in (draft.error or "")
+
+
+@pytest.mark.asyncio
+async def test_confirm_draft_creates_pending_candidate(monkeypatch) -> None:
+    """确认草稿：创建虚拟 Source/Attachment/Extraction/pending Candidate，不改 Entry。"""
+
+    async with async_session_factory() as db:
+        user = await create_user(db, "确认")
+        workspace = await create_workspace(db, user)
+        project = await create_project(db, workspace, "确认项目")
+        conversation, source_run, entry, source, attachment, evidence = (
+            await _answer_run_with_evidence(db, user, workspace, project)
+        )
+        message, run, draft = await submit_draft_candidate(
+            db,
+            conversation,
+            _draft_action(source_run_id=source_run.id),
+        )
+        await db.commit()
+        draft.title = "闭水试验要点"
+        draft.content = "闭水试验通常持续 24 小时，验收前不得放水。"
+        draft.status = DRAFT_DRAFT
+        draft.evidence_handles_json = __import__("json").dumps([evidence.handle])
+        await db.commit()
+
+        confirmed, candidate = await confirm_draft(
+            db,
+            draft,
+            f"op-{uuid.uuid4().hex[:8]}",
+        )
+        await db.commit()
+
+        assert confirmed.status == DRAFT_CONFIRMED
+        assert confirmed.confirmed_candidate_id == candidate.id
+        assert candidate.status == "pending"
+        assert candidate.source_id is not None
+        source_row = await db.get(Source, candidate.source_id)
+        assert source_row is not None
+        assert source_row.workspace_id == workspace.id
+        assert source_row.project_id == project.id
+        assert "知识 Agent 对话" in source_row.title
+        assert source_row.note == "闭水试验通常持续多久？"
+        assert source_row.id == source.id or source_row.id != source.id
+        # 未新增或修改正式 Entry（按目标项目过滤）
+        entries = (
+            (
+                await db.execute(
+                    select(Entry).where(Entry.project_id == project.id)
+                )
+            )
+            .scalars()
+            .all()
+        )
+        assert [row.id for row in entries] == [entry.id]
+        assert entries[0].content == "闭水试验通常持续 24 小时。"
+
+
+@pytest.mark.asyncio
+async def test_confirm_draft_idempotent_replay_returns_same_candidate() -> None:
+    """相同 client_operation_id 重放返回同一 Candidate，不重复创建对象。"""
+    async with async_session_factory() as db:
+        user = await create_user(db, "确认")
+        workspace = await create_workspace(db, user)
+        project = await create_project(db, workspace, "确认项目")
+        conversation, source_run, _entry, _source, _attachment, evidence = (
+            await _answer_run_with_evidence(db, user, workspace, project)
+        )
+        message, run, draft = await submit_draft_candidate(
+            db,
+            conversation,
+            _draft_action(source_run_id=source_run.id),
+        )
+        await db.commit()
+        draft.title = "闭水试验要点"
+        draft.content = "闭水试验通常持续 24 小时。"
+        draft.status = DRAFT_DRAFT
+        draft.evidence_handles_json = __import__("json").dumps([evidence.handle])
+        await db.commit()
+        key = f"op-{uuid.uuid4().hex[:8]}"
+
+        first, first_candidate = await confirm_draft(db, draft, key)
+        await db.commit()
+        second, second_candidate = await confirm_draft(db, draft, key)
+        await db.commit()
+
+        assert second_candidate.id == first_candidate.id
+        sources = (
+            (
+                await db.execute(
+                    select(Source).where(Source.workspace_id == workspace.id)
+                )
+            )
+            .scalars()
+            .all()
+        )
+        assert len(sources) == 2  # 原始回答来源 + 确认创建的虚拟来源，重放不重复
+        candidates = (
+            (
+                await db.execute(
+                    select(Candidate).where(
+                        Candidate.source_id.in_([row.id for row in sources])
+                    )
+                )
+            )
+            .scalars()
+            .all()
+        )
+        assert len(candidates) == 1
+
+
+@pytest.mark.asyncio
+async def test_confirm_draft_evidence_invalid_keeps_draft_editable() -> None:
+    """确认前 Evidence 失效返回 409，Draft 保持可编辑且不创建 Candidate。"""
+    from fastapi import HTTPException
+
+    async with async_session_factory() as db:
+        user = await create_user(db, "确认")
+        workspace = await create_workspace(db, user)
+        project = await create_project(db, workspace, "确认项目")
+        conversation, source_run, _entry, _source, attachment, evidence = (
+            await _answer_run_with_evidence(db, user, workspace, project)
+        )
+        message, run, draft = await submit_draft_candidate(
+            db,
+            conversation,
+            _draft_action(source_run_id=source_run.id),
+        )
+        await db.commit()
+        draft.title = "闭水试验要点"
+        draft.content = "闭水试验通常持续 24 小时。"
+        draft.status = DRAFT_DRAFT
+        draft.evidence_handles_json = __import__("json").dumps([evidence.handle])
+        attachment.text_content = "内容已变化，指纹不再匹配。"
+        await db.commit()
+
+        with pytest.raises(HTTPException) as exc_info:
+            await confirm_draft(db, draft, f"op-{uuid.uuid4().hex[:8]}")
+        assert exc_info.value.status_code == 409
+        await db.refresh(draft)
+        assert draft.status == DRAFT_DRAFT
+        sources = (
+            (
+                await db.execute(
+                    select(Source).where(Source.workspace_id == workspace.id)
+                )
+            )
+            .scalars()
+            .all()
+        )
+        assert len(sources) == 1  # 只有原始回答来源，没有确认创建的虚拟来源
+
+
+@pytest.mark.asyncio
+async def test_confirm_draft_cross_user_404() -> None:
+    """其他用户确认草稿返回 404，不暴露对象。"""
+    from fastapi import HTTPException
+
+    async with async_session_factory() as db:
+        user = await create_user(db, "确认")
+        workspace = await create_workspace(db, user)
+        project = await create_project(db, workspace, "确认项目")
+        conversation, source_run, _entry, _source, _attachment, evidence = (
+            await _answer_run_with_evidence(db, user, workspace, project)
+        )
+        message, run, draft = await submit_draft_candidate(
+            db,
+            conversation,
+            _draft_action(source_run_id=source_run.id),
+        )
+        await db.commit()
+        draft.status = DRAFT_DRAFT
+        await db.commit()
+        other_user = await create_user(db, "他人")
+        other_workspace = await create_workspace(db, other_user)
+        await db.commit()
+
+        with pytest.raises(HTTPException) as exc_info:
+            from app.services.knowledge_agent.candidate import get_owned_draft
+
+            owned = await get_owned_draft(
+                db,
+                other_workspace.id,
+                other_user.id,
+                draft.id,
+            )
+            await confirm_draft(db, owned, f"op-{uuid.uuid4().hex[:8]}")
+        assert exc_info.value.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_shared_creation_rolls_back_on_transaction_failure() -> None:
+    """共享创建服务事务失败不留半成品 Source/Candidate。"""
+    async with async_session_factory() as db:
+        user = await create_user(db, "创建")
+        workspace = await create_workspace(db, user)
+        project = await create_project(db, workspace, "创建项目")
+        await db.flush()
+        sources_before = (await db.execute(select(Source))).scalars().all()
+        candidates_before = (await db.execute(select(Candidate))).scalars().all()
+        try:
+            await create_candidate_from_answer(
+                db,
+                workspace_id=workspace.id,
+                project_id=project.id,
+                question="问题",
+                title="标题",
+                content="内容",
+                main_type="knowledge",
+                info_nature=None,
+                evidence_refs=[],
+                provider="reader",
+                model="reader",
+                prompt_version="v1",
+            )
+            raise RuntimeError("模拟提交失败")
+        except RuntimeError:
+            await db.rollback()
+        sources = (await db.execute(select(Source))).scalars().all()
+        candidates = (await db.execute(select(Candidate))).scalars().all()
+        assert len(sources) == len(sources_before)
+        assert len(candidates) == len(candidates_before)
+
+
+@pytest.mark.asyncio
+async def test_confirm_routing_failure_keeps_pending_candidate(monkeypatch) -> None:
+    """目录推荐/关系判断失败：Candidate 保留并暴露真实 pending，不伪装正常。"""
+
+    async def _broken_route_source(db, source_id: int) -> None:
+        raise RuntimeError("路由服务不可用")
+
+    monkeypatch.setattr(
+        "app.services.knowledge_agent.candidate.route_source",
+        _broken_route_source,
+    )
+    monkeypatch.setattr(
+        "app.services.knowledge_agent.candidate.route_relations",
+        _broken_route_source,
+    )
+    async with async_session_factory() as db:
+        user = await create_user(db, "确认")
+        workspace = await create_workspace(db, user)
+        project = await create_project(db, workspace, "确认项目")
+        conversation, source_run, _entry, _source, _attachment, evidence = (
+            await _answer_run_with_evidence(db, user, workspace, project)
+        )
+        message, run, draft = await submit_draft_candidate(
+            db,
+            conversation,
+            _draft_action(source_run_id=source_run.id),
+        )
+        await db.commit()
+        draft.title = "闭水试验要点"
+        draft.content = "闭水试验通常持续 24 小时。"
+        draft.status = DRAFT_DRAFT
+        draft.evidence_handles_json = __import__("json").dumps([evidence.handle])
+        await db.commit()
+
+        confirmed, candidate = await confirm_draft(
+            db,
+            draft,
+            f"op-{uuid.uuid4().hex[:8]}",
+        )
+        await db.commit()
+        await db.refresh(candidate)
+        assert confirmed.status == DRAFT_CONFIRMED
+        assert candidate.status == "pending"
+        assert candidate.routing_status == "pending"
+        assert candidate.relation_status == "pending"
