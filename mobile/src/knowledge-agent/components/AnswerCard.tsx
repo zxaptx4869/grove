@@ -18,6 +18,7 @@ import {
 } from "@/src/knowledge-agent/components/ui";
 import {
   cleanAnswerText,
+  draftActionEligibility,
   investigationSummaryLine,
   presentAnswer,
   stopReasonLabel,
@@ -216,11 +217,13 @@ export function AnswerCard({
   scopeLabel,
   onCitationPress,
   onRetry,
+  onOrganize,
 }: {
   run: KnowledgeRun;
   scopeLabel: string;
   onCitationPress: (citation: KnowledgeRunCitation) => void;
   onRetry: () => void;
+  onOrganize: (run: KnowledgeRun) => void;
 }) {
   const answer = run.answer;
   const presentation = presentAnswer(answer, run.status);
@@ -241,6 +244,7 @@ export function AnswerCard({
       (projectCounts.get(citation.projectName) ?? 0) + 1,
     );
   }
+  const organize = draftActionEligibility(run);
 
   return (
     <>
@@ -322,6 +326,25 @@ export function AnswerCard({
               onCitationPress={onCitationPress}
             />
             <ScopeStamp label={scopeLabel} />
+            {organize.eligible && (
+              <View style={styles.organizeArea}>
+                {organize.note !== null && (
+                  <Text style={styles.organizeNote}>{organize.note}</Text>
+                )}
+                <Pressable
+                  accessibilityRole="button"
+                  accessibilityLabel="整理成知识"
+                  onPress={() => onOrganize(run)}
+                  style={({ pressed }) => [
+                    styles.organizeButton,
+                    pressed && styles.organizeButtonPressed,
+                  ]}
+                >
+                  <Text style={styles.organizeText}>整理成知识</Text>
+                  <AgentIcon name="edit" size={16} color={theme.ai} />
+                </Pressable>
+              </View>
+            )}
             {canRetry && (
               <View style={styles.inlineActions}>
                 <AppButton
@@ -458,6 +481,26 @@ const styles = StyleSheet.create({
     borderTopColor: theme.border,
   },
   scopeStampText: { color: theme.muted, fontSize: 10, lineHeight: 16 },
+  organizeArea: { marginTop: 12 },
+  organizeNote: {
+    marginBottom: 8,
+    color: theme.muted,
+    fontSize: 11,
+    lineHeight: 17,
+  },
+  organizeButton: {
+    minHeight: 44,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 7,
+    borderWidth: 1,
+    borderColor: "#DACCDE",
+    borderRadius: 9,
+    backgroundColor: theme.aiSoft,
+  },
+  organizeButtonPressed: { opacity: 0.9 },
+  organizeText: { color: theme.ai, fontSize: 13, fontWeight: "600" },
   inlineActions: { flexDirection: "row", gap: 8, marginTop: 12, flexWrap: "wrap" },
   conflictHead: {
     flexDirection: "row",

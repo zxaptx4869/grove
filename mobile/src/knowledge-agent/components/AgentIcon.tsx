@@ -17,7 +17,8 @@ export type AgentIconName =
   | "circleCheck"
   | "message"
   | "file"
-  | "more";
+  | "more"
+  | "edit";
 
 const PATHS: Record<AgentIconName, string[]> = {
   history: [
@@ -48,6 +49,7 @@ const PATHS: Record<AgentIconName, string[]> = {
   message: ["M21 15a4 4 0 0 1-4 4H8l-5 3V7a4 4 0 0 1 4-4h10a4 4 0 0 1 4 4z"],
   file: ["M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z", "M14 2v6h6"],
   more: [],
+  edit: ["M17 3a2.8 2.8 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5z"],
 };
 
 export function AgentIcon({

@@ -20,14 +20,28 @@ import { AgentIcon } from "@/src/knowledge-agent/components/AgentIcon";
 import { AnswerCard } from "@/src/knowledge-agent/components/AnswerCard";
 import { CitationSheet } from "@/src/knowledge-agent/components/CitationSheet";
 import { Composer } from "@/src/knowledge-agent/components/Composer";
+import {
+  DraftCard,
+  DraftFailedCard,
+  DraftProcessCard,
+  DraftReceiptCard,
+} from "@/src/knowledge-agent/components/DraftCard";
+import { DraftConfirmSheet } from "@/src/knowledge-agent/components/DraftConfirmSheet";
+import { DraftEditSheet } from "@/src/knowledge-agent/components/DraftEditSheet";
 import { HistorySheet } from "@/src/knowledge-agent/components/HistorySheet";
 import { ModeSheet } from "@/src/knowledge-agent/components/ModeSheet";
 import { ProcessCard } from "@/src/knowledge-agent/components/ProcessCard";
 import { ScopeSheet } from "@/src/knowledge-agent/components/ScopeSheet";
+import {
+  TargetProjectSheet,
+  type DraftTargetOption,
+} from "@/src/knowledge-agent/components/TargetProjectSheet";
 import { useConversationController } from "@/src/knowledge-agent/hooks/useConversationController";
+import { draftActionEligibility } from "@/src/knowledge-agent/adapters/answer";
 import { scopeLabel } from "@/src/knowledge-agent/adapters/scope";
 import { toUserErrorMessage } from "@/src/knowledge-agent/errors";
 import type {
+  KnowledgeCandidateDraft,
   KnowledgeMessage,
   KnowledgeRun,
   KnowledgeRunCitation,
@@ -49,6 +63,12 @@ export function ConversationScreen() {
   const [scopeOpen, setScopeOpen] = useState(false);
   const [modeOpen, setModeOpen] = useState(false);
   const [citation, setCitation] = useState<KnowledgeRunCitation | null>(null);
+  const [targetProject, setTargetProject] = useState<{
+    sourceRunId: number;
+    options: DraftTargetOption[];
+  } | null>(null);
+  const [editDraftId, setEditDraftId] = useState<number | null>(null);
+  const [confirmDraftId, setConfirmDraftId] = useState<number | null>(null);
   const scrollRef = useRef<ScrollView>(null);
 
   const projectsQuery = useQuery({
@@ -95,6 +115,51 @@ export function ConversationScreen() {
     },
     [controller],
   );
+
+  const handleOrganize = useCallback(
+    (run: KnowledgeRun) => {
+      const eligibility = draftActionEligibility(run);
+      if (!eligibility.eligible || eligibility.sourceRunId === null) return;
+      if (eligibility.fixedProjectId !== null) {
+        void controller.submitDraftAction(
+          eligibility.sourceRunId,
+          eligibility.fixedProjectId,
+        );
+        return;
+      }
+      if (eligibility.projectOptions.length === 1) {
+        void controller.submitDraftAction(
+          eligibility.sourceRunId,
+          eligibility.projectOptions[0].id,
+        );
+        return;
+      }
+      setTargetProject({
+        sourceRunId: eligibility.sourceRunId,
+        options: eligibility.projectOptions,
+      });
+    },
+    [controller],
+  );
+
+  const handleTargetSelect = useCallback(
+    (sourceRunId: number, projectId: number) => {
+      setTargetProject(null);
+      void controller.submitDraftAction(sourceRunId, projectId);
+    },
+    [controller],
+  );
+
+  const editingDraft =
+    editDraftId !== null ? controller.draftsById.get(editDraftId) ?? null : null;
+  const confirmingDraft =
+    confirmDraftId !== null
+      ? controller.draftsById.get(confirmDraftId) ?? null
+      : null;
+  const editSaving = controller.draftEditBusy;
+  const editError = controller.draftEditError;
+  const confirmSaving = controller.confirmingDraftId !== null;
+  const confirmError = controller.draftConfirmError;
 
   const threadHasMessages = controller.thread.items.length > 0;
   const draftIntroVisible =
@@ -235,6 +300,15 @@ export function ConversationScreen() {
                 onRetryPolling={controller.retryRunPolling}
                 onRetryRun={(runId) => void controller.retryRun(runId)}
                 onCitationPress={setCitation}
+                draft={controller.draftByRunId(message.runId ?? -1)}
+                confirmingDraftId={controller.confirmingDraftId}
+                onEditDraft={setEditDraftId}
+                onConfirmDraft={setConfirmDraftId}
+                onCancelDraft={(draftId) => void controller.cancelDraft(draftId)}
+                onRetryDraft={(sourceRunId, targetProjectId) =>
+                  void controller.submitDraftAction(sourceRunId, targetProjectId)
+                }
+                onOrganize={handleOrganize}
               />
             ))}
           {controller.pending !== null && (
@@ -331,6 +405,45 @@ export function ConversationScreen() {
         onClose={() => setModeOpen(false)}
       />
       <CitationSheet citation={citation} onClose={() => setCitation(null)} />
+      <TargetProjectSheet
+        visible={targetProject !== null}
+        options={targetProject?.options ?? []}
+        sourceRunId={targetProject?.sourceRunId ?? null}
+        submitting={controller.draftActionPending}
+        error={controller.draftActionError}
+        onSelect={handleTargetSelect}
+        onClose={() => setTargetProject(null)}
+      />
+      <DraftEditSheet
+        visible={editingDraft !== null}
+        draft={editingDraft}
+        saving={editSaving}
+        error={editError}
+        onSave={(title, content, mainType) => {
+          if (editingDraft === null) return;
+          void controller.editDraft(editingDraft.id, {
+            title,
+            content,
+            mainType,
+          }).then((saved) => {
+            if (saved) setEditDraftId(null);
+          });
+        }}
+        onClose={() => setEditDraftId(null)}
+      />
+      <DraftConfirmSheet
+        visible={confirmingDraft !== null}
+        draft={confirmingDraft}
+        confirming={confirmSaving}
+        error={confirmError}
+        onConfirm={() => {
+          if (confirmingDraft === null) return;
+          void controller.confirmDraft(confirmingDraft.id).then((confirmed) => {
+            if (confirmed) setConfirmDraftId(null);
+          });
+        }}
+        onClose={() => setConfirmDraftId(null)}
+      />
     </SafeAreaView>
   );
 }
@@ -345,6 +458,13 @@ function ThreadMessage({
   onRetryPolling,
   onRetryRun,
   onCitationPress,
+  draft,
+  confirmingDraftId,
+  onEditDraft,
+  onConfirmDraft,
+  onCancelDraft,
+  onRetryDraft,
+  onOrganize,
 }: {
   message: KnowledgeMessage;
   run: KnowledgeRun | null;
@@ -355,6 +475,13 @@ function ThreadMessage({
   onRetryPolling: () => void;
   onRetryRun: (runId: number) => void;
   onCitationPress: (citation: KnowledgeRunCitation) => void;
+  draft: KnowledgeCandidateDraft | null;
+  confirmingDraftId: number | null;
+  onEditDraft: (draftId: number) => void;
+  onConfirmDraft: (draftId: number) => void;
+  onCancelDraft: (draftId: number) => void;
+  onRetryDraft: (sourceRunId: number, targetProjectId: number | null) => void;
+  onOrganize: (run: KnowledgeRun) => void;
 }) {
   if (message.messageType === "scope_change") {
     return (
@@ -377,6 +504,95 @@ function ThreadMessage({
   const runScope = run
     ? scopeLabel(run.scopeType, run.projectName)
     : message.projectName ?? "全部知识";
+  if (run?.runKind === "draft_candidate") {
+    if (isRunActive(run.status) || draft?.status === "generating") {
+      return (
+        <View>
+          <View style={styles.agentLabel}>
+            <View style={styles.agentDot}>
+              <Text style={styles.agentDotText}>G</Text>
+            </View>
+            <Text style={styles.agentLabelText}>知识 Agent</Text>
+          </View>
+          <DraftProcessCard
+            run={run}
+            cancelling={cancelling}
+            onCancel={onCancelRun}
+          />
+        </View>
+      );
+    }
+    if (draft === null) {
+      return (
+        <View>
+          <View style={styles.agentLabel}>
+            <View style={styles.agentDot}>
+              <Text style={styles.agentDotText}>G</Text>
+            </View>
+            <Text style={styles.agentLabelText}>知识 Agent</Text>
+          </View>
+          {message.content.trim() !== "" && (
+            <View style={styles.legacyAnswer}>
+              <Text style={styles.legacyAnswerText}>{message.content}</Text>
+            </View>
+          )}
+        </View>
+      );
+    }
+    if (draft.status === "confirmed") {
+      return (
+        <View>
+          <View style={styles.agentLabel}>
+            <View style={styles.agentDot}>
+              <Text style={styles.agentDotText}>G</Text>
+            </View>
+            <Text style={styles.agentLabelText}>知识 Agent</Text>
+          </View>
+          <DraftReceiptCard draft={draft} />
+        </View>
+      );
+    }
+    if (draft.status === "draft" || draft.status === "confirming") {
+      return (
+        <View>
+          <View style={styles.agentLabel}>
+            <View style={styles.agentDot}>
+              <Text style={styles.agentDotText}>G</Text>
+            </View>
+            <Text style={styles.agentLabelText}>知识 Agent</Text>
+          </View>
+          <DraftCard
+            draft={draft}
+            confirming={confirmingDraftId === draft.id}
+            onEdit={() => onEditDraft(draft.id)}
+            onConfirm={() => onConfirmDraft(draft.id)}
+            onCancel={() => onCancelDraft(draft.id)}
+          />
+        </View>
+      );
+    }
+    if (draft.status === "failed" || draft.status === "cancelled") {
+      return (
+        <View>
+          <View style={styles.agentLabel}>
+            <View style={styles.agentDot}>
+              <Text style={styles.agentDotText}>G</Text>
+            </View>
+            <Text style={styles.agentLabelText}>知识 Agent</Text>
+          </View>
+          <DraftFailedCard
+            draft={draft}
+            onRetry={() => {
+              if (draft.sourceRunId !== null) {
+                onRetryDraft(draft.sourceRunId, draft.targetProjectId);
+              }
+            }}
+            onCancel={() => onCancelDraft(draft.id)}
+          />
+        </View>
+      );
+    }
+  }
   return (
     <View>
       <View style={styles.agentLabel}>
@@ -406,6 +622,7 @@ function ThreadMessage({
           run={run}
           scopeLabel={runScope}
           onCitationPress={onCitationPress}
+          onOrganize={onOrganize}
           onRetry={() => {
             onRetryRun(run.id);
           }}

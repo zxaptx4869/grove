@@ -7,11 +7,21 @@ import { AnswerCard } from "@/src/knowledge-agent/components/AnswerCard";
 import { CitationSheet } from "@/src/knowledge-agent/components/CitationSheet";
 import { Composer } from "@/src/knowledge-agent/components/Composer";
 import { ConversationScreen } from "@/src/knowledge-agent/components/ConversationScreen";
+import {
+  DraftCard,
+  DraftFailedCard,
+  DraftProcessCard,
+  DraftReceiptCard,
+} from "@/src/knowledge-agent/components/DraftCard";
+import { DraftConfirmSheet } from "@/src/knowledge-agent/components/DraftConfirmSheet";
+import { DraftEditSheet } from "@/src/knowledge-agent/components/DraftEditSheet";
 import { HistorySheet } from "@/src/knowledge-agent/components/HistorySheet";
 import { ProcessCard } from "@/src/knowledge-agent/components/ProcessCard";
+import { TargetProjectSheet } from "@/src/knowledge-agent/components/TargetProjectSheet";
 import { DEFAULT_MODES } from "@/src/knowledge-agent/state/modes";
 import type {
   KnowledgeAnswer,
+  KnowledgeCandidateDraft,
   KnowledgeConflict,
   KnowledgeConversation,
   KnowledgeRun,
@@ -180,6 +190,43 @@ function conversation(id: number): KnowledgeConversation {
   };
 }
 
+function draftFixture(
+  overrides: Partial<KnowledgeCandidateDraft> = {},
+): KnowledgeCandidateDraft {
+  return {
+    id: 1,
+    conversationId: 1,
+    operationRunId: 10,
+    sourceRunId: 5,
+    targetProjectId: 1,
+    targetProjectName: "新房装修",
+    status: "draft",
+    title: "卫生间防水施工与验收要点",
+    content:
+      "基层处理、重点部位加强、防水层施工和闭水试验应形成连续的检查记录。",
+    mainType: "knowledge",
+    infoNature: "fact",
+    evidenceHandles: ["ev_1"],
+    evidenceSummaries: [
+      {
+        handle: "ev_1",
+        entryId: 1,
+        entryTitle: "闭水试验",
+        sourceId: 1,
+        sourceTitle: "验收手册",
+        quote: "闭水试验通常持续 24 小时",
+      },
+    ],
+    generationDegraded: false,
+    generationError: null,
+    confirmedCandidateId: null,
+    error: null,
+    createdAt: "2026-08-29T10:00:00Z",
+    updatedAt: "2026-08-29T10:00:00Z",
+    ...overrides,
+  };
+}
+
 test("composer 空文本禁用发送，模式覆盖显示可移除 chip", async () => {
   const onSend = jest.fn();
   const onRemove = jest.fn();
@@ -242,6 +289,7 @@ test("五种回答状态区分展示，知识不足不显示成功文案", async
         scopeLabel="全部知识"
         onCitationPress={jest.fn()}
         onRetry={jest.fn()}
+        onOrganize={jest.fn()}
       />,
       { wrapper },
     );
@@ -272,6 +320,7 @@ test("insufficient 带引用时仍遵循后端知识不足状态", async () => {
       scopeLabel="全部知识"
       onCitationPress={jest.fn()}
       onRetry={jest.fn()}
+      onOrganize={jest.fn()}
     />,
     { wrapper },
   );
@@ -294,6 +343,7 @@ test("partial 与可恢复 fallback 都提供重新提问", async () => {
       scopeLabel="全部知识"
       onCitationPress={jest.fn()}
       onRetry={partialRetry}
+      onOrganize={jest.fn()}
     />,
     { wrapper },
   );
@@ -332,6 +382,7 @@ test("partial 与可恢复 fallback 都提供重新提问", async () => {
       scopeLabel="全部知识"
       onCitationPress={jest.fn()}
       onRetry={fallbackRetry}
+      onOrganize={jest.fn()}
     />,
     { wrapper },
   );
@@ -372,6 +423,7 @@ test("冲突卡并列展示双边完整 citation 与项目归属", async () => {
       scopeLabel="全部知识"
       onCitationPress={onCitationPress}
       onRetry={jest.fn()}
+      onOrganize={jest.fn()}
     />,
     { wrapper },
   );
@@ -541,4 +593,160 @@ test("活动 Run 409 时显示冲突说明且不保留发送中气泡与重试",
     expect(api.getConversation).toHaveBeenCalledWith("token", 10);
     expect(api.listMessages).toHaveBeenCalledWith("token", 10, null);
   });
+});
+
+test("草稿卡使用 AI 建议语义并展示目标项目与来源摘要", async () => {
+  const onEdit = jest.fn();
+  const onConfirm = jest.fn();
+  const onCancel = jest.fn();
+  const view = await render(
+    <DraftCard
+      draft={draftFixture()}
+      confirming={false}
+      onEdit={onEdit}
+      onConfirm={onConfirm}
+      onCancel={onCancel}
+    />,
+    { wrapper },
+  );
+  expect(view.getByText("AI 草稿 · 未创建候选")).toBeOnTheScreen();
+  expect(view.getByText("卫生间防水施工与验收要点")).toBeOnTheScreen();
+  expect(view.getByText(/目标项目：新房装修/)).toBeOnTheScreen();
+  expect(view.getByText(/1 条核验证据/)).toBeOnTheScreen();
+  expect(view.getByText("类型建议：knowledge")).toBeOnTheScreen();
+  await fireEvent.press(view.getByText("编辑并检查"));
+  expect(onEdit).toHaveBeenCalled();
+  await fireEvent.press(view.getByText("创建待确认知识"));
+  expect(onConfirm).toHaveBeenCalled();
+  await fireEvent.press(view.getByText("取消"));
+  expect(onCancel).toHaveBeenCalled();
+  expect(view.queryByText("正式知识已保存")).toBeNull();
+  expect(view.queryByText("已归档")).toBeNull();
+});
+
+test("降级草稿显示明确降级说明", async () => {
+  const view = await render(
+    <DraftCard
+      draft={draftFixture({ generationDegraded: true })}
+      confirming={false}
+      onEdit={jest.fn()}
+      onConfirm={jest.fn()}
+      onCancel={jest.fn()}
+    />,
+    { wrapper },
+  );
+  expect(view.getByText(/草稿生成已降级/)).toBeOnTheScreen();
+});
+
+test("生成过程卡只展示可验证阶段并可取消", async () => {
+  const onCancel = jest.fn();
+  const view = await render(
+    <DraftProcessCard
+      run={run(10, "processing", null)}
+      cancelling={false}
+      onCancel={onCancel}
+    />,
+    { wrapper },
+  );
+  expect(view.getByText("正在生成候选草稿")).toBeOnTheScreen();
+  await fireEvent.press(view.getByText("取消"));
+  expect(onCancel).toHaveBeenCalled();
+  expect(view.queryByText("正在处理")).toBeNull();
+});
+
+test("确认回执明确尚未写入正式知识", async () => {
+  const view = await render(
+    <DraftReceiptCard
+      draft={draftFixture({
+        status: "confirmed",
+        confirmedCandidateId: 99,
+      })}
+    />,
+    { wrapper },
+  );
+  expect(view.getByText(/已创建待确认知识/)).toBeOnTheScreen();
+  expect(view.getAllByText(/尚未写入正式知识/).length).toBeGreaterThan(0);
+  expect(view.getByText(/待确认（#99）/)).toBeOnTheScreen();
+  expect(view.queryByText("正式知识")).toBeNull();
+});
+
+test("失败草稿保留错误与重试入口", async () => {
+  const onRetry = jest.fn();
+  const view = await render(
+    <DraftFailedCard
+      draft={draftFixture({ status: "failed", error: "证据当前无法重新核验" })}
+      onRetry={onRetry}
+      onCancel={jest.fn()}
+    />,
+    { wrapper },
+  );
+  expect(view.getByText(/证据当前无法重新核验/)).toBeOnTheScreen();
+  await fireEvent.press(view.getByText("重新整理"));
+  expect(onRetry).toHaveBeenCalled();
+});
+
+test("目标项目 Sheet 只列出项目，不展示目录节点", async () => {
+  const onSelect = jest.fn();
+  const view = await render(
+    <TargetProjectSheet
+      visible
+      options={[
+        { id: 1, name: "新房装修" },
+        { id: 2, name: "出租房翻新" },
+      ]}
+      sourceRunId={9}
+      submitting={false}
+      error={null}
+      onSelect={onSelect}
+      onClose={jest.fn()}
+    />,
+    { wrapper },
+  );
+  expect(view.getByText("新房装修")).toBeOnTheScreen();
+  expect(view.getByText("出租房翻新")).toBeOnTheScreen();
+  expect(view.getByText(/草稿只采用所选项目的证据/)).toBeOnTheScreen();
+  expect(view.queryByText("目录")).toBeNull();
+  await fireEvent.press(view.getByLabelText("整理到项目：新房装修"));
+  expect(onSelect).toHaveBeenCalledWith(9, 1);
+});
+
+test("确认 Sheet 说明不会直接写入正式知识，创建中禁用主按钮", async () => {
+  const onConfirm = jest.fn();
+  const view = await render(
+    <DraftConfirmSheet
+      visible
+      draft={draftFixture()}
+      confirming
+      error={null}
+      onConfirm={onConfirm}
+      onClose={jest.fn()}
+    />,
+    { wrapper },
+  );
+  expect(view.getByText("创建中…")).toBeOnTheScreen();
+  expect(view.getByText(/不会直接写入正式知识/)).toBeOnTheScreen();
+  await fireEvent.press(view.getByText("创建中…"));
+  expect(onConfirm).not.toHaveBeenCalled();
+});
+
+test("编辑 Sheet 可编辑标题、正文与类型并保存", async () => {
+  const onSave = jest.fn();
+  const view = await render(
+    <DraftEditSheet
+      visible
+      draft={draftFixture()}
+      saving={false}
+      error={null}
+      onSave={onSave}
+      onClose={jest.fn()}
+    />,
+    { wrapper },
+  );
+  const titleInput = view.getByLabelText("草稿标题");
+  const contentInput = view.getByLabelText("草稿核心内容");
+  await fireEvent.changeText(titleInput, "新标题");
+  await fireEvent.changeText(contentInput, "新内容");
+  await fireEvent.press(view.getByLabelText("类型：方法"));
+  await fireEvent.press(view.getByText("保存编辑"));
+  expect(onSave).toHaveBeenCalledWith("新标题", "新内容", "method");
 });

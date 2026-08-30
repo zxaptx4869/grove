@@ -83,6 +83,21 @@ Candidate 的 `evidence_refs` 由服务端 Evidence 的当前 attachment_id/quot
 
 App 进入后台停止轮询，恢复前台立即 refetch；重启或切换会话从服务端历史恢复 generating/draft/confirmed/failed 状态。范围切换不重写旧 Draft 的项目快照；未确认 Draft 仍可查看，但若用户想在新范围继续，必须新建操作，不能偷换目标项目。
 
+### 9. 原型视觉基线提取（grove-mobile-agent-prototype.html）
+
+按原型「整理成知识」路径提取并在正式 React Native 中复现的视觉基线：
+
+- 卡片：`border 1px #DDE3DF`、圆角 10、`card-body padding 13`、标题 16/700、正文 13–14/行高 21–23；
+- AI 语义：`AI 建议` Badge 使用 ai 色（`#7251A5`/`#F2EDF8`），卡片可带 `border-left 3px ai`；本 change 文案固定为「AI 草稿 · 未创建候选」；
+- 结构化后续动作：回答卡引用条与范围印记之后的全宽 AI 操作按钮（`#DACCDE` 边框、`#F2EDF8` 底、`#7251A5` 文字，min-height 44）；
+- Sheet：底部弹层圆角 18、把手 36×4、标题 17/700、`sheet-body padding 16/18`、`confirm-box` 圆角 9；
+- 确认回执：`receipt-icon 34×34` 圆角 8 confirmed 色、`receipt-row min-height 40` 列表、成功文案「已创建待确认知识 · 尚未写入正式知识」；
+- 主按钮 min-height 44、圆角 8、primary 为绿色 `#236748` 白字；禁用态 opacity 0.48。
+
+有意偏离（与第 7 节一致）：不展示保留/补充/替换/合并计数、不实现「审阅完整差异」全屏页、不显示正式 Entry 影响对象、不提供确认合并/撤销；编辑与确认收敛为可滚动 Sheet，成功回执只表达 Candidate 待确认。
+
+正式代码只复用 `Card`/`AppButton`/`Badge`/`Sheet`/`AgentIcon` 与 `theme` 令牌，不复制原型内联 CSS、HTML 或演示脚本。
+
 ## Risks / Trade-offs
 
 - [用户以为一次确认就已成为正式知识] → 全流程使用“AI 草稿”“创建待确认知识”“尚未写入正式知识”，回执显示 Candidate 状态，不使用“已归档”。
