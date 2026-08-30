@@ -1,8 +1,8 @@
 ## 1. 实施前基线与契约核对
 
-- [ ] 1.1 重新阅读本 change 的 proposal/design/specs、`AGENTS.md`、`docs/产品蓝图.md` 路由到的「Agent架构与AI边界」「目录与知识空间」「技术与端侧边界」，并核对 `grove-ui-conventions` 与移动原型的整理路径；把实施中发现的规格歧义先更新工件，不静默扩范围。
-- [ ] 1.2 盘点 `KnowledgeAgentRun`/Message Page/Worker、旧 `save_answer_as_candidate`、Candidate 创建/路由/关系服务及移动 AnswerCard/controller 的当前契约，确认普通 answer Run、旧 Reader 和既有移动只读流程的兼容基线。
-- [ ] 1.3 运行 `cd backend && .venv/bin/python -m pytest tests/test_reader.py tests/test_knowledge_agent_conversations.py tests/test_knowledge_agent_runs.py -W error` 与 `cd mobile && npm test -- --runInBand && npm run lint && npm run typecheck`，记录实施前结果。
+- [x] 1.1 重新阅读本 change 的 proposal/design/specs、`AGENTS.md`、`docs/产品蓝图.md` 路由到的「Agent架构与AI边界」「目录与知识空间」「技术与端侧边界」，并核对 `grove-ui-conventions` 与移动原型的整理路径；把实施中发现的规格歧义先更新工件，不静默扩范围。
+- [x] 1.2 盘点 `KnowledgeAgentRun`/Message Page/Worker、旧 `save_answer_as_candidate`、Candidate 创建/路由/关系服务及移动 AnswerCard/controller 的当前契约，确认普通 answer Run、旧 Reader 和既有移动只读流程的兼容基线。
+- [x] 1.3 运行 `cd backend && .venv/bin/python -m pytest tests/test_reader.py tests/test_knowledge_agent_conversations.py tests/test_knowledge_agent_runs.py -W error` 与 `cd mobile && npm test -- --runInBand && npm run lint && npm run typecheck`，记录实施前结果。
 
 ## 2. Candidate Draft 数据模型与迁移
 
