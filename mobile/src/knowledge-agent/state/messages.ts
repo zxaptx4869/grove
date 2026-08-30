@@ -2,6 +2,7 @@
 
 import type {
   KnowledgeCandidateDraft,
+  KnowledgeEntryRevisionDraft,
   KnowledgeMessage,
   KnowledgeMessagePage,
   KnowledgeRun,
@@ -11,6 +12,7 @@ export interface MessageThreadState {
   items: KnowledgeMessage[];
   runsById: Map<number, KnowledgeRun>;
   draftsById: Map<number, KnowledgeCandidateDraft>;
+  revisionDraftsById: Map<number, KnowledgeEntryRevisionDraft>;
   nextCursor: string | null;
   hasMore: boolean;
 }
@@ -20,6 +22,7 @@ export function emptyThread(): MessageThreadState {
     items: [],
     runsById: new Map(),
     draftsById: new Map(),
+    revisionDraftsById: new Map(),
     nextCursor: null,
     hasMore: false,
   };
@@ -69,6 +72,20 @@ function mergeDrafts(
   return next;
 }
 
+function mergeRevisionDrafts(
+  revisionDraftsById: Map<number, KnowledgeEntryRevisionDraft>,
+  drafts: KnowledgeEntryRevisionDraft[],
+): Map<number, KnowledgeEntryRevisionDraft> {
+  const next = new Map(revisionDraftsById);
+  for (const draft of drafts) {
+    const existing = next.get(draft.id);
+    if (existing === undefined || draft.updatedAt >= existing.updatedAt) {
+      next.set(draft.id, draft);
+    }
+  }
+  return next;
+}
+
 export function applyRecentPage(
   state: MessageThreadState,
   page: KnowledgeMessagePage,
@@ -77,6 +94,10 @@ export function applyRecentPage(
     items: dedupeById(page.items),
     runsById: mergeRuns(state.runsById, page.runs),
     draftsById: mergeDrafts(state.draftsById, page.candidateDrafts),
+    revisionDraftsById: mergeRevisionDrafts(
+      state.revisionDraftsById,
+      page.entryRevisionDrafts ?? [],
+    ),
     nextCursor: page.nextCursor,
     hasMore: page.nextCursor !== null,
   };
@@ -95,6 +116,10 @@ export function prependOlderPage(
     items: merged,
     runsById: mergeRuns(state.runsById, page.runs),
     draftsById: mergeDrafts(state.draftsById, page.candidateDrafts),
+    revisionDraftsById: mergeRevisionDrafts(
+      state.revisionDraftsById,
+      page.entryRevisionDrafts ?? [],
+    ),
     nextCursor: page.nextCursor,
     hasMore: page.nextCursor !== null,
   };
@@ -128,6 +153,16 @@ export function upsertDraft(
   return { ...state, draftsById: mergeDrafts(state.draftsById, [draft]) };
 }
 
+export function upsertRevisionDraft(
+  state: MessageThreadState,
+  draft: KnowledgeEntryRevisionDraft,
+): MessageThreadState {
+  return {
+    ...state,
+    revisionDraftsById: mergeRevisionDrafts(state.revisionDraftsById, [draft]),
+  };
+}
+
 export function threadFromPage(page: KnowledgeMessagePage): MessageThreadState {
   return applyRecentPage(emptyThread(), page);
 }
@@ -139,6 +174,7 @@ export function composeThread(
   runOverrides: Map<number, KnowledgeRun>,
   extraMessages: KnowledgeMessage[],
   draftOverrides: Map<number, KnowledgeCandidateDraft> = new Map(),
+  revisionDraftOverrides: Map<number, KnowledgeEntryRevisionDraft> = new Map(),
 ): MessageThreadState {
   if (!recent) return emptyThread();
   let state = threadFromPage(recent);
@@ -153,6 +189,9 @@ export function composeThread(
   }
   for (const draft of draftOverrides.values()) {
     state = upsertDraft(state, draft);
+  }
+  for (const draft of revisionDraftOverrides.values()) {
+    state = upsertRevisionDraft(state, draft);
   }
   return state;
 }

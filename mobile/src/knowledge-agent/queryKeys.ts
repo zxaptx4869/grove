@@ -9,4 +9,8 @@ export const knowledgeAgentKeys = {
   drafts: (conversationId: number) =>
     ["knowledge-agent", "drafts", conversationId] as const,
   draft: (id: number) => ["knowledge-agent", "draft", id] as const,
+  revisionDrafts: (conversationId: number) =>
+    ["knowledge-agent", "revision-drafts", conversationId] as const,
+  revisionDraft: (id: number) =>
+    ["knowledge-agent", "revision-draft", id] as const,
 };

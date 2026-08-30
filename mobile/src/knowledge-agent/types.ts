@@ -17,7 +17,7 @@ export type AnswerStatus =
   | "failed"
   | "clarification";
 
-export type RunKind = "answer" | "draft_candidate";
+export type RunKind = "answer" | "draft_candidate" | "entry_revision";
 
 export type DraftStatus =
   | "generating"
@@ -26,6 +26,17 @@ export type DraftStatus =
   | "confirmed"
   | "cancelled"
   | "failed";
+
+export type RevisionDraftStatus =
+  | "generating"
+  | "draft"
+  | "confirming"
+  | "applied"
+  | "cancelled"
+  | "failed"
+  | "undone";
+
+export type RevisionExecutionStatus = "applied" | "undoing" | "undone";
 
 export type ContextMode = "auto" | "continue" | "new_topic";
 export type ContextDecision = "continue" | "new_topic" | "clarify";
@@ -90,6 +101,8 @@ export interface KnowledgeMessagePage {
   nextCursor: string | null;
   runs: KnowledgeRun[];
   candidateDrafts: KnowledgeCandidateDraft[];
+  /** 旧服务端响应可能缺失该集合：兼容按空处理。 */
+  entryRevisionDrafts?: KnowledgeEntryRevisionDraft[];
 }
 
 export interface KnowledgeRunCitation extends KnowledgeScope {
@@ -164,6 +177,7 @@ export interface KnowledgeRun extends KnowledgeScope {
   /** 旧客户端/历史缓存可能缺省：缺省按 answer 处理 */
   runKind?: RunKind;
   sourceRunId?: number | null;
+  targetEntryId?: number | null;
   status: RunStatus;
   currentStep: string | null;
   userMessageId: number | null;
@@ -261,6 +275,111 @@ export interface KnowledgeDraftConfirmRequest {
 export interface KnowledgeDraftConfirm {
   draft: KnowledgeCandidateDraft;
   candidate: CandidateReceipt;
+}
+
+/** 单 Entry 修订：服务端按 base snapshot 计算的字段差异。 */
+export interface KnowledgeRevisionFieldDiff {
+  field: string;
+  label: string;
+  before: string | null;
+  after: string | null;
+}
+
+export interface KnowledgeRevisionExecution {
+  id: number;
+  draftId: number;
+  entryId: number | null;
+  status: RevisionExecutionStatus;
+  beforeVersionNumber: number | null;
+  afterVersionNumber: number | null;
+  addedEvidenceCount: number;
+  error: string | null;
+  undoneAt: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface KnowledgeEntryRevisionDraft {
+  id: number;
+  conversationId: number;
+  operationRunId: number;
+  sourceRunId: number | null;
+  targetEntryId: number | null;
+  targetProjectId: number | null;
+  targetProjectName: string | null;
+  instruction: string;
+  status: RevisionDraftStatus;
+  title: string | null;
+  content: string | null;
+  mainType: string | null;
+  infoNature: string | null;
+  applicableCondition: string | null;
+  note: string | null;
+  changeSummary: string | null;
+  reason: string | null;
+  selectedEvidenceHandles: string[];
+  evidenceSummaries: KnowledgeDraftEvidence[];
+  changedFields: KnowledgeRevisionFieldDiff[];
+  generationDegraded: boolean;
+  generationError: string | null;
+  execution: KnowledgeRevisionExecution | null;
+  error: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface KnowledgeRevisionEntry {
+  id: number;
+  title: string;
+  projectId: number;
+  projectName: string | null;
+  nodeId: number;
+  nodeName: string | null;
+  versionNumber: number | null;
+  updatedAt: string;
+}
+
+export interface KnowledgeRevisionActionRequest {
+  clientMessageId: string;
+  sourceRunId: number;
+  targetEntryId: number;
+  instruction: string;
+}
+
+export interface KnowledgeRevisionAction {
+  userMessage: KnowledgeMessage;
+  run: KnowledgeRun;
+  draft: KnowledgeEntryRevisionDraft;
+}
+
+export interface KnowledgeRevisionEditRequest {
+  title?: string | null;
+  content?: string | null;
+  mainType?: string | null;
+  infoNature?: string | null;
+  applicableCondition?: string | null;
+  note?: string | null;
+  changeSummary?: string | null;
+}
+
+export interface KnowledgeRevisionConfirmRequest {
+  clientOperationId: string;
+}
+
+export interface KnowledgeRevisionConfirm {
+  draft: KnowledgeEntryRevisionDraft;
+  execution: KnowledgeRevisionExecution;
+  entry: KnowledgeRevisionEntry;
+}
+
+export interface KnowledgeRevisionUndoRequest {
+  clientOperationId: string;
+}
+
+export interface KnowledgeRevisionUndo {
+  draft: KnowledgeEntryRevisionDraft;
+  execution: KnowledgeRevisionExecution;
+  entry: KnowledgeRevisionEntry;
 }
 
 export interface KnowledgeRunSubmitRequest {

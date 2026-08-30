@@ -7,6 +7,7 @@ import { useConversationController } from "@/src/knowledge-agent/hooks/useConver
 import type {
   KnowledgeCandidateDraft,
   KnowledgeConversation,
+  KnowledgeEntryRevisionDraft,
   KnowledgeMessage,
   KnowledgeRun,
 } from "@/src/knowledge-agent/types";
@@ -30,6 +31,12 @@ jest.mock("@/src/knowledge-agent/api", () => ({
     editDraft: jest.fn(),
     cancelDraft: jest.fn(),
     confirmDraft: jest.fn(),
+    submitEntryRevision: jest.fn(),
+    getEntryRevisionDraft: jest.fn(),
+    editEntryRevisionDraft: jest.fn(),
+    cancelEntryRevisionDraft: jest.fn(),
+    confirmEntryRevision: jest.fn(),
+    undoEntryRevision: jest.fn(),
   },
 }));
 
@@ -159,6 +166,41 @@ function draft(
     confirmedCandidateId: null,
     routingStatus: null,
     relationStatus: null,
+    error: null,
+    createdAt: "2026-08-29T10:00:00Z",
+    updatedAt: "2026-08-29T10:00:00Z",
+    ...overrides,
+  };
+}
+
+function revisionDraft(
+  id: number,
+  overrides: Partial<KnowledgeEntryRevisionDraft> = {},
+): KnowledgeEntryRevisionDraft {
+  return {
+    id,
+    conversationId: 1,
+    operationRunId: 20,
+    sourceRunId: 5,
+    targetEntryId: 1,
+    targetProjectId: 1,
+    targetProjectName: "新房装修",
+    instruction: "补充适用条件",
+    status: "generating",
+    title: null,
+    content: null,
+    mainType: null,
+    infoNature: null,
+    applicableCondition: null,
+    note: null,
+    changeSummary: null,
+    reason: null,
+    selectedEvidenceHandles: [],
+    evidenceSummaries: [],
+    changedFields: [],
+    generationDegraded: false,
+    generationError: null,
+    execution: null,
     error: null,
     createdAt: "2026-08-29T10:00:00Z",
     updatedAt: "2026-08-29T10:00:00Z",
@@ -788,6 +830,222 @@ describe("useConversationController", () => {
       rendered.result.current.clearDraftCancelError();
     });
     expect(rendered.result.current.draftCancelError).toBeNull();
+    await rendered.unmount();
+  });
+
+  test("提交修订动作：创建消息与草稿并进入线程", async () => {
+    api.listConversations.mockResolvedValue([conversation(1)]);
+    api.getConversation.mockResolvedValue(conversation(1));
+    api.listMessages.mockResolvedValue({
+      items: [],
+      nextCursor: null,
+      runs: [],
+      candidateDrafts: [],
+    });
+    api.submitEntryRevision.mockResolvedValue({
+      userMessage: message(3, "user", 20, "修订《闭水试验》：补充适用条件"),
+      run: { ...run(20, "waiting"), runKind: "entry_revision", targetEntryId: 1 },
+      draft: revisionDraft(2),
+    });
+    const rendered = await renderController();
+    await waitFor(() => expect(rendered.result.current.initialLoading).toBe(false));
+
+    await act(async () => {
+      const submitted = await rendered.result.current.submitEntryRevision(
+        5,
+        1,
+        "补充适用条件",
+      );
+      expect(submitted).toBe(true);
+    });
+    expect(api.submitEntryRevision).toHaveBeenCalledWith("token", 1, {
+      clientMessageId: "test-client-id",
+      sourceRunId: 5,
+      targetEntryId: 1,
+      instruction: "补充适用条件",
+    });
+    expect(rendered.result.current.revisionDraftsById.get(2)?.status).toBe(
+      "generating",
+    );
+    expect(
+      rendered.result.current.revisionDraftByRunId(20)?.targetEntryId,
+    ).toBe(1);
+    await rendered.unmount();
+  });
+
+  test("确认修订成功且网络未知重试复用同一 client_operation_id", async () => {
+    api.listConversations.mockResolvedValue([conversation(1)]);
+    api.getConversation.mockResolvedValue(conversation(1));
+    api.listMessages.mockResolvedValue({
+      items: [
+        message(1, "user", 20, "修订《闭水试验》：补充适用条件"),
+        message(2, "assistant", 20),
+      ],
+      nextCursor: null,
+      runs: [{ ...run(20, "completed"), runKind: "entry_revision", targetEntryId: 1 }],
+      candidateDrafts: [],
+      entryRevisionDrafts: [
+        revisionDraft(2, { status: "draft", title: "候选标题" }),
+      ],
+    });
+    api.confirmEntryRevision
+      .mockRejectedValueOnce(new Error("网络中断"))
+      .mockResolvedValueOnce({
+        draft: revisionDraft(2, { status: "applied", title: "候选标题" }),
+        execution: {
+          id: 9,
+          draftId: 2,
+          entryId: 1,
+          status: "applied",
+          beforeVersionNumber: 1,
+          afterVersionNumber: 2,
+          addedEvidenceCount: 0,
+          error: null,
+          undoneAt: null,
+          createdAt: "2026-08-29T10:00:00Z",
+          updatedAt: "2026-08-29T10:00:00Z",
+        },
+        entry: {
+          id: 1,
+          title: "候选标题",
+          projectId: 1,
+          projectName: "新房装修",
+          nodeId: 1,
+          nodeName: "施工",
+          versionNumber: 2,
+          updatedAt: "2026-08-29T10:00:00Z",
+        },
+      });
+    const rendered = await renderController();
+    await waitFor(() =>
+      expect(rendered.result.current.revisionDraftsById.get(2)?.status).toBe(
+        "draft",
+      ),
+    );
+
+    let firstResult = false;
+    await act(async () => {
+      firstResult = await rendered.result.current.confirmEntryRevision(2);
+    });
+    expect(firstResult).toBe(false);
+    expect(rendered.result.current.revisionConfirmError).toContain("网络中断");
+
+    await act(async () => {
+      const retried = await rendered.result.current.retryConfirmEntryRevision(2);
+      expect(retried).toBe(true);
+    });
+    expect(api.confirmEntryRevision).toHaveBeenNthCalledWith(1, "token", 2, {
+      clientOperationId: "test-client-id",
+    });
+    expect(api.confirmEntryRevision).toHaveBeenNthCalledWith(2, "token", 2, {
+      clientOperationId: "test-client-id",
+    });
+    expect(rendered.result.current.revisionDraftsById.get(2)?.status).toBe(
+      "applied",
+    );
+    await rendered.unmount();
+  });
+
+  test("撤销修订成功且重复撤销复用同一撤销键", async () => {
+    api.listConversations.mockResolvedValue([conversation(1)]);
+    api.getConversation.mockResolvedValue(conversation(1));
+    api.listMessages.mockResolvedValue({
+      items: [
+        message(1, "user", 20, "修订《闭水试验》：补充适用条件"),
+        message(2, "assistant", 20),
+      ],
+      nextCursor: null,
+      runs: [{ ...run(20, "completed"), runKind: "entry_revision", targetEntryId: 1 }],
+      candidateDrafts: [],
+      entryRevisionDrafts: [
+        revisionDraft(2, {
+          status: "applied",
+          title: "候选标题",
+          execution: {
+            id: 9,
+            draftId: 2,
+            entryId: 1,
+            status: "applied",
+            beforeVersionNumber: 1,
+            afterVersionNumber: 2,
+            addedEvidenceCount: 0,
+            error: null,
+            undoneAt: null,
+            createdAt: "2026-08-29T10:00:00Z",
+            updatedAt: "2026-08-29T10:00:00Z",
+          },
+        }),
+      ],
+    });
+    api.undoEntryRevision
+      .mockRejectedValueOnce(new Error("网络中断"))
+      .mockResolvedValueOnce({
+        draft: revisionDraft(2, {
+          status: "undone",
+          title: "闭水试验",
+          execution: {
+            id: 9,
+            draftId: 2,
+            entryId: 1,
+            status: "undone",
+            beforeVersionNumber: 1,
+            afterVersionNumber: 2,
+            addedEvidenceCount: 0,
+            error: null,
+            undoneAt: "2026-08-29T10:01:00Z",
+            createdAt: "2026-08-29T10:00:00Z",
+            updatedAt: "2026-08-29T10:01:00Z",
+          },
+        }),
+        execution: {
+          id: 9,
+          draftId: 2,
+          entryId: 1,
+          status: "undone",
+          beforeVersionNumber: 1,
+          afterVersionNumber: 2,
+          addedEvidenceCount: 0,
+          error: null,
+          undoneAt: "2026-08-29T10:01:00Z",
+          createdAt: "2026-08-29T10:00:00Z",
+          updatedAt: "2026-08-29T10:01:00Z",
+        },
+        entry: {
+          id: 1,
+          title: "闭水试验",
+          projectId: 1,
+          projectName: "新房装修",
+          nodeId: 1,
+          nodeName: "施工",
+          versionNumber: 3,
+          updatedAt: "2026-08-29T10:01:00Z",
+        },
+      });
+    const rendered = await renderController();
+    await waitFor(() =>
+      expect(rendered.result.current.revisionDraftsById.get(2)?.status).toBe(
+        "applied",
+      ),
+    );
+
+    await act(async () => {
+      const first = await rendered.result.current.undoEntryRevision(2);
+      expect(first).toBe(false);
+    });
+    expect(rendered.result.current.revisionUndoError).toContain("网络中断");
+    await act(async () => {
+      const retried = await rendered.result.current.retryUndoEntryRevision(2);
+      expect(retried).toBe(true);
+    });
+    expect(api.undoEntryRevision).toHaveBeenNthCalledWith(1, "token", 2, {
+      clientOperationId: "test-client-id",
+    });
+    expect(api.undoEntryRevision).toHaveBeenNthCalledWith(2, "token", 2, {
+      clientOperationId: "test-client-id",
+    });
+    expect(rendered.result.current.revisionDraftsById.get(2)?.status).toBe(
+      "undone",
+    );
     await rendered.unmount();
   });
 });

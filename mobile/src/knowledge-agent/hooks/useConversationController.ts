@@ -33,12 +33,14 @@ import type {
   KnowledgeCandidateDraft,
   KnowledgeConversation,
   KnowledgeDraftEditRequest,
+  KnowledgeEntryRevisionDraft,
   KnowledgeMessage,
   KnowledgeMessagePage,
   KnowledgeRun,
   RunStatus,
   KnowledgeScopeChangeRequest,
   KnowledgeScopeType,
+  KnowledgeRevisionEditRequest,
 } from "@/src/knowledge-agent/types";
 import { isRunActive } from "@/src/knowledge-agent/types";
 
@@ -105,6 +107,36 @@ export interface ConversationController {
   draftCancelBusy: boolean;
   draftCancelError: string | null;
   clearDraftCancelError: () => void;
+  /** 单 Entry 修订：按 id 与 operation Run id 检索，状态以服务端为权威 */
+  revisionDraftsById: Map<number, KnowledgeEntryRevisionDraft>;
+  revisionDraftByRunId: (runId: number) => KnowledgeEntryRevisionDraft | null;
+  submitEntryRevision: (
+    sourceRunId: number,
+    targetEntryId: number,
+    instruction: string,
+  ) => Promise<boolean>;
+  revisionActionPending: boolean;
+  revisionActionError: string | null;
+  retryEntryRevision: () => Promise<boolean>;
+  editEntryRevision: (
+    draftId: number,
+    fields: KnowledgeRevisionEditRequest,
+  ) => Promise<boolean>;
+  clearRevisionEditError: () => void;
+  revisionEditBusy: boolean;
+  revisionEditError: string | null;
+  confirmEntryRevision: (draftId: number) => Promise<boolean>;
+  retryConfirmEntryRevision: (draftId: number) => Promise<boolean>;
+  confirmingRevisionDraftId: number | null;
+  revisionConfirmError: string | null;
+  undoEntryRevision: (draftId: number) => Promise<boolean>;
+  retryUndoEntryRevision: (draftId: number) => Promise<boolean>;
+  undoingRevisionDraftId: number | null;
+  revisionUndoError: string | null;
+  cancelEntryRevision: (draftId: number) => Promise<boolean>;
+  revisionCancelBusy: boolean;
+  revisionCancelError: string | null;
+  clearRevisionCancelError: () => void;
   activeRun: KnowledgeRun | null;
   runPolling: boolean;
   runPollingError: string | null;
@@ -158,6 +190,9 @@ export function useConversationController(
   const [threadDrafts, setThreadDrafts] = useState<
     Map<number, KnowledgeCandidateDraft>
   >(() => new Map());
+  const [threadRevisionDrafts, setThreadRevisionDrafts] = useState<
+    Map<number, KnowledgeEntryRevisionDraft>
+  >(() => new Map());
   const [pending, setPending] = useState<PendingSubmission | null>(null);
   const [submitError, setSubmitError] = useState<string | null>(null);
   const [modes, setModesState] = useState<ModeSelection>(DEFAULT_MODES);
@@ -185,6 +220,36 @@ export function useConversationController(
   const [draftEditError, setDraftEditError] = useState<string | null>(null);
   const [draftCancelBusy, setDraftCancelBusy] = useState(false);
   const [draftCancelError, setDraftCancelError] = useState<string | null>(null);
+  // ---- 单 Entry 修订操作状态 ----
+  const [revisionActionPending, setRevisionActionPending] = useState(false);
+  const [revisionActionError, setRevisionActionError] = useState<string | null>(
+    null,
+  );
+  const revisionActionRef = useRef<{
+    clientMessageId: string;
+    sourceRunId: number;
+    targetEntryId: number;
+    instruction: string;
+  } | null>(null);
+  // 稳定确认/撤销幂等键：网络结果未知时重试复用原键，服务端 Draft/Execution 为权威
+  const pendingRevisionConfirmsRef = useRef<Map<number, string>>(new Map());
+  const pendingRevisionUndoRef = useRef<Map<number, string>>(new Map());
+  const [confirmingRevisionDraftId, setConfirmingRevisionDraftId] = useState<
+    number | null
+  >(null);
+  const [revisionConfirmError, setRevisionConfirmError] = useState<string | null>(
+    null,
+  );
+  const [undoingRevisionDraftId, setUndoingRevisionDraftId] = useState<
+    number | null
+  >(null);
+  const [revisionUndoError, setRevisionUndoError] = useState<string | null>(null);
+  const [revisionEditBusy, setRevisionEditBusy] = useState(false);
+  const [revisionEditError, setRevisionEditError] = useState<string | null>(null);
+  const [revisionCancelBusy, setRevisionCancelBusy] = useState(false);
+  const [revisionCancelError, setRevisionCancelError] = useState<string | null>(
+    null,
+  );
   const previousRunStatusRef = useRef<RunStatus | null>(null);
   const modesRef = useRef<ModeSelection>(DEFAULT_MODES);
   useEffect(() => {
@@ -257,8 +322,16 @@ export function useConversationController(
         runOverrides,
         extraMessages,
         threadDrafts,
+        threadRevisionDrafts,
       ),
-    [recentPageQuery.data, olderPages, runOverrides, extraMessages, threadDrafts],
+    [
+      recentPageQuery.data,
+      olderPages,
+      runOverrides,
+      extraMessages,
+      threadDrafts,
+      threadRevisionDrafts,
+    ],
   );
 
   const baseActiveRun = useMemo(() => {
@@ -710,6 +783,335 @@ export function useConversationController(
     [thread.draftsById],
   );
 
+  const performEntryRevisionAction = useCallback(
+    async (
+      sourceRunId: number,
+      targetEntryId: number,
+      instruction: string,
+      clientMessageId: string,
+    ): Promise<boolean> => {
+      if (!token || selectedConversationId === null) return false;
+      setRevisionActionError(null);
+      try {
+        const result = await knowledgeAgentApi.submitEntryRevision(
+          token,
+          selectedConversationId,
+          {
+            clientMessageId,
+            sourceRunId,
+            targetEntryId,
+            instruction,
+          },
+        );
+        revisionActionRef.current = null;
+        setRevisionActionPending(false);
+        setExtraMessages((previous) => [...previous, result.userMessage]);
+        setRunOverrides((previous) => {
+          const next = new Map(previous);
+          next.set(result.run.id, result.run);
+          return next;
+        });
+        setThreadRevisionDrafts((previous) =>
+          new Map(previous).set(result.draft.id, result.draft),
+        );
+        void queryClient.invalidateQueries({
+          queryKey: knowledgeAgentKeys.messages(selectedConversationId),
+        });
+        void queryClient.invalidateQueries({
+          queryKey: knowledgeAgentKeys.conversation(selectedConversationId),
+        });
+        void queryClient.invalidateQueries({
+          queryKey: knowledgeAgentKeys.conversations(),
+        });
+        return true;
+      } catch (error) {
+        const classified = classifyKnowledgeAgentError(error);
+        if (classified.kind === "conflict") {
+          revisionActionRef.current = null;
+          setRevisionActionPending(false);
+          setRevisionActionError(
+            "已有进行中的回答或修订，请等待完成或取消后再修订。",
+          );
+          if (selectedConversationId !== null) {
+            void queryClient.invalidateQueries({
+              queryKey: knowledgeAgentKeys.messages(selectedConversationId),
+            });
+          }
+          return false;
+        }
+        // 结果未知：保留同一幂等键等待重试
+        setRevisionActionError(classified.message);
+        return false;
+      }
+    },
+    [token, selectedConversationId, queryClient],
+  );
+
+  const submitEntryRevision = useCallback(
+    async (
+      sourceRunId: number,
+      targetEntryId: number,
+      instruction: string,
+    ): Promise<boolean> => {
+      const text = instruction.trim();
+      if (!text || revisionActionPending || !token) return false;
+      setRevisionActionPending(true);
+      const action = revisionActionRef.current ?? {
+        clientMessageId: nextClientMessageId(),
+        sourceRunId,
+        targetEntryId,
+        instruction: text,
+      };
+      revisionActionRef.current = action;
+      const submitted = await performEntryRevisionAction(
+        action.sourceRunId,
+        action.targetEntryId,
+        action.instruction,
+        action.clientMessageId,
+      );
+      return submitted;
+    },
+    [revisionActionPending, token, performEntryRevisionAction],
+  );
+
+  const retryEntryRevision = useCallback(async (): Promise<boolean> => {
+    const action = revisionActionRef.current;
+    if (!action || !token || !revisionActionPending) return false;
+    return performEntryRevisionAction(
+      action.sourceRunId,
+      action.targetEntryId,
+      action.instruction,
+      action.clientMessageId,
+    );
+  }, [token, revisionActionPending, performEntryRevisionAction]);
+
+  const editEntryRevision = useCallback(
+    async (
+      draftId: number,
+      fields: KnowledgeRevisionEditRequest,
+    ): Promise<boolean> => {
+      if (!token || revisionEditBusy) return false;
+      setRevisionEditBusy(true);
+      setRevisionEditError(null);
+      try {
+        const draft = await knowledgeAgentApi.editEntryRevisionDraft(
+          token,
+          draftId,
+          fields,
+        );
+        setThreadRevisionDrafts((previous) =>
+          new Map(previous).set(draft.id, draft),
+        );
+        setRevisionEditBusy(false);
+        return true;
+      } catch (error) {
+        setRevisionEditBusy(false);
+        setRevisionEditError(toUserErrorMessage(error));
+        return false;
+      }
+    },
+    [token, revisionEditBusy],
+  );
+
+  const clearRevisionEditError = useCallback(() => {
+    setRevisionEditError(null);
+  }, []);
+
+  const confirmEntryRevision = useCallback(
+    async (draftId: number): Promise<boolean> => {
+      if (!token || confirmingRevisionDraftId !== null) return false;
+      const operationId =
+        pendingRevisionConfirmsRef.current.get(draftId) ??
+        nextClientOperationId();
+      pendingRevisionConfirmsRef.current.set(draftId, operationId);
+      setConfirmingRevisionDraftId(draftId);
+      setRevisionConfirmError(null);
+      try {
+        const result = await knowledgeAgentApi.confirmEntryRevision(
+          token,
+          draftId,
+          { clientOperationId: operationId },
+        );
+        pendingRevisionConfirmsRef.current.delete(draftId);
+        setConfirmingRevisionDraftId(null);
+        setThreadRevisionDrafts((previous) =>
+          new Map(previous).set(result.draft.id, result.draft),
+        );
+        if (selectedConversationId !== null) {
+          void queryClient.invalidateQueries({
+            queryKey: knowledgeAgentKeys.messages(selectedConversationId),
+          });
+          void queryClient.invalidateQueries({
+            queryKey: knowledgeAgentKeys.conversation(selectedConversationId),
+          });
+          void queryClient.invalidateQueries({
+            queryKey: knowledgeAgentKeys.conversations(),
+          });
+        }
+        // 正式知识已更新：相关查询失效（引用详情/项目知识由后续消息页恢复）
+        void queryClient.invalidateQueries({ queryKey: ["projects"] });
+        return true;
+      } catch (error) {
+        const classified = classifyKnowledgeAgentError(error);
+        setConfirmingRevisionDraftId(null);
+        if (
+          classified.kind === "network" ||
+          classified.kind === "server" ||
+          classified.kind === "cancelled"
+        ) {
+          // 结果未知：保留幂等键，提供重试
+          setRevisionConfirmError(classified.message);
+        } else {
+          // 409/404 等确定性拒绝：清键并刷新，以服务端 Draft/Execution 为权威
+          pendingRevisionConfirmsRef.current.delete(draftId);
+          setRevisionConfirmError(classified.message);
+          if (selectedConversationId !== null) {
+            void queryClient.invalidateQueries({
+              queryKey: knowledgeAgentKeys.messages(selectedConversationId),
+            });
+            void queryClient.invalidateQueries({
+              queryKey: knowledgeAgentKeys.conversation(selectedConversationId),
+            });
+            void queryClient.invalidateQueries({
+              queryKey: knowledgeAgentKeys.conversations(),
+            });
+          }
+        }
+        return false;
+      }
+    },
+    [token, confirmingRevisionDraftId, queryClient, selectedConversationId],
+  );
+
+  const retryConfirmEntryRevision = useCallback(
+    async (draftId: number): Promise<boolean> => {
+      if (!pendingRevisionConfirmsRef.current.has(draftId)) return false;
+      return confirmEntryRevision(draftId);
+    },
+    [confirmEntryRevision],
+  );
+
+  const undoEntryRevision = useCallback(
+    async (draftId: number): Promise<boolean> => {
+      if (!token || undoingRevisionDraftId !== null) return false;
+      const operationId =
+        pendingRevisionUndoRef.current.get(draftId) ?? nextClientOperationId();
+      pendingRevisionUndoRef.current.set(draftId, operationId);
+      setUndoingRevisionDraftId(draftId);
+      setRevisionUndoError(null);
+      try {
+        const result = await knowledgeAgentApi.undoEntryRevision(
+          token,
+          draftId,
+          { clientOperationId: operationId },
+        );
+        pendingRevisionUndoRef.current.delete(draftId);
+        setUndoingRevisionDraftId(null);
+        setThreadRevisionDrafts((previous) =>
+          new Map(previous).set(result.draft.id, result.draft),
+        );
+        if (selectedConversationId !== null) {
+          void queryClient.invalidateQueries({
+            queryKey: knowledgeAgentKeys.messages(selectedConversationId),
+          });
+          void queryClient.invalidateQueries({
+            queryKey: knowledgeAgentKeys.conversation(selectedConversationId),
+          });
+          void queryClient.invalidateQueries({
+            queryKey: knowledgeAgentKeys.conversations(),
+          });
+        }
+        void queryClient.invalidateQueries({ queryKey: ["projects"] });
+        return true;
+      } catch (error) {
+        const classified = classifyKnowledgeAgentError(error);
+        setUndoingRevisionDraftId(null);
+        if (
+          classified.kind === "network" ||
+          classified.kind === "server" ||
+          classified.kind === "cancelled"
+        ) {
+          // 结果未知：保留撤销幂等键，提供重试
+          setRevisionUndoError(classified.message);
+        } else {
+          pendingRevisionUndoRef.current.delete(draftId);
+          setRevisionUndoError(classified.message);
+          if (selectedConversationId !== null) {
+            void queryClient.invalidateQueries({
+              queryKey: knowledgeAgentKeys.messages(selectedConversationId),
+            });
+            void queryClient.invalidateQueries({
+              queryKey: knowledgeAgentKeys.conversation(selectedConversationId),
+            });
+            void queryClient.invalidateQueries({
+              queryKey: knowledgeAgentKeys.conversations(),
+            });
+          }
+        }
+        return false;
+      }
+    },
+    [token, undoingRevisionDraftId, queryClient, selectedConversationId],
+  );
+
+  const retryUndoEntryRevision = useCallback(
+    async (draftId: number): Promise<boolean> => {
+      if (!pendingRevisionUndoRef.current.has(draftId)) return false;
+      return undoEntryRevision(draftId);
+    },
+    [undoEntryRevision],
+  );
+
+  const cancelEntryRevision = useCallback(
+    async (draftId: number): Promise<boolean> => {
+      if (!token || revisionCancelBusy) return false;
+      setRevisionCancelBusy(true);
+      setRevisionCancelError(null);
+      try {
+        const draft = await knowledgeAgentApi.cancelEntryRevisionDraft(
+          token,
+          draftId,
+        );
+        setThreadRevisionDrafts((previous) =>
+          new Map(previous).set(draft.id, draft),
+        );
+        pendingRevisionConfirmsRef.current.delete(draftId);
+        pendingRevisionUndoRef.current.delete(draftId);
+        setRevisionCancelBusy(false);
+        if (selectedConversationId !== null) {
+          void queryClient.invalidateQueries({
+            queryKey: knowledgeAgentKeys.messages(selectedConversationId),
+          });
+        }
+        return true;
+      } catch (error) {
+        setRevisionCancelBusy(false);
+        setRevisionCancelError(toUserErrorMessage(error));
+        if (selectedConversationId !== null) {
+          void queryClient.invalidateQueries({
+            queryKey: knowledgeAgentKeys.messages(selectedConversationId),
+          });
+        }
+        return false;
+      }
+    },
+    [token, revisionCancelBusy, queryClient, selectedConversationId],
+  );
+
+  const clearRevisionCancelError = useCallback(() => {
+    setRevisionCancelError(null);
+  }, []);
+
+  const revisionDraftByRunId = useCallback(
+    (runId: number): KnowledgeEntryRevisionDraft | null => {
+      for (const draft of thread.revisionDraftsById.values()) {
+        if (draft.operationRunId === runId) return draft;
+      }
+      return null;
+    },
+    [thread.revisionDraftsById],
+  );
+
   const scopeMutation = useMutation({
     mutationFn: ({
       conversationId,
@@ -779,6 +1181,7 @@ export function useConversationController(
     setRunOverrides(new Map());
     setExtraMessages([]);
     setThreadDrafts(new Map());
+    setThreadRevisionDrafts(new Map());
     setPending(null);
     setSubmitError(null);
     setDraftActionPending(false);
@@ -789,6 +1192,17 @@ export function useConversationController(
     setDraftConfirmError(null);
     setDraftEditError(null);
     setDraftCancelError(null);
+    setRevisionActionPending(false);
+    setRevisionActionError(null);
+    revisionActionRef.current = null;
+    pendingRevisionConfirmsRef.current = new Map();
+    pendingRevisionUndoRef.current = new Map();
+    setConfirmingRevisionDraftId(null);
+    setRevisionConfirmError(null);
+    setUndoingRevisionDraftId(null);
+    setRevisionUndoError(null);
+    setRevisionEditError(null);
+    setRevisionCancelError(null);
     setModesState(DEFAULT_MODES);
     setScopeError(null);
     setCancelError(null);
@@ -800,6 +1214,7 @@ export function useConversationController(
     setRunOverrides(new Map());
     setExtraMessages([]);
     setThreadDrafts(new Map());
+    setThreadRevisionDrafts(new Map());
     setPending(null);
     setSubmitError(null);
     setDraftActionPending(false);
@@ -810,6 +1225,17 @@ export function useConversationController(
     setDraftConfirmError(null);
     setDraftEditError(null);
     setDraftCancelError(null);
+    setRevisionActionPending(false);
+    setRevisionActionError(null);
+    revisionActionRef.current = null;
+    pendingRevisionConfirmsRef.current = new Map();
+    pendingRevisionUndoRef.current = new Map();
+    setConfirmingRevisionDraftId(null);
+    setRevisionConfirmError(null);
+    setUndoingRevisionDraftId(null);
+    setRevisionUndoError(null);
+    setRevisionEditError(null);
+    setRevisionCancelError(null);
     setModesState(DEFAULT_MODES);
     setScopeError(null);
     setCancelError(null);
@@ -903,6 +1329,28 @@ export function useConversationController(
     draftCancelBusy,
     draftCancelError,
     clearDraftCancelError,
+    revisionDraftsById: thread.revisionDraftsById,
+    revisionDraftByRunId,
+    submitEntryRevision,
+    revisionActionPending,
+    revisionActionError,
+    retryEntryRevision,
+    editEntryRevision,
+    clearRevisionEditError,
+    revisionEditBusy,
+    revisionEditError,
+    confirmEntryRevision,
+    retryConfirmEntryRevision,
+    confirmingRevisionDraftId,
+    revisionConfirmError,
+    undoEntryRevision,
+    retryUndoEntryRevision,
+    undoingRevisionDraftId,
+    revisionUndoError,
+    cancelEntryRevision,
+    revisionCancelBusy,
+    revisionCancelError,
+    clearRevisionCancelError,
     activeRun,
     runPolling: Boolean(runQuery.data && isRunActive(runQuery.data.status)),
     runPollingError: runQuery.isError

@@ -130,6 +130,79 @@ describe("知识 Agent API 序列化", () => {
     expect(page.runs[0].answer?.insufficientNote).toBeNull();
   });
 
+  test("提交修订动作序列化 source/target/instruction 并携带 client_message_id", async () => {
+    mockFetch({ user_message: {}, run: {}, draft: {} }, 201);
+    await api.knowledgeAgentApi.submitEntryRevision("token-r", 9, {
+      clientMessageId: "rev-1",
+      sourceRunId: 5,
+      targetEntryId: 3,
+      instruction: "补充适用条件",
+    });
+    const [url, init] = (globalThis.fetch as jest.Mock).mock.calls[0] as [
+      string,
+      RequestInit,
+    ];
+    expect(url).toBe(
+      "http://example.test/api/knowledge-agent/conversations/9/entry-revision-drafts",
+    );
+    expect(JSON.parse(String(init.body))).toEqual({
+      client_message_id: "rev-1",
+      source_run_id: 5,
+      target_entry_id: 3,
+      instruction: "补充适用条件",
+    });
+  });
+
+  test("编辑修订草稿序列化候选字段", async () => {
+    mockFetch({ id: 7 });
+    await api.knowledgeAgentApi.editEntryRevisionDraft("token-r", 7, {
+      title: "新标题",
+      content: "新内容",
+      applicableCondition: "南方潮湿地区",
+      changeSummary: "改写",
+    });
+    const [, init] = (globalThis.fetch as jest.Mock).mock.calls[0] as [
+      string,
+      RequestInit,
+    ];
+    expect(JSON.parse(String(init.body))).toEqual({
+      title: "新标题",
+      content: "新内容",
+      main_type: null,
+      info_nature: null,
+      applicable_condition: "南方潮湿地区",
+      note: null,
+      change_summary: "改写",
+    });
+  });
+
+  test("确认与撤销修订序列化 client_operation_id", async () => {
+    mockFetch({ draft: {}, execution: {}, entry: {} });
+    await api.knowledgeAgentApi.confirmEntryRevision("token-r", 7, {
+      clientOperationId: "confirm-1",
+    });
+    const [confirmUrl, confirmInit] = (globalThis.fetch as jest.Mock).mock
+      .calls[0] as [string, RequestInit];
+    expect(confirmUrl).toBe(
+      "http://example.test/api/knowledge-agent/entry-revision-drafts/7/confirm",
+    );
+    expect(JSON.parse(String(confirmInit.body))).toEqual({
+      client_operation_id: "confirm-1",
+    });
+
+    await api.knowledgeAgentApi.undoEntryRevision("token-r", 7, {
+      clientOperationId: "undo-1",
+    });
+    const [undoUrl, undoInit] = (globalThis.fetch as jest.Mock).mock
+      .calls[1] as [string, RequestInit];
+    expect(undoUrl).toBe(
+      "http://example.test/api/knowledge-agent/entry-revision-drafts/7/undo",
+    );
+    expect(JSON.parse(String(undoInit.body))).toEqual({
+      client_operation_id: "undo-1",
+    });
+  });
+
   test("整理动作序列化 source_run_id 与目标项目", async () => {
     mockFetch(
       {

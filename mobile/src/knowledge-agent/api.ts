@@ -12,6 +12,14 @@ import type {
   KnowledgeDraftConfirm,
   KnowledgeDraftConfirmRequest,
   KnowledgeDraftEditRequest,
+  KnowledgeEntryRevisionDraft,
+  KnowledgeRevisionAction,
+  KnowledgeRevisionActionRequest,
+  KnowledgeRevisionConfirm,
+  KnowledgeRevisionConfirmRequest,
+  KnowledgeRevisionEditRequest,
+  KnowledgeRevisionUndo,
+  KnowledgeRevisionUndoRequest,
   KnowledgeConversation,
   KnowledgeMessagePage,
   KnowledgeRun,
@@ -86,6 +94,47 @@ function serializeDraftEdit(
 
 function serializeDraftConfirm(
   payload: KnowledgeDraftConfirmRequest,
+): Record<string, unknown> {
+  return {
+    client_operation_id: payload.clientOperationId,
+  };
+}
+
+function serializeRevisionAction(
+  payload: KnowledgeRevisionActionRequest,
+): Record<string, unknown> {
+  return {
+    client_message_id: payload.clientMessageId,
+    source_run_id: payload.sourceRunId,
+    target_entry_id: payload.targetEntryId,
+    instruction: payload.instruction,
+  };
+}
+
+function serializeRevisionEdit(
+  payload: KnowledgeRevisionEditRequest,
+): Record<string, unknown> {
+  return {
+    title: payload.title ?? null,
+    content: payload.content ?? null,
+    main_type: payload.mainType ?? null,
+    info_nature: payload.infoNature ?? null,
+    applicable_condition: payload.applicableCondition ?? null,
+    note: payload.note ?? null,
+    change_summary: payload.changeSummary ?? null,
+  };
+}
+
+function serializeRevisionConfirm(
+  payload: KnowledgeRevisionConfirmRequest,
+): Record<string, unknown> {
+  return {
+    client_operation_id: payload.clientOperationId,
+  };
+}
+
+function serializeRevisionUndo(
+  payload: KnowledgeRevisionUndoRequest,
 ): Record<string, unknown> {
   return {
     client_operation_id: payload.clientOperationId,
@@ -247,6 +296,88 @@ export const knowledgeAgentApi = {
         t,
       ),
     ) as Promise<KnowledgeDraftConfirm>;
+  },
+
+  submitEntryRevision(
+    token: string,
+    conversationId: number,
+    payload: KnowledgeRevisionActionRequest,
+  ): Promise<KnowledgeRevisionAction> {
+    return withToken(token, (t) =>
+      request<KnowledgeRevisionAction>(
+        `/api/knowledge-agent/conversations/${conversationId}/entry-revision-drafts`,
+        { method: "POST", body: JSON.stringify(serializeRevisionAction(payload)) },
+        t,
+      ),
+    ) as Promise<KnowledgeRevisionAction>;
+  },
+
+  getEntryRevisionDraft(
+    token: string,
+    draftId: number,
+  ): Promise<KnowledgeEntryRevisionDraft> {
+    return withToken(token, (t) =>
+      request<KnowledgeEntryRevisionDraft>(
+        `/api/knowledge-agent/entry-revision-drafts/${draftId}`,
+        {},
+        t,
+      ),
+    ) as Promise<KnowledgeEntryRevisionDraft>;
+  },
+
+  editEntryRevisionDraft(
+    token: string,
+    draftId: number,
+    payload: KnowledgeRevisionEditRequest,
+  ): Promise<KnowledgeEntryRevisionDraft> {
+    return withToken(token, (t) =>
+      request<KnowledgeEntryRevisionDraft>(
+        `/api/knowledge-agent/entry-revision-drafts/${draftId}`,
+        { method: "PATCH", body: JSON.stringify(serializeRevisionEdit(payload)) },
+        t,
+      ),
+    ) as Promise<KnowledgeEntryRevisionDraft>;
+  },
+
+  cancelEntryRevisionDraft(
+    token: string,
+    draftId: number,
+  ): Promise<KnowledgeEntryRevisionDraft> {
+    return withToken(token, (t) =>
+      request<KnowledgeEntryRevisionDraft>(
+        `/api/knowledge-agent/entry-revision-drafts/${draftId}/cancel`,
+        { method: "POST" },
+        t,
+      ),
+    ) as Promise<KnowledgeEntryRevisionDraft>;
+  },
+
+  confirmEntryRevision(
+    token: string,
+    draftId: number,
+    payload: KnowledgeRevisionConfirmRequest,
+  ): Promise<KnowledgeRevisionConfirm> {
+    return withToken(token, (t) =>
+      request<KnowledgeRevisionConfirm>(
+        `/api/knowledge-agent/entry-revision-drafts/${draftId}/confirm`,
+        { method: "POST", body: JSON.stringify(serializeRevisionConfirm(payload)) },
+        t,
+      ),
+    ) as Promise<KnowledgeRevisionConfirm>;
+  },
+
+  undoEntryRevision(
+    token: string,
+    draftId: number,
+    payload: KnowledgeRevisionUndoRequest,
+  ): Promise<KnowledgeRevisionUndo> {
+    return withToken(token, (t) =>
+      request<KnowledgeRevisionUndo>(
+        `/api/knowledge-agent/entry-revision-drafts/${draftId}/undo`,
+        { method: "POST", body: JSON.stringify(serializeRevisionUndo(payload)) },
+        t,
+      ),
+    ) as Promise<KnowledgeRevisionUndo>;
   },
 
   getRun(token: string, runId: number): Promise<KnowledgeRun> {

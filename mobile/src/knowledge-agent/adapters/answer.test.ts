@@ -2,6 +2,7 @@ import {
   cleanAnswerText,
   draftActionEligibility,
   presentAnswer,
+  revisionEligibility,
 } from "@/src/knowledge-agent/adapters/answer";
 import type { KnowledgeAnswer, KnowledgeRun } from "@/src/knowledge-agent/types";
 
@@ -59,6 +60,70 @@ function citation(projectId: number, projectName: string) {
     nodePath: "施工",
   };
 }
+
+describe("revisionEligibility", () => {
+  test("completed 回答从最终 citations 提取目标 Entry", () => {
+    const answer: KnowledgeAnswer = {
+      answer: "闭水试验通常持续 24 小时。",
+      status: "completed",
+      insufficientNote: null,
+      citations: [citation(1, "新房装修"), citation(1, "新房装修")],
+      conflicts: [],
+    };
+    const eligibility = revisionEligibility(run({ answer }));
+    expect(eligibility.eligible).toBe(true);
+    expect(eligibility.sourceRunId).toBe(1);
+    // 同一 Entry 去重，只保留一个目标
+    expect(eligibility.targets).toHaveLength(1);
+    expect(eligibility.targets[0].entryId).toBe(1);
+    expect(eligibility.targets[0].entryTitle).toBe("闭水试验");
+  });
+
+  test("insufficient / failed / cancelled 回答不提供修订入口", () => {
+    const insufficient: KnowledgeAnswer = {
+      answer: "知识不足",
+      status: "insufficient",
+      insufficientNote: "缺少证据",
+      citations: [citation(1, "新房装修")],
+      conflicts: [],
+    };
+    expect(revisionEligibility(run({ answer: insufficient })).eligible).toBe(false);
+    expect(
+      revisionEligibility(
+        run({ status: "cancelled", answer: null }),
+      ).eligible,
+    ).toBe(false);
+  });
+
+  test("partial 回答可修订并说明只修订有依据部分", () => {
+    const answer: KnowledgeAnswer = {
+      answer: "部分内容。",
+      status: "partial",
+      insufficientNote: null,
+      citations: [citation(1, "新房装修")],
+      conflicts: [],
+    };
+    const eligibility = revisionEligibility(run({ answer }));
+    expect(eligibility.eligible).toBe(true);
+    expect(eligibility.note).toContain("有依据部分");
+  });
+
+  test("entryId 为 0 的失效引用不进入修订目标", () => {
+    const answer: KnowledgeAnswer = {
+      answer: "历史回答。",
+      status: "completed",
+      insufficientNote: null,
+      citations: [
+        {
+          ...citation(1, "新房装修"),
+          entryId: 0,
+        },
+      ],
+      conflicts: [],
+    };
+    expect(revisionEligibility(run({ answer })).targets).toHaveLength(0);
+  });
+});
 
 test("cleanAnswerText 移除常见 Markdown 标记但保留换行与内容", () => {
   const text =

@@ -66,12 +66,12 @@
 
 ## 8. 原生领域层与控制器
 
-- [ ] 8.1 扩展 mobile Knowledge Agent 类型、API 客户端、query keys 和 adapters，兼容 `entry_revision_drafts` 缺失的旧响应
-- [ ] 8.2 实现从 citation target 提交非空指令、乐观用户消息/服务端归并、operation Run 轮询/取消、Draft 编辑、确认与撤销的稳定 idempotency key
-- [ ] 8.3 实现 applied/undone 后 Conversation、Entry、版本、引用与项目知识查询失效；App 后台停止轮询、回前台/重启按服务端恢复
-- [ ] 8.4 对 401、404、409、422、网络未知、模型失败、Evidence 失效、版本冲突和撤销冲突提供领域错误映射，不用本地状态伪装终态
-- [ ] 8.5 补 adapter、API、controller、消息去重、重复点击、恢复、取消、确认/撤销幂等、query invalidation 和错误映射测试
-- [ ] 8.6 运行移动端定向 Jest、lint 与 typecheck，完成本地提交 `feat: 接入原生端单条知识修订协议`
+- [x] 8.1 扩展 mobile Knowledge Agent 类型、API 客户端、query keys 和 adapters，兼容 `entry_revision_drafts` 缺失的旧响应
+- [x] 8.2 实现从 citation target 提交非空指令、乐观用户消息/服务端归并、operation Run 轮询/取消、Draft 编辑、确认与撤销的稳定 idempotency key
+- [x] 8.3 实现 applied/undone 后 Conversation、Entry、版本、引用与项目知识查询失效；App 后台停止轮询、回前台/重启按服务端恢复
+- [x] 8.4 对 401、404、409、422、网络未知、模型失败、Evidence 失效、版本冲突和撤销冲突提供领域错误映射，不用本地状态伪装终态
+- [x] 8.5 补 adapter、API、controller、消息去重、重复点击、恢复、取消、确认/撤销幂等、query invalidation 和错误映射测试
+- [x] 8.6 运行移动端定向 Jest、lint 与 typecheck，完成本地提交 `feat: 接入原生端单条知识修订协议`
 
 ## 9. 原生修订界面与原型对齐
 

@@ -26,6 +26,22 @@ export interface DraftActionEligibility {
   note: string | null;
 }
 
+export interface RevisionTarget {
+  entryId: number;
+  entryTitle: string;
+  projectId: number;
+  projectName: string | null;
+  nodePath: string | null;
+}
+
+export interface RevisionEligibility {
+  eligible: boolean;
+  sourceRunId: number | null;
+  targets: RevisionTarget[];
+  /** partial 回答只修订有依据部分。 */
+  note: string | null;
+}
+
 const STOP_REASON_LABELS: Record<InvestigationStopReason, string> = {
   controller_complete: "控制器已完成调查",
   insufficient: "当前知识不足以继续补充证据",
@@ -141,6 +157,39 @@ export function draftActionEligibility(
     note:
       eligible && status === "partial"
         ? "只整理有依据部分，未解决的缺口不会进入草稿。"
+        : null,
+  };
+}
+
+/** 单 Entry 修订目标：只从最终 citations 中当前 Entry 快照提取，客户端不自行生成对象 ID。 */
+export function revisionEligibility(run: KnowledgeRun): RevisionEligibility {
+  const answer = run.answer;
+  const status = answer?.status ?? null;
+  const runKind = run.runKind ?? "answer";
+  const targets: RevisionTarget[] = [];
+  const seen = new Set<number>();
+  for (const citation of answer?.citations ?? []) {
+    if (citation.entryId === 0 || seen.has(citation.entryId)) continue;
+    seen.add(citation.entryId);
+    targets.push({
+      entryId: citation.entryId,
+      entryTitle: citation.entryTitle,
+      projectId: citation.projectId ?? run.projectId ?? 0,
+      projectName: citation.projectName ?? run.projectName ?? null,
+      nodePath: citation.nodePath,
+    });
+  }
+  const eligible =
+    runKind === "answer" &&
+    (status === "completed" || status === "partial") &&
+    targets.length > 0;
+  return {
+    eligible,
+    sourceRunId: eligible ? run.id : null,
+    targets,
+    note:
+      eligible && status === "partial"
+        ? "只修订有依据部分，未解决的缺口不会写入正式知识。"
         : null,
   };
 }
