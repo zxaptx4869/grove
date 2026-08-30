@@ -47,13 +47,13 @@
 
 ## 6. 原子应用、版本、Evidence 与执行审计
 
-- [ ] 6.1 抽取/扩展 Entry 应用服务，使字段更新、版本追加、Evidence 去重、Project Context 刷新和 embedding 标记可由现有桌面路径与 Knowledge Agent 在各自校验后复用
-- [ ] 6.2 确定并实现 SQLite/MySQL 兼容的 Evidence 等价去重策略；只记录本次事务真实新增的 `EntrySourceEvidence` id，不改变既有桌面行为
-- [ ] 6.3 实现 Draft 条件锁定与稳定 `client_operation_id`：重新校验 target/source/Evidence、base fingerprint 和最新版本，无变化或过期基线返回 409 并恢复可编辑状态
-- [ ] 6.4 在单事务中应用字段、补充 Evidence、追加明确 Knowledge Agent 修订版本、创建 Execution、更新 Draft；任一步失败整体回滚
-- [ ] 6.5 记录 confirm 工具调用的真实状态、版本、Evidence 增量、错误和耗时；响应成功不得掩盖工具失败
-- [ ] 6.6 补首次应用、幂等重放、并发确认、基线过期、Evidence 失效、无差异、重复 Evidence、不重复版本、事务失败回滚及桌面编辑/AI 修订/Candidate 修订兼容测试
-- [ ] 6.7 运行 Entry/确认定向测试、ruff 和必要的 SQLite/MySQL 迁移/事务测试，完成本地提交 `feat: 原子应用知识 Agent 单条修订`
+- [x] 6.1 抽取/扩展 Entry 应用服务，使字段更新、版本追加、Evidence 去重、Project Context 刷新和 embedding 标记可由现有桌面路径与 Knowledge Agent 在各自校验后复用
+- [x] 6.2 确定并实现 SQLite/MySQL 兼容的 Evidence 等价去重策略；只记录本次事务真实新增的 `EntrySourceEvidence` id，不改变既有桌面行为
+- [x] 6.3 实现 Draft 条件锁定与稳定 `client_operation_id`：重新校验 target/source/Evidence、base fingerprint 和最新版本，无变化或过期基线返回 409 并恢复可编辑状态
+- [x] 6.4 在单事务中应用字段、补充 Evidence、追加明确 Knowledge Agent 修订版本、创建 Execution、更新 Draft；任一步失败整体回滚
+- [x] 6.5 记录 confirm 工具调用的真实状态、版本、Evidence 增量、错误和耗时；响应成功不得掩盖工具失败
+- [x] 6.6 补首次应用、幂等重放、并发确认、基线过期、Evidence 失效、无差异、重复 Evidence、不重复版本、事务失败回滚及桌面编辑/AI 修订/Candidate 修订兼容测试
+- [x] 6.7 运行 Entry/确认定向测试、ruff 和必要的 SQLite/MySQL 迁移/事务测试，完成本地提交 `feat: 原子应用知识 Agent 单条修订`
 
 ## 7. 并发安全撤销
 

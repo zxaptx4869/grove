@@ -42,6 +42,8 @@ from app.schemas.knowledge_agent import (
     KnowledgeModelInvocationOut,
     KnowledgeRevisionActionOut,
     KnowledgeRevisionActionRequest,
+    KnowledgeRevisionConfirmOut,
+    KnowledgeRevisionConfirmRequest,
     KnowledgeRevisionDraftEditRequest,
     KnowledgeRunObservabilityOut,
     KnowledgeRunOut,
@@ -72,10 +74,13 @@ from app.services.knowledge_agent.conversations import (
 )
 from app.services.knowledge_agent.entry_revision import (
     cancel_revision_draft,
+    confirm_entry_revision,
     edit_revision_draft,
+    execution_out,
     get_owned_revision_draft,
     revision_drafts_for_runs,
     revision_drafts_out_batch,
+    revision_entry_out,
     submit_entry_revision,
 )
 from app.services.knowledge_agent.runs import (
@@ -559,6 +564,35 @@ async def cancel_revision_draft_endpoint(
     # 取消会经 ORM UPDATE 过期服务端生成的 updated_at：提交后显式刷新再组装
     await db.refresh(draft)
     return (await revision_drafts_out_batch(db, [draft]))[0]
+
+
+@router.post(
+    "/entry-revision-drafts/{draft_id}/confirm",
+    response_model=KnowledgeRevisionConfirmOut,
+)
+async def confirm_revision_draft_endpoint(
+    draft_id: int,
+    payload: KnowledgeRevisionConfirmRequest,
+    db: DbSession,
+    user: CurrentUser,
+    workspace: CurrentWorkspace,
+) -> KnowledgeRevisionConfirmOut:
+    """确认修订：服务端重验基线/Evidence 后原子更新一条正式 Entry。"""
+    draft = await get_owned_revision_draft(db, workspace.id, user.id, draft_id)
+    confirmed, execution, entry = await confirm_entry_revision(
+        db,
+        draft,
+        payload.client_operation_id,
+    )
+    draft_out = (await revision_drafts_out_batch(db, [confirmed]))[0]
+    entry_out = await revision_entry_out(
+        db, entry, execution.after_version_number
+    )
+    return KnowledgeRevisionConfirmOut(
+        draft=draft_out,
+        execution=draft_out.execution or execution_out(execution),
+        entry=entry_out,
+    )
 
 
 @router.post(

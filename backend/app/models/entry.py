@@ -25,6 +25,7 @@ VERSION_CREATED = "created"
 VERSION_EDITED = "edited"
 VERSION_AI_REVISION = "ai_revision"
 VERSION_RESTORED = "restored"
+VERSION_KNOWLEDGE_AGENT_REVISION = "knowledge_agent_revision"
 
 
 class Entry(Base):

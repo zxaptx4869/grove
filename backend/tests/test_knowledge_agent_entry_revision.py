@@ -1,5 +1,6 @@
 """知识 Agent 单 Entry 修订：目标校验、Evidence 约束、提交、执行、编辑与取消。"""
 
+import json
 import uuid
 
 import pytest
@@ -8,12 +9,16 @@ from sqlalchemy import select
 
 from app.db.session import async_session_factory
 from app.models import (
+    EntrySourceEvidence,
+    EntryVersion,
     KnowledgeAgentEvidence,
     KnowledgeAgentRun,
     KnowledgeConversation,
     KnowledgeEntryRevisionDraft,
+    KnowledgeEntryRevisionExecution,
     KnowledgeMessage,
     Node,
+    Project,
     User,
     Workspace,
 )
@@ -40,6 +45,7 @@ from app.schemas.knowledge_agent import (
 )
 from app.services.knowledge_agent.entry_revision import (
     cancel_revision_draft,
+    confirm_entry_revision,
     edit_revision_draft,
     execute_entry_revision_run,
     submit_entry_revision,
@@ -56,6 +62,27 @@ from tests._knowledge_agent_fixtures import (
 
 QUOTE = "闭水期间应持续观察水位变化，并到楼下检查顶面是否出现渗漏。"
 CONTENT = "闭水试验完成后再验收防水层。"
+
+
+async def _draft_to_ready(
+    db,
+    draft: KnowledgeEntryRevisionDraft,
+    evidence: KnowledgeAgentEvidence,
+    *,
+    title: str = "闭水试验完成后再验收防水层（含适用条件）",
+    content: str = CONTENT + "闭水期间同时观察水位与楼下顶面。",
+) -> None:
+    """把 generating 草稿推进到可确认的 draft 状态（模拟生成完成）。"""
+    draft.status = REVISION_DRAFT_DRAFT
+    draft.title = title
+    draft.content = content
+    draft.main_type = "method"
+    draft.info_nature = "advice"
+    draft.applicable_condition = "材料说明未覆盖时按现场条件确认"
+    draft.change_summary = "补充适用条件与观察要求"
+    draft.reason = "依据防水验收记录原文"
+    draft.selected_evidence_handles_json = json.dumps([evidence.handle])
+    await db.flush()
 
 
 def _action(
@@ -863,3 +890,459 @@ async def test_cancel_revision_draft_and_applied_rejected() -> None:
         with pytest.raises(HTTPException) as exc:
             await cancel_revision_draft(db, applied_draft)
         assert exc.value.status_code == 409
+
+
+@pytest.mark.asyncio
+async def test_confirm_applies_entry_version_evidence_and_execution() -> None:
+    """确认后原子更新 Entry、追加 knowledge_agent_revision 版本、去重补证据并创建 Execution。"""
+    async with async_session_factory() as db:
+        user = await create_user(db, "确认应用")
+        workspace = await create_workspace(db, user)
+        conversation, source_run, entry, source, _attachment, evidence = (
+            await _answer_run_with_evidence(db, user, workspace)
+        )
+        _m, _run, draft = await submit_entry_revision(
+            db,
+            conversation,
+            _action(source_run_id=source_run.id, target_entry_id=entry.id),
+        )
+        await _draft_to_ready(db, draft, evidence)
+        await db.commit()
+        entry_id = entry.id
+        before_version_number = 0
+
+        confirmed, execution, applied_entry = await confirm_entry_revision(
+            db, draft, "confirm-1"
+        )
+        await db.commit()
+
+        assert confirmed.status == "applied"
+        assert execution.status == "applied"
+        assert execution.entry_id == entry_id
+        assert execution.after_version_number == before_version_number + 1
+        assert execution.before_fingerprint == draft.base_entry_fingerprint
+        assert applied_entry.title == "闭水试验完成后再验收防水层（含适用条件）"
+
+        versions = (
+            await db.execute(
+                select(EntryVersion).where(EntryVersion.entry_id == entry_id)
+            )
+        ).scalars().all()
+        assert len(versions) == 1
+        assert versions[0].change_type == "knowledge_agent_revision"
+        assert versions[0].change_summary == "补充适用条件与观察要求"
+
+        relations = (
+            await db.execute(
+                select(EntrySourceEvidence).where(
+                    EntrySourceEvidence.entry_id == entry_id
+                )
+            )
+        ).scalars().all()
+        # 提交时 Entry 已带一条证据；采用证据等价已存在 → 去重复用，新增数为 0
+        assert len(relations) == 1
+        assert execution.added_evidence_ids_json == "[]"
+
+
+@pytest.mark.asyncio
+async def test_confirm_idempotent_replay() -> None:
+    """同一 client_operation_id 重放返回同一 Execution，不重复追加版本。"""
+    async with async_session_factory() as db:
+        user = await create_user(db, "确认幂等")
+        workspace = await create_workspace(db, user)
+        conversation, source_run, entry, _s, _a, evidence = (
+            await _answer_run_with_evidence(db, user, workspace)
+        )
+        _m, _run, draft = await submit_entry_revision(
+            db,
+            conversation,
+            _action(source_run_id=source_run.id, target_entry_id=entry.id),
+        )
+        await _draft_to_ready(db, draft, evidence)
+        await db.commit()
+
+        first = await confirm_entry_revision(db, draft, "confirm-dup")
+        await db.commit()
+        second = await confirm_entry_revision(db, draft, "confirm-dup")
+        await db.commit()
+        assert second[1].id == first[1].id
+        versions = (
+            await db.execute(
+                select(EntryVersion).where(EntryVersion.entry_id == entry.id)
+            )
+        ).scalars().all()
+        assert len(versions) == 1
+
+
+@pytest.mark.asyncio
+async def test_confirm_rejects_expired_baseline_and_restores_editable() -> None:
+    """Entry 在草稿生成后被修改：确认返回 409，草稿恢复可编辑，不覆盖新内容。"""
+    async with async_session_factory() as db:
+        user = await create_user(db, "基线过期")
+        workspace = await create_workspace(db, user)
+        conversation, source_run, entry, _s, _a, evidence = (
+            await _answer_run_with_evidence(db, user, workspace)
+        )
+        _m, _run, draft = await submit_entry_revision(
+            db,
+            conversation,
+            _action(source_run_id=source_run.id, target_entry_id=entry.id),
+        )
+        await _draft_to_ready(db, draft, evidence)
+        await db.commit()
+        entry.content = "用户稍后人工修改了内容。"
+        await db.commit()
+
+        with pytest.raises(HTTPException) as exc:
+            await confirm_entry_revision(db, draft, "confirm-expired")
+        assert exc.value.status_code == 409
+        assert "知识后来发生了变化" in exc.value.detail
+        await db.refresh(draft)
+        assert draft.status == REVISION_DRAFT_DRAFT
+        assert draft.client_operation_id is None
+        executions = (
+            await db.execute(
+                select(KnowledgeEntryRevisionExecution).where(
+                    KnowledgeEntryRevisionExecution.draft_id == draft.id
+                )
+            )
+        ).scalars().all()
+        assert executions == []
+
+
+@pytest.mark.asyncio
+async def test_confirm_rejects_stale_evidence_and_restores_editable() -> None:
+    """确认前 Evidence 失效：409 且不修改 Entry。"""
+    async with async_session_factory() as db:
+        user = await create_user(db, "确认证据失效")
+        workspace = await create_workspace(db, user)
+        conversation, source_run, entry, _s, attachment, evidence = (
+            await _answer_run_with_evidence(db, user, workspace)
+        )
+        _m, _run, draft = await submit_entry_revision(
+            db,
+            conversation,
+            _action(source_run_id=source_run.id, target_entry_id=entry.id),
+        )
+        await _draft_to_ready(db, draft, evidence)
+        await db.commit()
+        attachment.text_content = "来源内容已被修改，原文不再可核验。"
+        await db.commit()
+
+        with pytest.raises(HTTPException) as exc:
+            await confirm_entry_revision(db, draft, "confirm-evidence")
+        assert exc.value.status_code == 409
+        assert "来源证据当前无法核验" in exc.value.detail
+        await db.refresh(draft)
+        assert draft.status == REVISION_DRAFT_DRAFT
+        assert draft.execution_id is None
+
+
+@pytest.mark.asyncio
+async def test_confirm_rejects_no_actual_change_without_empty_version() -> None:
+    """候选与基线无实际差异：409、不追加空版本、不创建 Execution。"""
+    async with async_session_factory() as db:
+        user = await create_user(db, "确认无差异")
+        workspace = await create_workspace(db, user)
+        conversation, source_run, entry, _s, _a, evidence = (
+            await _answer_run_with_evidence(db, user, workspace)
+        )
+        _m, _run, draft = await submit_entry_revision(
+            db,
+            conversation,
+            _action(source_run_id=source_run.id, target_entry_id=entry.id),
+        )
+        # 候选字段与基线一致（仅 change_summary 不同不构成 Entry 字段变化）
+        await _draft_to_ready(
+            db,
+            draft,
+            evidence,
+            title="闭水试验完成后再验收防水层",
+            content=CONTENT,
+        )
+        draft.main_type = "knowledge"
+        draft.info_nature = None
+        draft.applicable_condition = None
+        draft.note = None
+        await db.commit()
+
+        with pytest.raises(HTTPException) as exc:
+            await confirm_entry_revision(db, draft, "confirm-noop")
+        assert exc.value.status_code == 409
+        versions = (
+            await db.execute(
+                select(EntryVersion).where(EntryVersion.entry_id == entry.id)
+            )
+        ).scalars().all()
+        assert versions == []
+        executions = (
+            await db.execute(
+                select(KnowledgeEntryRevisionExecution).where(
+                    KnowledgeEntryRevisionExecution.draft_id == draft.id
+                )
+            )
+        ).scalars().all()
+        assert executions == []
+
+
+@pytest.mark.asyncio
+async def test_confirm_adds_only_missing_evidence_and_keeps_existing() -> None:
+    """确认补入尚未关联的真实来源；已有等价关系复用，不记录为新增。"""
+    async with async_session_factory() as db:
+        user = await create_user(db, "证据增量")
+        workspace = await create_workspace(db, user)
+        conversation, source_run, entry, source, attachment, evidence = (
+            await _answer_run_with_evidence(db, user, workspace)
+        )
+        # 目标 Entry 目前只有另一条来源：构造第二条来源的 Evidence 并加入回答引用
+        project = await db.get(Project, entry.project_id)
+        second_source, second_attachment = await create_source_attachment(
+            db,
+            workspace,
+            project,
+            title="监理检查清单.md",
+            text_content="地漏、管根和门槛石周边应逐项检查。",
+        )
+        second_quote = "地漏、管根和门槛石周边应逐项检查。"
+        second_evidence = KnowledgeAgentEvidence(
+            run_id=source_run.id,
+            handle=f"ev_second_{uuid.uuid4().hex[:8]}",
+            entry_id=entry.id,
+            project_id=project.id,
+            source_id=second_source.id,
+            attachment_id=second_attachment.id,
+            entry_title=entry.title,
+            project_name=project.name,
+            source_title=second_source.title,
+            quote=second_quote,
+            content_fingerprint=attachment_fingerprint(second_quote),
+            purpose="answer",
+            is_citable=True,
+        )
+        db.add(second_evidence)
+        await db.flush()
+        # 回答引用加入第二条来源（重新生成 answer_json）
+        answer = KnowledgeAnswerOut(
+            answer="现有知识已确认；请补充易渗漏位置检查。",
+            status="completed",
+            citations=[
+                KnowledgeRunCitationOut(
+                    evidence_id=evidence.id,
+                    evidence_handle=evidence.handle,
+                    entry_id=entry.id,
+                    entry_title=entry.title,
+                    source_id=source.id,
+                    source_title=source.title,
+                    attachment_id=attachment.id,
+                    quote=QUOTE,
+                    project_id=project.id,
+                    project_name=project.name,
+                    node_path="根",
+                ),
+                KnowledgeRunCitationOut(
+                    evidence_id=second_evidence.id,
+                    evidence_handle=second_evidence.handle,
+                    entry_id=entry.id,
+                    entry_title=entry.title,
+                    source_id=second_source.id,
+                    source_title=second_source.title,
+                    attachment_id=second_attachment.id,
+                    quote=second_quote,
+                    project_id=project.id,
+                    project_name=project.name,
+                    node_path="根",
+                ),
+            ],
+        )
+        source_run.answer_json = answer.model_dump_json()
+        await db.flush()
+
+        _m, _run, draft = await submit_entry_revision(
+            db,
+            conversation,
+            _action(source_run_id=source_run.id, target_entry_id=entry.id),
+        )
+        # 候选采用第二条来源；目标 Entry 尚无该来源关系
+        await _draft_to_ready(db, draft, second_evidence)
+        await db.commit()
+
+        confirmed, execution, _applied = await confirm_entry_revision(
+            db, draft, "confirm-second"
+        )
+        await db.commit()
+
+        relations = (
+            await db.execute(
+                select(EntrySourceEvidence).where(
+                    EntrySourceEvidence.entry_id == entry.id
+                )
+            )
+        ).scalars().all()
+        assert len(relations) == 2  # 既有 + 新增
+        added = execution.added_evidence_ids_json
+        assert added != "[]"
+        assert str(relations[1].id) in added or str(relations[0].id) in added
+
+
+@pytest.mark.asyncio
+async def test_confirm_transaction_failure_rolls_back(monkeypatch) -> None:
+    """应用阶段任一步失败整体回滚：不产生版本、Execution 或证据残留。"""
+    async with async_session_factory() as db:
+        user = await create_user(db, "事务回滚")
+        workspace = await create_workspace(db, user)
+        conversation, source_run, entry, _s, _a, evidence = (
+            await _answer_run_with_evidence(db, user, workspace)
+        )
+        _m, _run, draft = await submit_entry_revision(
+            db,
+            conversation,
+            _action(source_run_id=source_run.id, target_entry_id=entry.id),
+        )
+        await _draft_to_ready(db, draft, evidence)
+        await db.commit()
+        entry_id = entry.id
+        draft_id = draft.id
+
+        async def _boom(db, entry, **kwargs):
+            raise RuntimeError("模拟数据库写入失败")
+
+        monkeypatch.setattr(
+            "app.services.knowledge_agent.entry_revision.apply_knowledge_agent_revision",
+            _boom,
+        )
+        with pytest.raises(RuntimeError):
+            await confirm_entry_revision(db, draft, "confirm-fail")
+        await db.rollback()
+        await db.commit()
+
+        versions = (
+            await db.execute(
+                select(EntryVersion).where(EntryVersion.entry_id == entry_id)
+            )
+        ).scalars().all()
+        assert versions == []
+        executions = (
+            await db.execute(
+                select(KnowledgeEntryRevisionExecution).where(
+                    KnowledgeEntryRevisionExecution.draft_id == draft_id
+                )
+            )
+        ).scalars().all()
+        assert executions == []
+
+
+@pytest.mark.asyncio
+async def test_desktop_entry_edit_still_works_after_revision_flow() -> None:
+    """既有桌面 Entry 编辑与版本语义不受修订流程影响。"""
+    async with async_session_factory() as db:
+        user = await create_user(db, "桌面兼容")
+        workspace = await create_workspace(db, user)
+        conversation, source_run, entry, _s, _a, evidence = (
+            await _answer_run_with_evidence(db, user, workspace)
+        )
+        _m, _run, draft = await submit_entry_revision(
+            db,
+            conversation,
+            _action(source_run_id=source_run.id, target_entry_id=entry.id),
+        )
+        await _draft_to_ready(db, draft, evidence)
+        await db.commit()
+        confirmed, _execution, _applied = await confirm_entry_revision(
+            db, draft, "confirm-desktop"
+        )
+        await db.commit()
+
+        from app.schemas.entry import EntryUpdate
+        from app.services.entry import edit_entry
+
+        await edit_entry(
+            db,
+            entry,
+            EntryUpdate(title="桌面编辑后的标题"),
+        )
+        await db.commit()
+        versions = (
+            await db.execute(
+                select(EntryVersion).where(EntryVersion.entry_id == entry.id)
+            )
+        ).scalars().all()
+        change_types = [version.change_type for version in versions]
+        assert "knowledge_agent_revision" in change_types
+        assert "edited" in change_types
+
+
+@pytest.mark.asyncio
+async def test_confirm_concurrent_second_request_replays_same_execution() -> None:
+    """并发确认同一草稿：第二个请求返回同一 Execution，不重复追加版本。"""
+    async with async_session_factory() as db_a:
+        user = await create_user(db_a, "并发确认")
+        workspace = await create_workspace(db_a, user)
+        conversation, source_run, entry, _s, _a, evidence = (
+            await _answer_run_with_evidence(db_a, user, workspace)
+        )
+        _m, _run, draft = await submit_entry_revision(
+            db_a,
+            conversation,
+            _action(source_run_id=source_run.id, target_entry_id=entry.id),
+        )
+        await _draft_to_ready(db_a, draft, evidence)
+        await db_a.commit()
+        draft_id = draft.id
+        entry_id = entry.id
+
+        first, execution_a, _entry_a = await confirm_entry_revision(
+            db_a, draft, "concurrent-key"
+        )
+        await db_a.commit()
+
+        async with async_session_factory() as db_b:
+            stale = await db_b.get(KnowledgeEntryRevisionDraft, draft_id)
+            second, execution_b, _entry_b = await confirm_entry_revision(
+                db_b, stale, "concurrent-key"
+            )
+            await db_b.commit()
+            assert execution_b.id == execution_a.id
+            assert second.status == "applied"
+
+        versions = (
+            await db_a.execute(
+                select(EntryVersion).where(EntryVersion.entry_id == entry_id)
+            )
+        ).scalars().all()
+        assert len(versions) == 1
+
+
+@pytest.mark.asyncio
+async def test_confirm_records_tool_call_observability() -> None:
+    """确认工具调用记录真实状态、版本与 Evidence 增量，不掩盖失败。"""
+    from app.models import KnowledgeAgentToolCall
+
+    async with async_session_factory() as db:
+        user = await create_user(db, "可观测")
+        workspace = await create_workspace(db, user)
+        conversation, source_run, entry, _s, _a, evidence = (
+            await _answer_run_with_evidence(db, user, workspace)
+        )
+        _m, run, draft = await submit_entry_revision(
+            db,
+            conversation,
+            _action(source_run_id=source_run.id, target_entry_id=entry.id),
+        )
+        await _draft_to_ready(db, draft, evidence)
+        await db.commit()
+
+        await confirm_entry_revision(db, draft, "confirm-obs")
+        await db.commit()
+        calls = (
+            await db.execute(
+                select(KnowledgeAgentToolCall).where(
+                    KnowledgeAgentToolCall.run_id == run.id
+                )
+            )
+        ).scalars().all()
+        confirm_calls = [call for call in calls if call.tool_name == "entry_revision_confirm"]
+        assert len(confirm_calls) == 1
+        assert confirm_calls[0].status == "ok"
+        assert confirm_calls[0].result_summary
+        assert "after_version_number" in (confirm_calls[0].result_summary or "")
+        assert confirm_calls[0].error is None

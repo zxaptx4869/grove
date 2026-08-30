@@ -14,9 +14,10 @@
 import json
 import logging
 from datetime import UTC, datetime
+from time import perf_counter
 
 from fastapi import HTTPException, status
-from sqlalchemy import select
+from sqlalchemy import select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -51,6 +52,7 @@ from app.models.knowledge_agent import (
     REVISION_DRAFT_GENERATING,
     REVISION_DRAFT_TERMINAL_STATUSES,
     REVISION_DRAFT_UNDONE,
+    REVISION_EXECUTION_APPLIED,
     RUN_CANCELLED,
     RUN_COMPLETED,
     RUN_FAILED,
@@ -67,10 +69,15 @@ from app.models.knowledge_agent import (
 from app.schemas.knowledge_agent import (
     KnowledgeDraftEvidenceOut,
     KnowledgeEntryRevisionDraftOut,
+    KnowledgeRevisionEntryOut,
     KnowledgeRevisionExecutionOut,
     KnowledgeRevisionFieldDiffOut,
 )
-from app.services.entry import entry_baseline, entry_fingerprint
+from app.services.entry import (
+    apply_knowledge_agent_revision,
+    entry_baseline,
+    entry_fingerprint,
+)
 from app.services.knowledge_agent.conversations import (
     DEFAULT_CONVERSATION_TITLE,
     active_run_for_conversation,
@@ -771,6 +778,26 @@ async def node_name_map(db: AsyncSession, node_ids: list[int]) -> dict[int, str]
     return {node_id: name for node_id, name in rows}
 
 
+async def revision_entry_out(
+    db: AsyncSession,
+    entry: Entry,
+    version_number: int | None = None,
+) -> KnowledgeRevisionEntryOut:
+    """组装确认/撤销后的 Entry 摘要（移动端回执使用）。"""
+    project = await db.get(Project, entry.project_id)
+    node_names = await node_name_map(db, [entry.node_id])
+    return KnowledgeRevisionEntryOut(
+        id=entry.id,
+        title=entry.title,
+        project_id=entry.project_id,
+        project_name=project.name if project is not None else None,
+        node_id=entry.node_id,
+        node_name=node_names.get(entry.node_id),
+        version_number=version_number,
+        updated_at=entry.updated_at,
+    )
+
+
 async def edit_revision_draft(
     db: AsyncSession,
     draft: KnowledgeEntryRevisionDraft,
@@ -1164,3 +1191,399 @@ async def _current_allowed_evidence(
             evidence=row,
         )
     ]
+
+
+async def _current_selected_evidence(
+    db: AsyncSession,
+    draft: KnowledgeEntryRevisionDraft,
+) -> list[KnowledgeAgentEvidence]:
+    """按草稿采用句柄逐条重验当前 Evidence；任一条失效即抛 RevisionEvidenceInvalid。"""
+    if draft.source_run_id is None or draft.target_project_id is None:
+        raise RevisionEvidenceInvalid("草稿的来源 Run 或目标项目已不可用")
+    handles = _load_handles(draft.selected_evidence_handles_json)
+    if not handles:
+        raise RevisionEvidenceInvalid("草稿没有采用任何证据")
+    rows = await evidence_rows_for_handles(db, draft.source_run_id, handles)
+    by_handle = {row.handle: row for row in rows}
+    valid: list[KnowledgeAgentEvidence] = []
+    for handle in handles:
+        row = by_handle.get(handle)
+        if row is None:
+            raise RevisionEvidenceInvalid(f"Evidence 句柄已失效：{handle}")
+        if not await _validate_evidence_current(
+            db,
+            workspace_id=draft.workspace_id,
+            target_project_id=draft.target_project_id,
+            evidence=row,
+        ):
+            raise RevisionEvidenceInvalid(f"Evidence 当前无法重新核验：{handle}")
+        valid.append(row)
+    return valid
+
+
+async def _restore_revision_draft_editable(
+    db: AsyncSession,
+    draft_id: int,
+) -> None:
+    """把 confirming 草稿恢复为可编辑，并提交恢复（避免停留在 confirming）。"""
+    await db.execute(
+        update(KnowledgeEntryRevisionDraft)
+        .where(KnowledgeEntryRevisionDraft.id == draft_id)
+        .values(status=REVISION_DRAFT_DRAFT, client_operation_id=None)
+    )
+    await db.commit()
+
+
+def _draft_has_actual_change(draft: KnowledgeEntryRevisionDraft) -> bool:
+    """确认前校验：归一化后候选字段与基线一致时返回 False。"""
+    base = _parse_base_entry(draft.base_entry_json)
+    return _revision_has_actual_change(
+        base,
+        title=draft.title or "",
+        content=draft.content or "",
+        main_type=draft.main_type or "",
+        info_nature=_normalize_output_field(draft.info_nature),
+        applicable_condition=_normalize_output_field(draft.applicable_condition),
+        note=_normalize_output_field(draft.note),
+    )
+
+
+async def _revision_confirm_tool(
+    db: AsyncSession,
+    run_id: int,
+    *,
+    status_code: str,
+    params: dict,
+    result: dict,
+    error: str | None,
+    duration_ms: int,
+) -> None:
+    """记录确认工具调用的真实状态（成功/失败），响应不得掩盖工具失败。"""
+    sequence = await next_tool_sequence(db, run_id)
+    await record_tool_call(
+        db,
+        run_id=run_id,
+        sequence=sequence,
+        tool_name="entry_revision_confirm",
+        status=status_code,
+        params_summary=json.dumps(params, ensure_ascii=False),
+        result_summary=json.dumps(result, ensure_ascii=False),
+        error=error,
+        duration_ms=duration_ms,
+    )
+
+
+async def confirm_entry_revision(
+    db: AsyncSession,
+    draft: KnowledgeEntryRevisionDraft,
+    client_operation_id: str,
+) -> tuple[KnowledgeEntryRevisionDraft, KnowledgeEntryRevisionExecution, Entry]:
+    """确认修订：单事务更新 Entry、追加版本、去重补证据并创建 Execution。
+
+    幂等：applied Execution 或相同幂等键重放返回同一结果；
+    并发：状态过渡 UPDATE + Execution.draft_id 唯一约束保证最多执行一次；
+    基线过期/Evidence 失效/无实际差异返回 409 并恢复草稿可编辑状态。
+    """
+    started = perf_counter()
+    draft_id = draft.id
+    operation_run_id = draft.operation_run_id
+
+    async def _replay_or_conflict() -> tuple[
+        KnowledgeEntryRevisionDraft,
+        KnowledgeEntryRevisionExecution,
+        Entry,
+    ]:
+        """幂等重放：已应用草稿返回同一 Execution 与 Entry；否则稳定冲突。"""
+        fresh = await db.get(KnowledgeEntryRevisionDraft, draft_id)
+        if (
+            fresh is not None
+            and fresh.status == REVISION_DRAFT_APPLIED
+            and fresh.execution_id is not None
+        ):
+            execution = await db.get(
+                KnowledgeEntryRevisionExecution, fresh.execution_id
+            )
+            entry = (
+                await db.get(Entry, fresh.target_entry_id)
+                if fresh.target_entry_id
+                else None
+            )
+            if execution is not None and entry is not None:
+                return fresh, execution, entry
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="修订正在确认或已进入终态，请刷新后重试",
+        )
+
+    if draft.status == REVISION_DRAFT_APPLIED and draft.execution_id is not None:
+        execution = await db.get(KnowledgeEntryRevisionExecution, draft.execution_id)
+        entry = (
+            await db.get(Entry, draft.target_entry_id)
+            if draft.target_entry_id
+            else None
+        )
+        if execution is not None and entry is not None:
+            return draft, execution, entry
+    if draft.status != REVISION_DRAFT_DRAFT:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="只有可编辑修订草稿可以确认",
+        )
+    if not draft.title or not draft.content:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="修订标题或内容为空，无法确认",
+        )
+
+    try:
+        locked = (
+            await db.execute(
+                update(KnowledgeEntryRevisionDraft)
+                .where(
+                    KnowledgeEntryRevisionDraft.id == draft_id,
+                    KnowledgeEntryRevisionDraft.status == REVISION_DRAFT_DRAFT,
+                    KnowledgeEntryRevisionDraft.execution_id.is_(None),
+                )
+                .values(
+                    status="confirming",
+                    client_operation_id=client_operation_id,
+                )
+            )
+        ).rowcount
+    except IntegrityError:
+        await db.rollback()
+        duration = int((perf_counter() - started) * 1000)
+        await _revision_confirm_tool(
+            db,
+            operation_run_id,
+            status_code="error",
+            params={"draft_id": draft_id},
+            result={},
+            error="确认幂等键冲突",
+            duration_ms=duration,
+        )
+        await db.commit()
+        return await _replay_or_conflict()  # type: ignore[return-value]
+    if locked != 1:
+        await db.rollback()
+        return await _replay_or_conflict()  # type: ignore[return-value]
+
+    # 重新校验 target Entry / source Run / 采用 Evidence
+    entry = (
+        await db.get(Entry, draft.target_entry_id)
+        if draft.target_entry_id
+        else None
+    )
+    if entry is None or entry.project_id != draft.target_project_id:
+        await _restore_revision_draft_editable(db, draft_id)
+        duration = int((perf_counter() - started) * 1000)
+        await _revision_confirm_tool(
+            db,
+            operation_run_id,
+            status_code="error",
+            params={"draft_id": draft_id},
+            result={},
+            error="目标知识当前不可用",
+            duration_ms=duration,
+        )
+        await db.commit()
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="目标知识当前不可用，请重新发起修订",
+        )
+    source_run = (
+        await db.get(KnowledgeAgentRun, draft.source_run_id)
+        if draft.source_run_id
+        else None
+    )
+    if (
+        source_run is None
+        or source_run.run_kind != RUN_KIND_ANSWER
+        or source_run.status not in {RUN_COMPLETED, RUN_PARTIAL}
+        or source_run.conversation_id != draft.conversation_id
+    ):
+        await _restore_revision_draft_editable(db, draft_id)
+        duration = int((perf_counter() - started) * 1000)
+        await _revision_confirm_tool(
+            db,
+            operation_run_id,
+            status_code="error",
+            params={"draft_id": draft_id},
+            result={},
+            error="来源回答 Run 已不可用",
+            duration_ms=duration,
+        )
+        await db.commit()
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="来源回答 Run 已不可用，无法确认",
+        )
+    try:
+        valid = await _current_selected_evidence(db, draft)
+    except RevisionEvidenceInvalid as exc:
+        await _restore_revision_draft_editable(db, draft_id)
+        duration = int((perf_counter() - started) * 1000)
+        await _revision_confirm_tool(
+            db,
+            operation_run_id,
+            status_code="error",
+            params={"draft_id": draft_id},
+            result={},
+            error=str(exc),
+            duration_ms=duration,
+        )
+        await db.commit()
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=f"来源证据当前无法核验，请重新生成草稿：{exc}",
+        ) from exc
+
+    # 基线乐观并发校验：字段 + node id 指纹与最新版本双重检查
+    current_baseline = entry_baseline(entry)
+    current_fp = entry_fingerprint(current_baseline)
+    version_id, version_number = await latest_entry_version(db, entry.id)
+    if (
+        current_fp != draft.base_entry_fingerprint
+        or version_id != draft.base_version_id
+        or version_number != draft.base_version_number
+    ):
+        await _restore_revision_draft_editable(db, draft_id)
+        duration = int((perf_counter() - started) * 1000)
+        await _revision_confirm_tool(
+            db,
+            operation_run_id,
+            status_code="error",
+            params={"draft_id": draft_id},
+            result={},
+            error="Entry 基线已过期",
+            duration_ms=duration,
+        )
+        await db.commit()
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="知识后来发生了变化，请重新生成修订草稿",
+        )
+    if not _draft_has_actual_change(draft):
+        await _restore_revision_draft_editable(db, draft_id)
+        duration = int((perf_counter() - started) * 1000)
+        await _revision_confirm_tool(
+            db,
+            operation_run_id,
+            status_code="error",
+            params={"draft_id": draft_id},
+            result={},
+            error="草稿与当前知识没有实际差异",
+            duration_ms=duration,
+        )
+        await db.commit()
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="草稿与当前知识没有实际差异，未生成空版本",
+        )
+
+    # 单事务应用：字段 + 版本 + 去重证据 + Execution + Draft 终态
+    values = {
+        "title": draft.title,
+        "content": draft.content,
+        "main_type": draft.main_type,
+        "info_nature": draft.info_nature,
+        "applicable_condition": draft.applicable_condition,
+        "note": draft.note,
+    }
+    evidence_refs = [
+        {
+            "source_id": row.source_id,
+            "attachment_id": row.attachment_id,
+            "quote": row.quote,
+        }
+        for row in valid
+        if row.source_id is not None
+    ]
+    before_json = draft.base_entry_json
+    before_fp = draft.base_entry_fingerprint
+    try:
+        version, added_ids = await apply_knowledge_agent_revision(
+            db,
+            entry,
+            values=values,
+            change_summary=draft.change_summary,
+            evidence_refs=evidence_refs,
+            refresh_reason="entry_edited",
+        )
+        if version is None:
+            # 无实际字段变化：不制造空版本，恢复可编辑并返回稳定冲突
+            await _restore_revision_draft_editable(db, draft_id)
+            duration = int((perf_counter() - started) * 1000)
+            await _revision_confirm_tool(
+                db,
+                operation_run_id,
+                status_code="error",
+                params={"draft_id": draft_id},
+                result={},
+                error="草稿与当前知识没有实际差异",
+                duration_ms=duration,
+            )
+            await db.commit()
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="草稿与当前知识没有实际差异，未生成空版本",
+            )
+        after_json = json.dumps(entry_baseline(entry), ensure_ascii=False)
+        after_fp = entry_fingerprint(entry_baseline(entry))
+        execution = KnowledgeEntryRevisionExecution(
+            workspace_id=draft.workspace_id,
+            owner_user_id=draft.owner_user_id,
+            conversation_id=draft.conversation_id,
+            draft_id=draft.id,
+            entry_id=entry.id,
+            client_operation_id=client_operation_id,
+            before_entry_json=before_json,
+            after_entry_json=after_json,
+            before_fingerprint=before_fp,
+            after_fingerprint=after_fp,
+            before_version_id=draft.base_version_id,
+            before_version_number=draft.base_version_number,
+            after_version_id=version.id,
+            after_version_number=version.version_number,
+            added_evidence_ids_json=json.dumps(added_ids, ensure_ascii=False),
+            status=REVISION_EXECUTION_APPLIED,
+        )
+        db.add(execution)
+        await db.flush()
+        draft.execution_id = execution.id
+        draft.status = REVISION_DRAFT_APPLIED
+        draft.error = None
+        await db.commit()
+    except IntegrityError:
+        await db.rollback()
+        duration = int((perf_counter() - started) * 1000)
+        await _revision_confirm_tool(
+            db,
+            operation_run_id,
+            status_code="error",
+            params={"draft_id": draft_id},
+            result={},
+            error="确认事务冲突",
+            duration_ms=duration,
+        )
+        await db.commit()
+        return await _replay_or_conflict()  # type: ignore[return-value]
+
+    duration = int((perf_counter() - started) * 1000)
+    await _revision_confirm_tool(
+        db,
+        operation_run_id,
+        status_code="ok",
+        params={"draft_id": draft.id, "entry_id": entry.id},
+        result={
+            "execution_id": execution.id,
+            "after_version_number": execution.after_version_number,
+            "added_evidence_count": len(added_ids),
+        },
+        error=None,
+        duration_ms=duration,
+    )
+    await db.commit()
+    await db.refresh(draft)
+    await db.refresh(entry)
+    return draft, execution, entry

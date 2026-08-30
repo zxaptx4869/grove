@@ -323,3 +323,58 @@ async def test_revision_rejects_empty_instruction_via_api(client: httpx.AsyncCli
         instruction="   ",
     )
     assert response.status_code == 422
+
+
+@pytest.mark.asyncio
+async def test_revision_confirm_via_api(client: httpx.AsyncClient) -> None:
+    """确认接口原子更新正式 Entry，返回 applied 回执；重复确认返回同一 Execution。"""
+    await _register(client)
+    project = await _project(client, "修订确认")
+    node = await _node(client, project["id"], "施工")
+    entry = await _entry(client, project["id"], node["id"], "闭水试验通常持续 24 小时")
+    source_run_id, _handle = await _completed_answer_run(client, project_id=project["id"])
+    conversation = (await client.get("/api/knowledge-agent/conversations")).json()[0]
+    submitted = await _revision_submit(
+        client,
+        conversation["id"],
+        source_run_id,
+        entry["id"],
+    )
+    draft_id = submitted.json()["draft"]["id"]
+    async with async_session_factory() as db:
+        draft = await db.get(KnowledgeEntryRevisionDraft, draft_id)
+        assert draft is not None
+        draft.status = "draft"
+        draft.title = "闭水试验验收要点（确认后）"
+        draft.content = "闭水试验应持续观察水位与楼下顶面，并按材料说明确认时长。"
+        draft.main_type = "method"
+        draft.info_nature = "advice"
+        draft.change_summary = "补充观察要求与材料口径"
+        import json as _json
+
+        # 采用允许集合内的真实句柄
+        allowed = _json.loads(draft.allowed_evidence_handles_json or "[]")
+        assert allowed
+        draft.selected_evidence_handles_json = _json.dumps([allowed[0]])
+        await db.commit()
+
+    op_key = f"confirm-{uuid.uuid4().hex[:8]}"
+    confirmed = await client.post(
+        f"/api/knowledge-agent/entry-revision-drafts/{draft_id}/confirm",
+        json={"client_operation_id": op_key},
+    )
+    assert confirmed.status_code == 200, confirmed.text
+    body = confirmed.json()
+    assert body["draft"]["status"] == "applied"
+    assert body["execution"]["status"] == "applied"
+    assert body["execution"]["after_version_number"] >= 2
+    assert body["entry"]["id"] == entry["id"]
+    assert body["entry"]["title"] == "闭水试验验收要点（确认后）"
+    assert body["draft"]["changed_fields"]
+
+    replay = await client.post(
+        f"/api/knowledge-agent/entry-revision-drafts/{draft_id}/confirm",
+        json={"client_operation_id": op_key},
+    )
+    assert replay.status_code == 200
+    assert replay.json()["execution"]["id"] == body["execution"]["id"]

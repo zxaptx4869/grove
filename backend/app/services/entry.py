@@ -29,6 +29,7 @@ from app.models.entry import (
     VERSION_AI_REVISION,
     VERSION_CREATED,
     VERSION_EDITED,
+    VERSION_KNOWLEDGE_AGENT_REVISION,
     VERSION_RESTORED,
 )
 from app.models.extraction import CANDIDATE_CONFIRMED, CANDIDATE_PENDING, EXTRACTION_ACTIVE
@@ -148,7 +149,7 @@ async def _snapshot_entry_version(
     entry: Entry,
     change_type: str,
     change_summary: str | None = None,
-) -> None:
+) -> EntryVersion:
     """为 Entry 追加快照版本，并滚动丢弃超过保留上限的最旧版本。"""
     max_number = (
         await db.execute(
@@ -158,21 +159,20 @@ async def _snapshot_entry_version(
         )
     ).scalar_one()
     next_number = (max_number or 0) + 1
-    db.add(
-        EntryVersion(
-            entry_id=entry.id,
-            version_number=next_number,
-            title=entry.title,
-            content=entry.content,
-            main_type=entry.main_type,
-            info_nature=entry.info_nature,
-            applicable_condition=entry.applicable_condition,
-            note=entry.note,
-            node_id=entry.node_id,
-            change_type=change_type,
-            change_summary=change_summary,
-        )
+    version = EntryVersion(
+        entry_id=entry.id,
+        version_number=next_number,
+        title=entry.title,
+        content=entry.content,
+        main_type=entry.main_type,
+        info_nature=entry.info_nature,
+        applicable_condition=entry.applicable_condition,
+        note=entry.note,
+        node_id=entry.node_id,
+        change_type=change_type,
+        change_summary=change_summary,
     )
+    db.add(version)
     await db.flush()
     if next_number > MAX_ENTRY_VERSIONS:
         await db.execute(
@@ -181,6 +181,7 @@ async def _snapshot_entry_version(
                 EntryVersion.version_number <= next_number - MAX_ENTRY_VERSIONS,
             )
         )
+    return version
 
 
 def _apply_revision_fields(entry: Entry, values: dict) -> bool:
@@ -793,3 +794,91 @@ async def _create_revision_source(
             quote=payload.change_summary or payload.reason,
         )
     )
+
+
+def _quote_key(quote: str | None) -> str:
+    """规范化 quote 用于等价去重：压缩空白并忽略大小写。"""
+    return " ".join((quote or "").split()).casefold()
+
+
+async def add_deduped_evidence_to_entry(
+    db: AsyncSession,
+    *,
+    entry_id: int,
+    source_id: int,
+    attachment_id: int | None,
+    quote: str | None,
+) -> EntrySourceEvidence | None:
+    """去重补充 Entry 来源证据：等价关系已存在时复用，否则创建并返回新关系。
+
+    等价判定使用 (source_id, attachment_id, 规范化 quote)；该策略与 SQLite/MySQL
+    均可工作，不依赖数据库唯一索引。
+    """
+    existing_rows = (
+        (
+            await db.execute(
+                select(EntrySourceEvidence).where(
+                    EntrySourceEvidence.entry_id == entry_id,
+                    EntrySourceEvidence.source_id == source_id,
+                    EntrySourceEvidence.attachment_id
+                    == (attachment_id if attachment_id is not None else None),
+                )
+            )
+        )
+        .scalars()
+        .all()
+    )
+    target_key = _quote_key(quote)
+    for row in existing_rows:
+        if _quote_key(row.quote) == target_key:
+            return None
+    relation = EntrySourceEvidence(
+        entry_id=entry_id,
+        source_id=source_id,
+        attachment_id=attachment_id,
+        quote=quote,
+    )
+    db.add(relation)
+    await db.flush()
+    return relation
+
+
+async def apply_knowledge_agent_revision(
+    db: AsyncSession,
+    entry: Entry,
+    *,
+    values: dict,
+    change_summary: str | None,
+    evidence_refs: list[dict],
+    refresh_reason: str = "entry_edited",
+) -> tuple[EntryVersion, list[int]]:
+    """原子应用 Knowledge Agent 修订：更新字段、追加快照、去重补充证据并调度刷新。
+
+    返回 (追加的版本, 本次真实新增的 EntrySourceEvidence id 列表)。
+    调用方必须先完成基线/版本并发校验；本函数不校验归属。
+    """
+    changed = _apply_revision_fields(entry, values)
+    added_ids: list[int] = []
+    for ref in evidence_refs:
+        relation = await add_deduped_evidence_to_entry(
+            db,
+            entry_id=entry.id,
+            source_id=ref["source_id"],
+            attachment_id=ref.get("attachment_id"),
+            quote=ref.get("quote"),
+        )
+        if relation is not None:
+            added_ids.append(relation.id)
+    if changed:
+        version = await _snapshot_entry_version(
+            db,
+            entry,
+            VERSION_KNOWLEDGE_AGENT_REVISION,
+            change_summary,
+        )
+    else:
+        # 无实际字段变化：不制造空版本，返回 None 由调用方转为稳定冲突
+        version = None
+    await schedule_refresh(db, entry.project_id, refresh_reason)
+    await mark_entry_embedding_pending(db, entry)
+    return version, added_ids
