@@ -344,6 +344,49 @@ async def test_draft_confirm_evidence_invalid_recovers_editable_via_api(
 
 
 @pytest.mark.asyncio
+async def test_draft_confirm_routing_failure_via_api_returns_success(
+    client: httpx.AsyncClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """核实：目录推荐/关系判断失败时确认接口应返回成功而非 500。"""
+    import app.services.knowledge_agent.candidate as candidate_module
+
+    async def _broken_route(db, source_id: int) -> None:
+        raise RuntimeError("路由服务不可用")
+
+    monkeypatch.setattr(candidate_module, "route_source", _broken_route)
+    monkeypatch.setattr(candidate_module, "route_relations", _broken_route)
+
+    await _register(client)
+    project = await _project(client, "路由失败项目")
+    node = await _node(client, project["id"], "施工")
+    await _entry(client, project["id"], node["id"], "闭水试验通常持续 24 小时")
+    source_run_id, _handle = await _completed_answer_run(client, project_id=project["id"])
+    conversation = (await client.get("/api/knowledge-agent/conversations")).json()[0]
+    submitted = await client.post(
+        f"/api/knowledge-agent/conversations/{conversation['id']}/drafts",
+        json={
+            "client_message_id": f"action-{uuid.uuid4().hex[:8]}",
+            "source_run_id": source_run_id,
+        },
+    )
+    draft_id = submitted.json()["draft"]["id"]
+    run_id = submitted.json()["run"]["id"]
+    async with async_session_factory() as db:
+        await _cancel_other_waiting_runs(db, keep_run_id=run_id)
+    assert await process_one_run() is True
+
+    confirmed = await client.post(
+        f"/api/knowledge-agent/drafts/{draft_id}/confirm",
+        json={"client_operation_id": f"op-{uuid.uuid4().hex[:8]}"},
+    )
+    assert confirmed.status_code == 200, confirmed.text
+    body = confirmed.json()
+    assert body["draft"]["status"] == "confirmed"
+    assert body["candidate"]["status"] == "pending"
+
+
+@pytest.mark.asyncio
 async def test_draft_action_cross_workspace_404(client: httpx.AsyncClient) -> None:
     """其他 Workspace 用户访问草稿一律 404。"""
     await _register(client)

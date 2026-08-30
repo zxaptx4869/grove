@@ -605,6 +605,79 @@ async def test_build_validated_answer_points_blank_text_dropped() -> None:
 
 
 @pytest.mark.asyncio
+async def test_build_validated_answer_points_all_blank_text_insufficient() -> None:
+    """v3 核实：全部要点正文为空时不得返回 completed + 0 引用。"""
+    async with async_session_factory() as db:
+        user = await create_user(db, "全空要点")
+        workspace = await create_workspace(db, user)
+        project = await create_project(db, workspace, "全空要点项目")
+        node = await create_child_node(db, project, "施工")
+        source, attachment = await create_source_attachment(
+            db,
+            workspace,
+            project,
+            text_content="闭水试验通常持续 24 小时。",
+        )
+        entry = await create_entry_with_evidence(
+            db,
+            project,
+            node,
+            source,
+            attachment,
+            quote="闭水试验通常持续 24 小时",
+        )
+        conversation = KnowledgeConversation(
+            workspace_id=workspace.id,
+            owner_user_id=user.id,
+            scope_type="workspace",
+            title="全空要点测试",
+        )
+        db.add(conversation)
+        await db.flush()
+        run = KnowledgeAgentRun(
+            conversation_id=conversation.id,
+            workspace_id=workspace.id,
+            owner_user_id=user.id,
+            scope_type="workspace",
+            status=RUN_PROCESSING,
+            active_slot="active",
+            max_retries=1,
+        )
+        db.add(run)
+        await db.flush()
+        evidence = await _evidence_row(
+            db,
+            run_id=run.id,
+            entry=entry,
+            project=project,
+            source=source,
+            attachment=attachment,
+            entry_evidence=await _entry_evidence(db, entry.id, source.id),
+            quote="闭水试验通常持续 24 小时",
+        )
+        await db.commit()
+
+        draft = KnowledgeAnswerDraft(
+            answer="",
+            lead="闭水试验有时长证据。",
+            core_question_answered=True,
+            coverage_complete=True,
+            points=[
+                KnowledgeAnswerPointDraft(
+                    section=None,
+                    text="  ",
+                    evidence_handles=[evidence.handle],
+                ),
+            ],
+        )
+        answer, _stats = await build_validated_answer(db, run.id, draft)
+        # 期望：没有可展示要点/引用时是 insufficient，而不是 completed
+        assert answer.status == "insufficient"
+        assert answer.points == []
+        assert answer.citations == []
+
+
+@pytest.mark.asyncio
 async def test_build_validated_answer_legacy_without_points() -> None:
     """v3 兼容：无 points 的旧草稿保持既有 answer 文本与扁平引用，points 为空。"""
     async with async_session_factory() as db:

@@ -220,6 +220,8 @@ function draftFixture(
     generationDegraded: false,
     generationError: null,
     confirmedCandidateId: null,
+    routingStatus: null,
+    relationStatus: null,
     error: null,
     createdAt: "2026-08-29T10:00:00Z",
     updatedAt: "2026-08-29T10:00:00Z",
@@ -767,6 +769,24 @@ test("确认回执明确尚未写入正式知识", async () => {
   expect(view.getAllByText(/尚未写入正式知识/).length).toBeGreaterThan(0);
   expect(view.getByText(/待确认（#99）/)).toBeOnTheScreen();
   expect(view.queryByText("正式知识")).toBeNull();
+});
+
+test("确认回执在目录推荐或关系判断未完成时明确提示", async () => {
+  const view = await render(
+    <DraftReceiptCard
+      draft={draftFixture({
+        status: "confirmed",
+        confirmedCandidateId: 99,
+        routingStatus: "pending",
+        relationStatus: "pending",
+      })}
+    />,
+    { wrapper },
+  );
+  expect(view.getByText(/已创建待确认知识/)).toBeOnTheScreen();
+  expect(view.getByText(/目录推荐或关系判断尚未完成/)).toBeOnTheScreen();
+  expect(view.getAllByText(/尚未写入正式知识/).length).toBeGreaterThan(0);
+  await view.unmount();
 });
 
 test("失败草稿保留错误与重试入口", async () => {

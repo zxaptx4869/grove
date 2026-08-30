@@ -881,10 +881,16 @@ def candidate_receipt(candidate: Candidate) -> CandidateReceiptOut:
 def draft_out(
     draft: KnowledgeCandidateDraft,
     evidence_by_handle: dict[str, KnowledgeAgentEvidence] | None = None,
+    candidate_by_id: dict[int, Candidate] | None = None,
 ) -> KnowledgeCandidateDraftOut:
     """组装草稿响应；evidence_by_handle 由调用方批量预加载避免 N+1。"""
     handles = _load_handles(draft.evidence_handles_json)
     meta = _meta_dict(draft)
+    candidate = (
+        candidate_by_id.get(draft.confirmed_candidate_id)
+        if candidate_by_id is not None and draft.confirmed_candidate_id is not None
+        else None
+    )
     summaries: list[KnowledgeDraftEvidenceOut] = []
     if evidence_by_handle is not None:
         for handle in handles:
@@ -918,6 +924,8 @@ def draft_out(
         generation_degraded=bool(meta.get("is_fallback")),
         generation_error=meta.get("error"),
         confirmed_candidate_id=draft.confirmed_candidate_id,
+        routing_status=candidate.routing_status if candidate is not None else None,
+        relation_status=candidate.relation_status if candidate is not None else None,
         error=draft.error,
         created_at=draft.created_at,
         updated_at=draft.updated_at,
@@ -948,7 +956,24 @@ async def drafts_out_batch(
             .all()
         )
     by_handle = {row.handle: row for row in rows}
-    return [draft_out(draft, by_handle) for draft in drafts]
+    candidate_ids = {
+        draft.confirmed_candidate_id
+        for draft in drafts
+        if draft.confirmed_candidate_id is not None
+    }
+    candidate_by_id: dict[int, Candidate] = {}
+    if candidate_ids:
+        candidate_rows = (
+            (
+                await db.execute(
+                    select(Candidate).where(Candidate.id.in_(candidate_ids))
+                )
+            )
+            .scalars()
+            .all()
+        )
+        candidate_by_id = {row.id: row for row in candidate_rows}
+    return [draft_out(draft, by_handle, candidate_by_id) for draft in drafts]
 
 
 async def drafts_for_runs(
