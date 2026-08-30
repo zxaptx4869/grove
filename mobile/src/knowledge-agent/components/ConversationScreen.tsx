@@ -88,6 +88,8 @@ export function ConversationScreen() {
   // 是否靠近消息底部：进入对话定位到底部，且新消息到达时若用户仍靠近底部则跟随滚动；
   // 用户向上翻阅历史时保持不动，不做跳底。
   const nearBottomRef = useRef(true);
+  // 已为当前对话做过一次初始定位（切换对话后重新定位）
+  const positionedConversationRef = useRef<string | null>(null);
 
   const projectsQuery = useQuery({
     queryKey: ["projects"],
@@ -132,7 +134,10 @@ export function ConversationScreen() {
   const handleContentSizeChange = useCallback(() => {
     // 进入对话时内容首次布局完成即定位到最近消息；之后仅在用户靠近底部时跟随新内容
     if (nearBottomRef.current) {
-      scrollRef.current?.scrollToEnd({ animated: false });
+      // 同步调用可能早于布局完成：放到下一帧再滚，确保按最新内容高度定位
+      requestAnimationFrame(() => {
+        scrollRef.current?.scrollToEnd({ animated: false });
+      });
     }
   }, []);
 
@@ -190,8 +195,30 @@ export function ConversationScreen() {
   const confirmError = controller.draftConfirmError;
 
   const threadHasMessages = controller.thread.items.length > 0;
+  const conversationKey = controller.isDraft
+    ? "draft"
+    : String(controller.activeConversation?.id ?? "none");
   const draftIntroVisible =
     controller.isDraft && !threadHasMessages && !controller.initialLoading;
+
+  // 双保险：消息页加载完成后延迟定位一次（onContentSizeChange 时机在部分设备不可靠）
+  useEffect(() => {
+    if (controller.messagesLoading || controller.initialLoading) return;
+    if (!threadHasMessages) return;
+    if (positionedConversationRef.current === conversationKey) return;
+    positionedConversationRef.current = conversationKey;
+    const timer = setTimeout(() => {
+      requestAnimationFrame(() => {
+        scrollRef.current?.scrollToEnd({ animated: false });
+      });
+    }, 0);
+    return () => clearTimeout(timer);
+  }, [
+    controller.messagesLoading,
+    controller.initialLoading,
+    threadHasMessages,
+    conversationKey,
+  ]);
 
   const headerScopeLabel =
     controller.currentScope.scopeType === "project"
