@@ -46,6 +46,7 @@ from app.models.knowledge_agent import (
     MESSAGE_ROLE_USER,
     MESSAGE_TYPE_ASSISTANT,
     MESSAGE_TYPE_USER,
+    RUN_CANCELLED,
     RUN_COMPLETED,
     RUN_FAILED,
     RUN_KIND_ANSWER,
@@ -748,7 +749,7 @@ async def _fail_draft_run(
         RUN_COMPLETED,
         RUN_PARTIAL,
         RUN_FAILED,
-        "cancelled",
+        RUN_CANCELLED,
     }:
         run.status = RUN_FAILED
         run.current_step = None
@@ -808,9 +809,21 @@ async def edit_draft(
             detail="草稿仍在生成中，暂不可编辑",
         )
     if payload.title is not None:
-        draft.title = payload.title.strip()
+        title = payload.title.strip()
+        if not title:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+                detail="草稿标题不能为空",
+            )
+        draft.title = title
     if payload.content is not None:
-        draft.content = payload.content.strip()
+        content = payload.content.strip()
+        if not content:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+                detail="草稿核心内容不能为空",
+            )
+        draft.content = content
     if payload.main_type is not None:
         draft.main_type = payload.main_type
     if payload.info_nature is not None:
@@ -1043,7 +1056,9 @@ async def confirm_draft(
             .where(KnowledgeCandidateDraft.id == draft_id)
             .values(status=DRAFT_DRAFT, client_operation_id=None)
         )
-        await db.flush()
+        # 必须先提交恢复：异常会让端点跳过 commit，会话关闭时未提交事务会被回滚，
+        # 草稿会停留在 confirming 无法再次确认或编辑。
+        await db.commit()
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
             detail=f"证据当前无法重新核验，请重新生成草稿：{exc}",
@@ -1058,7 +1073,7 @@ async def confirm_draft(
             .where(KnowledgeCandidateDraft.id == draft_id)
             .values(status=DRAFT_DRAFT, client_operation_id=None)
         )
-        await db.flush()
+        await db.commit()
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
             detail="来源回答 Run 已不可用，无法确认",

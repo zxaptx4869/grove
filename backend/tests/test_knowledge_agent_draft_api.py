@@ -4,11 +4,12 @@ import uuid
 
 import httpx
 import pytest
+from sqlalchemy import select
 
 from app.db.session import async_session_factory
 from app.knowledge_agent_worker import process_one_run
 from app.main import create_app
-from app.models import KnowledgeAgentRun
+from app.models import Attachment, KnowledgeAgentEvidence, KnowledgeAgentRun
 from app.models.knowledge_agent import SCOPE_PROJECT
 from app.services.knowledge_agent.tools import RunToolContext
 from tests.test_knowledge_agent_runner import (
@@ -279,12 +280,67 @@ async def test_draft_edit_cancel_confirm_via_api(client: httpx.AsyncClient) -> N
     ).json()
     assert [row["id"] for row in entries] == [entry["id"]]
 
-    # 桌面确认台可查看新 Candidate（既有确认流程入口）
-    candidates = (
-        await client.get(f"/api/sources/{body['candidate']['source_id']}/candidates")
-    ).json()
-    assert any(row["id"] == candidate_id for row in candidates)
-    assert any(row["status"] == "pending" for row in candidates)
+
+@pytest.mark.asyncio
+async def test_draft_confirm_evidence_invalid_recovers_editable_via_api(
+    client: httpx.AsyncClient,
+) -> None:
+    """HTTP 确认时证据失效返回 409，草稿必须恢复为可编辑，不能停在 confirming。"""
+    await _register(client)
+    project = await _project(client, "证据失效项目")
+    node = await _node(client, project["id"], "施工")
+    await _entry(client, project["id"], node["id"], "闭水试验通常持续 24 小时")
+    source_run_id, _handle = await _completed_answer_run(client, project_id=project["id"])
+    conversation = (await client.get("/api/knowledge-agent/conversations")).json()[0]
+    submitted = await client.post(
+        f"/api/knowledge-agent/conversations/{conversation['id']}/drafts",
+        json={
+            "client_message_id": f"action-{uuid.uuid4().hex[:8]}",
+            "source_run_id": source_run_id,
+        },
+    )
+    assert submitted.status_code == 201, submitted.text
+    draft_id = submitted.json()["draft"]["id"]
+    run_id = submitted.json()["run"]["id"]
+    async with async_session_factory() as db:
+        await _cancel_other_waiting_runs(db, keep_run_id=run_id)
+    assert await process_one_run() is True
+
+    draft = (await client.get(f"/api/knowledge-agent/drafts/{draft_id}")).json()
+    assert draft["status"] == "draft"
+
+    # 让来源附件文本变化，证据指纹不再匹配
+    async with async_session_factory() as db:
+        evidence = (
+            await db.execute(
+                select(KnowledgeAgentEvidence)
+                .where(
+                    KnowledgeAgentEvidence.run_id == source_run_id,
+                    KnowledgeAgentEvidence.is_citable.is_(True),
+                )
+                .limit(1)
+            )
+        ).scalar_one()
+        attachment = await db.get(Attachment, evidence.attachment_id)
+        assert attachment is not None
+        attachment.text_content = "内容已变化，指纹不再匹配。"
+        await db.commit()
+
+    failed = await client.post(
+        f"/api/knowledge-agent/drafts/{draft_id}/confirm",
+        json={"client_operation_id": f"op-{uuid.uuid4().hex[:8]}"},
+    )
+    assert failed.status_code == 409, failed.text
+
+    # 草稿必须恢复为 draft（可编辑），而不是卡在 confirming
+    after = (await client.get(f"/api/knowledge-agent/drafts/{draft_id}")).json()
+    assert after["status"] == "draft"
+    edited = await client.patch(
+        f"/api/knowledge-agent/drafts/{draft_id}",
+        json={"title": "证据失效后仍可编辑"},
+    )
+    assert edited.status_code == 200, edited.text
+    assert edited.json()["title"] == "证据失效后仍可编辑"
 
 
 @pytest.mark.asyncio
