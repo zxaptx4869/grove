@@ -213,17 +213,22 @@ function InvestigationGroup({ label, items }: { label: string; items: string[] }
   );
 }
 
-/** 结构化要点卡：分组标题 + 连续编号 + 正文 + 逐条来源入口（对齐原型 answer-points）。 */
+/** 上标序号：1-20 用圈号，超过回退为 (n)，避免 Unicode 圈号越界。 */
+function superscriptNumber(n: number): string {
+  if (n < 1 || n > 20) return `(${n})`;
+  return String.fromCharCode(0x2460 + n - 1);
+}
+
+/** 结构化要点卡：分组标题 + 正文 + 行内上标序号（对齐原型 answer-points 的轻量改版）。 */
 function AnswerPoints({
   points,
-  onCitationPress,
+  legendIndex,
 }: {
   points: KnowledgeAnswerPoint[];
-  onCitationPress: (citation: KnowledgeRunCitation) => void;
+  legendIndex: Map<number, number>;
 }) {
   const rows: ReactNode[] = [];
   let lastSection: string | null = null;
-  let number = 0;
   points.forEach((point, index) => {
     const section = point.section ?? null;
     if (section !== lastSection) {
@@ -236,36 +241,67 @@ function AnswerPoints({
       }
       lastSection = section;
     }
-    number += 1;
     rows.push(
       <View key={`point-${index}`} style={styles.pointRow}>
-        <View style={styles.pointNumber}>
-          <Text style={styles.pointNumberText}>{number}</Text>
-        </View>
-        <View style={styles.pointMain}>
-          <Text style={styles.pointText}>{point.text}</Text>
-          {point.citations.map((citation) => (
-            <Pressable
-              key={citation.evidenceId}
-              accessibilityRole="button"
-              accessibilityLabel={`查看引用：${citation.entryTitle}`}
-              onPress={() => onCitationPress(citation)}
-              style={({ pressed }) => [
-                styles.pointCitation,
-                pressed && styles.sourceChipPressed,
-              ]}
-            >
-              <AgentIcon name="quote" size={14} color={theme.green} />
-              <Text style={styles.pointCitationText} numberOfLines={1}>
-                {citation.sourceTitle || citation.entryTitle}
-              </Text>
-            </Pressable>
-          ))}
-        </View>
+        <Text style={styles.pointText}>
+          {point.text}
+          {point.citations.length > 0 && (
+            <Text style={styles.pointRef}>
+              {" "}
+              {point.citations
+                .map((citation) => {
+                  const n = legendIndex.get(citation.evidenceId) ?? 0;
+                  return n > 0 ? superscriptNumber(n) : "";
+                })
+                .join(" ")}
+            </Text>
+          )}
+        </Text>
       </View>,
     );
   });
   return <View style={styles.points}>{rows}</View>;
+}
+
+/** 底部按序号来源区：替代 CitationStrip，点击打开证据原文。 */
+function SourceLegend({
+  citations,
+  workspaceScope,
+  onCitationPress,
+}: {
+  citations: KnowledgeRunCitation[];
+  workspaceScope: boolean;
+  onCitationPress: (citation: KnowledgeRunCitation) => void;
+}) {
+  return (
+    <View style={styles.legend}>
+      {citations.map((citation, index) => {
+        const number = superscriptNumber(index + 1);
+        const label =
+          workspaceScope && citation.projectName
+            ? `${citation.projectName} · ${citation.entryTitle}`
+            : citation.entryTitle;
+        return (
+          <Pressable
+            key={citation.evidenceId}
+            accessibilityRole="button"
+            accessibilityLabel={`查看引用 ${number}：${citation.entryTitle}`}
+            onPress={() => onCitationPress(citation)}
+            style={({ pressed }) => [
+              styles.legendRow,
+              pressed && styles.sourceChipPressed,
+            ]}
+          >
+            <Text style={styles.legendNumber}>{number}</Text>
+            <Text style={styles.legendTitle} numberOfLines={1}>
+              {label}
+            </Text>
+            <AgentIcon name="chevron" size={14} color={theme.muted} />
+          </Pressable>
+        );
+      })}
+    </View>
+  );
 }
 
 export function AnswerCard({
@@ -290,6 +326,19 @@ export function AnswerCard({
     presentation.tone === "positive" ? "confirmed" : presentation.tone;
   const workspaceScope = run.scopeType === "workspace";
   const citations = answer?.citations ?? [];
+  const points = answer?.points ?? [];
+  const hasPoints = points.length > 0;
+  // 序号映射：按 points 顺序对全部引用去重编号（同一 Evidence 只占一个序号）
+  const legendCitations: KnowledgeRunCitation[] = [];
+  const legendIndex = new Map<number, number>();
+  for (const point of points) {
+    for (const citation of point.citations) {
+      if (!legendIndex.has(citation.evidenceId)) {
+        legendIndex.set(citation.evidenceId, legendCitations.length + 1);
+        legendCitations.push(citation);
+      }
+    }
+  }
   // partial 的「再问」不应原样重发同一问题：改为把原问题填回输入框，
   // 由用户修改措辞或切换模式后再发送（失败/降级仍支持一键重试）。
   const partialRefine = presentation.status === "partial";
@@ -357,11 +406,8 @@ export function AnswerCard({
               </Text>
             )}
             {answer &&
-              (answer.points && answer.points.length > 0 ? (
-                <AnswerPoints
-                  points={answer.points}
-                  onCitationPress={onCitationPress}
-                />
+              (hasPoints ? (
+                <AnswerPoints points={points} legendIndex={legendIndex} />
               ) : (
                 answer.answer.trim() !== "" && (
                   <Text style={styles.answerBody}>
@@ -389,11 +435,19 @@ export function AnswerCard({
                   <Text style={styles.projectHitCopy}>{count} 条引用</Text>
                 </View>
               ))}
-            <CitationStrip
-              citations={citations}
-              workspaceScope={workspaceScope}
-              onCitationPress={onCitationPress}
-            />
+            {hasPoints ? (
+              <SourceLegend
+                citations={legendCitations}
+                workspaceScope={workspaceScope}
+                onCitationPress={onCitationPress}
+              />
+            ) : (
+              <CitationStrip
+                citations={citations}
+                workspaceScope={workspaceScope}
+                onCitationPress={onCitationPress}
+              />
+            )}
             <ScopeStamp label={scopeLabel} />
             {organize.eligible && (
               <View style={styles.organizeArea}>
@@ -512,46 +566,44 @@ const styles = StyleSheet.create({
   },
   pointRow: {
     flexDirection: "row",
-    gap: 8,
   },
-  pointNumber: {
-    width: 21,
-    height: 21,
-    marginTop: 1,
-    borderRadius: 6,
-    alignItems: "center",
-    justifyContent: "center",
-    backgroundColor: theme.greenSoft,
-  },
-  pointNumberText: {
-    fontSize: 11,
-    fontWeight: "700",
-    color: theme.green,
-  },
-  pointMain: { minWidth: 0, flex: 1 },
   pointText: {
     fontSize: 13,
     lineHeight: 21,
     color: theme.ink,
+    flexShrink: 1,
   },
-  pointCitation: {
+  pointRef: {
+    fontSize: 10,
+    fontWeight: "700",
+    color: theme.green,
+  },
+  legend: {
+    marginTop: 14,
+    paddingTop: 12,
+    borderTopWidth: 1,
+    borderTopColor: theme.border,
+    gap: 2,
+  },
+  legendRow: {
     minHeight: 44,
-    alignSelf: "flex-start",
     flexDirection: "row",
     alignItems: "center",
-    gap: 5,
-    marginTop: 6,
-    paddingHorizontal: 10,
-    borderWidth: 1,
-    borderColor: theme.border,
-    borderRadius: 7,
-    backgroundColor: theme.soft,
+    gap: 8,
+    paddingHorizontal: 4,
   },
-  pointCitationText: {
-    maxWidth: 260,
-    color: theme.green,
+  legendNumber: {
+    width: 22,
     fontSize: 12,
-    fontWeight: "600",
+    fontWeight: "700",
+    color: theme.green,
+  },
+  legendTitle: {
+    minWidth: 0,
+    flex: 1,
+    color: theme.muted,
+    fontSize: 12,
+    lineHeight: 18,
   },
   insufficientText: { color: "#76501C" },
   fallbackBox: {

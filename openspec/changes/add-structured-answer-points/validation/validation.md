@@ -7,8 +7,17 @@
 
 回答协议新增可选 `points` 结构化字段（`section` / `text` / 逐条 `citations`），回答模型
 升级为输出 `lead` + `points`，服务端逐条重验句柄并确定性拼接 `answer` 文本；原生回答卡
-在有 `points` 时渲染「分组标题 + 连续编号 + 逐条来源入口」要点卡，无 `points` 的历史回答
-回退到现有纯文本 + 底部来源条。不改变草稿/确认协议、正式 Entry 语义与 Web 展示。
+在有 `points` 时渲染「分组标题 + 正文行内上标序号 + 底部按序号来源区」要点卡，无 `points`
+的历史回答回退到现有纯文本 + 底部来源条。不改变草稿/确认协议、正式 Entry 语义与 Web
+展示。
+
+## 真机反馈后的展示修订（2026-08-30）
+
+首版实现为「每条要点下方一个来源 chip」，真机反馈在「一条要点 = 一条 Entry」时来源标题与
+要点内容高度重复、显得多余；按用户选择改为方案 B：每条要点正文后显示极小上标序号
+（1-20 用圈号，超过回退 `(n)`），底部来源区按序号列出可点击来源行（替代原 CitationStrip），
+同一 Evidence 只占一个序号。无 `points` 的历史回答仍保留纯文本 + CitationStrip 回退。
+相应更新了 `design.md` 决策 5 与 `native-knowledge-agent-answer` delta spec。
 
 ## 真实命令与结果
 
@@ -46,7 +55,7 @@ cd backend && .venv/bin/ruff check app tests
 
 ```bash
 cd mobile && npm test -- --runInBand
-# 10 suites / 73 tests passed（新增要点渲染与回退 2 项）
+# 10 suites / 73 tests passed（新增要点渲染与回退 2 项；含上标/来源区修订）
 
 cd mobile && npm run lint
 # 通过
