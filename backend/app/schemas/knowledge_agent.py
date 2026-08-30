@@ -116,11 +116,13 @@ class KnowledgeMessageOut(BaseModel):
 
 class KnowledgeMessagePageOut(BaseModel):
     """游标分页的消息页：无 cursor 时返回最近一页且页内按时间正序；
-    `next_cursor` 指向更早消息；`runs` 是本页关联且去重的 Run 集合。"""
+    `next_cursor` 指向更早消息；`runs` 是本页关联且去重的 Run 集合；
+    `candidate_drafts` 是本页 operation Run 关联且去重的草稿集合。"""
 
     items: list[KnowledgeMessageOut]
     next_cursor: str | None = None
     runs: list["KnowledgeRunOut"] = []
+    candidate_drafts: list["KnowledgeCandidateDraftOut"] = []
 
 
 class KnowledgeRunCitationOut(BaseModel):

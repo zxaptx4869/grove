@@ -30,11 +30,11 @@
 
 ## 5. Conversation / Draft API 与历史归并
 
-- [ ] 5.1 扩展后端 schemas：动作资格/可选目标项目、Run kind/source Run、Draft、编辑请求、确认请求/回执和明确错误；字段命名与移动端 snake_case 适配保持一致。
-- [ ] 5.2 新增显式草稿动作提交、Draft 读取/PATCH/取消/确认端点，所有端点同时校验 owner + Workspace + Conversation；确认请求不接收自由引用字段。
-- [ ] 5.3 扩展 Message Page 规范化返回关联且去重的 `candidate_drafts`，对话列表/消息查询不得产生逐消息或逐 Draft N+1；历史范围切换后保留 Draft 目标项目快照。
-- [ ] 5.4 补充 API 201/200 幂等、400/404/409、分页历史、查询数量、普通 answer 兼容、Bearer 移动鉴权和旧客户端缺省字段测试；先以 curl 验证新端点非 404，再运行相关 API pytest。
-- [ ] 5.5 运行 `cd backend && .venv/bin/python -m pytest -W error && .venv/bin/ruff check app tests`，确认全量通过后完成一次后端阶段本地提交。
+- [x] 5.1 扩展后端 schemas：动作资格/可选目标项目、Run kind/source Run、Draft、编辑请求、确认请求/回执和明确错误；字段命名与移动端 snake_case 适配保持一致。
+- [x] 5.2 新增显式草稿动作提交、Draft 读取/PATCH/取消/确认端点，所有端点同时校验 owner + Workspace + Conversation；确认请求不接收自由引用字段。
+- [x] 5.3 扩展 Message Page 规范化返回关联且去重的 `candidate_drafts`，对话列表/消息查询不得产生逐消息或逐 Draft N+1；历史范围切换后保留 Draft 目标项目快照。
+- [x] 5.4 补充 API 201/200 幂等、400/404/409、分页历史、查询数量、普通 answer 兼容、Bearer 移动鉴权和旧客户端缺省字段测试；先以 curl 验证新端点非 404，再运行相关 API pytest。
+- [x] 5.5 运行 `cd backend && .venv/bin/python -m pytest -W error && .venv/bin/ruff check app tests`，确认全量通过后完成一次后端阶段本地提交。
 
 ## 6. 移动端领域层与恢复控制器
 

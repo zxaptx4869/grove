@@ -757,6 +757,8 @@ async def edit_draft(
     if payload.info_nature is not None:
         draft.info_nature = payload.info_nature
     await db.flush()
+    # onupdate 由数据库生成：刷新 updated_at，避免后续同步组装触发惰性加载
+    await db.refresh(draft)
     return draft
 
 
@@ -774,6 +776,7 @@ async def cancel_draft(
         return draft
     draft.status = DRAFT_CANCELLED
     await db.flush()
+    await db.refresh(draft)
     return draft
 
 
@@ -788,7 +791,7 @@ def _meta_dict(draft: KnowledgeCandidateDraft) -> dict:
     return data if isinstance(data, dict) else {}
 
 
-def _candidate_receipt(candidate: Candidate) -> CandidateReceiptOut:
+def candidate_receipt(candidate: Candidate) -> CandidateReceiptOut:
     """组装待确认 Candidate 回执。"""
     return CandidateReceiptOut(
         id=candidate.id,
@@ -846,6 +849,54 @@ def draft_out(
         error=draft.error,
         created_at=draft.created_at,
         updated_at=draft.updated_at,
+    )
+
+
+async def drafts_out_batch(
+    db: AsyncSession,
+    drafts: list[KnowledgeCandidateDraft],
+) -> list[KnowledgeCandidateDraftOut]:
+    """批量组装草稿响应：一次查询加载全部 Evidence 句柄，避免 N+1。"""
+    if not drafts:
+        return []
+    all_handles: set[str] = set()
+    for draft in drafts:
+        all_handles.update(_load_handles(draft.evidence_handles_json))
+    rows: list[KnowledgeAgentEvidence] = []
+    if all_handles:
+        rows = (
+            (
+                await db.execute(
+                    select(KnowledgeAgentEvidence).where(
+                        KnowledgeAgentEvidence.handle.in_(all_handles)
+                    )
+                )
+            )
+            .scalars()
+            .all()
+        )
+    by_handle = {row.handle: row for row in rows}
+    return [draft_out(draft, by_handle) for draft in drafts]
+
+
+async def drafts_for_runs(
+    db: AsyncSession,
+    run_ids: list[int],
+) -> list[KnowledgeCandidateDraft]:
+    """按 operation Run id 批量读取草稿（消息页归并使用）。"""
+    ids = list(dict.fromkeys(run_ids))
+    if not ids:
+        return []
+    return list(
+        (
+            await db.execute(
+                select(KnowledgeCandidateDraft).where(
+                    KnowledgeCandidateDraft.operation_run_id.in_(ids)
+                )
+            )
+        )
+        .scalars()
+        .all()
     )
 
 

@@ -19,10 +19,20 @@ from app.models import (
     User,
     Workspace,
 )
-from app.models.knowledge_agent import MESSAGE_TYPE_USER
+from app.models.knowledge_agent import (
+    MESSAGE_TYPE_USER,
+    RUN_ACTIVE_STATUSES,
+    RUN_KIND_DRAFT_CANDIDATE,
+)
 from app.schemas.knowledge_agent import (
+    KnowledgeCandidateDraftOut,
     KnowledgeConversationCreate,
     KnowledgeConversationOut,
+    KnowledgeDraftActionOut,
+    KnowledgeDraftActionRequest,
+    KnowledgeDraftConfirmOut,
+    KnowledgeDraftConfirmRequest,
+    KnowledgeDraftEditRequest,
     KnowledgeInvestigationDetailOut,
     KnowledgeInvestigationQueryOut,
     KnowledgeInvestigationRoundOut,
@@ -34,6 +44,16 @@ from app.schemas.knowledge_agent import (
     KnowledgeRunSubmitRequest,
     KnowledgeScopeChangeRequest,
     KnowledgeToolCallOut,
+)
+from app.services.knowledge_agent.candidate import (
+    cancel_draft,
+    candidate_receipt,
+    confirm_draft,
+    drafts_for_runs,
+    drafts_out_batch,
+    edit_draft,
+    get_owned_draft,
+    submit_draft_candidate,
 )
 from app.services.knowledge_agent.conversations import (
     change_scope,
@@ -179,6 +199,27 @@ async def _message_exists(
     return row is not None
 
 
+async def _draft_action_exists(
+    db: DbSession,
+    conversation_id: int,
+    client_message_id: str,
+) -> bool:
+    """判断草稿动作幂等键是否已存在（选择 201/200 状态码）。"""
+    row = (
+        await db.execute(
+            select(KnowledgeMessage.id)
+            .join(KnowledgeAgentRun, KnowledgeMessage.run_id == KnowledgeAgentRun.id)
+            .where(
+                KnowledgeMessage.conversation_id == conversation_id,
+                KnowledgeMessage.client_message_id == client_message_id,
+                KnowledgeMessage.message_type == MESSAGE_TYPE_USER,
+                KnowledgeAgentRun.run_kind == RUN_KIND_DRAFT_CANDIDATE,
+            )
+        )
+    ).scalar_one_or_none()
+    return row is not None
+
+
 @router.get("/conversations", response_model=list[KnowledgeConversationOut])
 async def list_conversations_endpoint(
     db: DbSession,
@@ -259,6 +300,8 @@ async def list_messages_endpoint(
             )
         ).scalars().all()
         runs_by_id = {run.id: run for run in run_rows}
+    drafts = await drafts_for_runs(db, list(run_ids))
+    draft_out_rows = await drafts_out_batch(db, drafts)
     return KnowledgeMessagePageOut(
         items=[
             message_out(row, runs_by_id.get(row.run_id) if row.run_id else None)
@@ -266,6 +309,7 @@ async def list_messages_endpoint(
         ],
         next_cursor=next_cursor,
         runs=[run_out(run) for run in runs_by_id.values()],
+        candidate_drafts=draft_out_rows,
     )
 
 
@@ -312,6 +356,109 @@ async def submit_message_endpoint(
     return KnowledgeRunSubmitOut(
         user_message=message_out(user_message, run),
         run=run_out(run),
+    )
+
+
+@router.post(
+    "/conversations/{conversation_id}/drafts",
+    response_model=KnowledgeDraftActionOut,
+)
+async def submit_draft_action_endpoint(
+    conversation_id: int,
+    payload: KnowledgeDraftActionRequest,
+    db: DbSession,
+    user: CurrentUser,
+    workspace: CurrentWorkspace,
+    response: Response,
+) -> KnowledgeDraftActionOut:
+    """显式「整理成知识」：创建可见用户消息、operation Run 与 generating Draft。"""
+    conversation = await get_owned_conversation(db, workspace.id, user.id, conversation_id)
+    created = not await _draft_action_exists(
+        db, conversation.id, payload.client_message_id
+    )
+    user_message, run, draft = await submit_draft_candidate(db, conversation, payload)
+    await db.commit()
+    response.status_code = status.HTTP_201_CREATED if created else status.HTTP_200_OK
+    draft_out = (await drafts_out_batch(db, [draft]))[0]
+    return KnowledgeDraftActionOut(
+        user_message=message_out(user_message, run),
+        run=run_out(run),
+        draft=draft_out,
+    )
+
+
+@router.get("/drafts/{draft_id}", response_model=KnowledgeCandidateDraftOut)
+async def get_draft_endpoint(
+    draft_id: int,
+    db: DbSession,
+    user: CurrentUser,
+    workspace: CurrentWorkspace,
+) -> KnowledgeCandidateDraftOut:
+    """读取草稿：owner + Workspace 越权一律 404。"""
+    draft = await get_owned_draft(db, workspace.id, user.id, draft_id)
+    return (await drafts_out_batch(db, [draft]))[0]
+
+
+@router.patch("/drafts/{draft_id}", response_model=KnowledgeCandidateDraftOut)
+async def edit_draft_endpoint(
+    draft_id: int,
+    payload: KnowledgeDraftEditRequest,
+    db: DbSession,
+    user: CurrentUser,
+    workspace: CurrentWorkspace,
+) -> KnowledgeCandidateDraftOut:
+    """编辑草稿允许字段；目标项目/source Run/Evidence 集合不可编辑。"""
+    draft = await get_owned_draft(db, workspace.id, user.id, draft_id)
+    await edit_draft(db, draft, payload)
+    await db.commit()
+    return (await drafts_out_batch(db, [draft]))[0]
+
+
+@router.post("/drafts/{draft_id}/cancel", response_model=KnowledgeCandidateDraftOut)
+async def cancel_draft_endpoint(
+    draft_id: int,
+    db: DbSession,
+    user: CurrentUser,
+    workspace: CurrentWorkspace,
+) -> KnowledgeCandidateDraftOut:
+    """取消未确认草稿；活动 operation Run 一并取消，不创建任何知识对象。"""
+    draft = await get_owned_draft(db, workspace.id, user.id, draft_id)
+    operation_run = (
+        await db.get(KnowledgeAgentRun, draft.operation_run_id)
+        if draft.operation_run_id
+        else None
+    )
+    if operation_run is not None and operation_run.status in RUN_ACTIVE_STATUSES:
+        await cancel_run(db, operation_run)
+    else:
+        await cancel_draft(db, draft)
+    await db.commit()
+    return (await drafts_out_batch(db, [draft]))[0]
+
+
+@router.post(
+    "/drafts/{draft_id}/confirm",
+    response_model=KnowledgeDraftConfirmOut,
+)
+async def confirm_draft_endpoint(
+    draft_id: int,
+    payload: KnowledgeDraftConfirmRequest,
+    db: DbSession,
+    user: CurrentUser,
+    workspace: CurrentWorkspace,
+) -> KnowledgeDraftConfirmOut:
+    """确认草稿：服务端重验后幂等创建待确认 Candidate，不写正式 Entry。"""
+    draft = await get_owned_draft(db, workspace.id, user.id, draft_id)
+    confirmed, candidate = await confirm_draft(
+        db,
+        draft,
+        payload.client_operation_id,
+    )
+    await db.commit()
+    draft_out_row = (await drafts_out_batch(db, [confirmed]))[0]
+    return KnowledgeDraftConfirmOut(
+        draft=draft_out_row,
+        candidate=candidate_receipt(candidate),
     )
 
 
