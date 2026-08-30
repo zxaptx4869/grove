@@ -157,6 +157,8 @@ function draft(
     generationDegraded: false,
     generationError: null,
     confirmedCandidateId: null,
+    routingStatus: null,
+    relationStatus: null,
     error: null,
     createdAt: "2026-08-29T10:00:00Z",
     updatedAt: "2026-08-29T10:00:00Z",

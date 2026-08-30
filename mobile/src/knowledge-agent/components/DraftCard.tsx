@@ -142,8 +142,11 @@ export function DraftReceiptCard({
   draft: KnowledgeCandidateDraft;
 }) {
   const sourceCount = draft.evidenceSummaries.length;
-  const routingPending =
-    draft.status === "confirmed" && draft.confirmedCandidateId !== null;
+  const routingUnfinished =
+    draft.status === "confirmed" &&
+    draft.confirmedCandidateId !== null &&
+    (draft.routingStatus === "pending" ||
+      draft.relationStatus === "pending");
   return (
     <Card style={styles.receiptCard}>
       <CardBody>
@@ -182,9 +185,9 @@ export function DraftReceiptCard({
             </Text>
           </View>
         </View>
-        {routingPending && (
+        {routingUnfinished && (
           <Text style={styles.receiptNote}>
-            目录与关系建议仍在待确认流程中处理，尚未写入正式知识。
+            目录推荐或关系判断尚未完成，Candidate 已创建待确认，尚未写入正式知识。
           </Text>
         )}
       </CardBody>

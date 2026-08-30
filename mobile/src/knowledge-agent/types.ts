@@ -215,6 +215,9 @@ export interface KnowledgeCandidateDraft {
   generationDegraded: boolean;
   generationError: string | null;
   confirmedCandidateId: number | null;
+  /** 确认后目录推荐/关系判断状态：pending 表示对应辅助步骤尚未完成。 */
+  routingStatus: string | null;
+  relationStatus: string | null;
   error: string | null;
   createdAt: string;
   updatedAt: string;

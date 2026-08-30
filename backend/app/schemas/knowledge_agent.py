@@ -306,6 +306,9 @@ class KnowledgeCandidateDraftOut(BaseModel):
     generation_degraded: bool = False
     generation_error: str | None = None
     confirmed_candidate_id: int | None = None
+    # 确认后目录推荐/关系判断状态：pending 表示对应辅助步骤尚未完成
+    routing_status: str | None = None
+    relation_status: str | None = None
     error: str | None = None
     created_at: datetime
     updated_at: datetime
