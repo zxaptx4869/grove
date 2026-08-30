@@ -29,4 +29,3 @@ Knowledge Agent Candidate 确认接口 MUST 从服务端 Draft、source Run 与 
 #### Scenario: 创建事务失败
 - **WHEN** Source、Attachment、Extraction、Candidate 或 Draft 关联任一步骤提交失败
 - **THEN** 事务不暴露半成品 Candidate，客户端可用相同幂等键安全恢复或重试
-

@@ -25,4 +25,3 @@
 #### Scenario: Candidate 创建完成
 - **WHEN** Draft 确认并关联 pending Candidate
 - **THEN** 回执显示待确认状态、来源与目标项目，不显示“正式知识已保存”
-

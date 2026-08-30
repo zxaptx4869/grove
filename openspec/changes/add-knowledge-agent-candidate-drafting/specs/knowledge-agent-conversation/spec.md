@@ -18,4 +18,3 @@
 #### Scenario: 活动 Run 期间提交草稿动作
 - **WHEN** Conversation 已有 waiting 或 processing Run
 - **THEN** 系统返回 409 且不创建第二个活动 Run、消息或 Draft
-

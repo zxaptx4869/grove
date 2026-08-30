@@ -136,4 +136,3 @@
 #### Scenario: 辅助建议失败
 - **WHEN** Candidate 已创建但目录推荐或关系判断失败
 - **THEN** 系统保留 Candidate 并记录/返回真实 pending 或失败影响，不把辅助阶段伪装为正常，也不回滚为无记录
-

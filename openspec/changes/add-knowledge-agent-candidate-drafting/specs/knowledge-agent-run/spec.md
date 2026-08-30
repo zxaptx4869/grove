@@ -22,4 +22,3 @@
 #### Scenario: 操作阶段可观测
 - **WHEN** 草稿生成模型或确认工具成功、降级或失败
 - **THEN** 系统分别记录 purpose、provider、model、fallback/error、耗时和受影响阶段，不把失败标为正常
-
