@@ -55,15 +55,15 @@
 
 ## 8. 视觉、键盘与可访问性验收
 
-- [ ] 8.1 在 390×844 主视口逐项对照原型走查回答动作、项目 Sheet、用户操作消息、过程卡、草稿卡、编辑 Sheet、确认 Sheet、回执与错误恢复；核对元素顺序、水平对齐、视觉重量、文字层级、间距、边框、圆角和按钮样式。
-- [ ] 8.2 在 360×800 与 412×915 验证短/长草稿、动态字体、文本缩放、长项目名、多个来源和错误文案，无横向溢出、截断或固定控件跳动。
-- [ ] 8.3 在可用的 iOS/Android 真机或模拟器验证系统键盘开闭、多行增长、滚动、焦点归还、安全区、底栏隐藏/恢复和返回行为；若工具链不可用，明确记录未验证项，不以 Web 伪键盘代替原生验收。
-- [ ] 8.4 校验 44×44 触控目标、读屏 label/state/order、非颜色状态、reduce-motion 和 Sheet 长内容滚动；将代表性三视口截图与走查记录放入本 change 的 `validation/`，不提交构建包、密钥或 `.env`。
+- [x] 8.1 在 390×844 主视口逐项对照原型走查回答动作、项目 Sheet、用户操作消息、过程卡、草稿卡、编辑 Sheet、确认 Sheet、回执与错误恢复；核对元素顺序、水平对齐、视觉重量、文字层级、间距、边框、圆角和按钮样式。
+- [x] 8.2 在 360×800 与 412×915 验证短/长草稿、动态字体、文本缩放、长项目名、多个来源和错误文案，无横向溢出、截断或固定控件跳动。
+- [x] 8.3 在可用的 iOS/Android 真机或模拟器验证系统键盘开闭、多行增长、滚动、焦点归还、安全区、底栏隐藏/恢复和返回行为；若工具链不可用，明确记录未验证项，不以 Web 伪键盘代替原生验收。
+- [x] 8.4 校验 44×44 触控目标、读屏 label/state/order、非颜色状态、reduce-motion 和 Sheet 长内容滚动；将代表性三视口截图与走查记录放入本 change 的 `validation/`，不提交构建包、密钥或 `.env`。
 
 ## 9. 纵向走查与全量验证
 
-- [ ] 9.1 用真实 Bearer Session 和真实服务端 Run 走查：项目回答整理、Workspace 单项目预填、多项目选择、partial 只整理有效部分、无引用拒绝、编辑、取消、确认、未知结果重试、Evidence 失效 409、历史恢复与跨 Workspace 404。
-- [ ] 9.2 核对确认后只新增虚拟 Source/Attachment/Extraction/pending Candidate，未新增/修改 Entry；在桌面既有确认台确认 Candidate、目录建议、关系建议和来源均可正常查看，旧 Reader 保存仍可用。
-- [ ] 9.3 运行 `cd backend && .venv/bin/python -m pytest -W error && .venv/bin/ruff check app tests`，运行 `cd mobile && npm test -- --runInBand && npm run lint && npm run typecheck && npx expo export --platform ios && npx expo export --platform android`，再运行 `git diff --check`。
-- [ ] 9.4 运行 `openspec validate add-knowledge-agent-candidate-drafting --strict` 与 `openspec validate --all --strict`；逐项核对 specs、原型偏离、可观测性、Workspace 隔离、Candidate/Entry 文案和任务勾选。
-- [ ] 9.5 更新 `validation/validation.md` 的真实命令、测试数量、curl/设备结果与未验证项；完成最终本地提交并停留在特性分支等待用户体验，不 archive、push 或 merge。
+- [x] 9.1 用真实 Bearer Session 和真实服务端 Run 走查：项目回答整理、Workspace 单项目预填、多项目选择、partial 只整理有效部分、无引用拒绝、编辑、取消、确认、未知结果重试、Evidence 失效 409、历史恢复与跨 Workspace 404。
+- [x] 9.2 核对确认后只新增虚拟 Source/Attachment/Extraction/pending Candidate，未新增/修改 Entry；在桌面既有确认台确认 Candidate、目录建议、关系建议和来源均可正常查看，旧 Reader 保存仍可用。
+- [x] 9.3 运行 `cd backend && .venv/bin/python -m pytest -W error && .venv/bin/ruff check app tests`，运行 `cd mobile && npm test -- --runInBand && npm run lint && npm run typecheck && npx expo export --platform ios && npx expo export --platform android`，再运行 `git diff --check`。
+- [x] 9.4 运行 `openspec validate add-knowledge-agent-candidate-drafting --strict` 与 `openspec validate --all --strict`；逐项核对 specs、原型偏离、可观测性、Workspace 隔离、Candidate/Entry 文案和任务勾选。
+- [x] 9.5 更新 `validation/validation.md` 的真实命令、测试数量、curl/设备结果与未验证项；完成最终本地提交并停留在特性分支等待用户体验，不 archive、push 或 merge。
