@@ -329,6 +329,87 @@ test("insufficient 带引用时仍遵循后端知识不足状态", async () => {
   expect(view.getByLabelText("查看引用：Entry 1")).toBeOnTheScreen();
 });
 
+test("结构化要点渲染分组编号与逐条来源", async () => {
+  const onCitationPress = jest.fn();
+  const view = await render(
+    <AnswerCard
+      run={run(1, "completed", {
+        answer:
+          "结论摘要。\n\n**客厅/卧室区域**\n- 飘窗处预留插座。\n\n**厨房区域**\n- 台面多留插座。",
+        status: "completed",
+        insufficientNote: null,
+        points: [
+          {
+            section: "客厅/卧室区域",
+            text: "飘窗处预留插座。",
+            citations: [citation(1)],
+          },
+          {
+            section: "客厅/卧室区域",
+            text: "窗帘盒边预留电源。",
+            citations: [citation(2)],
+          },
+          {
+            section: "厨房区域",
+            text: "台面多留插座。",
+            citations: [citation(3)],
+          },
+        ],
+        citations: [citation(1), citation(2), citation(3)],
+        conflicts: [],
+      })}
+      scopeLabel="全部知识"
+      onCitationPress={onCitationPress}
+      onRetry={jest.fn()}
+      onOrganize={jest.fn()}
+    />,
+    { wrapper },
+  );
+  expect(view.getByText("▍ 客厅/卧室区域")).toBeOnTheScreen();
+  expect(view.getByText("▍ 厨房区域")).toBeOnTheScreen();
+  expect(view.getByText("飘窗处预留插座。")).toBeOnTheScreen();
+  expect(view.getByText("窗帘盒边预留电源。")).toBeOnTheScreen();
+  expect(view.getByText("台面多留插座。")).toBeOnTheScreen();
+  // 连续编号 1..3，且无 points 时不裸露 Markdown 标记
+  expect(view.getByText("1")).toBeOnTheScreen();
+  expect(view.getByText("2")).toBeOnTheScreen();
+  expect(view.getByText("3")).toBeOnTheScreen();
+  expect(view.queryByText(/\*\*/)).toBeNull();
+  // 每条要点一个来源入口，点击复用引用回调
+  const chips = view.getAllByLabelText("查看引用：Entry 1");
+  expect(chips.length).toBeGreaterThanOrEqual(1);
+  await fireEvent.press(chips[0]);
+  expect(onCitationPress).toHaveBeenCalledWith(citation(1));
+  // 底部「全部来源速览」与逐条来源并存
+  expect(chips.length).toBeGreaterThanOrEqual(2);
+  await view.unmount();
+});
+
+test("无结构化要点时回退纯文本与底部来源条", async () => {
+  const view = await render(
+    <AnswerCard
+      run={run(1, "completed", {
+        answer: "**客厅/卧室区域**\n- 飘窗处预留插座。",
+        status: "completed",
+        insufficientNote: null,
+        citations: [citation(1)],
+        conflicts: [],
+      })}
+      scopeLabel="全部知识"
+      onCitationPress={jest.fn()}
+      onRetry={jest.fn()}
+      onOrganize={jest.fn()}
+    />,
+    { wrapper },
+  );
+  // 清洗后展示，不裸露 ** 标记
+  expect(view.getByText(/客厅\/卧室区域/)).toBeOnTheScreen();
+  expect(view.queryByText(/\*\*/)).toBeNull();
+  // 底部引用条仍可访问
+  expect(view.getByLabelText("查看引用：Entry 1")).toBeOnTheScreen();
+  await view.unmount();
+});
+
 test("partial 提供修改问题再问，失败/降级才提供一键重新提问", async () => {
   const partialRefine = jest.fn();
   const partial = await render(

@@ -116,10 +116,20 @@ export interface KnowledgeConflict {
   citationB: KnowledgeRunCitation | null;
 }
 
+export interface KnowledgeAnswerPoint {
+  /** 可选分组标题（如「客厅/卧室区域」）；服务端重验后输出。 */
+  section: string | null;
+  text: string;
+  /** 该要点采用的逐条引用（服务端重验后的当前可核验 Evidence）。 */
+  citations: KnowledgeRunCitation[];
+}
+
 export interface KnowledgeAnswer {
   answer: string;
   status: AnswerStatus;
   insufficientNote: string | null;
+  /** v3 可选结构化要点；历史回答与旧模型输出缺省为空。 */
+  points?: KnowledgeAnswerPoint[];
   citations: KnowledgeRunCitation[];
   conflicts: KnowledgeConflict[];
 }

@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, type ReactNode } from "react";
 import {
   Pressable,
   ScrollView,
@@ -26,6 +26,7 @@ import {
 import { presentFallback } from "@/src/knowledge-agent/adapters/fallback";
 import type {
   KnowledgeConflict,
+  KnowledgeAnswerPoint,
   KnowledgeRun,
   KnowledgeRunCitation,
 } from "@/src/knowledge-agent/types";
@@ -212,6 +213,61 @@ function InvestigationGroup({ label, items }: { label: string; items: string[] }
   );
 }
 
+/** 结构化要点卡：分组标题 + 连续编号 + 正文 + 逐条来源入口（对齐原型 answer-points）。 */
+function AnswerPoints({
+  points,
+  onCitationPress,
+}: {
+  points: KnowledgeAnswerPoint[];
+  onCitationPress: (citation: KnowledgeRunCitation) => void;
+}) {
+  const rows: ReactNode[] = [];
+  let lastSection: string | null = null;
+  let number = 0;
+  points.forEach((point, index) => {
+    const section = point.section ?? null;
+    if (section !== lastSection) {
+      if (section !== null) {
+        rows.push(
+          <Text key={`section-${index}`} style={styles.pointSection}>
+            ▍ {section}
+          </Text>,
+        );
+      }
+      lastSection = section;
+    }
+    number += 1;
+    rows.push(
+      <View key={`point-${index}`} style={styles.pointRow}>
+        <View style={styles.pointNumber}>
+          <Text style={styles.pointNumberText}>{number}</Text>
+        </View>
+        <View style={styles.pointMain}>
+          <Text style={styles.pointText}>{point.text}</Text>
+          {point.citations.map((citation) => (
+            <Pressable
+              key={citation.evidenceId}
+              accessibilityRole="button"
+              accessibilityLabel={`查看引用：${citation.entryTitle}`}
+              onPress={() => onCitationPress(citation)}
+              style={({ pressed }) => [
+                styles.pointCitation,
+                pressed && styles.sourceChipPressed,
+              ]}
+            >
+              <AgentIcon name="quote" size={14} color={theme.green} />
+              <Text style={styles.pointCitationText} numberOfLines={1}>
+                {citation.sourceTitle || citation.entryTitle}
+              </Text>
+            </Pressable>
+          ))}
+        </View>
+      </View>,
+    );
+  });
+  return <View style={styles.points}>{rows}</View>;
+}
+
 export function AnswerCard({
   run,
   scopeLabel,
@@ -300,9 +356,19 @@ export function AnswerCard({
                 {presentation.note}
               </Text>
             )}
-            {answer && answer.answer.trim() !== "" && (
-              <Text style={styles.answerBody}>{cleanAnswerText(answer.answer)}</Text>
-            )}
+            {answer &&
+              (answer.points && answer.points.length > 0 ? (
+                <AnswerPoints
+                  points={answer.points}
+                  onCitationPress={onCitationPress}
+                />
+              ) : (
+                answer.answer.trim() !== "" && (
+                  <Text style={styles.answerBody}>
+                    {cleanAnswerText(answer.answer)}
+                  </Text>
+                )
+              ))}
             {fallback.hasFallback && (
               <View style={styles.fallbackBox}>
                 {fallback.lines.map((line) => (
@@ -434,6 +500,58 @@ const styles = StyleSheet.create({
     fontSize: 14,
     lineHeight: 23,
     color: theme.ink,
+  },
+  points: {
+    marginTop: 14,
+    gap: 12,
+  },
+  pointSection: {
+    fontSize: 13,
+    fontWeight: "700",
+    color: theme.ink,
+  },
+  pointRow: {
+    flexDirection: "row",
+    gap: 8,
+  },
+  pointNumber: {
+    width: 21,
+    height: 21,
+    marginTop: 1,
+    borderRadius: 6,
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: theme.greenSoft,
+  },
+  pointNumberText: {
+    fontSize: 11,
+    fontWeight: "700",
+    color: theme.green,
+  },
+  pointMain: { minWidth: 0, flex: 1 },
+  pointText: {
+    fontSize: 13,
+    lineHeight: 21,
+    color: theme.ink,
+  },
+  pointCitation: {
+    minHeight: 44,
+    alignSelf: "flex-start",
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 5,
+    marginTop: 6,
+    paddingHorizontal: 10,
+    borderWidth: 1,
+    borderColor: theme.border,
+    borderRadius: 7,
+    backgroundColor: theme.soft,
+  },
+  pointCitationText: {
+    maxWidth: 260,
+    color: theme.green,
+    fontSize: 12,
+    fontWeight: "600",
   },
   insufficientText: { color: "#76501C" },
   fallbackBox: {

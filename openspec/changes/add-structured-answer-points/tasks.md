@@ -14,10 +14,10 @@
 
 ## 3. 移动端：要点卡渲染与回退
 
-- [ ] 3.1 扩展 `KnowledgeAnswer` 类型与 `KnowledgeAnswerPoint`（`section`/`text`/`citations`），API 解析保持旧响应兼容。
-- [ ] 3.2 在 `AnswerCard` 实现要点卡渲染：`section` 变化时显示分组标题（加粗 + 前缀符号）、全回答连续编号、要点正文；每条要点下方提供来源 chip（`minHeight 44`、复用 `onCitationPress` → CitationSheet、`accessibilityLabel="查看引用：{entryTitle}"`）。
-- [ ] 3.3 保留无 `points` 回退路径（`cleanAnswerText` + 底部 `CitationStrip`）与有 `points` 时的底部「全部来源速览」；不出现空要点区或伪富文本。
-- [ ] 3.4 补充组件测试：要点渲染（分组/编号/chip）、无 points 回退、引用点击、读屏标签与 44 触控目标；运行 `cd mobile && npm test -- --runInBand && npm run lint && npx tsc --noEmit`，通过后本地提交。
+- [x] 3.1 扩展 `KnowledgeAnswer` 类型与 `KnowledgeAnswerPoint`（`section`/`text`/`citations`），API 解析保持旧响应兼容。
+- [x] 3.2 在 `AnswerCard` 实现要点卡渲染：`section` 变化时显示分组标题（加粗 + 前缀符号）、全回答连续编号、要点正文；每条要点下方提供来源 chip（`minHeight 44`、复用 `onCitationPress` → CitationSheet、`accessibilityLabel="查看引用：{entryTitle}"`）。
+- [x] 3.3 保留无 `points` 回退路径（`cleanAnswerText` + 底部 `CitationStrip`）与有 `points` 时的底部「全部来源速览」；不出现空要点区或伪富文本。
+- [x] 3.4 补充组件测试：要点渲染（分组/编号/chip）、无 points 回退、引用点击、读屏标签与 44 触控目标；运行 `cd mobile && npm test -- --runInBand && npm run lint && npx tsc --noEmit`，通过后本地提交。
 
 ## 4. 验证与记录
 
