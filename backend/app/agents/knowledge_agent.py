@@ -13,7 +13,7 @@ from app.services.knowledge_agent.observability import StageMeta
 
 logger = logging.getLogger(__name__)
 
-ANSWER_PROMPT_VERSION = "v2"
+ANSWER_PROMPT_VERSION = "v3"
 
 
 class KnowledgeCitationDraft(BaseModel):
@@ -37,10 +37,21 @@ class KnowledgeEvidenceSummaryDraft(BaseModel):
     evidence_handles: list[str] = []
 
 
+class KnowledgeAnswerPointDraft(BaseModel):
+    """回答要点：服务端会逐条重验句柄并派生 citations。"""
+
+    section: str | None = None
+    text: str = ""
+    evidence_handles: list[str] = []
+
+
 class KnowledgeAnswerDraft(BaseModel):
     """一次问答的结构化草稿。"""
 
     answer: str = ""
+    # v3：结论摘要与结构化要点；answer 文本由服务端从 lead + points 拼接
+    lead: str | None = None
+    points: list[KnowledgeAnswerPointDraft] = []
     citations: list[KnowledgeCitationDraft] = []
     conflicts: list[KnowledgeConflictDraft] = []
     insufficient: bool = False
@@ -88,12 +99,17 @@ KNOWLEDGE_ANSWER_SYSTEM_PROMPT = (
     "insufficient=False，已确认部分用 coverage 表达、未覆盖部分用 gaps 表达，"
     "不得用 insufficient 掩盖已有的可确认结论。"
     "\n"
-    "10. 正文中绝对禁止出现 ev_ 开头的句柄字符串或任何引用标识；引用只通过结构化的"
-    "citations/conflicts 字段表达，不得在内联文本中追加句柄、编号或括号标记。"
+    "10. 正文（lead 与每条 point 的 text）中绝对禁止出现 ev_ 开头的句柄字符串或任何"
+    "引用标识；引用只通过结构化的 citations/conflicts 字段表达，不得在内联文本中追加"
+    "句柄、编号或括号标记。"
     "\n"
-    "11. 每个独立的关键事实点都必须挂对应引用：不要为一段多个结论只挂一个句柄，"
-    "也不要让正文出现无引用的关键结论。引用与正文事实一一对应，"
-    "宁可多列 citations 也不要漏挂。"
+    "11. 用 points 表达正文结构：每个独立的关键事实点必须是一个 point，且该 point 的"
+    "evidence_handles 至少挂一个对应句柄；不要为一段多个结论只挂一个句柄，也不要让"
+    "point 出现无引用的关键结论。多个事实点主题相同时用相同的 section 分组；"
+    "section 使用简短主题词（如「客厅/卧室区域」「厨房区域」），不使用序号。"
+    "\n"
+    "12. lead 只写一至两句直接回答核心问题的结论摘要；详细分点全部放入 points，"
+    "lead 与 points 之间不要重复展开。answer 字段由服务端生成，请留空。"
 )
 
 

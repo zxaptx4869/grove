@@ -160,12 +160,22 @@ class KnowledgeConflictOut(BaseModel):
     citation_b: "KnowledgeRunCitationOut | None" = None
 
 
+class KnowledgeAnswerPointOut(BaseModel):
+    """回答结构化要点：每条携带服务端重验后的逐条引用。"""
+
+    section: str | None = None
+    text: str
+    citations: list[KnowledgeRunCitationOut] = []
+
+
 class KnowledgeAnswerOut(BaseModel):
     """结构化回答：引用只能来自本 Run 的 Evidence 句柄。"""
 
     answer: str
     status: AnswerStatus
     insufficient_note: str | None = None
+    # v3：可选结构化要点；旧回答/旧模型输出为空列表
+    points: list[KnowledgeAnswerPointOut] = []
     citations: list[KnowledgeRunCitationOut] = []
     conflicts: list[KnowledgeConflictOut] = []
     # 只由本 Run 最终有效引用支撑的终态覆盖/缺口，不复用控制器搜索前计划。

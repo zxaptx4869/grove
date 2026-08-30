@@ -5,6 +5,7 @@ from sqlalchemy import select
 
 from app.agents.knowledge_agent import (
     KnowledgeAnswerDraft,
+    KnowledgeAnswerPointDraft,
     KnowledgeCitationDraft,
     KnowledgeConflictDraft,
     KnowledgeEvidenceSummaryDraft,
@@ -254,6 +255,341 @@ async def test_build_validated_answer_drops_fake_handles_and_quotes() -> None:
         assert stats.requested_count == 3
         assert stats.valid_count == 1
         assert stats.discarded_count == 2
+
+
+@pytest.mark.asyncio
+async def test_build_validated_answer_points_compose_and_validate() -> None:
+    """v3：lead + points 逐条校验、派生 citations，并按分组拼接 answer。"""
+    async with async_session_factory() as db:
+        user = await create_user(db, "要点校验")
+        workspace = await create_workspace(db, user)
+        project = await create_project(db, workspace, "要点项目")
+        node = await create_child_node(db, project, "施工")
+
+        source_a, attachment_a = await create_source_attachment(
+            db,
+            workspace,
+            project,
+            text_content="飘窗处预留插座，方便充电。窗帘盒边预留电源。",
+        )
+        entry_a = await create_entry_with_evidence(
+            db,
+            project,
+            node,
+            source_a,
+            attachment_a,
+            quote="飘窗处预留插座",
+        )
+        source_b, attachment_b = await create_source_attachment(
+            db,
+            workspace,
+            project,
+            text_content="厨房台面应多留插座，可安装带开关的插座。",
+        )
+        entry_b = await create_entry_with_evidence(
+            db,
+            project,
+            node,
+            source_b,
+            attachment_b,
+            quote="厨房台面应多留插座",
+        )
+        conversation = KnowledgeConversation(
+            workspace_id=workspace.id,
+            owner_user_id=user.id,
+            scope_type="workspace",
+            title="要点测试",
+        )
+        db.add(conversation)
+        await db.flush()
+        run = KnowledgeAgentRun(
+            conversation_id=conversation.id,
+            workspace_id=workspace.id,
+            owner_user_id=user.id,
+            scope_type="workspace",
+            status=RUN_PROCESSING,
+            active_slot="active",
+            max_retries=1,
+        )
+        db.add(run)
+        await db.flush()
+        evidence_a = await _evidence_row(
+            db,
+            run_id=run.id,
+            entry=entry_a,
+            project=project,
+            source=source_a,
+            attachment=attachment_a,
+            entry_evidence=await _entry_evidence(db, entry_a.id, source_a.id),
+            quote="飘窗处预留插座",
+        )
+        evidence_b = await _evidence_row(
+            db,
+            run_id=run.id,
+            entry=entry_b,
+            project=project,
+            source=source_b,
+            attachment=attachment_b,
+            entry_evidence=await _entry_evidence(db, entry_b.id, source_b.id),
+            quote="厨房台面应多留插座",
+        )
+        await db.commit()
+
+        draft = KnowledgeAnswerDraft(
+            answer="",
+            lead="装修时需要预留插座的位置包括：飘窗、厨房台面。",
+            core_question_answered=True,
+            coverage_complete=True,
+            points=[
+                KnowledgeAnswerPointDraft(
+                    section="客厅/卧室区域",
+                    text="飘窗处预留插座（ev_0123456789abcdef0123456789abcdef）。",
+                    evidence_handles=[evidence_a.handle],
+                ),
+                KnowledgeAnswerPointDraft(
+                    section="客厅/卧室区域",
+                    text="窗帘盒边预留电源。",
+                    evidence_handles=[evidence_a.handle],
+                ),
+                KnowledgeAnswerPointDraft(
+                    section="厨房区域",
+                    text="台面多留插座。",
+                    evidence_handles=[evidence_b.handle],
+                ),
+            ],
+        )
+        answer, stats = await build_validated_answer(db, run.id, draft)
+        assert answer.status == "completed"
+        assert stats.requested_count == 2
+        assert stats.valid_count == 2
+        assert stats.discarded_count == 0
+        assert answer.answer == (
+            "装修时需要预留插座的位置包括：飘窗、厨房台面。\n\n"
+            "**客厅/卧室区域**\n"
+            "- 飘窗处预留插座。\n"
+            "- 窗帘盒边预留电源。\n\n"
+            "**厨房区域**\n"
+            "- 台面多留插座。"
+        )
+        assert [point.section for point in answer.points] == [
+            "客厅/卧室区域",
+            "客厅/卧室区域",
+            "厨房区域",
+        ]
+        assert all("ev_" not in point.text for point in answer.points)
+        assert [len(point.citations) for point in answer.points] == [1, 1, 1]
+        # 扁平 citations 按 points 顺序去重派生
+        assert [c.evidence_handle for c in answer.citations] == [
+            evidence_a.handle,
+            evidence_b.handle,
+        ]
+
+
+@pytest.mark.asyncio
+async def test_build_validated_answer_points_drop_invalid_marks_partial() -> None:
+    """v3：无有效句柄的要点整条丢弃，其余保留并标记 partial。"""
+    async with async_session_factory() as db:
+        user = await create_user(db, "要点部分")
+        workspace = await create_workspace(db, user)
+        project = await create_project(db, workspace, "要点部分项目")
+        node = await create_child_node(db, project, "施工")
+        source, attachment = await create_source_attachment(
+            db,
+            workspace,
+            project,
+            text_content="闭水试验通常持续 24 小时。",
+        )
+        entry = await create_entry_with_evidence(
+            db,
+            project,
+            node,
+            source,
+            attachment,
+            quote="闭水试验通常持续 24 小时",
+        )
+        conversation = KnowledgeConversation(
+            workspace_id=workspace.id,
+            owner_user_id=user.id,
+            scope_type="workspace",
+            title="要点部分测试",
+        )
+        db.add(conversation)
+        await db.flush()
+        run = KnowledgeAgentRun(
+            conversation_id=conversation.id,
+            workspace_id=workspace.id,
+            owner_user_id=user.id,
+            scope_type="workspace",
+            status=RUN_PROCESSING,
+            active_slot="active",
+            max_retries=1,
+        )
+        db.add(run)
+        await db.flush()
+        evidence = await _evidence_row(
+            db,
+            run_id=run.id,
+            entry=entry,
+            project=project,
+            source=source,
+            attachment=attachment,
+            entry_evidence=await _entry_evidence(db, entry.id, source.id),
+            quote="闭水试验通常持续 24 小时",
+        )
+        await db.commit()
+
+        draft = KnowledgeAnswerDraft(
+            answer="",
+            lead="闭水试验有时长证据。",
+            points=[
+                KnowledgeAnswerPointDraft(
+                    section=None,
+                    text="闭水试验通常持续 24 小时。",
+                    evidence_handles=[evidence.handle],
+                ),
+                KnowledgeAnswerPointDraft(
+                    section=None,
+                    text="无依据的要点应被丢弃。",
+                    evidence_handles=["ev_unknown"],
+                ),
+            ],
+        )
+        answer, stats = await build_validated_answer(db, run.id, draft)
+        assert answer.status == "partial"
+        assert len(answer.points) == 1
+        assert answer.points[0].text == "闭水试验通常持续 24 小时。"
+        assert [c.evidence_handle for c in answer.citations] == [evidence.handle]
+        assert stats.discarded_count == 1
+
+
+@pytest.mark.asyncio
+async def test_build_validated_answer_points_all_invalid_insufficient() -> None:
+    """v3：全部要点句柄失效时按无有效引用规则返回 insufficient。"""
+    async with async_session_factory() as db:
+        user = await create_user(db, "要点全失")
+        workspace = await create_workspace(db, user)
+        project = await create_project(db, workspace, "要点全失项目")
+        node = await create_child_node(db, project, "施工")
+        source, attachment = await create_source_attachment(
+            db,
+            workspace,
+            project,
+            text_content="闭水试验通常持续 24 小时。",
+        )
+        await create_entry_with_evidence(
+            db,
+            project,
+            node,
+            source,
+            attachment,
+            quote="闭水试验通常持续 24 小时",
+        )
+        conversation = KnowledgeConversation(
+            workspace_id=workspace.id,
+            owner_user_id=user.id,
+            scope_type="workspace",
+            title="要点全失测试",
+        )
+        db.add(conversation)
+        await db.flush()
+        run = KnowledgeAgentRun(
+            conversation_id=conversation.id,
+            workspace_id=workspace.id,
+            owner_user_id=user.id,
+            scope_type="workspace",
+            status=RUN_PROCESSING,
+            active_slot="active",
+            max_retries=1,
+        )
+        db.add(run)
+        await db.flush()
+        await db.commit()
+
+        draft = KnowledgeAnswerDraft(
+            answer="",
+            lead="全部句柄无效。",
+            points=[
+                KnowledgeAnswerPointDraft(
+                    section=None,
+                    text="无依据要点。",
+                    evidence_handles=["ev_unknown"],
+                ),
+            ],
+        )
+        answer, stats = await build_validated_answer(db, run.id, draft)
+        assert answer.status == "insufficient"
+        assert answer.points == []
+        assert answer.citations == []
+        assert stats.valid_count == 0
+
+
+@pytest.mark.asyncio
+async def test_build_validated_answer_legacy_without_points() -> None:
+    """v3 兼容：无 points 的旧草稿保持既有 answer 文本与扁平引用，points 为空。"""
+    async with async_session_factory() as db:
+        user = await create_user(db, "旧格式")
+        workspace = await create_workspace(db, user)
+        project = await create_project(db, workspace, "旧格式项目")
+        node = await create_child_node(db, project, "施工")
+        source, attachment = await create_source_attachment(
+            db,
+            workspace,
+            project,
+            text_content="闭水试验通常持续 24 小时。",
+        )
+        entry = await create_entry_with_evidence(
+            db,
+            project,
+            node,
+            source,
+            attachment,
+            quote="闭水试验通常持续 24 小时",
+        )
+        conversation = KnowledgeConversation(
+            workspace_id=workspace.id,
+            owner_user_id=user.id,
+            scope_type="workspace",
+            title="旧格式测试",
+        )
+        db.add(conversation)
+        await db.flush()
+        run = KnowledgeAgentRun(
+            conversation_id=conversation.id,
+            workspace_id=workspace.id,
+            owner_user_id=user.id,
+            scope_type="workspace",
+            status=RUN_PROCESSING,
+            active_slot="active",
+            max_retries=1,
+        )
+        db.add(run)
+        await db.flush()
+        evidence = await _evidence_row(
+            db,
+            run_id=run.id,
+            entry=entry,
+            project=project,
+            source=source,
+            attachment=attachment,
+            entry_evidence=await _entry_evidence(db, entry.id, source.id),
+            quote="闭水试验通常持续 24 小时",
+        )
+        await db.commit()
+
+        draft = KnowledgeAnswerDraft(
+            answer="闭水试验通常持续 24 小时。",
+            core_question_answered=True,
+            coverage_complete=True,
+            citations=[
+                KnowledgeCitationDraft(evidence_handle=evidence.handle),
+            ],
+        )
+        answer, stats = await build_validated_answer(db, run.id, draft)
+        assert answer.points == []
+        assert answer.answer == "闭水试验通常持续 24 小时。"
+        assert len(answer.citations) == 1
+        assert answer.status == "completed"
+        assert stats.discarded_count == 0
 
 
 @pytest.mark.asyncio

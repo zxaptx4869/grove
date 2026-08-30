@@ -13,6 +13,7 @@ from app.models import Attachment, EntrySourceEvidence, KnowledgeAgentEvidence, 
 from app.models.knowledge_agent import EVIDENCE_PURPOSE_ANSWER
 from app.schemas.knowledge_agent import (
     KnowledgeAnswerOut,
+    KnowledgeAnswerPointOut,
     KnowledgeConflictOut,
     KnowledgeRunCitationOut,
 )
@@ -23,6 +24,35 @@ logger = logging.getLogger(__name__)
 _EVIDENCE_HANDLE_IN_TEXT = re.compile(
     r"[（(]\s*ev_[0-9a-f]{32}\s*[）)]|ev_[0-9a-f]{32}"
 )
+
+
+def _compose_answer_text(lead: str | None, points: list) -> str:
+    """从 lead + 结构化要点确定性拼接回答纯文本。
+
+    格式刻意模仿模型既有输出（`**分组**` + `- 列表`），让 Web 与历史
+    展示语义保持一致；同一分组内要点不空行，分组变化与 lead 后空行分段。
+    """
+    lines: list[str] = []
+    current_section: str | None = None
+    started = False
+    if lead and lead.strip():
+        lines.append(lead.strip())
+    for point in points:
+        text = (getattr(point, "text", "") or "").strip()
+        if not text:
+            continue
+        section = (getattr(point, "section", None) or "").strip() or None
+        if section != current_section:
+            if lines:
+                lines.append("")
+            current_section = section
+            if section:
+                lines.append(f"**{section}**")
+        elif not started and lines:
+            lines.append("")
+        lines.append(f"- {text}")
+        started = True
+    return "\n".join(lines).strip()
 
 
 def sanitize_answer_text(text: str) -> str:
@@ -229,16 +259,52 @@ async def build_validated_answer(
 
     返回 (最终回答, 引用校验统计)。事实性回答没有有效引用时降级为
     `insufficient`；部分句柄失效时保留有效引用并标记 `partial`。
+
+    v3：模型输出 `lead` + `points` 时，逐条校验要点句柄、派生扁平 citations，
+    并由服务端从 `lead` + `points` 拼接 `answer` 文本；无 `points`（旧模型/
+    降级输出）沿用既有 `answer` 文本与扁平 citations 行为。
     """
-    handles = [item.evidence_handle for item in draft.citations]
+    points = list(getattr(draft, "points", []) or [])
+    if points:
+        handles = [
+            handle for point in points for handle in point.evidence_handles
+        ]
+    else:
+        handles = [item.evidence_handle for item in draft.citations]
     handles.extend(item.evidence_handle_a for item in draft.conflicts)
     handles.extend(item.evidence_handle_b for item in draft.conflicts)
     unique_handles = list(dict.fromkeys(handles))
     resolved = await resolve_evidence_handles(db, run_id, handles)
-    citation_handles = list(dict.fromkeys(item.evidence_handle for item in draft.citations))
-    citations = [
-        _citation_out(resolved[handle]) for handle in citation_handles if handle in resolved
-    ]
+
+    if points:
+        valid_points: list = []
+        citations: list[KnowledgeRunCitationOut] = []
+        seen_citations: set[int] = set()
+        for point in points:
+            point_handles = list(
+                dict.fromkeys(
+                    handle for handle in point.evidence_handles if handle in resolved
+                )
+            )
+            if not point_handles:
+                # 无有效句柄的要点整条丢弃，并计入失效统计
+                continue
+            valid_points.append(point)
+            for handle in point_handles:
+                citation = _citation_out(resolved[handle])
+                if citation.evidence_id not in seen_citations:
+                    seen_citations.add(citation.evidence_id)
+                    citations.append(citation)
+    else:
+        citation_handles = list(
+            dict.fromkeys(item.evidence_handle for item in draft.citations)
+        )
+        citations = [
+            _citation_out(resolved[handle])
+            for handle in citation_handles
+            if handle in resolved
+        ]
+        valid_points = []
 
     conflicts: list[KnowledgeConflictOut] = []
     for conflict in draft.conflicts:
@@ -312,12 +378,28 @@ async def build_validated_answer(
         gaps = ["当前 Run 的有效证据尚未完整覆盖核心问题"]
     if status == "insufficient" and not gaps:
         gaps = [draft.insufficient_note or "当前 Run 证据不足以回答核心问题"]
+    if points:
+        answer_text = _compose_answer_text(draft.lead, valid_points)
+    else:
+        answer_text = draft.answer or (draft.lead or "")
     return KnowledgeAnswerOut(
-        answer=sanitize_answer_text(draft.answer),
+        answer=sanitize_answer_text(answer_text),
         status=status,
         insufficient_note=draft.insufficient_note
         if draft.insufficient
         else ("全部引用被丢弃，无法提供带证据的确定结论" if stats.valid_count == 0 else None),
+        points=[
+            KnowledgeAnswerPointOut(
+                section=point.section,
+                text=sanitize_answer_text(point.text),
+                citations=[
+                    _citation_out(resolved[handle])
+                    for handle in dict.fromkeys(point.evidence_handles)
+                    if handle in resolved
+                ],
+            )
+            for point in valid_points
+        ],
         citations=citations,
         conflicts=conflicts,
         coverage=coverage,
