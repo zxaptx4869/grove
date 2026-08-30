@@ -7,7 +7,7 @@
 from datetime import datetime
 from typing import Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 KnowledgeScopeType = Literal["workspace", "project"]
 
@@ -20,7 +20,7 @@ RunStatus = Literal[
     "cancelled",
 ]
 
-RunKind = Literal["answer", "draft_candidate"]
+RunKind = Literal["answer", "draft_candidate", "entry_revision"]
 
 AnswerStatus = Literal[
     "completed",
@@ -38,6 +38,16 @@ DraftStatus = Literal[
     "cancelled",
     "failed",
 ]
+RevisionDraftStatus = Literal[
+    "generating",
+    "draft",
+    "confirming",
+    "applied",
+    "cancelled",
+    "failed",
+    "undone",
+]
+RevisionExecutionStatus = Literal["applied", "undoing", "undone"]
 ContextMode = Literal["auto", "continue", "new_topic"]
 ContextDecision = Literal["continue", "new_topic", "clarify"]
 AnswerMode = Literal["auto", "quick", "investigate"]
@@ -123,6 +133,7 @@ class KnowledgeMessagePageOut(BaseModel):
     next_cursor: str | None = None
     runs: list["KnowledgeRunOut"] = []
     candidate_drafts: list["KnowledgeCandidateDraftOut"] = []
+    entry_revision_drafts: list["KnowledgeEntryRevisionDraftOut"] = []
 
 
 class KnowledgeRunCitationOut(BaseModel):
@@ -222,6 +233,8 @@ class KnowledgeRunOut(BaseModel):
     run_kind: RunKind = "answer"
     # 操作 Run 锚定的来源回答 Run（仅 draft_candidate 使用）
     source_run_id: int | None = None
+    # 操作 Run 锚定的目标正式 Entry（仅 entry_revision 使用）
+    target_entry_id: int | None = None
     status: RunStatus
     current_step: str | None = None
     scope_type: KnowledgeScopeType
@@ -356,6 +369,135 @@ class KnowledgeDraftConfirmOut(BaseModel):
 
     draft: KnowledgeCandidateDraftOut
     candidate: CandidateReceiptOut
+
+
+class KnowledgeRevisionActionRequest(BaseModel):
+    """显式「修订这条知识」动作：锚定来源回答 Run、目标 Entry 与非空指令。"""
+
+    client_message_id: str = Field(min_length=1, max_length=64)
+    source_run_id: int
+    target_entry_id: int
+    instruction: str = Field(min_length=1, max_length=2000)
+
+
+class KnowledgeRevisionFieldDiffOut(BaseModel):
+    """单字段差异：服务端按 base snapshot 与当前草稿计算，客户端不提交 diff。"""
+
+    field: str
+    label: str
+    before: str | None = None
+    after: str | None = None
+
+
+class KnowledgeRevisionExecutionOut(BaseModel):
+    """一次确认/撤销执行的可展示摘要；不暴露内部快照与幂等键。"""
+
+    id: int
+    draft_id: int
+    entry_id: int | None = None
+    status: RevisionExecutionStatus
+    before_version_number: int | None = None
+    after_version_number: int | None = None
+    added_evidence_count: int = 0
+    error: str | None = None
+    undone_at: datetime | None = None
+    created_at: datetime
+    updated_at: datetime
+
+
+class KnowledgeEntryRevisionDraftOut(BaseModel):
+    """持久化修订草稿：AI 建议语义，展示可编辑字段与服务端差异。"""
+
+    id: int
+    conversation_id: int
+    operation_run_id: int
+    source_run_id: int | None = None
+    target_entry_id: int | None = None
+    target_project_id: int | None = None
+    target_project_name: str | None = None
+    instruction: str
+    status: RevisionDraftStatus
+    title: str | None = None
+    content: str | None = None
+    main_type: str | None = None
+    info_nature: str | None = None
+    applicable_condition: str | None = None
+    note: str | None = None
+    change_summary: str | None = None
+    reason: str | None = None
+    selected_evidence_handles: list[str] = []
+    evidence_summaries: list[KnowledgeDraftEvidenceOut] = []
+    # 服务端按 base snapshot 计算的字段差异；未变字段不返回
+    changed_fields: list[KnowledgeRevisionFieldDiffOut] = []
+    generation_degraded: bool = False
+    generation_error: str | None = None
+    execution: KnowledgeRevisionExecutionOut | None = None
+    error: str | None = None
+    created_at: datetime
+    updated_at: datetime
+
+
+class KnowledgeRevisionActionOut(BaseModel):
+    """修订动作提交结果：可见用户消息、entry_revision Run 与 generating Draft。"""
+
+    user_message: KnowledgeMessageOut
+    run: KnowledgeRunOut
+    draft: KnowledgeEntryRevisionDraftOut
+
+
+class KnowledgeRevisionDraftEditRequest(BaseModel):
+    """编辑候选字段；target Entry/项目/source Run/基线与 Evidence 集合不可编辑。"""
+
+    model_config = ConfigDict(extra="forbid")
+
+    title: str | None = Field(default=None, min_length=1, max_length=255)
+    content: str | None = Field(default=None, min_length=1, max_length=8000)
+    main_type: Literal["knowledge", "method", "parameter", "reminder"] | None = None
+    info_nature: Literal["fact", "experience", "advice", "speculation", "other"] | None = None
+    applicable_condition: str | None = Field(default=None, max_length=8000)
+    note: str | None = Field(default=None, max_length=8000)
+    change_summary: str | None = Field(default=None, min_length=1, max_length=1000)
+
+
+class KnowledgeRevisionConfirmRequest(BaseModel):
+    """确认修订：只接收稳定幂等键，不接受任何自由引用字段。"""
+
+    client_operation_id: str = Field(min_length=1, max_length=64)
+
+
+class KnowledgeRevisionUndoRequest(BaseModel):
+    """撤销修订：只接收稳定幂等键，不接受任何自由引用字段。"""
+
+    client_operation_id: str = Field(min_length=1, max_length=64)
+
+
+class KnowledgeRevisionEntryOut(BaseModel):
+    """确认/撤销后的正式 Entry 摘要（移动端回执使用）。"""
+
+    id: int
+    title: str
+    project_id: int
+    project_name: str | None = None
+    node_id: int
+    node_name: str | None = None
+    version_number: int | None = None
+    updated_at: datetime
+
+
+class KnowledgeRevisionConfirmOut(BaseModel):
+    """确认回执：Entry 已更新、版本已追加、Execution 为 applied。"""
+
+    draft: KnowledgeEntryRevisionDraftOut
+    execution: KnowledgeRevisionExecutionOut
+    entry: KnowledgeRevisionEntryOut
+
+
+class KnowledgeRevisionUndoOut(BaseModel):
+    """撤销回执：Entry 已恢复、Execution 为 undone，审计保留。"""
+
+    draft: KnowledgeEntryRevisionDraftOut
+    execution: KnowledgeRevisionExecutionOut
+    entry: KnowledgeRevisionEntryOut
 
 
 class KnowledgeToolCallOut(BaseModel):

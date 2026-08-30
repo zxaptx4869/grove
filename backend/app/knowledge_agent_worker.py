@@ -13,11 +13,13 @@ from app.models.knowledge_agent import (
     INVESTIGATION_STATUS_ACTIVE,
     INVESTIGATION_STATUS_CANCELLED,
     RUN_KIND_DRAFT_CANDIDATE,
+    RUN_KIND_ENTRY_REVISION,
     RUN_PROCESSING,
     RUN_WAITING,
     STOP_REASON_CANCELLED,
 )
 from app.services.knowledge_agent.candidate import execute_draft_candidate_run
+from app.services.knowledge_agent.entry_revision import execute_entry_revision_run
 from app.services.knowledge_agent.runner import RunCancelled, execute_run
 from app.services.knowledge_agent.runs import (
     finalize_cancelled,
@@ -102,6 +104,8 @@ async def process_one_run() -> bool:
                 await finalize_cancelled(db, run)
             elif run.run_kind == RUN_KIND_DRAFT_CANDIDATE:
                 await execute_draft_candidate_run(db, run)
+            elif run.run_kind == RUN_KIND_ENTRY_REVISION:
+                await execute_entry_revision_run(db, run)
             else:
                 await execute_run(db, run)
             await db.commit()

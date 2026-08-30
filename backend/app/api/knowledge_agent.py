@@ -23,6 +23,7 @@ from app.models.knowledge_agent import (
     MESSAGE_TYPE_USER,
     RUN_ACTIVE_STATUSES,
     RUN_KIND_DRAFT_CANDIDATE,
+    RUN_KIND_ENTRY_REVISION,
 )
 from app.schemas.knowledge_agent import (
     KnowledgeCandidateDraftOut,
@@ -33,11 +34,15 @@ from app.schemas.knowledge_agent import (
     KnowledgeDraftConfirmOut,
     KnowledgeDraftConfirmRequest,
     KnowledgeDraftEditRequest,
+    KnowledgeEntryRevisionDraftOut,
     KnowledgeInvestigationDetailOut,
     KnowledgeInvestigationQueryOut,
     KnowledgeInvestigationRoundOut,
     KnowledgeMessagePageOut,
     KnowledgeModelInvocationOut,
+    KnowledgeRevisionActionOut,
+    KnowledgeRevisionActionRequest,
+    KnowledgeRevisionDraftEditRequest,
     KnowledgeRunObservabilityOut,
     KnowledgeRunOut,
     KnowledgeRunSubmitOut,
@@ -64,6 +69,14 @@ from app.services.knowledge_agent.conversations import (
     list_messages,
     message_out,
     recent_runs_for_conversations,
+)
+from app.services.knowledge_agent.entry_revision import (
+    cancel_revision_draft,
+    edit_revision_draft,
+    get_owned_revision_draft,
+    revision_drafts_for_runs,
+    revision_drafts_out_batch,
+    submit_entry_revision,
 )
 from app.services.knowledge_agent.runs import (
     cancel_run,
@@ -220,6 +233,27 @@ async def _draft_action_exists(
     return row is not None
 
 
+async def _revision_action_exists(
+    db: DbSession,
+    conversation_id: int,
+    client_message_id: str,
+) -> bool:
+    """判断修订动作幂等键是否已存在（选择 201/200 状态码）。"""
+    row = (
+        await db.execute(
+            select(KnowledgeMessage.id)
+            .join(KnowledgeAgentRun, KnowledgeMessage.run_id == KnowledgeAgentRun.id)
+            .where(
+                KnowledgeMessage.conversation_id == conversation_id,
+                KnowledgeMessage.client_message_id == client_message_id,
+                KnowledgeMessage.message_type == MESSAGE_TYPE_USER,
+                KnowledgeAgentRun.run_kind == RUN_KIND_ENTRY_REVISION,
+            )
+        )
+    ).scalar_one_or_none()
+    return row is not None
+
+
 @router.get("/conversations", response_model=list[KnowledgeConversationOut])
 async def list_conversations_endpoint(
     db: DbSession,
@@ -302,6 +336,8 @@ async def list_messages_endpoint(
         runs_by_id = {run.id: run for run in run_rows}
     drafts = await drafts_for_runs(db, list(run_ids))
     draft_out_rows = await drafts_out_batch(db, drafts)
+    revision_drafts = await revision_drafts_for_runs(db, list(run_ids))
+    revision_draft_out_rows = await revision_drafts_out_batch(db, revision_drafts)
     return KnowledgeMessagePageOut(
         items=[
             message_out(row, runs_by_id.get(row.run_id) if row.run_id else None)
@@ -310,6 +346,7 @@ async def list_messages_endpoint(
         next_cursor=next_cursor,
         runs=[run_out(run) for run in runs_by_id.values()],
         candidate_drafts=draft_out_rows,
+        entry_revision_drafts=revision_draft_out_rows,
     )
 
 
@@ -434,6 +471,94 @@ async def cancel_draft_endpoint(
         await cancel_draft(db, draft)
     await db.commit()
     return (await drafts_out_batch(db, [draft]))[0]
+
+
+@router.post(
+    "/conversations/{conversation_id}/entry-revision-drafts",
+    response_model=KnowledgeRevisionActionOut,
+)
+async def submit_revision_action_endpoint(
+    conversation_id: int,
+    payload: KnowledgeRevisionActionRequest,
+    db: DbSession,
+    user: CurrentUser,
+    workspace: CurrentWorkspace,
+    response: Response,
+) -> KnowledgeRevisionActionOut:
+    """显式「修订这条知识」：创建可见用户消息、entry_revision Run 与 generating Draft。"""
+    conversation = await get_owned_conversation(db, workspace.id, user.id, conversation_id)
+    created = not await _revision_action_exists(
+        db, conversation.id, payload.client_message_id
+    )
+    user_message, run, draft = await submit_entry_revision(db, conversation, payload)
+    await db.commit()
+    response.status_code = status.HTTP_201_CREATED if created else status.HTTP_200_OK
+    draft_out = (await revision_drafts_out_batch(db, [draft]))[0]
+    return KnowledgeRevisionActionOut(
+        user_message=message_out(user_message, run),
+        run=run_out(run),
+        draft=draft_out,
+    )
+
+
+@router.get(
+    "/entry-revision-drafts/{draft_id}",
+    response_model=KnowledgeEntryRevisionDraftOut,
+)
+async def get_revision_draft_endpoint(
+    draft_id: int,
+    db: DbSession,
+    user: CurrentUser,
+    workspace: CurrentWorkspace,
+) -> KnowledgeEntryRevisionDraftOut:
+    """读取修订草稿：owner + Workspace 越权一律 404。"""
+    draft = await get_owned_revision_draft(db, workspace.id, user.id, draft_id)
+    return (await revision_drafts_out_batch(db, [draft]))[0]
+
+
+@router.patch(
+    "/entry-revision-drafts/{draft_id}",
+    response_model=KnowledgeEntryRevisionDraftOut,
+)
+async def edit_revision_draft_endpoint(
+    draft_id: int,
+    payload: KnowledgeRevisionDraftEditRequest,
+    db: DbSession,
+    user: CurrentUser,
+    workspace: CurrentWorkspace,
+) -> KnowledgeEntryRevisionDraftOut:
+    """编辑修订草稿允许字段；target Entry/项目/source Run/基线与 Evidence 不可编辑。"""
+    draft = await get_owned_revision_draft(db, workspace.id, user.id, draft_id)
+    await edit_revision_draft(db, draft, payload)
+    await db.commit()
+    return (await revision_drafts_out_batch(db, [draft]))[0]
+
+
+@router.post(
+    "/entry-revision-drafts/{draft_id}/cancel",
+    response_model=KnowledgeEntryRevisionDraftOut,
+)
+async def cancel_revision_draft_endpoint(
+    draft_id: int,
+    db: DbSession,
+    user: CurrentUser,
+    workspace: CurrentWorkspace,
+) -> KnowledgeEntryRevisionDraftOut:
+    """取消未应用修订草稿；活动 operation Run 一并取消，不修改正式 Entry。"""
+    draft = await get_owned_revision_draft(db, workspace.id, user.id, draft_id)
+    operation_run = (
+        await db.get(KnowledgeAgentRun, draft.operation_run_id)
+        if draft.operation_run_id
+        else None
+    )
+    if operation_run is not None and operation_run.status in RUN_ACTIVE_STATUSES:
+        await cancel_run(db, operation_run)
+    else:
+        await cancel_revision_draft(db, draft)
+    await db.commit()
+    # 取消会经 ORM UPDATE 过期服务端生成的 updated_at：提交后显式刷新再组装
+    await db.refresh(draft)
+    return (await revision_drafts_out_batch(db, [draft]))[0]
 
 
 @router.post(

@@ -1,5 +1,6 @@
 """Entry 归档、编辑与证据服务。"""
 
+import hashlib
 import json
 import logging
 
@@ -56,6 +57,31 @@ MAX_REVISION_MESSAGES = 20
 MAX_REVISION_MESSAGE_CHARS = 2000
 _REQUIRED_FIELDS = ("title", "content", "main_type")
 _NULLABLE_FIELDS = ("info_nature", "applicable_condition", "note")
+_BASELINE_FIELDS = (
+    "title",
+    "content",
+    "main_type",
+    "info_nature",
+    "applicable_condition",
+    "note",
+    "node_id",
+)
+
+
+def entry_baseline(entry: Entry) -> dict:
+    """提取 Entry 可变字段与 node id 的不可变基线快照（供并发校验复用）。"""
+    return {field: getattr(entry, field) for field in _BASELINE_FIELDS}
+
+
+def entry_fingerprint(baseline: dict) -> str:
+    """按规范化 JSON 计算稳定指纹（排序键、紧凑分隔符）。"""
+    canonical = json.dumps(
+        baseline,
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    )
+    return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
 
 
 def entry_eager_options():

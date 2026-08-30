@@ -18,32 +18,32 @@
 
 ## 3. 显式动作、目标与 Evidence 校验
 
-- [ ] 3.1 扩展 schemas：`revise_entry` 动作请求、Revision Draft/差异/Execution/确认/撤销输入输出和消息页规范化集合，所有用户文本与枚举设置长度/类型约束
-- [ ] 3.2 实现 source Run 与 target Entry 校验：同 owner/Workspace/Conversation、回答 completed/partial、Entry 位于最终有效 citations、目标项目由 Entry 决定、越权统一 404
-- [ ] 3.3 只从最终 answer points/citations/conflicts 收集允许 Evidence，并逐条复验 Run、项目、Entry/Source/Attachment、quote 与内容指纹；不得加载回答未采用的整轮 Evidence
-- [ ] 3.4 实现 Entry 基线 snapshot、最新版本解析和稳定 fingerprint；覆盖必填/可空字段、node id、JSON 规范化与旧 Entry 无版本的兼容处理
-- [ ] 3.5 实现幂等 submit：可见用户消息、entry_revision Run、generating Draft 和活动槽在同一事务内创建；重复 client_message_id 返回同一对象
-- [ ] 3.6 补目标未引用、跨项目/Workspace/用户、历史 Evidence 失效、普通 answer 消息不触发、空指令、活动 Run 冲突和幂等测试
-- [ ] 3.7 运行本组后端定向测试与 ruff，完成本地提交 `feat: 约束知识 Agent 修订目标与证据`
+- [x] 3.1 扩展 schemas：`revise_entry` 动作请求、Revision Draft/差异/Execution/确认/撤销输入输出和消息页规范化集合，所有用户文本与枚举设置长度/类型约束
+- [x] 3.2 实现 source Run 与 target Entry 校验：同 owner/Workspace/Conversation、回答 completed/partial、Entry 位于最终有效 citations、目标项目由 Entry 决定、越权统一 404
+- [x] 3.3 只从最终 answer points/citations/conflicts 收集允许 Evidence，并逐条复验 Run、项目、Entry/Source/Attachment、quote 与内容指纹；不得加载回答未采用的整轮 Evidence
+- [x] 3.4 实现 Entry 基线 snapshot、最新版本解析和稳定 fingerprint；覆盖必填/可空字段、node id、JSON 规范化与旧 Entry 无版本的兼容处理
+- [x] 3.5 实现幂等 submit：可见用户消息、entry_revision Run、generating Draft 和活动槽在同一事务内创建；重复 client_message_id 返回同一对象
+- [x] 3.6 补目标未引用、跨项目/Workspace/用户、历史 Evidence 失效、普通 answer 消息不触发、空指令、活动 Run 冲突和幂等测试
+- [x] 3.7 运行本组后端定向测试与 ruff，完成本地提交（阶段 3-5 共用单服务模块，合并为一次提交）
 
 ## 4. 修订草稿 Agent 与可恢复 Run
 
-- [ ] 4.1 新增 Knowledge Agent 专用单 Entry revision Agent 输出：字段全集、change_summary、reason、selected Evidence handles；提示词禁止模型常识、联网、对象 ID 和执行声称
-- [ ] 4.2 抽取可复用的 Entry 上下文/字段归一化能力，但保持桌面 Revision Agent 的外部知识语义与无状态接口不变
-- [ ] 4.3 实现 `execute_entry_revision_run`：租约与状态校验、目标/Evidence 复验、模型调用、句柄白名单、无差异失败、Draft/Run/助手消息原子终态和活动槽释放
-- [ ] 4.4 将 entry_revision 分支接入 Worker 领取、恢复、重试与取消；不得执行 answer 搜索/调查或创建输出工作集
-- [ ] 4.5 记录 revision draft 模型 purpose、provider/model/fallback/error/duration；未配置模型、异常或非法输出不得生成伪草稿
-- [ ] 4.6 补成功、未知句柄、回答未采用 Evidence 排除、跨项目 Evidence、模型失败、无实际差异、崩溃恢复、重试耗尽、取消边界和工作集不推进测试
-- [ ] 4.7 运行 Agent/Worker 定向测试与 ruff，完成本地提交 `feat: 实现可恢复的单条知识修订草稿`
+- [x] 4.1 新增 Knowledge Agent 专用单 Entry revision Agent 输出：字段全集、change_summary、reason、selected Evidence handles；提示词禁止模型常识、联网、对象 ID 和执行声称
+- [x] 4.2 抽取可复用的 Entry 上下文/字段归一化能力，但保持桌面 Revision Agent 的外部知识语义与无状态接口不变
+- [x] 4.3 实现 `execute_entry_revision_run`：租约与状态校验、目标/Evidence 复验、模型调用、句柄白名单、无差异失败、Draft/Run/助手消息原子终态和活动槽释放
+- [x] 4.4 将 entry_revision 分支接入 Worker 领取、恢复、重试与取消；不得执行 answer 搜索/调查或创建输出工作集
+- [x] 4.5 记录 revision draft 模型 purpose、provider/model/fallback/error/duration；未配置模型、异常或非法输出不得生成伪草稿
+- [x] 4.6 补成功、未知句柄、回答未采用 Evidence 排除、跨项目 Evidence、模型失败、无实际差异、崩溃恢复、重试耗尽、取消边界和工作集不推进测试
+- [x] 4.7 运行 Agent/Worker 定向测试与 ruff，完成本地提交（并入阶段 3-5 合并提交）
 
 ## 5. Draft 编辑、服务端差异与消息恢复
 
-- [ ] 5.1 实现按 owner + Workspace 读取 Revision Draft，越权统一 404；Message Page 批量归并当前页 Draft/Execution，避免 N+1 和敏感基线泄漏
-- [ ] 5.2 实现 draft 状态的候选字段与 change_summary 编辑、字段清洗和服务端 changed fields 计算；拒绝 target/source/base/Evidence 受保护字段
-- [ ] 5.3 实现取消：generating 时取消关联 Run，draft 时只进入 cancelled；applied/undone/failed 状态不可非法回退
-- [ ] 5.4 新增 submit、edit、cancel、get/confirm/undo 所需 Knowledge Agent API 路由；新增端点先用 curl 验证预期 401/200/4xx 而非 404
-- [ ] 5.5 补历史分页、重启恢复、长字段、字段清空、diff 稳定顺序、非法状态、跨用户/Workspace 和既有 answer/Candidate Draft 响应兼容测试
-- [ ] 5.6 运行 API/Conversation 定向测试与 ruff，完成本地提交 `feat: 支持修订草稿编辑与历史恢复`
+- [x] 5.1 实现按 owner + Workspace 读取 Revision Draft，越权统一 404；Message Page 批量归并当前页 Draft/Execution，避免 N+1 和敏感基线泄漏
+- [x] 5.2 实现 draft 状态的候选字段与 change_summary 编辑、字段清洗和服务端 changed fields 计算；拒绝 target/source/base/Evidence 受保护字段
+- [x] 5.3 实现取消：generating 时取消关联 Run，draft 时只进入 cancelled；applied/undone/failed 状态不可非法回退
+- [x] 5.4 新增 submit、edit、cancel、get 等 Knowledge Agent API 路由；confirm/undo 路由随 6/7 阶段补充；新增端点以 API 测试验证 401/200/4xx 而非 404
+- [x] 5.5 补历史分页、重启恢复、长字段、字段清空、diff 稳定顺序、非法状态、跨用户/Workspace 和既有 answer/Candidate Draft 响应兼容测试
+- [x] 5.6 运行 API/Conversation 定向测试与 ruff，完成本地提交（并入阶段 3-5 合并提交）
 
 ## 6. 原子应用、版本、Evidence 与执行审计
 

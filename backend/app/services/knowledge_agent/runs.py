@@ -14,6 +14,7 @@ from app.models import (
     KnowledgeAgentRun,
     KnowledgeCandidateDraft,
     KnowledgeConversation,
+    KnowledgeEntryRevisionDraft,
     KnowledgeMessage,
     Project,
 )
@@ -28,9 +29,13 @@ from app.models.knowledge_agent import (
     MESSAGE_ROLE_USER,
     MESSAGE_TYPE_ASSISTANT,
     MESSAGE_TYPE_USER,
+    REVISION_DRAFT_CANCELLED,
+    REVISION_DRAFT_FAILED,
+    REVISION_DRAFT_TERMINAL_STATUSES,
     RUN_CANCELLED,
     RUN_FAILED,
     RUN_KIND_DRAFT_CANDIDATE,
+    RUN_KIND_ENTRY_REVISION,
     RUN_PROCESSING,
     RUN_TERMINAL_STATUSES,
     RUN_WAITING,
@@ -63,6 +68,23 @@ async def _sync_draft_status(
 ) -> None:
     """把操作 Run 的取消/失败同步到关联 Draft（终态 Draft 不覆盖）。"""
     if run.run_kind != RUN_KIND_DRAFT_CANDIDATE:
+        if run.run_kind == RUN_KIND_ENTRY_REVISION:
+            # status 来自取消/失败路径，取值 cancelled 或 failed
+            revision_status = (
+                status
+                if status in {REVISION_DRAFT_CANCELLED, REVISION_DRAFT_FAILED}
+                else REVISION_DRAFT_FAILED
+            )
+            await db.execute(
+                update(KnowledgeEntryRevisionDraft)
+                .where(
+                    KnowledgeEntryRevisionDraft.operation_run_id == run.id,
+                    KnowledgeEntryRevisionDraft.status.notin_(
+                        REVISION_DRAFT_TERMINAL_STATUSES
+                    ),
+                )
+                .values(status=revision_status, error=error)
+            )
         return
     await db.execute(
         update(KnowledgeCandidateDraft)
@@ -328,6 +350,7 @@ def run_out(run: KnowledgeAgentRun) -> KnowledgeRunOut:
         conversation_id=run.conversation_id,
         run_kind=run.run_kind,
         source_run_id=run.source_run_id,
+        target_entry_id=run.target_entry_id,
         status=run.status,
         current_step=run.current_step,
         scope_type=run.scope_type,
