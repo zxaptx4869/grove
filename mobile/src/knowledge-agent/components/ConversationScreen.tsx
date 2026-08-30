@@ -1,7 +1,7 @@
-import { useCallback, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import {
   ActivityIndicator,
-  KeyboardAvoidingView,
+  LayoutAnimation,
   NativeScrollEvent,
   NativeSyntheticEvent,
   Platform,
@@ -11,7 +11,7 @@ import {
   Text,
   View,
 } from "react-native";
-import { SafeAreaView } from "react-native-safe-area-context";
+import { SafeAreaView, useSafeAreaInsets } from "react-native-safe-area-context";
 import { useQuery } from "@tanstack/react-query";
 
 import { getProjects } from "@/src/api";
@@ -37,6 +37,7 @@ import {
   type DraftTargetOption,
 } from "@/src/knowledge-agent/components/TargetProjectSheet";
 import { useConversationController } from "@/src/knowledge-agent/hooks/useConversationController";
+import { useKeyboardHeight } from "@/src/knowledge-agent/hooks/useKeyboardHeight";
 import { draftActionEligibility } from "@/src/knowledge-agent/adapters/answer";
 import { scopeLabel } from "@/src/knowledge-agent/adapters/scope";
 import { toUserErrorMessage } from "@/src/knowledge-agent/errors";
@@ -58,6 +59,20 @@ const SUGGESTIONS = [
 export function ConversationScreen() {
   const { token } = useAuth();
   const controller = useConversationController(token);
+  const insets = useSafeAreaInsets();
+  const keyboardHeight = useKeyboardHeight(insets.bottom);
+  const previousKeyboardHeightRef = useRef(0);
+  // Android 键盘收起/弹出动画与 padding 瞬移不同步会导致输入框闪烁；
+  // 高度变化时用 LayoutAnimation 平滑过渡，让 composer 跟随键盘动画。
+  useEffect(() => {
+    if (
+      Platform.OS === "android" &&
+      previousKeyboardHeightRef.current !== keyboardHeight
+    ) {
+      LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
+    }
+    previousKeyboardHeightRef.current = keyboardHeight;
+  }, [keyboardHeight]);
   const [text, setText] = useState("");
   const [historyOpen, setHistoryOpen] = useState(false);
   const [scopeOpen, setScopeOpen] = useState(false);
@@ -172,10 +187,7 @@ export function ConversationScreen() {
 
   return (
     <SafeAreaView edges={["top"]} style={styles.page}>
-      <KeyboardAvoidingView
-        style={styles.page}
-        behavior={Platform.OS === "ios" ? "padding" : undefined}
-      >
+      <View style={styles.page}>
         <View style={styles.header}>
           <View style={styles.brandMark}>
             <Text style={styles.brandText}>G</Text>
@@ -362,7 +374,7 @@ export function ConversationScreen() {
           )}
         </ScrollView>
 
-        <View>
+        <View style={{ paddingBottom: keyboardHeight }}>
           <Composer
             value={text}
             onChangeText={setText}
@@ -379,7 +391,7 @@ export function ConversationScreen() {
             }
           />
         </View>
-      </KeyboardAvoidingView>
+      </View>
 
       <HistorySheet
         visible={historyOpen}
@@ -701,8 +713,8 @@ const styles = StyleSheet.create({
     borderRadius: 9,
   },
   thread: { flex: 1 },
-  // Composer 是 KeyboardAvoidingView 内的正常布局兄弟节点，会按自身真实高度
-  // 动态压缩消息区；这里只保留阅读呼吸空间，不能再重复预留固定 Composer 高度。
+  // Composer 是正常布局兄弟节点，键盘高度由 composer 下方 padding 垫起；
+  // 这里只保留阅读呼吸空间，不重复预留固定 Composer 高度。
   threadContent: { paddingHorizontal: 16, paddingTop: 18, paddingBottom: 18 },
   intro: { paddingTop: 44 },
   introMark: {
