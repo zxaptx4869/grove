@@ -82,6 +82,11 @@ KNOWLEDGE_ANSWER_SYSTEM_PROMPT = (
     "当前 Run Evidence。gap 若对应综合上下文中列出的未解决缺口，必须原样使用该缺口文本，"
     "可以不附 Evidence；其他 gap 必须关联用于证明其边界的最终 Evidence。"
     "边缘证据不能视为已回答核心问题。"
+    "\n"
+    "9. insufficient 只能用于完全没有可确认证据或没有任何部分能直接回答核心问题的情况；"
+    "只要你能基于证据直接回答核心问题的任何一部分，就必须 core_question_answered=True 且"
+    "insufficient=False，已确认部分用 coverage 表达、未覆盖部分用 gaps 表达，"
+    "不得用 insufficient 掩盖已有的可确认结论。"
 )
 
 

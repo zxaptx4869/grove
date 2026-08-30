@@ -329,8 +329,8 @@ test("insufficient 带引用时仍遵循后端知识不足状态", async () => {
   expect(view.getByLabelText("查看引用：Entry 1")).toBeOnTheScreen();
 });
 
-test("partial 与可恢复 fallback 都提供重新提问", async () => {
-  const partialRetry = jest.fn();
+test("partial 提供修改问题再问，失败/降级才提供一键重新提问", async () => {
+  const partialRefine = jest.fn();
   const partial = await render(
     <AnswerCard
       run={run(1, "partial", {
@@ -342,13 +342,15 @@ test("partial 与可恢复 fallback 都提供重新提问", async () => {
       })}
       scopeLabel="全部知识"
       onCitationPress={jest.fn()}
-      onRetry={partialRetry}
+      onRetry={partialRefine}
       onOrganize={jest.fn()}
+      onRefineQuestion={partialRefine}
     />,
     { wrapper },
   );
-  await fireEvent.press(partial.getByLabelText("重新提问"));
-  expect(partialRetry).toHaveBeenCalledTimes(1);
+  expect(partial.queryByLabelText("重新提问")).toBeNull();
+  await fireEvent.press(partial.getByLabelText("修改问题再问"));
+  expect(partialRefine).toHaveBeenCalledTimes(1);
   await partial.unmount();
 
   const fallbackRetry = jest.fn();
@@ -699,6 +701,18 @@ test("失败草稿保留错误与重试入口", async () => {
   await fireEvent.press(view.getByText("重新整理"));
   expect(onRetry).toHaveBeenCalled();
   expect(view.queryByText("取消")).toBeNull();
+});
+
+test("取消草稿卡不再提供重新整理按钮", async () => {
+  const view = await render(
+    <DraftFailedCard
+      draft={draftFixture({ status: "cancelled" })}
+      onRetry={jest.fn()}
+    />,
+    { wrapper },
+  );
+  expect(view.getByText(/这次整理已取消/)).toBeOnTheScreen();
+  expect(view.queryByText("重新整理")).toBeNull();
 });
 
 test("目标项目 Sheet 只列出项目，不展示目录节点", async () => {

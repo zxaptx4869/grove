@@ -218,12 +218,14 @@ export function AnswerCard({
   onCitationPress,
   onRetry,
   onOrganize,
+  onRefineQuestion,
 }: {
   run: KnowledgeRun;
   scopeLabel: string;
   onCitationPress: (citation: KnowledgeRunCitation) => void;
   onRetry: () => void;
   onOrganize: (run: KnowledgeRun) => void;
+  onRefineQuestion?: (run: KnowledgeRun) => void;
 }) {
   const answer = run.answer;
   const presentation = presentAnswer(answer, run.status);
@@ -232,10 +234,11 @@ export function AnswerCard({
     presentation.tone === "positive" ? "confirmed" : presentation.tone;
   const workspaceScope = run.scopeType === "workspace";
   const citations = answer?.citations ?? [];
+  // partial 的「再问」不应原样重发同一问题：改为把原问题填回输入框，
+  // 由用户修改措辞或切换模式后再发送（失败/降级仍支持一键重试）。
+  const partialRefine = presentation.status === "partial";
   const canRetry =
-    presentation.status === "failed" ||
-    presentation.status === "partial" ||
-    fallback.hasFallback;
+    presentation.status === "failed" || fallback.hasFallback;
   const projectCounts = new Map<string, number>();
   for (const citation of citations) {
     if (!citation.projectName) continue;
@@ -345,7 +348,17 @@ export function AnswerCard({
                 </Pressable>
               </View>
             )}
-            {canRetry && (
+            {partialRefine && onRefineQuestion !== undefined && (
+              <View style={styles.inlineActions}>
+                <AppButton
+                  label="修改问题再问"
+                  variant="default"
+                  icon={<AgentIcon name="edit" size={16} color={theme.ink} />}
+                  onPress={() => onRefineQuestion(run)}
+                />
+              </View>
+            )}
+            {canRetry && !partialRefine && (
               <View style={styles.inlineActions}>
                 <AppButton
                   label="重新提问"

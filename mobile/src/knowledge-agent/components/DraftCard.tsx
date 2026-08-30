@@ -214,11 +214,8 @@ export function DraftFailedCard({
             <Badge tone="neutral">已取消</Badge>
           </View>
           <Text style={styles.processCopy}>
-            没有创建候选草稿，可以重新发起整理。
+            没有创建候选草稿；如需整理，请在对应回答上重新发起。
           </Text>
-          <View style={styles.actions}>
-            <AppButton label="重新整理" variant="primary" onPress={onRetry} />
-          </View>
         </CardBody>
       </Card>
     );

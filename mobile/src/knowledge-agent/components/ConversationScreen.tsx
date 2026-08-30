@@ -312,6 +312,15 @@ export function ConversationScreen() {
                 onRetryPolling={controller.retryRunPolling}
                 onRetryRun={(runId) => void controller.retryRun(runId)}
                 onCitationPress={setCitation}
+                onRefineQuestion={(run) => {
+                  const userMessage = controller.thread.items.find(
+                    (item) => item.runId === run.id && item.role === "user",
+                  );
+                  if (userMessage) {
+                    setText(userMessage.content);
+                    scrollRef.current?.scrollToEnd({ animated: true });
+                  }
+                }}
                 draft={controller.draftByRunId(message.runId ?? -1)}
                 confirmingDraftId={controller.confirmingDraftId}
                 onEditDraft={(draftId) => {
@@ -490,6 +499,7 @@ function ThreadMessage({
   onRetryPolling,
   onRetryRun,
   onCitationPress,
+  onRefineQuestion,
   draft,
   confirmingDraftId,
   onEditDraft,
@@ -507,6 +517,7 @@ function ThreadMessage({
   onRetryPolling: () => void;
   onRetryRun: (runId: number) => void;
   onCitationPress: (citation: KnowledgeRunCitation) => void;
+  onRefineQuestion: (run: KnowledgeRun) => void;
   draft: KnowledgeCandidateDraft | null;
   confirmingDraftId: number | null;
   onEditDraft: (draftId: number) => void;
@@ -654,6 +665,7 @@ function ThreadMessage({
           scopeLabel={runScope}
           onCitationPress={onCitationPress}
           onOrganize={onOrganize}
+          onRefineQuestion={onRefineQuestion}
           onRetry={() => {
             onRetryRun(run.id);
           }}
