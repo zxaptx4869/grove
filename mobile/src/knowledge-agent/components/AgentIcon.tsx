@@ -17,7 +17,7 @@ export type AgentIconName =
   | "circleCheck"
   | "message"
   | "file"
-  | "more"
+  | "tune"
   | "edit";
 
 const PATHS: Record<AgentIconName, string[]> = {
@@ -48,7 +48,9 @@ const PATHS: Record<AgentIconName, string[]> = {
   circleCheck: ["M12 12m-9 0a9 9 0 1 0 18 0a9 9 0 1 0-18 0", "m8 12 3 3 5-6"],
   message: ["M21 15a4 4 0 0 1-4 4H8l-5 3V7a4 4 0 0 1 4-4h10a4 4 0 0 1 4 4z"],
   file: ["M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z", "M14 2v6h6"],
-  more: [],
+  tune: [
+    "M4 21v-7M4 10V3M12 21v-9M12 8V3M20 21v-5M20 12V3M1 14h6M9 8h6M17 16h6",
+  ],
   edit: ["M17 3a2.8 2.8 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5z"],
 };
 
@@ -71,10 +73,6 @@ export function AgentIcon({
       {name === "circleCheck" && (
         <Circle cx={12} cy={12} r={9} fill="none" stroke={color} strokeWidth={strokeWidth} />
       )}
-      {name === "more" &&
-        [5, 12, 19].map((cx) => (
-          <Circle key={cx} cx={cx} cy={12} r={1} fill={color} stroke="none" />
-        ))}
       {PATHS[name].map((d) => (
         <Path
           key={d}

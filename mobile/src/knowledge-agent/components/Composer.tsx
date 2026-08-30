@@ -68,7 +68,7 @@ export function Composer({
           onPress={onOpenModes}
           style={({ pressed }) => [styles.toolButton, pressed && styles.pressed]}
         >
-          <AgentIcon name="more" size={20} color={theme.muted} />
+          <AgentIcon name="tune" size={20} color={theme.muted} />
         </Pressable>
         <TextInput
           value={value}
