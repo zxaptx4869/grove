@@ -30,6 +30,7 @@ from app.models.knowledge_agent import (
     MESSAGE_TYPE_ASSISTANT,
     MESSAGE_TYPE_USER,
     REVISION_DRAFT_CANCELLED,
+    REVISION_DRAFT_CONFIRMING,
     REVISION_DRAFT_FAILED,
     REVISION_DRAFT_TERMINAL_STATUSES,
     RUN_CANCELLED,
@@ -82,6 +83,8 @@ async def _sync_draft_status(
                     KnowledgeEntryRevisionDraft.status.notin_(
                         REVISION_DRAFT_TERMINAL_STATUSES
                     ),
+                    # 确认已推进到 confirming 的草稿不能被取消同步覆盖
+                    KnowledgeEntryRevisionDraft.status != REVISION_DRAFT_CONFIRMING,
                 )
                 .values(status=revision_status, error=error)
             )
