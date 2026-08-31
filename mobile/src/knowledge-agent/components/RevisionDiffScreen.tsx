@@ -20,6 +20,9 @@ export function RevisionDiffScreen({
 }) {
   const insets = useSafeAreaInsets();
   if (!visible || draft === null) return null;
+  const confirmable = draft.status === "draft" || draft.status === "confirming";
+  const applied = draft.status === "applied";
+  const undone = draft.status === "undone";
   return (
     <Modal visible={visible} animationType="slide" onRequestClose={onClose}>
       <SafeAreaView edges={["top", "bottom"]} style={styles.page}>
@@ -46,7 +49,13 @@ export function RevisionDiffScreen({
           accessibilityLabel="完整差异审阅"
         >
           <View style={styles.summary}>
-            <Badge tone="ai">AI 建议 · 待确认</Badge>
+            {applied ? (
+              <Badge tone="confirmed">已应用到正式知识</Badge>
+            ) : undone ? (
+              <Badge tone="neutral">操作已撤销 · 审计保留</Badge>
+            ) : (
+              <Badge tone="ai">AI 建议 · 待确认</Badge>
+            )}
             <Text style={styles.summaryTitle}>{draft.title ?? "未命名修订草稿"}</Text>
             <Text style={styles.summaryPath}>
               目标：{draft.targetProjectName ?? "未知项目"}
@@ -112,7 +121,15 @@ export function RevisionDiffScreen({
         </ScrollView>
         <View style={[styles.footer, { paddingBottom: insets.bottom + 10 }]}>
           <AppButton label="返回" variant="default" onPress={onClose} />
-          <AppButton label="确认修改" variant="primary" onPress={onConfirm} />
+          {confirmable ? (
+            <AppButton label="确认修改" variant="primary" onPress={onConfirm} />
+          ) : (
+            <Text style={styles.footerNote}>
+              {undone
+                ? "已撤销，审计记录保留"
+                : "已应用到正式知识，可返回查看回执"}
+            </Text>
+          )}
         </View>
       </SafeAreaView>
     </Modal>
@@ -244,5 +261,12 @@ const styles = StyleSheet.create({
     borderTopWidth: 1,
     borderTopColor: theme.border,
     backgroundColor: theme.surface,
+  },
+  footerNote: {
+    flex: 1,
+    textAlign: "right",
+    color: theme.muted,
+    fontSize: 11,
+    lineHeight: 18,
   },
 });

@@ -1311,6 +1311,52 @@ test("全屏差异审阅按字段展示原内容/建议内容并可确认", asyn
   expect(onConfirm).toHaveBeenCalled();
 });
 
+test("已应用差异页不再提供确认修改按钮", async () => {
+  const onConfirm = jest.fn();
+  const view = await render(
+    <RevisionDiffScreen
+      visible
+      draft={revisionDraftFixture({
+        status: "applied",
+        execution: {
+          id: 9,
+          draftId: 30,
+          entryId: 1,
+          status: "applied",
+          beforeVersionNumber: 1,
+          afterVersionNumber: 2,
+          addedEvidenceCount: 0,
+          error: null,
+          undoneAt: null,
+          createdAt: "2026-08-29T10:00:00Z",
+          updatedAt: "2026-08-29T10:00:00Z",
+        },
+      })}
+      onConfirm={onConfirm}
+      onClose={jest.fn()}
+    />,
+    { wrapper },
+  );
+  expect(view.getByText("已应用到正式知识")).toBeOnTheScreen();
+  expect(view.queryByText("确认修改")).toBeNull();
+  expect(view.getByText(/已应用到正式知识，可返回查看回执/)).toBeOnTheScreen();
+});
+
+test("已撤销差异页展示审计保留说明", async () => {
+  const view = await render(
+    <RevisionDiffScreen
+      visible
+      draft={revisionDraftFixture({ status: "undone" })}
+      onConfirm={jest.fn()}
+      onClose={jest.fn()}
+    />,
+    { wrapper },
+  );
+  expect(view.getByText("操作已撤销 · 审计保留")).toBeOnTheScreen();
+  expect(view.queryByText("确认修改")).toBeNull();
+  expect(view.getByText(/已撤销，审计记录保留/)).toBeOnTheScreen();
+});
+
 test("修订编辑 Sheet 可编辑长正文与变更摘要并保存", async () => {
   const onSave = jest.fn();
   const view = await render(
