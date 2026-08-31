@@ -574,6 +574,7 @@ async def execute_structured_entry_search(
         tool_name="structured_entry_search",
         params={"query": query[:200]},
         result={
+            "total": len(persisted),
             "scope_total": scope_total,
             "candidates": len(candidates),
             "persisted": len(persisted),

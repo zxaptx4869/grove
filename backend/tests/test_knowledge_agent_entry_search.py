@@ -579,6 +579,7 @@ async def test_search_tool_observability_recorded() -> None:
             )
         ).scalars().all()
         assert len(tool_rows) == 1
+        assert tool_rows[0].status == "ok"
         result = json.loads(tool_rows[0].result_summary)
         assert result["scope_total"] == 2
         assert result["persisted"] == 2

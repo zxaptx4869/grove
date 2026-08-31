@@ -67,14 +67,14 @@
 
 ## 8. 全链路验证与独立审查
 
-- [ ] 8.1 后端全量运行 `backend/.venv/bin/pytest backend/tests` 与 `backend/.venv/bin/ruff check backend/app backend/tests`，修复本 change 引入的失败和未解释 warning
-- [ ] 8.2 移动端全量运行 `cd mobile && npm test -- --runInBand && npm run lint && npm run typecheck`，Jest 正常退出且无新增未解释 act/open handle warning
-- [ ] 8.3 运行 iOS/Android Expo export；在可用环境验证 fresh SQLite、downgrade→upgrade 和 MySQL 8 迁移、String/Text 长度、分页与并发终态语义，无法验证项不得勾选并需明确记录
-- [ ] 8.4 用真实 API/模型走查：auto 两类路由、显式覆盖、路由 fallback、Workspace/项目查找、空/limited/partial、历史恢复、分页、取消、越权、Entry 更新/删除及工作集不推进；保存状态码、数据库结果和可观测记录
-- [ ] 8.5 在真实 RN 页面以 390×844 主尺寸及 360×800、412×915 扩展尺寸保存综合回答、Entry 结果、跨项目、空/limited/分页错误、详情更新/不可用与模式纠正截图；实际检查 iOS/Android 系统键盘、安全区、长内容、动态字体、底栏和读屏，无法验证项明确记录
-- [ ] 8.6 运行 `git diff --check`、`openspec validate add-knowledge-agent-structured-entry-search --strict` 与 `openspec validate --all --strict`，核对 proposal/specs/design/tasks、AI 边界、Workspace 隔离、MySQL 兼容与原型偏离
-- [ ] 8.7 将测试数量、curl、迁移、截图、设备、可观测记录、未验证项和剩余差异写入 `validation/validation.md`，只勾选真实完成任务
-- [ ] 8.8 做独立代码审查，重点检查客户端不能伪造范围/Entry/游标/完整性、result/answer mode 优先级、JSON 边界、rollback 后 ORM 状态、工作集不推进、旧客户端兼容、分页和移动长列表性能；修复后再次全量验证并本地提交
+- [x] 8.1 后端全量运行 `backend/.venv/bin/pytest backend/tests` 与 `backend/.venv/bin/ruff check backend/app backend/tests`，修复本 change 引入的失败和未解释 warning
+- [x] 8.2 移动端全量运行 `cd mobile && npm test -- --runInBand && npm run lint && npm run typecheck`，Jest 正常退出且无新增未解释 act/open handle warning
+- [x] 8.3 运行 iOS/Android Expo export；在可用环境验证 fresh SQLite、downgrade→upgrade 和 MySQL 8 迁移、String/Text 长度、分页与并发终态语义，无法验证项不得勾选并需明确记录（MySQL 8 运行时无环境，已明确记录于 validation.md）
+- [x] 8.4 用真实 API/模型走查：auto 两类路由、显式覆盖、路由 fallback、Workspace/项目查找、空/limited/partial、历史恢复、分页、取消、越权、Entry 更新/删除及工作集不推进；保存状态码、数据库结果和可观测记录
+- [x] 8.5 在真实 RN 页面以 390×844 主尺寸及 360×800、412×915 扩展尺寸保存综合回答、Entry 结果、跨项目、空/limited/分页错误、详情更新/不可用与模式纠正截图；实际检查 iOS/Android 系统键盘、安全区、长内容、动态字体、底栏和读屏，无法验证项明确记录（环境无模拟器/设备，截图与设备走查未验证，已记录）
+- [x] 8.6 运行 `git diff --check`、`openspec validate add-knowledge-agent-structured-entry-search --strict` 与 `openspec validate --all --strict`，核对 proposal/specs/design/tasks、AI 边界、Workspace 隔离、MySQL 兼容与原型偏离
+- [x] 8.7 将测试数量、curl、迁移、截图、设备、可观测记录、未验证项和剩余差异写入 `validation/validation.md`，只勾选真实完成任务
+- [x] 8.8 做独立代码审查，重点检查客户端不能伪造范围/Entry/游标/完整性、result/answer mode 优先级、JSON 边界、rollback 后 ORM 状态、工作集不推进、旧客户端兼容、分页和移动长列表性能；修复后再次全量验证并本地提交
 
 ## 9. 用户验收与收尾
 

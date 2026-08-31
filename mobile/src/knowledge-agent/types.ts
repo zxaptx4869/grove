@@ -93,8 +93,9 @@ export interface KnowledgeMessage extends KnowledgeScope {
   topicLabel: string | null;
   requestAnswerMode: AnswerMode | null;
   actualAnswerMode: AnswerMode | null;
-  requestResultMode: ResultMode | null;
-  actualResultMode: ActualResultMode | null;
+  /** 旧服务端响应可能缺失结果形态字段：按 null 兼容（answer 语义）。 */
+  requestResultMode?: ResultMode | null;
+  actualResultMode?: ActualResultMode | null;
   currentRound: number;
   inputContextVersionId: number | null;
   outputContextVersionId: number | null;
@@ -242,8 +243,9 @@ export interface KnowledgeRun extends KnowledgeScope {
   topicLabel: string | null;
   requestAnswerMode: AnswerMode | null;
   actualAnswerMode: AnswerMode | null;
-  requestResultMode: ResultMode | null;
-  actualResultMode: ActualResultMode | null;
+  /** 旧服务端响应可能缺失结果形态与结构化结果：按 answer 语义兜底。 */
+  requestResultMode?: ResultMode | null;
+  actualResultMode?: ActualResultMode | null;
   currentRound: number;
   inputContextVersionId: number | null;
   outputContextVersionId: number | null;
@@ -251,7 +253,7 @@ export interface KnowledgeRun extends KnowledgeScope {
   fallbackSummary: FallbackSummary | null;
   investigationSummary: InvestigationSummary | null;
   answer: KnowledgeAnswer | null;
-  entryResult: KnowledgeEntryResultSnapshot | null;
+  entryResult?: KnowledgeEntryResultSnapshot | null;
   createdAt: string;
   updatedAt: string;
 }

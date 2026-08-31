@@ -36,12 +36,12 @@ export function EntryResultSheet({
   });
   const current = entryQuery.data ?? null;
   const unavailable = entryQuery.isError;
-  const changed =
-    current !== null &&
+  const comparable =
     item !== null &&
+    current !== null &&
     item.fingerprint !== null &&
-    current.fingerprint !== null &&
-    item.fingerprint !== current.fingerprint;
+    current.fingerprint !== null;
+  const changed = comparable && item!.fingerprint !== current!.fingerprint;
 
   return (
     <Sheet visible={item !== null} title="知识详情" onClose={onClose}>
@@ -86,7 +86,7 @@ export function EntryResultSheet({
                   <Text style={styles.changedText}>结果生成后已更新</Text>
                 </View>
               )}
-              {!changed && (
+              {comparable && !changed && (
                 <View style={styles.sameBanner}>
                   <Text style={styles.sameText}>当前内容与结果一致</Text>
                 </View>
