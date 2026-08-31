@@ -256,6 +256,7 @@ export function AnswerCard({
   onRetry,
   onOrganize,
   onRefineQuestion,
+  onListEntries,
 }: {
   run: KnowledgeRun;
   scopeLabel: string;
@@ -263,6 +264,8 @@ export function AnswerCard({
   onRetry: () => void;
   onOrganize: (run: KnowledgeRun) => void;
   onRefineQuestion?: (run: KnowledgeRun) => void;
+  /** 低强调「列出相关知识」：只预填 Composer 与结果形式，不自动发送。 */
+  onListEntries?: (run: KnowledgeRun) => void;
 }) {
   const answer = run.answer;
   const presentation = presentAnswer(answer, run.status);
@@ -375,6 +378,18 @@ export function AnswerCard({
               onCitationPress={onCitationPress}
             />
             <ScopeStamp label={scopeLabel} />
+            {onListEntries !== undefined &&
+              presentation.status !== "failed" &&
+              (
+                <View style={styles.inlineActions}>
+                  <AppButton
+                    label="列出相关知识"
+                    variant="default"
+                    icon={<AgentIcon name="search" size={16} color={theme.muted} />}
+                    onPress={() => onListEntries(run)}
+                  />
+                </View>
+              )}
             {organize.eligible && (
               <View style={styles.organizeArea}>
                 {organize.note !== null && (

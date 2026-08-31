@@ -57,13 +57,13 @@
 
 ## 7. 原生 Entry 结果界面与原型对齐
 
-- [ ] 7.1 实现 `EntryResultsCard` 与扁平 `EntryResultRow`：找到数量、范围、完整性、正式知识 Badge、标题、项目/目录、摘要、类型、来源数、更新时间和可选 match hint；不做卡片套卡片
-- [ ] 7.2 实现 loading、empty、partial、failed、cancelled、limited/unknown 和分页状态；错误留在结果区域，已有项不因分页错误消失，动态文案不导致固定控件跳动
-- [ ] 7.3 实现 `EntryResultSheet`：当前 Entry 完整正文、归属、类型、更新时间、来源摘要、加载/更新/不可用状态、关闭与焦点归还；不得出现修订、勾选或批量动作
-- [ ] 7.4 在 AnswerCard 增加低强调“列出相关知识”，在结果卡增加“改为综合回答”；两者只预填 Composer 与 mode chip，保持原消息滚动位置和键盘行为
-- [ ] 7.5 严格按 visual baseline 对齐元素顺序、字号、行高、间距、边框、圆角、徽标和按钮，不复制原型 HTML/CSS；有意偏离必须回写 design/validation，不以框架默认值代替
-- [ ] 7.6 补组件测试：Workspace/项目结果、长标题/摘要、空目录、跨项目、30 条分页、完整性文案、分页失败、详情更新/404、44×44 触控、辅助名称、动态字体和不出现多选/修订/批量文案
-- [ ] 7.7 运行移动全量 Jest（不得 `--forceExit`）、lint、typecheck、iOS/Android Expo export，完成本地提交 `feat: 实现原生端正式知识结果列表`
+- [x] 7.1 实现 `EntryResultsCard` 与扁平 `EntryResultRow`：找到数量、范围、完整性、正式知识 Badge、标题、项目/目录、摘要、类型、来源数、更新时间和可选 match hint；不做卡片套卡片
+- [x] 7.2 实现 loading、empty、partial、failed、cancelled、limited/unknown 和分页状态；错误留在结果区域，已有项不因分页错误消失，动态文案不导致固定控件跳动
+- [x] 7.3 实现 `EntryResultSheet`：当前 Entry 完整正文、归属、类型、更新时间、来源摘要、加载/更新/不可用状态、关闭与焦点归还；不得出现修订、勾选或批量动作
+- [x] 7.4 在 AnswerCard 增加低强调“列出相关知识”，在结果卡增加“改为综合回答”；两者只预填 Composer 与 mode chip，保持原消息滚动位置和键盘行为
+- [x] 7.5 严格按 visual baseline 对齐元素顺序、字号、行高、间距、边框、圆角、徽标和按钮，不复制原型 HTML/CSS；有意偏离必须回写 design/validation，不以框架默认值代替
+- [x] 7.6 补组件测试：Workspace/项目结果、长标题/摘要、空目录、跨项目、30 条分页、完整性文案、分页失败、详情更新/404、44×44 触控、辅助名称、动态字体和不出现多选/修订/批量文案
+- [x] 7.7 运行移动全量 Jest（不得 `--forceExit`）、lint、typecheck、iOS/Android Expo export，完成本地提交 `feat: 实现原生端正式知识结果列表`
 
 ## 8. 全链路验证与独立审查
 

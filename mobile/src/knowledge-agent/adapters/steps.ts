@@ -27,8 +27,25 @@ const STEP_TITLES: Record<string, string> = {
   finalize: "综合回答",
 };
 
-export function presentRunStep(run: Pick<KnowledgeRun, "currentStep" | "currentRound" | "actualAnswerMode">): StepPresentation {
+export function presentRunStep(
+  run: Pick<
+    KnowledgeRun,
+    "currentStep" | "currentRound" | "actualAnswerMode" | "actualResultMode"
+  >,
+): StepPresentation {
   const step = run.currentStep ?? "waiting";
+  if (run.actualResultMode === "entries") {
+    const titles: Record<string, string> = {
+      waiting: "准备",
+      claim: "准备",
+      context_decision: "理解问题",
+      result_mode_route: "判断结果形式",
+      entry_search: "查找正式知识",
+      entry_assemble: "整理结果",
+      finalize: "整理结果",
+    };
+    return { title: titles[step] ?? "正在处理" };
+  }
   const title = STEP_TITLES[step] ?? "正在处理";
   if (step.startsWith("round_") && run.actualAnswerMode === "investigate") {
     const round = Math.max(1, run.currentRound || 1);

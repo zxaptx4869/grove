@@ -20,6 +20,8 @@ import { AgentIcon } from "@/src/knowledge-agent/components/AgentIcon";
 import { AnswerCard } from "@/src/knowledge-agent/components/AnswerCard";
 import { CitationSheet } from "@/src/knowledge-agent/components/CitationSheet";
 import { Composer } from "@/src/knowledge-agent/components/Composer";
+import { EntryResultSheet } from "@/src/knowledge-agent/components/EntryResultSheet";
+import { EntryResultsCard } from "@/src/knowledge-agent/components/EntryResultsCard";
 import {
   DraftCard,
   DraftFailedCard,
@@ -47,7 +49,10 @@ import {
   TargetProjectSheet,
   type DraftTargetOption,
 } from "@/src/knowledge-agent/components/TargetProjectSheet";
-import { useConversationController } from "@/src/knowledge-agent/hooks/useConversationController";
+import {
+  useConversationController,
+  type EntryResultsState,
+} from "@/src/knowledge-agent/hooks/useConversationController";
 import { useKeyboardHeight } from "@/src/knowledge-agent/hooks/useKeyboardHeight";
 import { draftActionEligibility } from "@/src/knowledge-agent/adapters/answer";
 import {
@@ -59,6 +64,7 @@ import { toUserErrorMessage } from "@/src/knowledge-agent/errors";
 import type {
   KnowledgeCandidateDraft,
   KnowledgeEntryRevisionDraft,
+  KnowledgeEntryResultItem,
   KnowledgeMessage,
   KnowledgeRun,
   KnowledgeRunCitation,
@@ -98,6 +104,9 @@ export function ConversationScreen() {
     citation: KnowledgeRunCitation;
     run: KnowledgeRun;
   } | null>(null);
+  const [entryResultItem, setEntryResultItem] = useState<
+    KnowledgeEntryResultItem | null
+  >(null);
   const [targetProject, setTargetProject] = useState<{
     sourceRunId: number;
     options: DraftTargetOption[];
@@ -161,6 +170,31 @@ export function ConversationScreen() {
     },
     [controller],
   );
+
+  /** 「修改问题」：只把原问题填回 Composer，不改变模式、不自动发送。 */
+  const handleRefineEntrySearch = useCallback(
+    (run: KnowledgeRun) => {
+      const userMessage = controller.thread.items.find(
+        (item) => item.runId === run.id && item.role === "user",
+      );
+      if (!userMessage) return;
+      setText(userMessage.content);
+      scrollRef.current?.scrollToEnd({ animated: true });
+    },
+    [controller],
+  );
+
+  const entryResultsUi = {
+    stateFor: (runId: number): EntryResultsState | null =>
+      controller.entryResultsForRun(runId),
+    prime: (runId: number) => controller.primeEntryResults(runId),
+    loadMore: (runId: number) => controller.loadMoreEntryResults(runId),
+    retry: (runId: number) => controller.retryEntryResults(runId),
+    openItem: (item: KnowledgeEntryResultItem) => setEntryResultItem(item),
+    correctMode: (run: KnowledgeRun) =>
+      handleResultModeCorrection(run, "answer"),
+    refine: (run: KnowledgeRun) => handleRefineEntrySearch(run),
+  };
 
   const handleScroll = useCallback(
     (event: NativeSyntheticEvent<NativeScrollEvent>) => {
@@ -490,6 +524,8 @@ export function ConversationScreen() {
                 }}
                 onOrganize={handleOrganize}
                 onResultModeCorrection={handleResultModeCorrection}
+                entryResultsUi={entryResultsUi}
+                onListEntries={(run) => handleResultModeCorrection(run, "entries")}
               />
             ))}
           {controller.pending !== null && (
@@ -636,6 +672,10 @@ export function ConversationScreen() {
         onChange={(modes) => controller.setModes(modes)}
         onClose={() => setModeOpen(false)}
       />
+      <EntryResultSheet
+        item={entryResultItem}
+        onClose={() => setEntryResultItem(null)}
+      />
       <CitationSheet
         citation={citationContext?.citation ?? null}
         sourceRunId={citationContext?.run.id ?? null}
@@ -776,6 +816,8 @@ function ThreadMessage({
   onRetryDraft,
   onOrganize,
   onResultModeCorrection,
+  entryResultsUi,
+  onListEntries,
   confirmingRevisionDraftId,
   undoingRevisionDraftId,
   revisionUndoError,
@@ -808,6 +850,16 @@ function ThreadMessage({
   onRetryDraft: (sourceRunId: number, targetProjectId: number | null) => void;
   onOrganize: (run: KnowledgeRun) => void;
   onResultModeCorrection: (run: KnowledgeRun, resultMode: ResultMode) => void;
+  entryResultsUi: {
+    stateFor: (runId: number) => EntryResultsState | null;
+    prime: (runId: number) => void;
+    loadMore: (runId: number) => void;
+    retry: (runId: number) => void;
+    openItem: (item: KnowledgeEntryResultItem) => void;
+    correctMode: (run: KnowledgeRun) => void;
+    refine: (run: KnowledgeRun) => void;
+  };
+  onListEntries: (run: KnowledgeRun) => void;
   confirmingRevisionDraftId: number | null;
   undoingRevisionDraftId: number | null;
   revisionUndoError: string | null;
@@ -1040,18 +1092,11 @@ function ThreadMessage({
   }
   if (run?.actualResultMode === "entries" && !isRunActive(run.status)) {
     return (
-      <View>
-        <View style={styles.agentLabel}>
-          <View style={styles.agentDot}>
-            <Text style={styles.agentDotText}>G</Text>
-          </View>
-          <Text style={styles.agentLabelText}>知识 Agent</Text>
-        </View>
-        <EntryResultsLegacyCard
-          messageContent={message.content}
-          onCorrect={() => onResultModeCorrection(run, "answer")}
-        />
-      </View>
+      <EntryResultsMessage
+        run={run}
+        scopeLabel={runScope}
+        ui={entryResultsUi}
+      />
     );
   }
   return (
@@ -1085,6 +1130,7 @@ function ThreadMessage({
           onCitationPress={(citation) => onCitationPress(citation, run)}
           onOrganize={onOrganize}
           onRefineQuestion={onRefineQuestion}
+          onListEntries={onListEntries}
           onRetry={() => {
             onRetryRun(run.id);
           }}
@@ -1094,30 +1140,57 @@ function ThreadMessage({
   );
 }
 
-/** 兼容兜底：旧客户端/尚未加载结果卡时展示助手摘要，并提供模式纠正入口。 */
-function EntryResultsLegacyCard({
-  messageContent,
-  onCorrect,
+/** 结构化查找结果的对话消息：独立组件承载首屏/分页状态与挂载时游标获取。 */
+function EntryResultsMessage({
+  run,
+  scopeLabel,
+  ui,
 }: {
-  messageContent: string;
-  onCorrect: () => void;
+  run: KnowledgeRun;
+  scopeLabel: string;
+  ui: {
+    stateFor: (runId: number) => EntryResultsState | null;
+    prime: (runId: number) => void;
+    loadMore: (runId: number) => void;
+    retry: (runId: number) => void;
+    openItem: (item: KnowledgeEntryResultItem) => void;
+    correctMode: (run: KnowledgeRun) => void;
+    refine: (run: KnowledgeRun) => void;
+  };
 }) {
+  // 挂载即获取服务端第一页（取得不透明游标）；重复调用由控制器幂等
+  useEffect(() => {
+    ui.prime(run.id);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [run.id]);
+  const state = ui.stateFor(run.id) ?? {
+    runId: run.id,
+    items: [],
+    nextCursor: null,
+    hasMore: false,
+    loadingMore: false,
+    error: null,
+    primed: false,
+  };
   return (
-    <View style={styles.legacyAnswer}>
-      <Text style={styles.legacyAnswerText}>
-        {messageContent.trim() !== "" ? messageContent : "已生成结构化知识结果。"}
-      </Text>
-      <Pressable
-        accessibilityRole="button"
-        accessibilityLabel="改为综合回答"
-        onPress={onCorrect}
-        style={({ pressed }) => [
-          styles.retryButton,
-          pressed && styles.pressed,
-        ]}
-      >
-        <Text style={styles.retryText}>改为综合回答</Text>
-      </Pressable>
+    <View>
+      <View style={styles.agentLabel}>
+        <View style={styles.agentDot}>
+          <Text style={styles.agentDotText}>G</Text>
+        </View>
+        <Text style={styles.agentLabelText}>知识 Agent</Text>
+      </View>
+      <EntryResultsCard
+        run={run}
+        scopeLabel={scopeLabel}
+        state={state}
+        onPrime={() => ui.prime(run.id)}
+        onLoadMore={() => ui.loadMore(run.id)}
+        onRetry={() => ui.retry(run.id)}
+        onOpenItem={ui.openItem}
+        onCorrectMode={() => ui.correctMode(run)}
+        onRefine={() => ui.refine(run)}
+      />
     </View>
   );
 }

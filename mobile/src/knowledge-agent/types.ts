@@ -407,6 +407,13 @@ export interface KnowledgeEntryCurrent {
   createdAt: string;
   updatedAt: string;
   fingerprint: string | null;
+  /** 当前 Entry 的真实来源摘要（服务端 /api/entries/{id} 归一化结果）。 */
+  evidences?: {
+    id: number;
+    sourceId: number;
+    sourceTitle: string;
+    quote: string | null;
+  }[];
 }
 
 export interface KnowledgeRevisionActionRequest {
