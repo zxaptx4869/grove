@@ -24,6 +24,7 @@ from app.models import (
 )
 from app.models.knowledge_agent import (
     REVISION_DRAFT_CANCELLED,
+    REVISION_DRAFT_CONFIRMING,
     REVISION_DRAFT_DRAFT,
     REVISION_DRAFT_FAILED,
     REVISION_DRAFT_GENERATING,
@@ -990,6 +991,73 @@ async def test_cancel_revision_draft_and_applied_rejected() -> None:
 
 
 @pytest.mark.asyncio
+async def test_edit_revision_draft_rejected_when_confirming() -> None:
+    """确认进行中（confirming）不可编辑：条件 UPDATE 拒绝且不覆盖字段。"""
+    async with async_session_factory() as db:
+        user = await create_user(db, "确认中编辑")
+        workspace = await create_workspace(db, user)
+        conversation, source_run, entry, _s, _a, _e = await _answer_run_with_evidence(
+            db, user, workspace
+        )
+        _m, _run, draft = await submit_entry_revision(
+            db,
+            conversation,
+            _action(source_run_id=source_run.id, target_entry_id=entry.id),
+        )
+        await db.commit()
+        draft.title = "旧标题"
+        draft.content = "旧内容"
+        draft.status = REVISION_DRAFT_DRAFT
+        await db.commit()
+        draft_id = draft.id
+        draft.status = REVISION_DRAFT_CONFIRMING
+        await db.flush()
+        with pytest.raises(HTTPException) as exc:
+            await edit_revision_draft(
+                db,
+                draft,
+                KnowledgeRevisionDraftEditRequest(title="并发新标题"),
+            )
+        assert exc.value.status_code == 409
+        await db.rollback()
+        fresh = await db.get(KnowledgeEntryRevisionDraft, draft_id)
+        assert fresh is not None
+        assert fresh.title == "旧标题"
+        assert fresh.content == "旧内容"
+        assert fresh.status == REVISION_DRAFT_DRAFT
+
+
+@pytest.mark.asyncio
+async def test_cancel_revision_draft_rejected_when_confirming() -> None:
+    """确认进行中（confirming）不可取消：条件 UPDATE 拒绝，状态不被覆盖。"""
+    async with async_session_factory() as db:
+        user = await create_user(db, "确认中取消")
+        workspace = await create_workspace(db, user)
+        conversation, source_run, entry, _s, _a, _e = await _answer_run_with_evidence(
+            db, user, workspace
+        )
+        _m, _run, draft = await submit_entry_revision(
+            db,
+            conversation,
+            _action(source_run_id=source_run.id, target_entry_id=entry.id),
+        )
+        await db.commit()
+        draft.status = REVISION_DRAFT_DRAFT
+        await db.commit()
+        draft_id = draft.id
+        draft.status = REVISION_DRAFT_CONFIRMING
+        await db.flush()
+        with pytest.raises(HTTPException) as exc:
+            await cancel_revision_draft(db, draft)
+        assert exc.value.status_code == 409
+        await db.rollback()
+        fresh = await db.get(KnowledgeEntryRevisionDraft, draft_id)
+        assert fresh is not None
+        # 取消被拒绝：状态未被覆盖成 cancelled
+        assert fresh.status == REVISION_DRAFT_DRAFT
+
+
+@pytest.mark.asyncio
 async def test_confirm_applies_entry_version_evidence_and_execution() -> None:
     """确认后原子更新 Entry、追加 knowledge_agent_revision 版本、去重补证据并创建 Execution。"""
     async with async_session_factory() as db:
@@ -1731,8 +1799,8 @@ async def test_confirm_failure_restore_does_not_overwrite_cancelled() -> None:
         await db.commit()
         draft_id = draft.id
 
-        # 模拟确认已锁定 confirming，随后用户取消
-        draft.status = "confirming"
+        # 模拟草稿可编辑时用户取消（确认开始后取消会被条件 UPDATE 拒绝）
+        draft.status = "draft"
         await db.commit()
         await cancel_revision_draft(db, draft)
         await db.commit()

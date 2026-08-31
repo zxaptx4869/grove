@@ -808,33 +808,28 @@ async def edit_revision_draft(
     draft: KnowledgeEntryRevisionDraft,
     payload,
 ) -> KnowledgeEntryRevisionDraft:
-    """编辑允许字段；applied/undone/cancelled/failed 与受保护字段拒绝。"""
-    if draft.status == REVISION_DRAFT_APPLIED:
+    """编辑允许字段；以状态条件 UPDATE 保证与确认并发安全。
+
+    只有仍处于 draft 状态的草稿可以被编辑：若确认已把状态推进到
+    confirming/applied，条件 UPDATE 的 rowcount=0，返回 409 且不覆盖
+    确认已写入的字段，避免回执/差异与正式 Entry 不一致。
+    """
+    # rollback 会过期会话内对象：提前固化主键供冲突路径重查
+    draft_id = draft.id
+    # 终态草稿快速拒绝：错误码与既有语义一致；并发变化由下方条件 UPDATE 兜底
+    if draft.status in REVISION_DRAFT_TERMINAL_STATUSES:
+        detail = {
+            REVISION_DRAFT_APPLIED: "修订已应用，无法编辑",
+            REVISION_DRAFT_UNDONE: "修订已撤销，无法编辑",
+            REVISION_DRAFT_CANCELLED: "修订草稿已取消，无法编辑",
+            REVISION_DRAFT_FAILED: "修订草稿已失败，请重新发起修订",
+        }.get(draft.status, "修订草稿状态已变化，无法编辑")
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
-            detail="修订已应用，无法编辑",
-        )
-    if draft.status == REVISION_DRAFT_UNDONE:
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
-            detail="修订已撤销，无法编辑",
-        )
-    if draft.status == REVISION_DRAFT_CANCELLED:
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
-            detail="修订草稿已取消，无法编辑",
-        )
-    if draft.status == REVISION_DRAFT_FAILED:
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
-            detail="修订草稿已失败，请重新发起修订",
-        )
-    if draft.status != REVISION_DRAFT_DRAFT:
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
-            detail="修订草稿仍在生成中，暂不可编辑",
+            detail=detail,
         )
     fields = payload.model_fields_set
+    values: dict = {}
     if "title" in fields:
         title = (payload.title or "").strip()
         if not title:
@@ -842,7 +837,7 @@ async def edit_revision_draft(
                 status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
                 detail="修订标题不能为空",
             )
-        draft.title = title
+        values["title"] = title
     if "content" in fields:
         content = (payload.content or "").strip()
         if not content:
@@ -850,15 +845,17 @@ async def edit_revision_draft(
                 status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
                 detail="修订核心内容不能为空",
             )
-        draft.content = content
+        values["content"] = content
     if "main_type" in fields:
-        draft.main_type = payload.main_type
+        values["main_type"] = payload.main_type
     if "info_nature" in fields:
-        draft.info_nature = payload.info_nature
+        values["info_nature"] = payload.info_nature
     if "applicable_condition" in fields:
-        draft.applicable_condition = _normalize_field_value(payload.applicable_condition)
+        values["applicable_condition"] = _normalize_field_value(
+            payload.applicable_condition
+        )
     if "note" in fields:
-        draft.note = _normalize_field_value(payload.note)
+        values["note"] = _normalize_field_value(payload.note)
     if "change_summary" in fields:
         summary = (payload.change_summary or "").strip()
         if not summary:
@@ -866,8 +863,37 @@ async def edit_revision_draft(
                 status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
                 detail="变更摘要不能为空",
             )
-        draft.change_summary = summary
-    await db.flush()
+        values["change_summary"] = summary
+    if not values:
+        # 空编辑不写任何字段，仍按当前状态返回（不触发并发写入）
+        return draft
+    updated = (
+        await db.execute(
+            update(KnowledgeEntryRevisionDraft)
+            .where(
+                KnowledgeEntryRevisionDraft.id == draft.id,
+                KnowledgeEntryRevisionDraft.status == REVISION_DRAFT_DRAFT,
+            )
+            .values(**values)
+        )
+    ).rowcount
+    if updated != 1:
+        await db.rollback()
+        fresh = await db.get(KnowledgeEntryRevisionDraft, draft_id)
+        detail = "修订草稿状态已变化，请刷新后重试"
+        if fresh is not None:
+            detail = {
+                REVISION_DRAFT_APPLIED: "修订已应用，无法编辑",
+                REVISION_DRAFT_UNDONE: "修订已撤销，无法编辑",
+                REVISION_DRAFT_CANCELLED: "修订草稿已取消，无法编辑",
+                REVISION_DRAFT_FAILED: "修订草稿已失败，请重新发起修订",
+                REVISION_DRAFT_CONFIRMING: "修订正在确认，请刷新后重试",
+                REVISION_DRAFT_GENERATING: "修订草稿仍在生成中，暂不可编辑",
+            }.get(fresh.status, detail)
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=detail,
+        )
     await db.refresh(draft)
     return draft
 
@@ -876,7 +902,11 @@ async def cancel_revision_draft(
     db: AsyncSession,
     draft: KnowledgeEntryRevisionDraft,
 ) -> KnowledgeEntryRevisionDraft:
-    """取消未应用修订草稿：只改状态，不修改 Entry/版本/来源。"""
+    """取消未应用修订草稿：以状态条件 UPDATE 保证与确认并发安全。
+
+    只有仍处于 draft/generating 的草稿可被取消；确认一旦推进状态，
+    取消请求返回 409，不会出现“Entry 已修改但草稿显示 cancelled”的不一致。
+    """
     if draft.status == REVISION_DRAFT_APPLIED:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
@@ -884,9 +914,24 @@ async def cancel_revision_draft(
         )
     if draft.status in REVISION_DRAFT_TERMINAL_STATUSES:
         return draft
-    draft.status = REVISION_DRAFT_CANCELLED
-    draft.error = None
-    await db.flush()
+    updated = (
+        await db.execute(
+            update(KnowledgeEntryRevisionDraft)
+            .where(
+                KnowledgeEntryRevisionDraft.id == draft.id,
+                KnowledgeEntryRevisionDraft.status.in_(
+                    {REVISION_DRAFT_DRAFT, REVISION_DRAFT_GENERATING}
+                ),
+            )
+            .values(status=REVISION_DRAFT_CANCELLED, error=None)
+        )
+    ).rowcount
+    if updated != 1:
+        await db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="修订正在确认或已进入终态，无法取消，请刷新后重试",
+        )
     await db.refresh(draft)
     return draft
 
