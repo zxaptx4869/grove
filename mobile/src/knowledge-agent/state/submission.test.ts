@@ -14,6 +14,7 @@ test("草稿首次发送生成稳定幂等键并保留对话 id", () => {
     text: "  第一个问题  ",
     contextMode: "auto",
     answerMode: "auto",
+    resultMode: "entries",
     random: fixedId,
   });
   expect(pending.clientMessageId).toBe("fixed-client-id");
@@ -33,6 +34,7 @@ test("确定提交成功前可重复重试，成功后清空 pending 不可重�
       text: "问题",
       contextMode: "continue",
       answerMode: "investigate",
+      resultMode: "answer",
       random: fixedId,
     }),
     7,
@@ -49,6 +51,7 @@ test("终态 failed 的重新提问生成新 client_message_id", () => {
       text: "同一个问题",
       contextMode: "auto",
       answerMode: "auto",
+      resultMode: "auto",
       random: fixedId,
     }),
     3,
@@ -67,6 +70,7 @@ test("409 冲突标记后不创建第二个本地任务", () => {
         text: "问题",
         contextMode: "auto",
         answerMode: "auto",
+        resultMode: "auto",
         random: fixedId,
       }),
       9,

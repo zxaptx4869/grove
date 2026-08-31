@@ -12,6 +12,7 @@ import type {
   KnowledgeDraftConfirm,
   KnowledgeDraftConfirmRequest,
   KnowledgeDraftEditRequest,
+  KnowledgeEntryResultsPage,
   KnowledgeEntryRevisionDraft,
   KnowledgeEntryCurrent,
   KnowledgeRevisionAction,
@@ -69,6 +70,7 @@ function serializeSubmit(
     message: payload.message,
     context_mode: payload.contextMode,
     answer_mode: payload.answerMode,
+    result_mode: payload.resultMode,
   };
 }
 
@@ -392,6 +394,25 @@ export const knowledgeAgentApi = {
     return withToken(token, (t) =>
       request<KnowledgeRun>(`/api/knowledge-agent/runs/${runId}`, {}, t),
     ) as Promise<KnowledgeRun>;
+  },
+
+  /** 从同一持久化快照分页读取结构化 Entry 结果（不重新搜索）。 */
+  getEntryResults(
+    token: string,
+    runId: number,
+    cursor: string | null,
+    limit: number,
+  ): Promise<KnowledgeEntryResultsPage> {
+    const query = cursor
+      ? `?cursor=${encodeURIComponent(cursor)}&limit=${limit}`
+      : `?limit=${limit}`;
+    return withToken(token, (t) =>
+      request<KnowledgeEntryResultsPage>(
+        `/api/knowledge-agent/runs/${runId}/entry-results${query}`,
+        {},
+        t,
+      ),
+    ) as Promise<KnowledgeEntryResultsPage>;
   },
 
   cancelRun(token: string, runId: number): Promise<KnowledgeRun> {

@@ -2,7 +2,11 @@
 
 import * as Crypto from "expo-crypto";
 
-import type { AnswerMode, ContextMode } from "@/src/knowledge-agent/types";
+import type {
+  AnswerMode,
+  ContextMode,
+  ResultMode,
+} from "@/src/knowledge-agent/types";
 
 export type PendingPhase =
   | "creating_conversation"
@@ -15,6 +19,7 @@ export interface PendingSubmission {
   text: string;
   contextMode: ContextMode;
   answerMode: AnswerMode;
+  resultMode: ResultMode;
   /** 创建成功但提交结果未知时保留；网络重试不得再建对话或换幂等键。 */
   conversationId: number | null;
   phase: PendingPhase;
@@ -33,6 +38,7 @@ export function createPendingSubmission(input: {
   text: string;
   contextMode: ContextMode;
   answerMode: AnswerMode;
+  resultMode: ResultMode;
   random?: () => string;
 }): PendingSubmission {
   return {
@@ -40,6 +46,7 @@ export function createPendingSubmission(input: {
     text: input.text,
     contextMode: input.contextMode,
     answerMode: input.answerMode,
+    resultMode: input.resultMode,
     conversationId: null,
     phase: "creating_conversation",
   };
@@ -76,6 +83,7 @@ export function retrySubmissionWithNewId(
     text: pending.text,
     contextMode: pending.contextMode,
     answerMode: pending.answerMode,
+    resultMode: pending.resultMode,
     random,
   });
 }

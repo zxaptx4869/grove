@@ -4,6 +4,7 @@ import { Sheet } from "@/src/knowledge-agent/components/ui";
 import type {
   AnswerMode,
   ContextMode,
+  ResultMode,
 } from "@/src/knowledge-agent/types";
 import type { ModeSelection } from "@/src/knowledge-agent/state/modes";
 import { theme } from "@/src/theme";
@@ -18,6 +19,12 @@ const ANSWER_OPTIONS: { value: AnswerMode; title: string; detail: string }[] = [
   { value: "auto", title: "自动", detail: "由 Agent 选择快速回答或深度查找" },
   { value: "quick", title: "快速回答", detail: "单轮检索，最快返回" },
   { value: "investigate", title: "深度查找", detail: "最多三轮受限调查，带证据核验" },
+];
+
+const RESULT_OPTIONS: { value: ResultMode; title: string; detail: string }[] = [
+  { value: "auto", title: "自动", detail: "由 Agent 判断综合回答或列出知识" },
+  { value: "answer", title: "综合回答", detail: "返回带引用的综合结论" },
+  { value: "entries", title: "知识列表", detail: "列出匹配的正式知识条目" },
 ];
 
 export function ModeSheet({
@@ -51,6 +58,16 @@ export function ModeSheet({
           detail={option.detail}
           selected={modes.answerMode === option.value}
           onPress={() => onChange({ ...modes, answerMode: option.value })}
+        />
+      ))}
+      <Text style={[styles.groupLabel, styles.groupLabelSecond]}>结果形式</Text>
+      {RESULT_OPTIONS.map((option) => (
+        <ModeOption
+          key={option.value}
+          title={option.title}
+          detail={option.detail}
+          selected={modes.resultMode === option.value}
+          onPress={() => onChange({ ...modes, resultMode: option.value })}
         />
       ))}
       <Text style={styles.footnote}>

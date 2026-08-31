@@ -8,6 +8,7 @@ export interface FallbackCopy {
 }
 
 const PURPOSE_COPY: Record<string, string> = {
+  result_mode_route: "结果形式判断降级，已按综合回答处理",
   answer_mode_route: "回答方式路由不可用，已改用快速回答",
   context_decision: "上下文判断降级，已按新话题处理",
   synthesis: "综合回答阶段降级，结果可能不完整",

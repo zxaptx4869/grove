@@ -63,6 +63,7 @@ import type {
   KnowledgeRun,
   KnowledgeRunCitation,
   KnowledgeScopeChangeRequest,
+  ResultMode,
 } from "@/src/knowledge-agent/types";
 import { isRunActive } from "@/src/knowledge-agent/types";
 import { theme } from "@/src/theme";
@@ -146,6 +147,20 @@ export function ConversationScreen() {
   const handleSuggestion = useCallback((suggestion: string) => {
     setText(suggestion);
   }, []);
+
+  /** 模式纠正：只把原问题填回 Composer 并预设结果形式，不自动发送。 */
+  const handleResultModeCorrection = useCallback(
+    (run: KnowledgeRun, resultMode: ResultMode) => {
+      const userMessage = controller.thread.items.find(
+        (item) => item.runId === run.id && item.role === "user",
+      );
+      if (!userMessage) return;
+      setText(userMessage.content);
+      controller.setModes({ ...controller.modes, resultMode });
+      scrollRef.current?.scrollToEnd({ animated: true });
+    },
+    [controller],
+  );
 
   const handleScroll = useCallback(
     (event: NativeSyntheticEvent<NativeScrollEvent>) => {
@@ -474,6 +489,7 @@ export function ConversationScreen() {
                   }
                 }}
                 onOrganize={handleOrganize}
+                onResultModeCorrection={handleResultModeCorrection}
               />
             ))}
           {controller.pending !== null && (
@@ -566,6 +582,7 @@ export function ConversationScreen() {
             onOpenModes={() => setModeOpen(true)}
             onRemoveContextOverride={() => controller.setContextMode("auto")}
             onRemoveAnswerOverride={() => controller.setAnswerMode("auto")}
+            onRemoveResultOverride={() => controller.setResultMode("auto")}
             submitting={submitting}
             disabled={
               controller.initialLoading ||
@@ -758,6 +775,7 @@ function ThreadMessage({
   onCancelDraft,
   onRetryDraft,
   onOrganize,
+  onResultModeCorrection,
   confirmingRevisionDraftId,
   undoingRevisionDraftId,
   revisionUndoError,
@@ -789,6 +807,7 @@ function ThreadMessage({
   onCancelDraft: (draftId: number) => void;
   onRetryDraft: (sourceRunId: number, targetProjectId: number | null) => void;
   onOrganize: (run: KnowledgeRun) => void;
+  onResultModeCorrection: (run: KnowledgeRun, resultMode: ResultMode) => void;
   confirmingRevisionDraftId: number | null;
   undoingRevisionDraftId: number | null;
   revisionUndoError: string | null;
@@ -1019,6 +1038,22 @@ function ThreadMessage({
       );
     }
   }
+  if (run?.actualResultMode === "entries" && !isRunActive(run.status)) {
+    return (
+      <View>
+        <View style={styles.agentLabel}>
+          <View style={styles.agentDot}>
+            <Text style={styles.agentDotText}>G</Text>
+          </View>
+          <Text style={styles.agentLabelText}>知识 Agent</Text>
+        </View>
+        <EntryResultsLegacyCard
+          messageContent={message.content}
+          onCorrect={() => onResultModeCorrection(run, "answer")}
+        />
+      </View>
+    );
+  }
   return (
     <View>
       <View style={styles.agentLabel}>
@@ -1055,6 +1090,34 @@ function ThreadMessage({
           }}
         />
       )}
+    </View>
+  );
+}
+
+/** 兼容兜底：旧客户端/尚未加载结果卡时展示助手摘要，并提供模式纠正入口。 */
+function EntryResultsLegacyCard({
+  messageContent,
+  onCorrect,
+}: {
+  messageContent: string;
+  onCorrect: () => void;
+}) {
+  return (
+    <View style={styles.legacyAnswer}>
+      <Text style={styles.legacyAnswerText}>
+        {messageContent.trim() !== "" ? messageContent : "已生成结构化知识结果。"}
+      </Text>
+      <Pressable
+        accessibilityRole="button"
+        accessibilityLabel="改为综合回答"
+        onPress={onCorrect}
+        style={({ pressed }) => [
+          styles.retryButton,
+          pressed && styles.pressed,
+        ]}
+      >
+        <Text style={styles.retryText}>改为综合回答</Text>
+      </Pressable>
     </View>
   );
 }

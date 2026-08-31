@@ -25,6 +25,7 @@ jest.mock("@/src/knowledge-agent/api", () => ({
     listMessages: jest.fn(),
     submitMessage: jest.fn(),
     getRun: jest.fn(),
+    getEntryResults: jest.fn(),
     cancelRun: jest.fn(),
     submitDraftAction: jest.fn(),
     getDraft: jest.fn(),
@@ -97,6 +98,8 @@ function message(
     topicLabel: null,
     requestAnswerMode: null,
     actualAnswerMode: null,
+    requestResultMode: null,
+    actualResultMode: null,
     currentRound: 0,
     inputContextVersionId: null,
     outputContextVersionId: null,
@@ -131,6 +134,8 @@ function run(
     topicLabel: null,
     requestAnswerMode: null,
     actualAnswerMode: null,
+    requestResultMode: null,
+    actualResultMode: null,
     currentRound: 0,
     inputContextVersionId: null,
     outputContextVersionId: null,
@@ -138,6 +143,7 @@ function run(
     fallbackSummary: null,
     investigationSummary: null,
     answer: null,
+    entryResult: null,
     createdAt: updatedAt,
     updatedAt,
   };
@@ -264,7 +270,8 @@ async function renderController() {
 
 describe("useConversationController", () => {
   beforeEach(() => {
-    jest.clearAllMocks();
+    // resetAllMocks 会连同 once 实现队列一起清空，避免分页 mock 跨测试串线
+    jest.resetAllMocks();
   });
 
   test("draft 首次发送懒创建对话并重置一次性模式", async () => {
@@ -304,11 +311,13 @@ describe("useConversationController", () => {
       message: "问题内容",
       contextMode: "continue",
       answerMode: "investigate",
+      resultMode: "auto",
     });
     expect(rendered.result.current.pending).toBeNull();
     expect(rendered.result.current.modes).toEqual({
       contextMode: "auto",
       answerMode: "auto",
+      resultMode: "auto",
     });
     await rendered.unmount();
   });
@@ -384,6 +393,7 @@ describe("useConversationController", () => {
       message: "第二轮问题",
       contextMode: "auto",
       answerMode: "auto",
+      resultMode: "auto",
     });
     expect(rendered.result.current.isDraft).toBe(false);
     await rendered.unmount();
@@ -1051,6 +1061,308 @@ describe("useConversationController", () => {
     expect(rendered.result.current.revisionDraftsById.get(2)?.status).toBe(
       "undone",
     );
+    await rendered.unmount();
+  });
+
+  test("显式结果形式随下一条消息提交，成功后恢复 auto", async () => {
+    api.listConversations.mockResolvedValue([conversation(1)]);
+    api.getConversation.mockResolvedValue(conversation(1));
+    api.listMessages.mockResolvedValue({
+      items: [],
+      nextCursor: null,
+      runs: [],
+      candidateDrafts: [],
+    });
+    api.submitMessage.mockResolvedValue({
+      userMessage: message(3, "user", 2, "列出血压知识"),
+      run: run(2, "waiting"),
+    });
+
+    const rendered = await renderController();
+    await waitFor(() => expect(rendered.result.current.isDraft).toBe(false));
+    await act(async () => {
+      rendered.result.current.setResultMode("entries");
+    });
+    expect(rendered.result.current.modes.resultMode).toBe("entries");
+    await act(async () => {
+      await rendered.result.current.submit("列出血压知识");
+    });
+    expect(api.submitMessage).toHaveBeenCalledWith("token", 1, {
+      clientMessageId: "test-client-id",
+      message: "列出血压知识",
+      contextMode: "auto",
+      answerMode: "auto",
+      resultMode: "entries",
+    });
+    expect(rendered.result.current.modes.resultMode).toBe("auto");
+    await rendered.unmount();
+  });
+
+  test("设置结果形式不自动发送；发送失败保留用户选择", async () => {
+    api.listConversations.mockResolvedValue([conversation(1)]);
+    api.getConversation.mockResolvedValue(conversation(1));
+    api.listMessages.mockResolvedValue({
+      items: [],
+      nextCursor: null,
+      runs: [],
+      candidateDrafts: [],
+    });
+    api.submitMessage.mockRejectedValue(new TypeError("Network request failed"));
+
+    const rendered = await renderController();
+    await waitFor(() => expect(rendered.result.current.isDraft).toBe(false));
+    await act(async () => {
+      rendered.result.current.setResultMode("answer");
+    });
+    // 只设置模式不得触发发送
+    expect(api.submitMessage).not.toHaveBeenCalled();
+    await act(async () => {
+      await rendered.result.current.submit("闭水试验说明了什么");
+    });
+    expect(rendered.result.current.submitError).not.toBeNull();
+    // 失败后保留用户选择，便于重试
+    expect(rendered.result.current.modes.resultMode).toBe("answer");
+    expect(rendered.result.current.pending?.resultMode).toBe("answer");
+    await rendered.unmount();
+  });
+
+  test("结果分页首屏派生、下一页按 entry id 去重追加，失败保留已加载项", async () => {
+    api.listConversations.mockResolvedValue([conversation(1)]);
+    api.getConversation.mockResolvedValue(conversation(1));
+    const snapshot = {
+      schemaVersion: "v1",
+      query: "闭水试验",
+      status: "completed" as const,
+      completeness: "limited" as const,
+      items: [
+        {
+          entryId: 1,
+          title: "闭水试验 A",
+          excerpt: "摘要",
+          projectId: 1,
+          projectName: "新房装修",
+          nodeId: 1,
+          nodePath: "施工",
+          mainType: "knowledge",
+          infoNature: "fact",
+          updatedAt: "2026-08-29T10:00:00Z",
+          sourceCount: 1,
+          fingerprint: "fp-1",
+          matchHint: null,
+          matchedFields: ["title"],
+        },
+        {
+          entryId: 2,
+          title: "闭水试验 B",
+          excerpt: "摘要",
+          projectId: 1,
+          projectName: "新房装修",
+          nodeId: 1,
+          nodePath: "施工",
+          mainType: "knowledge",
+          infoNature: "fact",
+          updatedAt: "2026-08-29T10:00:00Z",
+          sourceCount: 1,
+          fingerprint: "fp-2",
+          matchHint: null,
+          matchedFields: ["title"],
+        },
+        {
+          entryId: 3,
+          title: "闭水试验 C",
+          excerpt: "摘要",
+          projectId: 1,
+          projectName: "新房装修",
+          nodeId: 1,
+          nodePath: "施工",
+          mainType: "knowledge",
+          infoNature: "fact",
+          updatedAt: "2026-08-29T10:00:00Z",
+          sourceCount: 1,
+          fingerprint: "fp-3",
+          matchHint: null,
+          matchedFields: ["title"],
+        },
+      ],
+      returnedCount: 3,
+      candidateLimit: 50,
+      warning: null,
+      snapshotUpdatedAt: "2026-08-29T10:00:00Z",
+    };
+    const entriesRun = {
+      ...run(9, "completed"),
+      actualResultMode: "entries" as const,
+      entryResult: snapshot,
+    };
+    api.listMessages.mockResolvedValue({
+      items: [
+        message(1, "user", 9, "列出闭水试验知识"),
+        message(2, "assistant", 9, "找到 3 条相关正式知识"),
+      ],
+      nextCursor: null,
+      runs: [entriesRun],
+      candidateDrafts: [],
+    });
+    api.getEntryResults
+      .mockResolvedValueOnce({
+        schemaVersion: "v1",
+        status: "completed",
+        completeness: "limited",
+        items: snapshot.items.slice(0, 6),
+        returnedCount: 3,
+        totalInSnapshot: 3,
+        candidateLimit: 50,
+        hasMore: false,
+        nextCursor: null,
+        warning: null,
+        snapshotUpdatedAt: "2026-08-29T10:00:00Z",
+      })
+      .mockResolvedValueOnce({
+        schemaVersion: "v1",
+        status: "completed",
+        completeness: "limited",
+        items: [snapshot.items[1], snapshot.items[2]],
+        returnedCount: 2,
+        totalInSnapshot: 3,
+        candidateLimit: 50,
+        hasMore: false,
+        nextCursor: null,
+        warning: null,
+        snapshotUpdatedAt: "2026-08-29T10:00:00Z",
+      });
+
+    const rendered = await renderController();
+    await waitFor(() => expect(rendered.result.current.isDraft).toBe(false));
+    await act(async () => {
+      rendered.result.current.primeEntryResults(9);
+    });
+    await waitFor(() => {
+      expect(rendered.result.current.entryResultsForRun(9)?.primed).toBe(true);
+    });
+    expect(api.getEntryResults).toHaveBeenCalledWith("token", 9, null, 6);
+    expect(rendered.result.current.entryResultsForRun(9)?.items).toHaveLength(3);
+    await rendered.unmount();
+  });
+
+  test("下一页失败保留已加载项并可重试", async () => {
+    api.listConversations.mockResolvedValue([conversation(1)]);
+    api.getConversation.mockResolvedValue(conversation(1));
+    const itemA = {
+      entryId: 1,
+      title: "闭水试验 A",
+      excerpt: "摘要",
+      projectId: 1,
+      projectName: "新房装修",
+      nodeId: 1,
+      nodePath: "施工",
+      mainType: "knowledge",
+      infoNature: "fact",
+      updatedAt: "2026-08-29T10:00:00Z",
+      sourceCount: 1,
+      fingerprint: "fp-1",
+      matchHint: null,
+      matchedFields: ["title"],
+    };
+    const itemB = {
+      entryId: 2,
+      title: "闭水试验 B",
+      excerpt: "摘要",
+      projectId: 1,
+      projectName: "新房装修",
+      nodeId: 1,
+      nodePath: "施工",
+      mainType: "knowledge",
+      infoNature: "fact",
+      updatedAt: "2026-08-29T10:00:00Z",
+      sourceCount: 1,
+      fingerprint: "fp-2",
+      matchHint: null,
+      matchedFields: ["title"],
+    };
+    const entriesRun = {
+      ...run(10, "completed"),
+      actualResultMode: "entries" as const,
+      entryResult: {
+        schemaVersion: "v1",
+        query: "闭水试验",
+        status: "completed" as const,
+        completeness: "limited" as const,
+        items: [itemA, itemB],
+        returnedCount: 2,
+        candidateLimit: 50,
+        warning: null,
+        snapshotUpdatedAt: "2026-08-29T10:00:00Z",
+      },
+    };
+    api.listMessages.mockResolvedValue({
+      items: [
+        message(1, "user", 10, "列出闭水试验知识"),
+        message(2, "assistant", 10, "找到 2 条相关正式知识"),
+      ],
+      nextCursor: null,
+      runs: [entriesRun],
+      candidateDrafts: [],
+    });
+    api.getEntryResults
+      .mockResolvedValueOnce({
+        schemaVersion: "v1",
+        status: "completed",
+        completeness: "limited",
+        items: [itemA],
+        returnedCount: 1,
+        totalInSnapshot: 2,
+        candidateLimit: 50,
+        hasMore: true,
+        nextCursor: "cursor-2",
+        warning: null,
+        snapshotUpdatedAt: "2026-08-29T10:00:00Z",
+      })
+      .mockRejectedValueOnce(new TypeError("Network request failed"))
+      .mockResolvedValueOnce({
+        schemaVersion: "v1",
+        status: "completed",
+        completeness: "limited",
+        items: [itemB],
+        returnedCount: 1,
+        totalInSnapshot: 2,
+        candidateLimit: 50,
+        hasMore: false,
+        nextCursor: null,
+        warning: null,
+        snapshotUpdatedAt: "2026-08-29T10:00:00Z",
+      });
+
+    const rendered = await renderController();
+    await waitFor(() => expect(rendered.result.current.isDraft).toBe(false));
+    await act(async () => {
+      rendered.result.current.primeEntryResults(10);
+    });
+    await waitFor(() => {
+      expect(rendered.result.current.entryResultsForRun(10)?.primed).toBe(true);
+    });
+    await act(async () => {
+      rendered.result.current.loadMoreEntryResults(10);
+      // 显式 flush 被拒绝的 Promise，确保错误状态在断言前落地
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    });
+    await waitFor(() => {
+      expect(rendered.result.current.entryResultsForRun(10)?.error).not.toBeNull();
+    });
+    // 失败保留已加载项，不重新提交原问题
+    const afterFailure = rendered.result.current.entryResultsForRun(10);
+    expect(afterFailure?.items.map((item) => item.entryId)).toEqual([1]);
+    expect(api.submitMessage).not.toHaveBeenCalled();
+    await act(async () => {
+      rendered.result.current.retryEntryResults(10);
+    });
+    await waitFor(() => {
+      expect(
+        rendered.result.current.entryResultsForRun(10)?.items.map(
+          (item) => item.entryId,
+        ),
+      ).toEqual([1, 2]);
+    });
+    expect(rendered.result.current.entryResultsForRun(10)?.error).toBeNull();
     await rendered.unmount();
   });
 });

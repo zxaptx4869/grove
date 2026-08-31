@@ -17,6 +17,7 @@ import {
   DEFAULT_MODES,
   withAnswerMode,
   withContextMode,
+  withResultMode,
   type ModeSelection,
 } from "@/src/knowledge-agent/state/modes";
 import {
@@ -33,16 +34,55 @@ import type {
   KnowledgeCandidateDraft,
   KnowledgeConversation,
   KnowledgeDraftEditRequest,
+  KnowledgeEntryResultItem,
   KnowledgeEntryRevisionDraft,
   KnowledgeMessage,
   KnowledgeMessagePage,
   KnowledgeRun,
   RunStatus,
+  ResultMode,
   KnowledgeScopeChangeRequest,
   KnowledgeScopeType,
   KnowledgeRevisionEditRequest,
 } from "@/src/knowledge-agent/types";
 import { isRunActive } from "@/src/knowledge-agent/types";
+import { ENTRY_RESULT_PAGE_SIZE } from "@/src/knowledge-agent/adapters/entryResults";
+
+export interface EntryResultsState {
+  runId: number;
+  items: KnowledgeEntryResultItem[];
+  nextCursor: string | null;
+  hasMore: boolean;
+  loadingMore: boolean;
+  error: string | null;
+  primed: boolean;
+}
+
+function emptyEntryResultsState(runId: number): EntryResultsState {
+  return {
+    runId,
+    items: [],
+    nextCursor: null,
+    hasMore: false,
+    loadingMore: false,
+    error: null,
+    primed: false,
+  };
+}
+
+function mergeEntryItems(
+  previous: KnowledgeEntryResultItem[],
+  incoming: KnowledgeEntryResultItem[],
+): KnowledgeEntryResultItem[] {
+  const seen = new Set(previous.map((item) => item.entryId));
+  const result = [...previous];
+  for (const item of incoming) {
+    if (seen.has(item.entryId)) continue;
+    seen.add(item.entryId);
+    result.push(item);
+  }
+  return result;
+}
 
 export interface DraftScope {
   scopeType: KnowledgeScopeType;
@@ -78,7 +118,13 @@ export interface ConversationController {
   modes: ModeSelection;
   setContextMode: (mode: ContextMode) => void;
   setAnswerMode: (mode: AnswerMode) => void;
+  setResultMode: (mode: ResultMode) => void;
   setModes: (modes: ModeSelection) => void;
+  /** 结构化 Entry 结果分页：按 Run 归并、去重追加；失败保留已加载项。 */
+  entryResultsForRun: (runId: number) => EntryResultsState | null;
+  primeEntryResults: (runId: number) => void;
+  loadMoreEntryResults: (runId: number) => void;
+  retryEntryResults: (runId: number) => void;
   submit: (text: string) => Promise<boolean>;
   retrySubmit: () => Promise<boolean>;
   retryRun: (runId: number) => Promise<boolean>;
@@ -191,6 +237,9 @@ export function useConversationController(
   const [runOverrides, setRunOverrides] = useState<Map<number, KnowledgeRun>>(
     () => new Map(),
   );
+  const [entryResultsByRun, setEntryResultsByRun] = useState<
+    Map<number, EntryResultsState>
+  >(() => new Map());
   const [extraMessages, setExtraMessages] = useState<KnowledgeMessage[]>([]);
   const [threadDrafts, setThreadDrafts] = useState<
     Map<number, KnowledgeCandidateDraft>
@@ -461,6 +510,7 @@ export function useConversationController(
           message: current.text,
           contextMode: current.contextMode,
           answerMode: current.answerMode,
+          resultMode: current.resultMode,
         });
         setPending(null);
         setModesState(DEFAULT_MODES);
@@ -528,6 +578,7 @@ export function useConversationController(
         text,
         contextMode: modesRef.current.contextMode,
         answerMode: modesRef.current.answerMode,
+        resultMode: modesRef.current.resultMode,
       });
       setPending(submission);
       return performSubmission(submission);
@@ -551,6 +602,7 @@ export function useConversationController(
         text: userMessage.content,
         contextMode: modesRef.current.contextMode,
         answerMode: modesRef.current.answerMode,
+        resultMode: modesRef.current.resultMode,
       });
       setPending(submission);
       return performSubmission(submission);
@@ -1199,6 +1251,7 @@ export function useConversationController(
   const switchToConversation = useCallback((conversationId: number) => {
     setOlderPages([]);
     setRunOverrides(new Map());
+    setEntryResultsByRun(new Map());
     setExtraMessages([]);
     setThreadDrafts(new Map());
     setThreadRevisionDrafts(new Map());
@@ -1235,6 +1288,7 @@ export function useConversationController(
   const startNewConversation = useCallback(() => {
     setOlderPages([]);
     setRunOverrides(new Map());
+    setEntryResultsByRun(new Map());
     setExtraMessages([]);
     setThreadDrafts(new Map());
     setThreadRevisionDrafts(new Map());
@@ -1295,9 +1349,128 @@ export function useConversationController(
   const setAnswerMode = useCallback((mode: AnswerMode) => {
     setModesState((previous) => withAnswerMode(previous, mode));
   }, []);
+  const setResultMode = useCallback((mode: ResultMode) => {
+    setModesState((previous) => withResultMode(previous, mode));
+  }, []);
   const setModes = (next: ModeSelection) => {
     setModesState({ ...next });
   };
+
+  /** 按 Run 读取/派生结果分页状态；未初始化时从快照首屏派生。 */
+  const entryResultsForRun = useCallback(
+    (runId: number): EntryResultsState | null => {
+      const stored = entryResultsByRun.get(runId);
+      if (stored) return stored;
+      const run = thread.runsById.get(runId);
+      const snapshot = run?.entryResult ?? null;
+      if (!snapshot) return null;
+      const items = snapshot.items.slice(0, ENTRY_RESULT_PAGE_SIZE);
+      return {
+        runId,
+        items,
+        nextCursor: null,
+        hasMore: snapshot.items.length > ENTRY_RESULT_PAGE_SIZE,
+        loadingMore: false,
+        error: null,
+        primed: false,
+      };
+    },
+    [entryResultsByRun, thread.runsById],
+  );
+
+  const updateEntryResults = useCallback(
+    (runId: number, update: (state: EntryResultsState) => EntryResultsState) => {
+      setEntryResultsByRun((previous) => {
+        const current = previous.get(runId) ?? emptyEntryResultsState(runId);
+        const next = new Map(previous);
+        next.set(runId, update(current));
+        return next;
+      });
+    },
+    [],
+  );
+
+  /** 首次加载：用服务端第一页取得不透明游标（内容与快照首屏一致，按 id 去重）。 */
+  const primeEntryResults = useCallback(
+    (runId: number) => {
+      if (!token) return;
+      const current = entryResultsByRun.get(runId);
+      if (current?.primed || current?.loadingMore) return;
+      updateEntryResults(runId, (state) => ({ ...state, loadingMore: true, error: null }));
+      void knowledgeAgentApi
+        .getEntryResults(token, runId, null, ENTRY_RESULT_PAGE_SIZE)
+        .then((page) => {
+          updateEntryResults(runId, (state) => ({
+            ...state,
+            items: mergeEntryItems(state.items, page.items),
+            nextCursor: page.nextCursor,
+            hasMore: page.hasMore,
+            loadingMore: false,
+            error: null,
+            primed: true,
+          }));
+        })
+        .catch((error) => {
+          updateEntryResults(runId, (state) => ({
+            ...state,
+            loadingMore: false,
+            error: toUserErrorMessage(error),
+            primed: true,
+          }));
+        });
+    },
+    [token, entryResultsByRun, updateEntryResults],
+  );
+
+  /** 加载下一页：只读同一快照，不重新提交问题；失败保留已加载项。 */
+  const loadMoreEntryResults = useCallback(
+    (runId: number) => {
+      if (!token) return;
+      const current = entryResultsByRun.get(runId);
+      if (!current || current.loadingMore) return;
+      if (!current.primed) {
+        primeEntryResults(runId);
+        return;
+      }
+      if (!current.nextCursor || !current.hasMore) return;
+      updateEntryResults(runId, (state) => ({ ...state, loadingMore: true, error: null }));
+      void knowledgeAgentApi
+        .getEntryResults(token, runId, current.nextCursor, ENTRY_RESULT_PAGE_SIZE)
+        .then((page) => {
+          updateEntryResults(runId, (state) => ({
+            ...state,
+            items: mergeEntryItems(state.items, page.items),
+            nextCursor: page.nextCursor,
+            hasMore: page.hasMore,
+            loadingMore: false,
+            error: null,
+          }));
+        })
+        .catch((error) => {
+          updateEntryResults(runId, (state) => ({
+            ...state,
+            loadingMore: false,
+            error: toUserErrorMessage(error),
+          }));
+        });
+    },
+    [token, entryResultsByRun, primeEntryResults, updateEntryResults],
+  );
+
+  const retryEntryResults = useCallback(
+    (runId: number) => {
+      const current = entryResultsByRun.get(runId);
+      if (!current || current.loadingMore) return;
+      if (!current.primed || !current.nextCursor) {
+        // 首屏或游标获取失败：重置后重新拉取第一页
+        updateEntryResults(runId, (state) => ({ ...state, primed: false, error: null }));
+        primeEntryResults(runId);
+        return;
+      }
+      loadMoreEntryResults(runId);
+    },
+    [entryResultsByRun, primeEntryResults, loadMoreEntryResults, updateEntryResults],
+  );
 
   return {
     initialLoading: conversationsQuery.isLoading,
@@ -1333,7 +1506,12 @@ export function useConversationController(
     modes,
     setContextMode,
     setAnswerMode,
+    setResultMode,
     setModes,
+    entryResultsForRun,
+    primeEntryResults,
+    loadMoreEntryResults,
+    retryEntryResults,
     submit,
     retrySubmit,
     retryRun,

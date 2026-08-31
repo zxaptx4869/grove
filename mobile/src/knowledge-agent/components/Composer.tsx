@@ -9,7 +9,11 @@ import {
 import { AgentIcon } from "@/src/knowledge-agent/components/AgentIcon";
 import { hasModeOverrides } from "@/src/knowledge-agent/state/modes";
 import type { ModeSelection } from "@/src/knowledge-agent/state/modes";
-import type { AnswerMode, ContextMode } from "@/src/knowledge-agent/types";
+import type {
+  AnswerMode,
+  ContextMode,
+  ResultMode,
+} from "@/src/knowledge-agent/types";
 import { theme } from "@/src/theme";
 
 const CONTEXT_LABELS: Record<ContextMode, string> = {
@@ -24,6 +28,12 @@ const ANSWER_LABELS: Record<AnswerMode, string> = {
   investigate: "深度查找",
 };
 
+const RESULT_LABELS: Record<ResultMode, string> = {
+  auto: "",
+  answer: "综合回答",
+  entries: "知识列表",
+};
+
 export function Composer({
   value,
   onChangeText,
@@ -32,6 +42,7 @@ export function Composer({
   onOpenModes,
   onRemoveContextOverride,
   onRemoveAnswerOverride,
+  onRemoveResultOverride,
   submitting,
   disabled,
 }: {
@@ -42,6 +53,7 @@ export function Composer({
   onOpenModes: () => void;
   onRemoveContextOverride: () => void;
   onRemoveAnswerOverride: () => void;
+  onRemoveResultOverride: () => void;
   submitting: boolean;
   disabled: boolean;
 }) {
@@ -49,6 +61,7 @@ export function Composer({
   const canSend = trimmed.length > 0 && !submitting && !disabled;
   const contextLabel = CONTEXT_LABELS[modes.contextMode];
   const answerLabel = ANSWER_LABELS[modes.answerMode];
+  const resultLabel = RESULT_LABELS[modes.resultMode];
   return (
     <View style={styles.wrap}>
       {hasModeOverrides(modes) && (
@@ -58,6 +71,9 @@ export function Composer({
           )}
           {answerLabel !== "" && (
             <ModeChip label={answerLabel} onRemove={onRemoveAnswerOverride} />
+          )}
+          {resultLabel !== "" && (
+            <ModeChip label={resultLabel} onRemove={onRemoveResultOverride} />
           )}
         </View>
       )}

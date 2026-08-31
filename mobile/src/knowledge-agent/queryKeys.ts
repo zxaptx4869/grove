@@ -6,6 +6,8 @@ export const knowledgeAgentKeys = {
   conversation: (id: number) => ["knowledge-agent", "conversation", id] as const,
   messages: (id: number) => ["knowledge-agent", "messages", id] as const,
   run: (id: number) => ["knowledge-agent", "run", id] as const,
+  entryResults: (runId: number) =>
+    ["knowledge-agent", "entry-results", runId] as const,
   drafts: (conversationId: number) =>
     ["knowledge-agent", "drafts", conversationId] as const,
   draft: (id: number) => ["knowledge-agent", "draft", id] as const,

@@ -51,6 +51,7 @@ describe("知识 Agent API 序列化", () => {
       message: "闭水试验多久？",
       contextMode: "continue",
       answerMode: "investigate",
+      resultMode: "entries",
     });
     const [url, init] = (globalThis.fetch as jest.Mock).mock.calls[0] as [
       string,
@@ -64,6 +65,7 @@ describe("知识 Agent API 序列化", () => {
       message: "闭水试验多久？",
       context_mode: "continue",
       answer_mode: "investigate",
+      result_mode: "entries",
     });
   });
 
@@ -346,6 +348,7 @@ describe("知识 Agent API 序列化", () => {
         message: "问题",
         contextMode: "auto",
         answerMode: "auto",
+        resultMode: "auto",
       }),
     ).rejects.toMatchObject({ kind: "conflict", status: 409 });
 

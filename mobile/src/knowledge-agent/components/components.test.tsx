@@ -183,6 +183,8 @@ function run(
     topicLabel: null,
     requestAnswerMode: null,
     actualAnswerMode: null,
+    requestResultMode: null,
+    actualResultMode: null,
     currentRound: 0,
     inputContextVersionId: null,
     outputContextVersionId: null,
@@ -190,6 +192,7 @@ function run(
     fallbackSummary: null,
     investigationSummary: null,
     answer,
+    entryResult: null,
     createdAt: "2026-08-29T10:00:00Z",
     updatedAt: "2026-08-29T10:00:00Z",
     ...overrides,
@@ -238,6 +241,8 @@ function message(
     topicLabel: null,
     requestAnswerMode: null,
     actualAnswerMode: null,
+    requestResultMode: null,
+    actualResultMode: null,
     currentRound: 0,
     inputContextVersionId: null,
     outputContextVersionId: null,
@@ -342,6 +347,7 @@ test("composer 空文本禁用发送，模式覆盖显示可移除 chip", async 
       onOpenModes={jest.fn()}
       onRemoveContextOverride={onRemove}
       onRemoveAnswerOverride={onRemove}
+      onRemoveResultOverride={onRemove}
       submitting={false}
       disabled={false}
     />,
@@ -354,10 +360,11 @@ test("composer 空文本禁用发送，模式覆盖显示可移除 chip", async 
       value="问题"
       onChangeText={jest.fn()}
       onSend={onSend}
-      modes={{ contextMode: "continue", answerMode: "investigate" }}
+      modes={{ contextMode: "continue", answerMode: "investigate", resultMode: "entries" }}
       onOpenModes={jest.fn()}
       onRemoveContextOverride={onRemove}
       onRemoveAnswerOverride={onRemove}
+      onRemoveResultOverride={onRemove}
       submitting={false}
       disabled={false}
     />,

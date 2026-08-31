@@ -47,13 +47,13 @@
 
 ## 6. 原生领域协议与控制器
 
-- [ ] 6.1 扩展 mobile 类型、snake/camel API 映射、query keys、adapters 与错误分类，兼容旧响应缺少 result mode/entry result 时继续渲染 AnswerCard
-- [ ] 6.2 扩展 ModeSelection、ModeSheet 与 Composer payload/chip：结果形式 auto/answer/entries 只作用下一条，发送成功复位，失败保留用户选择
-- [ ] 6.3 在 Conversation controller 归并首屏结果、分页页与 Run override，按 entry id 去重追加；切换会话、退出登录和刷新历史时清除错误/游标串线
-- [ ] 6.4 实现分页加载/重试、详情查询及失效；下一页网络失败保留已加载项，不重新提交原问题或重跑搜索
-- [ ] 6.5 实现模式纠正：将原问题填回 Composer 并预设相反 result mode，不自动发送、不复用旧 client_message_id、不修改历史 Run
-- [ ] 6.6 补 API 映射、模式复位/失败保留、旧协议、消息归并、分页去重、会话切换、详情失效、纠正不自动发送和 active Run 冲突测试
-- [ ] 6.7 运行移动定向 Jest、`npm run lint` 与 `npm run typecheck`，完成本地提交 `feat: 接入原生端结构化知识查找协议`
+- [x] 6.1 扩展 mobile 类型、snake/camel API 映射、query keys、adapters 与错误分类，兼容旧响应缺少 result mode/entry result 时继续渲染 AnswerCard
+- [x] 6.2 扩展 ModeSelection、ModeSheet 与 Composer payload/chip：结果形式 auto/answer/entries 只作用下一条，发送成功复位，失败保留用户选择
+- [x] 6.3 在 Conversation controller 归并首屏结果、分页页与 Run override，按 entry id 去重追加；切换会话、退出登录和刷新历史时清除错误/游标串线
+- [x] 6.4 实现分页加载/重试、详情查询及失效；下一页网络失败保留已加载项，不重新提交原问题或重跑搜索
+- [x] 6.5 实现模式纠正：将原问题填回 Composer 并预设相反 result mode，不自动发送、不复用旧 client_message_id、不修改历史 Run
+- [x] 6.6 补 API 映射、模式复位/失败保留、旧协议、消息归并、分页去重、会话切换、详情失效、纠正不自动发送和 active Run 冲突测试
+- [x] 6.7 运行移动定向 Jest、`npm run lint` 与 `npm run typecheck`，完成本地提交 `feat: 接入原生端结构化知识查找协议`
 
 ## 7. 原生 Entry 结果界面与原型对齐
 

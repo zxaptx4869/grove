@@ -41,6 +41,9 @@ export type RevisionExecutionStatus = "applied" | "undoing" | "undone";
 export type ContextMode = "auto" | "continue" | "new_topic";
 export type ContextDecision = "continue" | "new_topic" | "clarify";
 export type AnswerMode = "auto" | "quick" | "investigate";
+export type ResultMode = "auto" | "answer" | "entries";
+export type ActualResultMode = "answer" | "entries";
+export type ResultCompleteness = "complete" | "limited" | "unknown";
 
 export type InvestigationStopReason =
   | "controller_complete"
@@ -90,6 +93,8 @@ export interface KnowledgeMessage extends KnowledgeScope {
   topicLabel: string | null;
   requestAnswerMode: AnswerMode | null;
   actualAnswerMode: AnswerMode | null;
+  requestResultMode: ResultMode | null;
+  actualResultMode: ActualResultMode | null;
   currentRound: number;
   inputContextVersionId: number | null;
   outputContextVersionId: number | null;
@@ -147,6 +152,51 @@ export interface KnowledgeAnswer {
   conflicts: KnowledgeConflict[];
 }
 
+/** 结构化 Entry 查找结果项：正式知识对象快照，不是 Citation。 */
+export interface KnowledgeEntryResultItem {
+  entryId: number;
+  title: string;
+  excerpt: string;
+  projectId: number | null;
+  projectName: string | null;
+  nodeId: number | null;
+  nodePath: string | null;
+  mainType: string | null;
+  infoNature: string | null;
+  updatedAt: string;
+  sourceCount: number;
+  /** 生成时内容/归属指纹：与当前 Entry 对比判断「已更新」。 */
+  fingerprint: string | null;
+  matchHint: string | null;
+  matchedFields: string[];
+}
+
+export interface KnowledgeEntryResultSnapshot {
+  schemaVersion: string;
+  query: string;
+  status: "completed" | "partial";
+  completeness: ResultCompleteness;
+  items: KnowledgeEntryResultItem[];
+  returnedCount: number;
+  candidateLimit: number;
+  warning: string | null;
+  snapshotUpdatedAt: string;
+}
+
+export interface KnowledgeEntryResultsPage {
+  schemaVersion: string;
+  status: "completed" | "partial";
+  completeness: ResultCompleteness;
+  items: KnowledgeEntryResultItem[];
+  returnedCount: number;
+  totalInSnapshot: number;
+  candidateLimit: number;
+  hasMore: boolean;
+  nextCursor: string | null;
+  warning: string | null;
+  snapshotUpdatedAt: string;
+}
+
 export interface FallbackStage {
   purpose: string;
   isFallback: boolean;
@@ -192,6 +242,8 @@ export interface KnowledgeRun extends KnowledgeScope {
   topicLabel: string | null;
   requestAnswerMode: AnswerMode | null;
   actualAnswerMode: AnswerMode | null;
+  requestResultMode: ResultMode | null;
+  actualResultMode: ActualResultMode | null;
   currentRound: number;
   inputContextVersionId: number | null;
   outputContextVersionId: number | null;
@@ -199,6 +251,7 @@ export interface KnowledgeRun extends KnowledgeScope {
   fallbackSummary: FallbackSummary | null;
   investigationSummary: InvestigationSummary | null;
   answer: KnowledgeAnswer | null;
+  entryResult: KnowledgeEntryResultSnapshot | null;
   createdAt: string;
   updatedAt: string;
 }
@@ -353,6 +406,7 @@ export interface KnowledgeEntryCurrent {
   note: string | null;
   createdAt: string;
   updatedAt: string;
+  fingerprint: string | null;
 }
 
 export interface KnowledgeRevisionActionRequest {
@@ -403,6 +457,7 @@ export interface KnowledgeRunSubmitRequest {
   message: string;
   contextMode: ContextMode;
   answerMode: AnswerMode;
+  resultMode: ResultMode;
 }
 
 export interface KnowledgeRunSubmit {
