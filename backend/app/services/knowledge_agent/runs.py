@@ -45,6 +45,7 @@ from app.schemas.knowledge_agent import (
     FallbackSummaryOut,
     InvestigationSummaryOut,
     KnowledgeAnswerOut,
+    KnowledgeEntryResultSnapshotOut,
     KnowledgeRunOut,
     KnowledgeRunSubmitRequest,
 )
@@ -226,6 +227,7 @@ async def submit_message(
         user_message_id=user_message.id,
         request_context_mode=payload.context_mode,
         request_answer_mode=payload.answer_mode,
+        request_result_mode=payload.result_mode,
         input_context_version_id=input_context_version_id,
         status=RUN_WAITING,
         current_step="waiting",
@@ -324,6 +326,19 @@ def _parse_answer(raw: str | None) -> KnowledgeAnswerOut | None:
     return KnowledgeAnswerOut.model_validate(data)
 
 
+def _parse_entry_result(raw: str | None) -> KnowledgeEntryResultSnapshotOut | None:
+    """解析 Run 结构化 Entry 结果 JSON；损坏或缺失返回 None。"""
+    if not raw:
+        return None
+    try:
+        data = json.loads(raw)
+    except (json.JSONDecodeError, TypeError):
+        return None
+    if not isinstance(data, dict):
+        return None
+    return KnowledgeEntryResultSnapshotOut.model_validate(data)
+
+
 def _parse_investigation_summary(
     raw: str | None,
 ) -> InvestigationSummaryOut | None:
@@ -371,6 +386,8 @@ def run_out(run: KnowledgeAgentRun) -> KnowledgeRunOut:
         topic_label=run.topic_label,
         request_answer_mode=run.request_answer_mode,
         actual_answer_mode=run.actual_answer_mode,
+        request_result_mode=run.request_result_mode,
+        actual_result_mode=run.actual_result_mode,
         current_round=run.current_round,
         input_context_version_id=run.input_context_version_id,
         output_context_version_id=run.output_context_version_id,
@@ -380,6 +397,7 @@ def run_out(run: KnowledgeAgentRun) -> KnowledgeRunOut:
             run.investigation_summary
         ),
         answer=_parse_answer(run.answer_json),
+        entry_result=_parse_entry_result(run.entry_result_json),
         created_at=run.created_at,
         updated_at=run.updated_at,
     )

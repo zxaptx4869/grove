@@ -1,20 +1,20 @@
 ## 1. 开工基线与前置同步
 
-- [ ] 1.1 阅读 `AGENTS.md`、本 change 全部工件、相关主规格、产品专题、移动原型对应片段，以及 `openspec-apply-change` 与 `grove-ui-conventions` 完整说明，确认本轮只做只读结构化 Entry 查找
-- [ ] 1.2 确认用户单独修复的三个前置问题（EntryVersion 字段长度、Revision edit/cancel 并发、Candidate rollback 后刷新对象）已经合入当前分支；若未合入则停止并汇报，不在本 change 重复或绕开
-- [ ] 1.3 记录当前后端 pytest/ruff、移动 Jest/lint/typecheck、iOS/Android Expo export 与 `openspec validate --all --strict` 基线；先区分既有失败与本 change 回归
-- [ ] 1.4 检查 Run/Message 迁移、结果序列化、游标、混合召回、关键词搜索、Entry 详情、Conversation controller 与消息归并实现，列出复用函数和兼容边界，不通过内部 HTTP 复用后端服务
-- [ ] 1.5 按 `design.md` 提取原型知识行、当前 AnswerCard/ModeSheet/Composer/CitationSheet 的视觉基线，写入 `validation/visual-baseline.md`，包括元素顺序、字号/行高、间距、边框、徽标、44×44 触控、Sheet、键盘、安全区和有意偏离
-- [ ] 1.6 运行 `openspec validate add-knowledge-agent-structured-entry-search --strict`，完成基线本地提交 `docs: 核对知识 Agent 结构化查找基线`
+- [x] 1.1 阅读 `AGENTS.md`、本 change 全部工件、相关主规格、产品专题、移动原型对应片段，以及 `openspec-apply-change` 与 `grove-ui-conventions` 完整说明，确认本轮只做只读结构化 Entry 查找
+- [x] 1.2 确认用户单独修复的三个前置问题（EntryVersion 字段长度、Revision edit/cancel 并发、Candidate rollback 后刷新对象）已经合入当前分支；若未合入则停止并汇报，不在本 change 重复或绕开
+- [x] 1.3 记录当前后端 pytest/ruff、移动 Jest/lint/typecheck、iOS/Android Expo export 与 `openspec validate --all --strict` 基线；先区分既有失败与本 change 回归
+- [x] 1.4 检查 Run/Message 迁移、结果序列化、游标、混合召回、关键词搜索、Entry 详情、Conversation controller 与消息归并实现，列出复用函数和兼容边界，不通过内部 HTTP 复用后端服务
+- [x] 1.5 按 `design.md` 提取原型知识行、当前 AnswerCard/ModeSheet/Composer/CitationSheet 的视觉基线，写入 `validation/visual-baseline.md`，包括元素顺序、字号/行高、间距、边框、徽标、44×44 触控、Sheet、键盘、安全区和有意偏离
+- [x] 1.6 运行 `openspec validate add-knowledge-agent-structured-entry-search --strict`，完成基线本地提交 `docs: 核对知识 Agent 结构化查找基线`
 
 ## 2. Run 协议、数据模型与迁移
 
-- [ ] 2.1 在后端常量与 Pydantic schema 中增加 `ResultMode=auto|answer|entries`、`ResultCompleteness=complete|limited|unknown`、结果项/结果集/分页响应；所有文本、列表和分页 limit 设置服务端约束
-- [ ] 2.2 扩展 `KnowledgeAgentRun` 的 request/actual result mode 与有界 `entry_result_json`，保持 `run_kind=answer` 和旧行按 answer 兼容，不修改既有 Candidate/Revision operation Run 语义
-- [ ] 2.3 新增 SQLite/MySQL 8 兼容 Alembic 迁移，检查 String 长度、Text 最大序列化字节、索引与 upgrade/downgrade；不得回填或改写历史 answer_json
-- [ ] 2.4 扩展 Run/Message/Conversation 输出与提交请求：默认 result mode 为 auto，重复 `client_message_id` 返回首次模式，首屏结构化结果随 Run 返回
-- [ ] 2.5 补模型、schema、旧行兼容、非法枚举/长度/limit、fresh SQLite、downgrade→upgrade 与 MySQL 字段长度测试
-- [ ] 2.6 运行本组定向 pytest、`backend/.venv/bin/ruff check backend/app backend/tests` 和 Alembic 验证，完成本地提交 `feat: 建立知识 Agent 结构化结果协议`
+- [x] 2.1 在后端常量与 Pydantic schema 中增加 `ResultMode=auto|answer|entries`、`ResultCompleteness=complete|limited|unknown`、结果项/结果集/分页响应；所有文本、列表和分页 limit 设置服务端约束
+- [x] 2.2 扩展 `KnowledgeAgentRun` 的 request/actual result mode 与有界 `entry_result_json`，保持 `run_kind=answer` 和旧行按 answer 兼容，不修改既有 Candidate/Revision operation Run 语义
+- [x] 2.3 新增 SQLite/MySQL 8 兼容 Alembic 迁移，检查 String 长度、Text 最大序列化字节、索引与 upgrade/downgrade；不得回填或改写历史 answer_json
+- [x] 2.4 扩展 Run/Message/Conversation 输出与提交请求：默认 result mode 为 auto，重复 `client_message_id` 返回首次模式，首屏结构化结果随 Run 返回
+- [x] 2.5 补模型、schema、旧行兼容、非法枚举/长度/limit、fresh SQLite、downgrade→upgrade 与 MySQL 字段长度测试
+- [x] 2.6 运行本组定向 pytest、`backend/.venv/bin/ruff check backend/app backend/tests` 和 Alembic 验证，完成本地提交 `feat: 建立知识 Agent 结构化结果协议`
 
 ## 3. 结果形态路由与可观测性
 

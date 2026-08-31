@@ -315,6 +315,8 @@ def message_out(
         topic_label=run.topic_label if run else None,
         request_answer_mode=run.request_answer_mode if run else None,
         actual_answer_mode=run.actual_answer_mode if run else None,
+        request_result_mode=run.request_result_mode if run else None,
+        actual_result_mode=run.actual_result_mode if run else None,
         current_round=run.current_round if run else 0,
         input_context_version_id=run.input_context_version_id if run else None,
         output_context_version_id=run.output_context_version_id if run else None,

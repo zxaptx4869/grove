@@ -51,6 +51,9 @@ RevisionExecutionStatus = Literal["applied", "undoing", "undone"]
 ContextMode = Literal["auto", "continue", "new_topic"]
 ContextDecision = Literal["continue", "new_topic", "clarify"]
 AnswerMode = Literal["auto", "quick", "investigate"]
+ResultMode = Literal["auto", "answer", "entries"]
+ActualResultMode = Literal["answer", "entries"]
+ResultCompleteness = Literal["complete", "limited", "unknown"]
 InvestigationStopReason = Literal[
     "controller_complete",
     "insufficient",
@@ -118,6 +121,8 @@ class KnowledgeMessageOut(BaseModel):
     topic_label: str | None = None
     request_answer_mode: AnswerMode | None = None
     actual_answer_mode: AnswerMode | None = None
+    request_result_mode: ResultMode | None = None
+    actual_result_mode: ActualResultMode | None = None
     current_round: int = 0
     input_context_version_id: int | None = None
     output_context_version_id: int | None = None
@@ -194,6 +199,59 @@ class KnowledgeAnswerOut(BaseModel):
     gaps: list[str] = []
 
 
+class KnowledgeEntryResultItemOut(BaseModel):
+    """结构化 Entry 结果项：正式知识对象快照，不是 Citation。
+
+    只保存服务端从正式 Entry / Project / Node / Evidence 关系装配的有界字段；
+    不保存完整正文、Source 原文、prompt、伪相关度或模型编造理由。
+    """
+
+    entry_id: int
+    title: str
+    excerpt: str
+    project_id: int | None = None
+    project_name: str | None = None
+    node_id: int | None = None
+    node_path: str | None = None
+    main_type: str | None = None
+    info_nature: str | None = None
+    updated_at: datetime
+    source_count: int = 0
+    # 服务端可验证的匹配线索；纯语义召回无法证明时省略
+    match_hint: str | None = None
+    matched_fields: list[str] = []
+
+
+class KnowledgeEntryResultSnapshotOut(BaseModel):
+    """Run 上持久化的有界 Entry 结果快照（首屏随 Run/消息页返回）。"""
+
+    schema_version: str = "v1"
+    query: str
+    status: Literal["completed", "partial"]
+    completeness: ResultCompleteness
+    items: list[KnowledgeEntryResultItemOut] = []
+    returned_count: int
+    candidate_limit: int
+    warning: str | None = None
+    snapshot_updated_at: datetime
+
+
+class KnowledgeEntryResultsPageOut(BaseModel):
+    """结果分页响应：只读取同一持久化快照，不重新搜索。"""
+
+    schema_version: str = "v1"
+    status: Literal["completed", "partial"]
+    completeness: ResultCompleteness
+    items: list[KnowledgeEntryResultItemOut]
+    returned_count: int
+    total_in_snapshot: int
+    candidate_limit: int
+    has_more: bool
+    next_cursor: str | None = None
+    warning: str | None = None
+    snapshot_updated_at: datetime
+
+
 class FallbackStageOut(BaseModel):
     """单个 AI 阶段的降级状态。"""
 
@@ -253,6 +311,8 @@ class KnowledgeRunOut(BaseModel):
     topic_label: str | None = None
     request_answer_mode: AnswerMode | None = None
     actual_answer_mode: AnswerMode | None = None
+    request_result_mode: ResultMode | None = None
+    actual_result_mode: ActualResultMode | None = None
     current_round: int = 0
     input_context_version_id: int | None = None
     output_context_version_id: int | None = None
@@ -260,6 +320,7 @@ class KnowledgeRunOut(BaseModel):
     fallback_summary: FallbackSummaryOut | None = None
     investigation_summary: InvestigationSummaryOut | None = None
     answer: KnowledgeAnswerOut | None = None
+    entry_result: KnowledgeEntryResultSnapshotOut | None = None
     created_at: datetime
     updated_at: datetime
 
@@ -271,6 +332,7 @@ class KnowledgeRunSubmitRequest(BaseModel):
     message: str = Field(min_length=1, max_length=2000)
     context_mode: ContextMode = "auto"
     answer_mode: AnswerMode = "auto"
+    result_mode: ResultMode = "auto"
 
 
 class KnowledgeRunSubmitOut(BaseModel):

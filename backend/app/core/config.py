@@ -127,6 +127,42 @@ class Settings(BaseSettings):
     knowledge_agent_investigation_query_chars: int = Field(
         default=200, description="调查控制器单条文本查询最大字符数"
     )
+    # 结构化 Entry 查找预算：候选上限、持久化结果上限、分页与摘要长度
+    knowledge_agent_result_candidate_limit: int = Field(
+        default=50, description="结构化 Entry 查找混合召回候选上限"
+    )
+    knowledge_agent_result_persist_limit: int = Field(
+        default=30, description="结构化 Entry 结果快照最多持久化条数"
+    )
+    knowledge_agent_result_default_page_size: int = Field(
+        default=6, description="结构化 Entry 结果默认每页条数"
+    )
+    knowledge_agent_result_max_page_size: int = Field(
+        default=12, description="结构化 Entry 结果最大每页条数"
+    )
+    knowledge_agent_result_excerpt_chars: int = Field(
+        default=240, description="结构化 Entry 结果摘要最大字符数"
+    )
+    knowledge_agent_result_node_path_chars: int = Field(
+        default=400, description="结构化 Entry 结果目录路径最大字符数"
+    )
+    knowledge_agent_result_match_hint_chars: int = Field(
+        default=120, description="结构化 Entry 结果匹配线索最大字符数"
+    )
+    knowledge_agent_result_json_bytes_limit: int = Field(
+        default=60000,
+        description=(
+            "结构化 Entry 结果 JSON 序列化后最大字节数（须低于 MySQL TEXT "
+            "65535 字节上限，SQLite 无上限）"
+        ),
+    )
+    # 结果形态路由：auto 请求独立路由；关闭时 auto 一律 answer
+    knowledge_agent_result_mode_router_enabled: bool = Field(
+        default=True, description="auto 结果形态路由是否启用；关闭时 auto 一律综合回答"
+    )
+    knowledge_agent_result_mode_router_timeout_seconds: float = Field(
+        default=20.0, description="结果形态路由模型调用超时（秒）"
+    )
 
     # 知识 Agent Worker 租约（秒）：processing 超过该阈值可恢复重试
     knowledge_agent_lease_seconds: int = Field(

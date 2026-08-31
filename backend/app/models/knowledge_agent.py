@@ -141,6 +141,22 @@ ANSWER_MODE_QUICK = "quick"
 ANSWER_MODE_INVESTIGATE = "investigate"
 ANSWER_MODES = (ANSWER_MODE_AUTO, ANSWER_MODE_QUICK, ANSWER_MODE_INVESTIGATE)
 
+# ---- 结果形态（请求与实际分开持久化） ----
+RESULT_MODE_AUTO = "auto"
+RESULT_MODE_ANSWER = "answer"
+RESULT_MODE_ENTRIES = "entries"
+RESULT_MODES = (RESULT_MODE_AUTO, RESULT_MODE_ANSWER, RESULT_MODE_ENTRIES)
+
+# ---- 结构化 Entry 结果完整性 ----
+RESULT_COMPLETENESS_COMPLETE = "complete"
+RESULT_COMPLETENESS_LIMITED = "limited"
+RESULT_COMPLETENESS_UNKNOWN = "unknown"
+RESULT_COMPLETENESSES = (
+    RESULT_COMPLETENESS_COMPLETE,
+    RESULT_COMPLETENESS_LIMITED,
+    RESULT_COMPLETENESS_UNKNOWN,
+)
+
 CONTEXT_DECISION_CONTINUE = "continue"
 CONTEXT_DECISION_NEW_TOPIC = "new_topic"
 CONTEXT_DECISION_CLARIFY = "clarify"
@@ -180,6 +196,11 @@ STEP_ROUND_SEARCH = "round_search"
 STEP_ROUND_EVIDENCE = "round_evidence"
 STEP_SYNTHESIZE = "synthesize"
 
+# ---- Run 步骤（结构化 Entry 查找分支） ----
+STEP_RESULT_MODE_ROUTE = "result_mode_route"
+STEP_ENTRY_SEARCH = "entry_search"
+STEP_ENTRY_ASSEMBLE = "entry_assemble"
+
 # ---- Run 步骤（候选草稿操作分支） ----
 STEP_DRAFT_VERIFY_EVIDENCE = "draft_verify_evidence"
 STEP_DRAFT_GENERATE = "draft_generate"
@@ -196,6 +217,7 @@ PURPOSE_EMBEDDING = "embedding"
 PURPOSE_RERANK = "rerank"
 PURPOSE_ANSWER = "answer"
 PURPOSE_ANSWER_MODE_ROUTE = "answer_mode_route"
+PURPOSE_RESULT_MODE_ROUTE = "result_mode_route"
 PURPOSE_INVESTIGATION_CONTROLLER = "investigation_controller"
 PURPOSE_SYNTHESIS = "synthesis"
 PURPOSE_DRAFT_CANDIDATE = "draft_candidate"
@@ -396,6 +418,9 @@ class KnowledgeAgentRun(Base):
     # ---- 回答模式契约：请求模式与路由后的实际模式分开保存 ----
     request_answer_mode: Mapped[str | None] = mapped_column(String(16), nullable=True)
     actual_answer_mode: Mapped[str | None] = mapped_column(String(16), nullable=True)
+    # ---- 结果形态契约：请求形态与路由后的实际形态分开保存 ----
+    request_result_mode: Mapped[str | None] = mapped_column(String(8), nullable=True)
+    actual_result_mode: Mapped[str | None] = mapped_column(String(8), nullable=True)
     # JSON：实际用于判断的历史消息 ID（不保存原始 prompt）
     history_message_ids_json: Mapped[str | None] = mapped_column(Text, nullable=True)
     # 输入工作集在领取时固化；恢复执行不漂移到后来状态
@@ -421,6 +446,8 @@ class KnowledgeAgentRun(Base):
     investigation_summary: Mapped[str | None] = mapped_column(Text, nullable=True)
     # 结构化回答 JSON（终态一次性写入）
     answer_json: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # 结构化 Entry 结果 JSON（终态一次性写入；有界快照，不保存完整正文）
+    entry_result_json: Mapped[str | None] = mapped_column(Text, nullable=True)
     error: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
