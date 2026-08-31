@@ -68,7 +68,7 @@ export function CitationSheet({
               </Text>
             </View>
           ) : (
-            <>
+            <View style={styles.entryBox}>
               <Text style={styles.entryTitle}>{currentEntry.title}</Text>
               <Text style={styles.path}>
                 {[citation.projectName, citation.nodePath]
@@ -84,12 +84,7 @@ export function CitationSheet({
                   ? new Date(currentEntry.updatedAt).toLocaleString()
                   : "—"}
               </Text>
-              {revisionTarget !== null && sourceRunId !== null && (
-                <Text style={styles.revisionCopy}>
-                  修改这条正式知识并追加版本，确认前不会写入。
-                </Text>
-              )}
-            </>
+            </View>
           )}
           <View style={styles.section}>
             <Text style={styles.sectionLabel}>本次回答核验的原文</Text>
@@ -103,6 +98,13 @@ export function CitationSheet({
               以上是回答生成时的快照，当前状态可能已变化
             </Text>
           </View>
+          {currentEntry !== null &&
+            revisionTarget !== null &&
+            sourceRunId !== null && (
+              <Text style={styles.revisionCopy}>
+                修改这条正式知识并追加版本，确认前不会写入。
+              </Text>
+            )}
           <View style={styles.actions}>
             {currentEntry !== null &&
               revisionTarget !== null &&
@@ -128,6 +130,14 @@ const styles = StyleSheet.create({
     fontSize: 10,
     fontWeight: "700",
     letterSpacing: 0.2,
+  },
+  entryBox: {
+    marginTop: 8,
+    padding: 11,
+    borderWidth: 1,
+    borderColor: theme.border,
+    borderRadius: 9,
+    backgroundColor: theme.soft,
   },
   entryTitle: {
     fontSize: 16,
@@ -183,7 +193,7 @@ const styles = StyleSheet.create({
     flexWrap: "wrap",
   },
   revisionCopy: {
-    marginTop: 8,
+    marginTop: 10,
     color: theme.muted,
     fontSize: 11,
     lineHeight: 18,
