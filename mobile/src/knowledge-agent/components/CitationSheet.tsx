@@ -90,10 +90,8 @@ export function CitationSheet({
             revisionTarget !== null &&
             sourceRunId !== null && (
               <View style={styles.revisionBox}>
-                <Text style={styles.revisionTitle}>修订这条知识</Text>
                 <Text style={styles.revisionCopy}>
-                  将修改这条正式知识并追加版本；只采用本次回答核验的来源，
-                  确认前不会写入。
+                  修改这条正式知识并追加版本，确认前不会写入。
                 </Text>
                 <AppButton
                   label="开始修订"
@@ -115,7 +113,7 @@ export function CitationSheet({
             </Text>
           </View>
           <View style={styles.actions}>
-            <AppButton label="关闭" variant="ghost" onPress={onClose} />
+            <AppButton label="关闭" variant="default" onPress={onClose} />
           </View>
         </View>
       )}
@@ -141,8 +139,8 @@ const styles = StyleSheet.create({
   entryContent: {
     marginTop: 8,
     color: theme.ink,
-    fontSize: 12,
-    lineHeight: 19,
+    fontSize: 13,
+    lineHeight: 22,
   },
   section: { marginTop: 13 },
   quoteBox: {
@@ -180,14 +178,13 @@ const styles = StyleSheet.create({
   actions: { marginTop: 14, gap: 8 },
   revisionBox: {
     marginTop: 14,
-    padding: 11,
+    padding: 9,
     borderWidth: 1,
     borderColor: "#DACCDE",
     borderRadius: 9,
     backgroundColor: theme.aiSoft,
-    gap: 6,
+    gap: 5,
   },
-  revisionTitle: { fontSize: 12, fontWeight: "700", color: theme.ai },
   revisionCopy: {
     color: theme.muted,
     fontSize: 11,
