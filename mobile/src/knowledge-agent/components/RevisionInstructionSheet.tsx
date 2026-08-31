@@ -83,17 +83,17 @@ export function RevisionInstructionSheet({
                   "归属未标注"}
               </Text>
               <View style={styles.consequenceBox}>
-                <Text style={styles.consequenceTitle}>确认后会发生什么</Text>
-                <Text style={styles.consequenceCopy}>
-                  将修改这条正式知识并追加版本；来源只采用本次回答核验的证据，
-                  你确认前不会写入。
-                </Text>
+              <Text style={styles.consequenceTitle}>确认后会发生什么</Text>
+              <Text style={styles.consequenceCopy}>
+                将修改这条正式知识并追加版本；来源只采用本次回答核验的证据，
+                确认前不会写入。
+              </Text>
               </View>
               <Text style={styles.fieldLabel}>修订要求</Text>
               <TextInput
                 value={instruction}
                 onChangeText={setInstruction}
-                placeholder="说明希望如何修订这条知识（不能为空）"
+                placeholder="说明希望如何修订这条知识"
                 placeholderTextColor={theme.faint}
                 multiline
                 maxLength={2000}
@@ -101,9 +101,6 @@ export function RevisionInstructionSheet({
                 accessibilityLabel="修订要求"
                 editable={!submitting}
               />
-              <Text style={styles.hint}>
-                只会修订你明确选中的这一条知识；普通问答不会自动触发修改。
-              </Text>
               {error !== null && <Text style={styles.error}>{error}</Text>}
             </ScrollView>
             <View style={[styles.footer, { paddingBottom: insets.bottom + 10 }]}>
@@ -207,12 +204,6 @@ const styles = StyleSheet.create({
     fontSize: 13,
     lineHeight: 20,
     textAlignVertical: "top",
-  },
-  hint: {
-    marginTop: 10,
-    color: theme.muted,
-    fontSize: 11,
-    lineHeight: 18,
   },
   error: { marginTop: 8, color: theme.error, fontSize: 12, lineHeight: 18 },
   footer: {

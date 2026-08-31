@@ -648,9 +648,13 @@ test("引用 Sheet 分区展示 Entry、项目/目录、Source 原文快照", as
   expect(view.getByText("新房装修 / 施工 / 防水")).toBeOnTheScreen();
   expect(view.getByText(/本次回答核验的 SOURCE 原文/)).toBeOnTheScreen();
   expect(view.getByText(/“闭水期间应持续观察水位变化”/)).toBeOnTheScreen();
-  expect(view.getByText(/Source：验收记录\.md/)).toBeOnTheScreen();
+  expect(view.getByText(/来源：验收记录\.md/)).toBeOnTheScreen();
   expect(view.getByText("查看当前知识（暂不可用）")).toBeOnTheScreen();
-  expect(view.getByText("修订这条知识")).toBeOnTheScreen();
+  expect(view.getByText("开始修订")).toBeOnTheScreen();
+  // 精简后的快照说明与内部校验话术
+  expect(view.getByText(/回答生成时的快照/)).toBeOnTheScreen();
+  expect(view.queryByText(/证据关系已由应用层校验/)).toBeNull();
+  expect(view.queryByText(/不是模型自由生成/)).toBeNull();
   await fireEvent.press(view.getAllByLabelText("关闭")[0]);
   expect(onClose).toHaveBeenCalled();
 });
@@ -1428,13 +1432,13 @@ test("对话内从引用发起修订并提交非空指令", async () => {
   });
 
   const view = await render(<ConversationScreen />, { wrapper });
-  // 打开引用 Sheet 并点击「修订这条知识」
+  // 打开引用 Sheet 并点击「开始修订」
   await waitFor(() =>
     expect(view.getByLabelText("查看引用：闭水试验时长")).toBeOnTheScreen(),
   );
   await fireEvent.press(view.getByLabelText("查看引用：闭水试验时长"));
-  await waitFor(() => expect(view.getByText("修订这条知识")).toBeOnTheScreen());
-  await fireEvent.press(view.getByText("修订这条知识"));
+  await waitFor(() => expect(view.getByText("开始修订")).toBeOnTheScreen());
+  await fireEvent.press(view.getByText("开始修订"));
 
   // 指令 Sheet 出现，输入内容后提交
   await waitFor(() => expect(view.getByLabelText("修订要求")).toBeOnTheScreen());

@@ -48,24 +48,22 @@ export function CitationSheet({
             <View style={styles.quoteBox}>
               <Text style={styles.quote}>“{citation.quote}”</Text>
             </View>
-            <Text style={styles.sourceContext}>
-              该片段来自本 Run 实际读取并核验的 Source，不是模型自由生成。
-            </Text>
           </View>
           <View style={styles.meta}>
-            <Text>Source：{citation.sourceTitle}</Text>
-            <Text>证据关系已由应用层校验 · 不包含 Agent 回答</Text>
-            <Text>以上是本次回答生成时的 Run 快照，不代表对象当前状态。</Text>
+            <Text style={styles.metaText}>来源：{citation.sourceTitle}</Text>
+            <Text style={styles.metaText}>
+              以上是回答生成时的快照，当前状态可能已变化
+            </Text>
           </View>
           {revisionTarget !== null && sourceRunId !== null && (
             <View style={styles.revisionBox}>
-              <Text style={styles.revisionTitle}>修改这条正式知识</Text>
+              <Text style={styles.revisionTitle}>修订这条知识</Text>
               <Text style={styles.revisionCopy}>
-                只修订当前选中的 Entry，来源只采用本次回答核验的证据；
-                生成草稿后仍需你确认。
+                将修改这条正式知识并追加版本；只采用本次回答核验的来源，
+                确认前不会写入。
               </Text>
               <AppButton
-                label="修订这条知识"
+                label="开始修订"
                 variant="ai"
                 onPress={() => onRevise(revisionTarget)}
               />
@@ -105,20 +103,17 @@ const styles = StyleSheet.create({
     backgroundColor: theme.aiSoft,
   },
   quote: { fontSize: 13, lineHeight: 22, color: theme.ink },
-  sourceContext: {
-    marginTop: 8,
-    color: theme.muted,
-    fontSize: 11,
-    lineHeight: 18,
-  },
   meta: {
     gap: 7,
     marginTop: 13,
     paddingTop: 12,
     borderTopWidth: 1,
     borderTopColor: theme.border,
+  },
+  metaText: {
     color: theme.muted,
     fontSize: 11,
+    lineHeight: 17,
   },
   actions: { marginTop: 14, gap: 8 },
   revisionBox: {
@@ -132,7 +127,7 @@ const styles = StyleSheet.create({
   },
   revisionTitle: { fontSize: 12, fontWeight: "700", color: theme.ai },
   revisionCopy: {
-    color: "#5A4178",
+    color: theme.muted,
     fontSize: 11,
     lineHeight: 18,
   },
