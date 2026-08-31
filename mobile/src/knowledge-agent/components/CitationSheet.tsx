@@ -84,22 +84,13 @@ export function CitationSheet({
                   ? new Date(currentEntry.updatedAt).toLocaleString()
                   : "—"}
               </Text>
-            </>
-          )}
-          {currentEntry !== null &&
-            revisionTarget !== null &&
-            sourceRunId !== null && (
-              <View style={styles.revisionBox}>
+              {revisionTarget !== null && sourceRunId !== null && (
                 <Text style={styles.revisionCopy}>
                   修改这条正式知识并追加版本，确认前不会写入。
                 </Text>
-                <AppButton
-                  label="开始修订"
-                  variant="ai"
-                  onPress={() => onRevise(revisionTarget)}
-                />
-              </View>
-            )}
+              )}
+            </>
+          )}
           <View style={styles.section}>
             <Text style={styles.sectionLabel}>本次回答核验的原文</Text>
             <View style={styles.quoteBox}>
@@ -113,6 +104,15 @@ export function CitationSheet({
             </Text>
           </View>
           <View style={styles.actions}>
+            {currentEntry !== null &&
+              revisionTarget !== null &&
+              sourceRunId !== null && (
+                <AppButton
+                  label="开始修订"
+                  variant="ai"
+                  onPress={() => onRevise(revisionTarget)}
+                />
+              )}
             <AppButton label="关闭" variant="default" onPress={onClose} />
           </View>
         </View>
@@ -175,17 +175,15 @@ const styles = StyleSheet.create({
     backgroundColor: theme.bg,
   },
   unavailableTitle: { fontSize: 12, fontWeight: "700", color: theme.ink },
-  actions: { marginTop: 14, gap: 8 },
-  revisionBox: {
+  actions: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
     marginTop: 14,
-    padding: 9,
-    borderWidth: 1,
-    borderColor: "#DACCDE",
-    borderRadius: 9,
-    backgroundColor: theme.aiSoft,
-    gap: 5,
+    flexWrap: "wrap",
   },
   revisionCopy: {
+    marginTop: 8,
     color: theme.muted,
     fontSize: 11,
     lineHeight: 18,
