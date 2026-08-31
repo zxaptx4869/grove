@@ -10,6 +10,7 @@ export function RevisionConfirmSheet({
   draft,
   confirming,
   error,
+  retryable,
   onConfirm,
   onClose,
 }: {
@@ -17,12 +18,15 @@ export function RevisionConfirmSheet({
   draft: KnowledgeEntryRevisionDraft | null;
   confirming: boolean;
   error: string | null;
+  /** 网络结果未知时保留幂等键，可原键重试；确定性冲突不可重试。 */
+  retryable: boolean;
   onConfirm: () => void;
   onClose: () => void;
 }) {
   const sourceCount = draft?.evidenceSummaries.length ?? 0;
   const changedCount = draft?.changedFields.length ?? 0;
-  const conflict = error !== null;
+  const blocked = error !== null && !retryable;
+  const retry = error !== null && retryable;
   return (
     <Sheet visible={visible} title="确认知识修改" onClose={onClose}>
       {draft !== null && (
@@ -56,18 +60,30 @@ export function RevisionConfirmSheet({
               如果正式知识随后被人工编辑或再次修订，撤销将被阻止，请到版本历史处理。
             </Text>
           </View>
-          {conflict && (
+          {blocked && (
             <View style={styles.conflictBox}>
               <Text style={styles.conflictTitle}>未能确认</Text>
+              <Text style={styles.conflictCopy}>{error}</Text>
+            </View>
+          )}
+          {retry && (
+            <View style={styles.conflictBox}>
+              <Text style={styles.conflictTitle}>结果未知，可重试</Text>
               <Text style={styles.conflictCopy}>{error}</Text>
             </View>
           )}
           <View style={styles.actions}>
             <AppButton label="返回检查" variant="default" onPress={onClose} />
             <AppButton
-              label={confirming ? "确认中…" : "确认执行"}
+              label={
+                confirming
+                  ? "确认中…"
+                  : retry
+                    ? "重试确认"
+                    : "确认执行"
+              }
               variant="primary"
-              disabled={confirming || conflict}
+              disabled={confirming || blocked}
               onPress={onConfirm}
             />
           </View>

@@ -212,6 +212,7 @@ export function ConversationScreen() {
 
   const handleRevise = useCallback((target: RevisionTarget) => {
     controller.clearRevisionEditError();
+    setCitationContext(null);
     setRevisionTarget(target);
   }, [controller]);
 
@@ -444,6 +445,8 @@ export function ConversationScreen() {
                 confirmingRevisionDraftId={controller.confirmingRevisionDraftId}
                 undoingRevisionDraftId={controller.undoingRevisionDraftId}
                 revisionUndoError={controller.revisionUndoError}
+                revisionUndoErrorDraftId={controller.revisionUndoErrorDraftId}
+                revisionUndoRetryable={controller.revisionUndoRetryable}
                 onRetryUndoRevision={(draftId) =>
                   void controller.retryUndoEntryRevision(draftId)
                 }
@@ -699,6 +702,7 @@ export function ConversationScreen() {
         draft={confirmingRevisionDraft}
         confirming={revisionConfirming}
         error={revisionConfirmError}
+        retryable={controller.revisionConfirmRetryable}
         onConfirm={() => {
           if (confirmingRevisionDraft === null) return;
           void controller
@@ -714,6 +718,7 @@ export function ConversationScreen() {
         draft={undoingRevisionDraft}
         undoing={revisionUndoing}
         error={revisionUndoError}
+        retryable={controller.revisionUndoRetryable}
         onUndo={() => {
           if (undoingRevisionDraft === null) return;
           void controller.undoEntryRevision(undoingRevisionDraft.id).then((undone) => {
@@ -748,6 +753,8 @@ function ThreadMessage({
   confirmingRevisionDraftId,
   undoingRevisionDraftId,
   revisionUndoError,
+  revisionUndoErrorDraftId,
+  revisionUndoRetryable,
   onRetryUndoRevision,
   onEditRevision,
   onConfirmRevision,
@@ -777,6 +784,8 @@ function ThreadMessage({
   confirmingRevisionDraftId: number | null;
   undoingRevisionDraftId: number | null;
   revisionUndoError: string | null;
+  revisionUndoErrorDraftId: number | null;
+  revisionUndoRetryable: boolean;
   onRetryUndoRevision: (draftId: number) => void;
   onEditRevision: (draftId: number) => void;
   onConfirmRevision: (draftId: number) => void;
@@ -945,9 +954,13 @@ function ThreadMessage({
             draft={revisionDraft}
             undoing={undoingRevisionDraftId === revisionDraft.id}
             undoError={
-              undoingRevisionDraftId === revisionDraft.id
+              revisionUndoErrorDraftId === revisionDraft.id
                 ? revisionUndoError
                 : null
+            }
+            undoRetryable={
+              revisionUndoErrorDraftId === revisionDraft.id &&
+              revisionUndoRetryable
             }
             onViewDiff={() => onViewRevisionDiff(revisionDraft.id)}
             onUndo={() => onUndoRevision(revisionDraft.id)}

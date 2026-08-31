@@ -698,6 +698,101 @@ async def test_execute_revision_run_cancelled_before_generate(monkeypatch) -> No
 
 
 @pytest.mark.asyncio
+async def test_execute_revision_finalize_does_not_overwrite_concurrent_cancel(
+    monkeypatch,
+) -> None:
+    """生成终态提交不覆写并发取消：最后校验边界后取消仍保持 cancelled。"""
+    from app.agents.entry_revision import EntryRevisionOutput
+
+    async def _fake_agent(db, workspace_id, **kwargs):
+        handles = [item["handle"] for item in kwargs["evidences"]]
+        return (
+            EntryRevisionOutput(
+                title="新标题",
+                content="新内容",
+                main_type="knowledge",
+                info_nature=None,
+                applicable_condition=None,
+                note=None,
+                change_summary="改写",
+                reason="依据证据",
+                selected_evidence_handles=handles,
+            ),
+            StageMeta(
+                purpose="entry_revision",
+                provider="llm",
+                model="fake",
+                is_fallback=False,
+                error=None,
+                duration_ms=5,
+            ),
+        )
+
+    monkeypatch.setattr(
+        "app.services.knowledge_agent.entry_revision.run_entry_revision_agent",
+        _fake_agent,
+    )
+    from app.services.knowledge_agent import entry_revision as revision_module
+
+    original_summary = revision_module.run_fallback_summary
+
+    async def _cancel_during_summary(db, run_id):
+        # 模拟用户在最后一次取消边界之后并发取消（cancel_requested + draft cancelled 已提交）
+        from sqlalchemy import update
+
+        from app.models.knowledge_agent import (
+            REVISION_DRAFT_CANCELLED,
+            RUN_CANCELLED,
+        )
+
+        # 独立会话提交取消（与真实取消请求一致），不触碰执行会话的待写字段
+        async with async_session_factory() as cancel_db:
+            await cancel_db.execute(
+                update(KnowledgeAgentRun)
+                .where(KnowledgeAgentRun.id == run_id)
+                .values(cancel_requested=True, status=RUN_CANCELLED)
+            )
+            await cancel_db.execute(
+                update(KnowledgeEntryRevisionDraft)
+                .where(KnowledgeEntryRevisionDraft.operation_run_id == run_id)
+                .values(status=REVISION_DRAFT_CANCELLED)
+            )
+            await cancel_db.commit()
+        return await original_summary(db, run_id)
+
+    monkeypatch.setattr(
+        "app.services.knowledge_agent.entry_revision.run_fallback_summary",
+        _cancel_during_summary,
+    )
+    from app.services.knowledge_agent.runner import RunCancelled
+
+    async with async_session_factory() as db:
+        user = await create_user(db, "终态取消竞态")
+        workspace = await create_workspace(db, user)
+        conversation, source_run, entry, _s, _a, evidence = (
+            await _answer_run_with_evidence(db, user, workspace)
+        )
+        _m, run, draft = await submit_entry_revision(
+            db,
+            conversation,
+            _action(source_run_id=source_run.id, target_entry_id=entry.id),
+        )
+        await db.commit()
+        run.status = RUN_PROCESSING
+        run.active_slot = "active"
+        await db.commit()
+        draft_id = draft.id
+
+        with pytest.raises(RunCancelled):
+            await execute_entry_revision_run(db, run)
+        async with async_session_factory() as fresh_db:
+            fresh = await fresh_db.get(KnowledgeEntryRevisionDraft, draft_id)
+        assert fresh is not None
+        assert fresh.status == "cancelled"
+        assert fresh.title is None  # 候选字段未落库
+
+
+@pytest.mark.asyncio
 async def test_execute_revision_evidence_excludes_uncited_run_evidence(
     monkeypatch,
 ) -> None:

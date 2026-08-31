@@ -202,6 +202,7 @@ export function RevisionReceiptCard({
   draft,
   undoing,
   undoError,
+  undoRetryable,
   onViewDiff,
   onUndo,
   onRetryUndo,
@@ -209,6 +210,7 @@ export function RevisionReceiptCard({
   draft: KnowledgeEntryRevisionDraft;
   undoing: boolean;
   undoError: string | null;
+  undoRetryable: boolean;
   onViewDiff: () => void;
   onUndo: () => void;
   onRetryUndo: () => void;
@@ -283,7 +285,9 @@ export function RevisionReceiptCard({
         {undoError !== null && (
           <View style={styles.errorBox}>
             <Text style={styles.errorCopy}>{undoError}</Text>
-            <AppButton label="重试撤销" variant="primary" onPress={onRetryUndo} />
+            {undoRetryable && (
+              <AppButton label="重试撤销" variant="primary" onPress={onRetryUndo} />
+            )}
           </View>
         )}
         <View style={styles.actions}>

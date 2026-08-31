@@ -851,7 +851,7 @@ async def apply_knowledge_agent_revision(
     change_summary: str | None,
     evidence_refs: list[dict],
     refresh_reason: str = "entry_edited",
-) -> tuple[EntryVersion, list[int]]:
+) -> tuple[EntryVersion | None, list[int]]:
     """原子应用 Knowledge Agent 修订：更新字段、追加快照、去重补充证据并调度刷新。
 
     返回 (追加的版本, 本次真实新增的 EntrySourceEvidence id 列表)。

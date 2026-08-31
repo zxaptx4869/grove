@@ -1013,6 +1013,7 @@ test("applied 回执展示正式知识已更新、版本与撤销；undone 收�
       })}
       undoing={false}
       undoError={null}
+      undoRetryable={false}
       onViewDiff={jest.fn()}
       onUndo={onUndo}
       onRetryUndo={jest.fn()}
@@ -1044,6 +1045,7 @@ test("applied 回执展示正式知识已更新、版本与撤销；undone 收�
       })}
       undoing={false}
       undoError={null}
+      undoRetryable={false}
       onViewDiff={jest.fn()}
       onUndo={jest.fn()}
       onRetryUndo={jest.fn()}
@@ -1117,6 +1119,7 @@ test("修订确认 Sheet 明确更新 1 条正式知识，确认中禁用主按�
       draft={revisionDraftFixture()}
       confirming
       error={null}
+      retryable={false}
       onConfirm={onConfirm}
       onClose={jest.fn()}
     />,
@@ -1135,6 +1138,7 @@ test("撤销 Sheet 二次确认，冲突时禁用撤销并展示原因", async (
       draft={revisionDraftFixture({ status: "applied" })}
       undoing={false}
       error="知识后来发生了变化，不能自动撤销"
+      retryable={false}
       onUndo={onUndo}
       onClose={jest.fn()}
     />,
@@ -1145,6 +1149,105 @@ test("撤销 Sheet 二次确认，冲突时禁用撤销并展示原因", async (
   expect(view.getByText(/知识后来发生了变化/)).toBeOnTheScreen();
   await fireEvent.press(view.getByText("撤销操作"));
   expect(onUndo).not.toHaveBeenCalled();
+});
+
+test("确认 Sheet 网络结果未知时保留原键重试入口", async () => {
+  const onConfirm = jest.fn();
+  const view = await render(
+    <RevisionConfirmSheet
+      visible
+      draft={revisionDraftFixture()}
+      confirming={false}
+      error="连接超时，请检查网络后重试"
+      retryable
+      onConfirm={onConfirm}
+      onClose={jest.fn()}
+    />,
+    { wrapper },
+  );
+  expect(view.getByText("结果未知，可重试")).toBeOnTheScreen();
+  await fireEvent.press(view.getByText("重试确认"));
+  expect(onConfirm).toHaveBeenCalled();
+});
+
+test("撤销 Sheet 网络结果未知时保留原键重试入口", async () => {
+  const onUndo = jest.fn();
+  const view = await render(
+    <RevisionUndoSheet
+      visible
+      draft={revisionDraftFixture({ status: "applied" })}
+      undoing={false}
+      error="连接超时，请检查网络后重试"
+      retryable
+      onUndo={onUndo}
+      onClose={jest.fn()}
+    />,
+    { wrapper },
+  );
+  expect(view.getByText("结果未知，可重试")).toBeOnTheScreen();
+  await fireEvent.press(view.getByText("重试撤销"));
+  expect(onUndo).toHaveBeenCalled();
+});
+
+test("applied 回执只对可重试错误展示重试撤销按钮", async () => {
+  const retryableView = await render(
+    <RevisionReceiptCard
+      draft={revisionDraftFixture({
+        status: "applied",
+        execution: {
+          id: 9,
+          draftId: 30,
+          entryId: 1,
+          status: "applied",
+          beforeVersionNumber: 1,
+          afterVersionNumber: 2,
+          addedEvidenceCount: 0,
+          error: null,
+          undoneAt: null,
+          createdAt: "2026-08-29T10:00:00Z",
+          updatedAt: "2026-08-29T10:00:00Z",
+        },
+      })}
+      undoing={false}
+      undoError="连接超时，请检查网络后重试"
+      undoRetryable
+      onViewDiff={jest.fn()}
+      onUndo={jest.fn()}
+      onRetryUndo={jest.fn()}
+    />,
+    { wrapper },
+  );
+  expect(retryableView.getByText("重试撤销")).toBeOnTheScreen();
+
+  const conflictView = await render(
+    <RevisionReceiptCard
+      draft={revisionDraftFixture({
+        status: "applied",
+        execution: {
+          id: 9,
+          draftId: 30,
+          entryId: 1,
+          status: "applied",
+          beforeVersionNumber: 1,
+          afterVersionNumber: 2,
+          addedEvidenceCount: 0,
+          error: null,
+          undoneAt: null,
+          createdAt: "2026-08-29T10:00:00Z",
+          updatedAt: "2026-08-29T10:00:00Z",
+        },
+      })}
+      undoing={false}
+      undoError="知识后来发生了变化，不能自动撤销；请到版本历史处理"
+      undoRetryable={false}
+      onViewDiff={jest.fn()}
+      onUndo={jest.fn()}
+      onRetryUndo={jest.fn()}
+    />,
+    { wrapper },
+  );
+  expect(conflictView.getByText(/知识后来发生了变化/)).toBeOnTheScreen();
+  expect(conflictView.queryByText("重试撤销")).toBeNull();
 });
 
 test("全屏差异审阅按字段展示原内容/建议内容并可确认", async () => {

@@ -10,6 +10,7 @@ export function RevisionUndoSheet({
   draft,
   undoing,
   error,
+  retryable,
   onUndo,
   onClose,
 }: {
@@ -17,10 +18,13 @@ export function RevisionUndoSheet({
   draft: KnowledgeEntryRevisionDraft | null;
   undoing: boolean;
   error: string | null;
+  /** 网络结果未知时保留撤销键，可原键重试；确定性冲突不可重试。 */
+  retryable: boolean;
   onUndo: () => void;
   onClose: () => void;
 }) {
-  const conflict = error !== null;
+  const blocked = error !== null && !retryable;
+  const retry = error !== null && retryable;
   return (
     <Sheet visible={visible} title="撤销此次操作？" onClose={onClose}>
       {draft !== null && (
@@ -38,18 +42,24 @@ export function RevisionUndoSheet({
               如果知识随后被人工编辑或再次修订，撤销会被拒绝，请到版本历史处理。
             </Text>
           </View>
-          {conflict && (
+          {blocked && (
             <View style={styles.conflictBox}>
               <Text style={styles.conflictTitle}>无法撤销</Text>
+              <Text style={styles.conflictCopy}>{error}</Text>
+            </View>
+          )}
+          {retry && (
+            <View style={styles.conflictBox}>
+              <Text style={styles.conflictTitle}>结果未知，可重试</Text>
               <Text style={styles.conflictCopy}>{error}</Text>
             </View>
           )}
           <View style={styles.actions}>
             <AppButton label="取消" variant="default" onPress={onClose} />
             <AppButton
-              label={undoing ? "撤销中…" : "撤销操作"}
+              label={undoing ? "撤销中…" : retry ? "重试撤销" : "撤销操作"}
               variant="danger"
-              disabled={undoing || conflict}
+              disabled={undoing || blocked}
               onPress={onUndo}
             />
           </View>

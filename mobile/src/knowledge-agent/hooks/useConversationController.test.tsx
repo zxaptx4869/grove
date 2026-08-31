@@ -929,11 +929,13 @@ describe("useConversationController", () => {
     });
     expect(firstResult).toBe(false);
     expect(rendered.result.current.revisionConfirmError).toContain("网络中断");
+    expect(rendered.result.current.revisionConfirmRetryable).toBe(true);
 
     await act(async () => {
       const retried = await rendered.result.current.retryConfirmEntryRevision(2);
       expect(retried).toBe(true);
     });
+    expect(rendered.result.current.revisionConfirmRetryable).toBe(false);
     expect(api.confirmEntryRevision).toHaveBeenNthCalledWith(1, "token", 2, {
       clientOperationId: "test-client-id",
     });
@@ -1033,10 +1035,13 @@ describe("useConversationController", () => {
       expect(first).toBe(false);
     });
     expect(rendered.result.current.revisionUndoError).toContain("网络中断");
+    expect(rendered.result.current.revisionUndoRetryable).toBe(true);
+    expect(rendered.result.current.revisionUndoErrorDraftId).toBe(2);
     await act(async () => {
       const retried = await rendered.result.current.retryUndoEntryRevision(2);
       expect(retried).toBe(true);
     });
+    expect(rendered.result.current.revisionUndoRetryable).toBe(false);
     expect(api.undoEntryRevision).toHaveBeenNthCalledWith(1, "token", 2, {
       clientOperationId: "test-client-id",
     });

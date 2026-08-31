@@ -129,10 +129,15 @@ export interface ConversationController {
   retryConfirmEntryRevision: (draftId: number) => Promise<boolean>;
   confirmingRevisionDraftId: number | null;
   revisionConfirmError: string | null;
+  /** 网络结果未知时保留幂等键，可重试；确定性 409/404 后不可重试。 */
+  revisionConfirmRetryable: boolean;
   undoEntryRevision: (draftId: number) => Promise<boolean>;
   retryUndoEntryRevision: (draftId: number) => Promise<boolean>;
   undoingRevisionDraftId: number | null;
   revisionUndoError: string | null;
+  revisionUndoRetryable: boolean;
+  /** 撤销错误归属的草稿 id（用于回执持久展示冲突说明）。 */
+  revisionUndoErrorDraftId: number | null;
   cancelEntryRevision: (draftId: number) => Promise<boolean>;
   revisionCancelBusy: boolean;
   revisionCancelError: string | null;
@@ -240,10 +245,15 @@ export function useConversationController(
   const [revisionConfirmError, setRevisionConfirmError] = useState<string | null>(
     null,
   );
+  const [revisionConfirmRetryable, setRevisionConfirmRetryable] = useState(false);
   const [undoingRevisionDraftId, setUndoingRevisionDraftId] = useState<
     number | null
   >(null);
   const [revisionUndoError, setRevisionUndoError] = useState<string | null>(null);
+  const [revisionUndoRetryable, setRevisionUndoRetryable] = useState(false);
+  const [revisionUndoErrorDraftId, setRevisionUndoErrorDraftId] = useState<
+    number | null
+  >(null);
   const [revisionEditBusy, setRevisionEditBusy] = useState(false);
   const [revisionEditError, setRevisionEditError] = useState<string | null>(null);
   const [revisionCancelBusy, setRevisionCancelBusy] = useState(false);
@@ -934,6 +944,7 @@ export function useConversationController(
         );
         pendingRevisionConfirmsRef.current.delete(draftId);
         setConfirmingRevisionDraftId(null);
+        setRevisionConfirmRetryable(false);
         setThreadRevisionDrafts((previous) =>
           new Map(previous).set(result.draft.id, result.draft),
         );
@@ -961,10 +972,12 @@ export function useConversationController(
         ) {
           // 结果未知：保留幂等键，提供重试
           setRevisionConfirmError(classified.message);
+          setRevisionConfirmRetryable(true);
         } else {
           // 409/404 等确定性拒绝：清键并刷新，以服务端 Draft/Execution 为权威
           pendingRevisionConfirmsRef.current.delete(draftId);
           setRevisionConfirmError(classified.message);
+          setRevisionConfirmRetryable(false);
           if (selectedConversationId !== null) {
             void queryClient.invalidateQueries({
               queryKey: knowledgeAgentKeys.messages(selectedConversationId),
@@ -999,6 +1012,7 @@ export function useConversationController(
       pendingRevisionUndoRef.current.set(draftId, operationId);
       setUndoingRevisionDraftId(draftId);
       setRevisionUndoError(null);
+      setRevisionUndoErrorDraftId(null);
       try {
         const result = await knowledgeAgentApi.undoEntryRevision(
           token,
@@ -1007,6 +1021,8 @@ export function useConversationController(
         );
         pendingRevisionUndoRef.current.delete(draftId);
         setUndoingRevisionDraftId(null);
+        setRevisionUndoRetryable(false);
+        setRevisionUndoErrorDraftId(null);
         setThreadRevisionDrafts((previous) =>
           new Map(previous).set(result.draft.id, result.draft),
         );
@@ -1033,9 +1049,13 @@ export function useConversationController(
         ) {
           // 结果未知：保留撤销幂等键，提供重试
           setRevisionUndoError(classified.message);
+          setRevisionUndoRetryable(true);
+          setRevisionUndoErrorDraftId(draftId);
         } else {
           pendingRevisionUndoRef.current.delete(draftId);
           setRevisionUndoError(classified.message);
+          setRevisionUndoRetryable(false);
+          setRevisionUndoErrorDraftId(draftId);
           if (selectedConversationId !== null) {
             void queryClient.invalidateQueries({
               queryKey: knowledgeAgentKeys.messages(selectedConversationId),
@@ -1199,8 +1219,11 @@ export function useConversationController(
     pendingRevisionUndoRef.current = new Map();
     setConfirmingRevisionDraftId(null);
     setRevisionConfirmError(null);
+    setRevisionConfirmRetryable(false);
     setUndoingRevisionDraftId(null);
     setRevisionUndoError(null);
+    setRevisionUndoRetryable(false);
+    setRevisionUndoErrorDraftId(null);
     setRevisionEditError(null);
     setRevisionCancelError(null);
     setModesState(DEFAULT_MODES);
@@ -1232,8 +1255,11 @@ export function useConversationController(
     pendingRevisionUndoRef.current = new Map();
     setConfirmingRevisionDraftId(null);
     setRevisionConfirmError(null);
+    setRevisionConfirmRetryable(false);
     setUndoingRevisionDraftId(null);
     setRevisionUndoError(null);
+    setRevisionUndoRetryable(false);
+    setRevisionUndoErrorDraftId(null);
     setRevisionEditError(null);
     setRevisionCancelError(null);
     setModesState(DEFAULT_MODES);
@@ -1343,10 +1369,13 @@ export function useConversationController(
     retryConfirmEntryRevision,
     confirmingRevisionDraftId,
     revisionConfirmError,
+    revisionConfirmRetryable,
     undoEntryRevision,
     retryUndoEntryRevision,
     undoingRevisionDraftId,
     revisionUndoError,
+    revisionUndoRetryable,
+    revisionUndoErrorDraftId,
     cancelEntryRevision,
     revisionCancelBusy,
     revisionCancelError,

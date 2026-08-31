@@ -1140,30 +1140,50 @@ async def execute_entry_revision_run(
         )
         return
 
-    draft.title = output.title
-    draft.content = output.content
-    draft.main_type = output.main_type
-    draft.info_nature = _normalize_output_field(output.info_nature)
-    draft.applicable_condition = _normalize_output_field(output.applicable_condition)
-    draft.note = _normalize_output_field(output.note)
-    draft.change_summary = output.change_summary
-    draft.reason = output.reason
-    draft.selected_evidence_handles_json = json.dumps(selected, ensure_ascii=False)
-    draft.generation_meta_json = json.dumps(
-        {
-            "purpose": meta.purpose,
-            "prompt_version": ENTRY_REVISION_PROMPT_VERSION,
-            "provider": meta.provider,
-            "model": meta.model,
-            "is_fallback": meta.is_fallback,
-            "error": meta.error,
-            "duration_ms": meta.duration_ms,
-        },
-        ensure_ascii=False,
-    )
-    draft.status = REVISION_DRAFT_DRAFT
-    draft.error = None
     summary = await run_fallback_summary(db, run.id)
+    # 候选字段与状态一次性条件写入：仅 generating 可进入 draft。若用户已并发
+    # 取消（cancelled 为终态），rowcount=0 且不覆写任何字段，直接按取消终止；
+    # 不先改内存对象再 flush，避免 autoflush 用陈旧状态覆盖并发取消。
+    transitioned = (
+        await db.execute(
+            update(KnowledgeEntryRevisionDraft)
+            .where(
+                KnowledgeEntryRevisionDraft.operation_run_id == run.id,
+                KnowledgeEntryRevisionDraft.status == REVISION_DRAFT_GENERATING,
+            )
+            .values(
+                status=REVISION_DRAFT_DRAFT,
+                title=output.title,
+                content=output.content,
+                main_type=output.main_type,
+                info_nature=_normalize_output_field(output.info_nature),
+                applicable_condition=_normalize_output_field(
+                    output.applicable_condition
+                ),
+                note=_normalize_output_field(output.note),
+                change_summary=output.change_summary,
+                reason=output.reason,
+                selected_evidence_handles_json=json.dumps(
+                    selected, ensure_ascii=False
+                ),
+                generation_meta_json=json.dumps(
+                    {
+                        "purpose": meta.purpose,
+                        "prompt_version": ENTRY_REVISION_PROMPT_VERSION,
+                        "provider": meta.provider,
+                        "model": meta.model,
+                        "is_fallback": meta.is_fallback,
+                        "error": meta.error,
+                        "duration_ms": meta.duration_ms,
+                    },
+                    ensure_ascii=False,
+                ),
+                error=None,
+            )
+        )
+    ).rowcount
+    if transitioned != 1:
+        raise RunCancelled()
     run.status = RUN_COMPLETED
     run.current_step = None
     run.active_slot = None
