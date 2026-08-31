@@ -75,9 +75,7 @@ export function CitationSheet({
                   .filter(Boolean)
                   .join(" / ") || "归属未标注"}
               </Text>
-              <Text style={styles.entryContent} numberOfLines={5}>
-                {currentEntry.content}
-              </Text>
+              <Text style={styles.entryContent}>{currentEntry.content}</Text>
               <Text style={styles.metaText}>
                 更新于{" "}
                 {currentEntry.updatedAt
