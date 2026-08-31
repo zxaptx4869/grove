@@ -94,7 +94,7 @@ export function RevisionDraftCard({
         <View style={styles.metaRow}>
           <AgentIcon name="book" size={14} color={theme.muted} />
           <Text style={styles.metaText} numberOfLines={2}>
-            目标：{draft.title ?? "未命名修订草稿"}
+            目标：单条正式知识（修订前状态已固化）
           </Text>
         </View>
         <View style={styles.metaRow}>

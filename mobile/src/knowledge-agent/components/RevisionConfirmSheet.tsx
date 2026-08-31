@@ -64,6 +64,11 @@ export function RevisionConfirmSheet({
             <View style={styles.conflictBox}>
               <Text style={styles.conflictTitle}>未能确认</Text>
               <Text style={styles.conflictCopy}>{error}</Text>
+              <Text style={styles.conflictCopy}>
+                {error?.includes("知识后来发生了变化")
+                  ? "请关闭本弹窗，取消该草稿后从引用重新发起修订。"
+                  : "请关闭后编辑草稿或取消重试。"}
+              </Text>
             </View>
           )}
           {retry && (

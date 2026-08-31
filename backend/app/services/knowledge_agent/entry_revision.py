@@ -925,15 +925,18 @@ async def _fail_revision_run(
         run.current_step = None
         run.active_slot = None
         run.error = error
+        # 只有模型阶段失败才算 fallback；证据失效/无差异等非模型失败
+        # 不应被监控误判为“模型降级”
+        is_fallback = meta is not None
         run.fallback_summary = json.dumps(
             {
-                "has_fallback": True,
+                "has_fallback": is_fallback,
                 "stages": [
                     {
                         "purpose": "entry_revision",
-                        "is_fallback": True,
-                        "provider": None,
-                        "model": None,
+                        "is_fallback": is_fallback,
+                        "provider": (meta or {}).get("provider"),
+                        "model": (meta or {}).get("model"),
                         "error": error,
                     }
                 ],
@@ -1344,7 +1347,7 @@ async def confirm_entry_revision(
                 return fresh, execution, entry
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
-            detail="修订正在确认或已进入终态，请刷新后重试",
+            detail="修订状态已变化，请刷新后重试",
         )
 
     if draft.status == REVISION_DRAFT_APPLIED and draft.execution_id is not None:
@@ -1401,8 +1404,16 @@ async def confirm_entry_revision(
         return await _replay_or_conflict()  # type: ignore[return-value]
 
     # 重新校验 target Entry / source Run / 采用 Evidence
+    # 乐观并发校验与字段写入必须原子：锁定 Entry 行后校验指纹/版本，
+    # 避免“校验通过后、写入前”被其他会话修改导致覆盖较新内容
     entry = (
-        await db.get(Entry, draft.target_entry_id)
+        (
+            await db.execute(
+                select(Entry)
+                .where(Entry.id == draft.target_entry_id)
+                .with_for_update()
+            )
+        ).scalar_one_or_none()
         if draft.target_entry_id
         else None
     )
@@ -1721,8 +1732,26 @@ async def undo_entry_revision(
             detail="草稿当前状态不可撤销，请刷新后重试",
         )
 
-    entry = await db.get(Entry, entry_id) if entry_id else None
-    if entry is None or entry.project_id != draft.target_project_id:
+    # 撤销同样必须原子锁定 Entry：指纹校验与恢复写入之间不允许被
+    # 其他会话插入修改；同时复验项目仍属于同一 Workspace
+    entry = (
+        (
+            await db.execute(
+                select(Entry)
+                .where(Entry.id == entry_id)
+                .with_for_update()
+            )
+        ).scalar_one_or_none()
+        if entry_id
+        else None
+    )
+    project = await db.get(Project, entry.project_id) if entry is not None else None
+    if (
+        entry is None
+        or project is None
+        or project.workspace_id != draft.workspace_id
+        or entry.project_id != draft.target_project_id
+    ):
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
             detail="目标知识当前不可用，无法撤销",
@@ -1789,12 +1818,15 @@ async def undo_entry_revision(
             ),
         )
         if added_ids:
-            await db.execute(
+            result = await db.execute(
                 delete(EntrySourceEvidence).where(
                     EntrySourceEvidence.id.in_(added_ids),
                     EntrySourceEvidence.entry_id == entry.id,
                 )
             )
+            removed_evidence_count = result.rowcount or 0
+        else:
+            removed_evidence_count = 0
         execution.status = REVISION_EXECUTION_UNDONE
         execution.undone_at = datetime.now(UTC)
         execution.error = None
@@ -1829,7 +1861,7 @@ async def undo_entry_revision(
             "restored_version_number": restored_version.version_number
             if restored_version is not None
             else None,
-            "removed_evidence_count": len(added_ids),
+            "removed_evidence_count": removed_evidence_count,
         },
         error=None,
         duration_ms=duration,
