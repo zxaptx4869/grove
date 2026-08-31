@@ -26,6 +26,7 @@ from app.models import (
     EntrySourceEvidence,
     KnowledgeAgentEvidence,
     KnowledgeAgentRun,
+    KnowledgeAgentToolCall,
     KnowledgeCandidateDraft,
     KnowledgeConversation,
     KnowledgeMessage,
@@ -1363,6 +1364,139 @@ async def test_confirm_routing_failure_keeps_pending_candidate(monkeypatch) -> N
         assert candidate.status == "pending"
         assert candidate.routing_status == "pending"
         assert candidate.relation_status == "pending"
+
+
+@pytest.mark.asyncio
+async def test_confirm_routing_failure_after_db_access_keeps_pending(
+    monkeypatch,
+) -> None:
+    """route_source 访问数据库后失败：rollback 后仍能读取 Candidate 并记录失败工具。"""
+
+    async def _broken_route_source(db, source_id: int) -> None:
+        await db.execute(select(Source.id).where(Source.id == source_id))
+        raise RuntimeError("路由服务不可用")
+
+    async def _ok_route_relations(db, source_id: int) -> None:
+        await db.execute(select(Source.id).where(Source.id == source_id))
+
+    monkeypatch.setattr(
+        "app.services.knowledge_agent.candidate.route_source",
+        _broken_route_source,
+    )
+    monkeypatch.setattr(
+        "app.services.knowledge_agent.candidate.route_relations",
+        _ok_route_relations,
+    )
+    async with async_session_factory() as db:
+        user = await create_user(db, "确认DB路由")
+        workspace = await create_workspace(db, user)
+        project = await create_project(db, workspace, "确认DB路由项目")
+        conversation, source_run, _entry, _source, _attachment, evidence = (
+            await _answer_run_with_evidence(db, user, workspace, project)
+        )
+        message, run, draft = await submit_draft_candidate(
+            db,
+            conversation,
+            _draft_action(source_run_id=source_run.id),
+        )
+        await db.commit()
+        run_id = run.id
+        draft.title = "闭水试验要点"
+        draft.content = "闭水试验通常持续 24 小时。"
+        draft.status = DRAFT_DRAFT
+        draft.evidence_handles_json = __import__("json").dumps([evidence.handle])
+        await db.commit()
+
+        confirmed, candidate = await confirm_draft(
+            db,
+            draft,
+            f"op-{uuid.uuid4().hex[:8]}",
+        )
+        await db.commit()
+        await db.refresh(candidate)
+        assert confirmed.status == DRAFT_CONFIRMED
+        assert candidate.status == "pending"
+        assert candidate.routing_status == "pending"
+        route_tools = (
+            (
+                await db.execute(
+                    select(KnowledgeAgentToolCall).where(
+                        KnowledgeAgentToolCall.run_id == run_id,
+                        KnowledgeAgentToolCall.tool_name == "draft_confirm_route",
+                    )
+                )
+            )
+            .scalars()
+            .all()
+        )
+        assert len(route_tools) == 1
+        assert route_tools[0].status == "error"
+
+
+@pytest.mark.asyncio
+async def test_confirm_relations_failure_after_route_ok_keeps_pending(
+    monkeypatch,
+) -> None:
+    """route_source 成功、route_relations 访问数据库后失败：同样保持 pending 并记录。"""
+
+    async def _ok_route_source(db, source_id: int) -> None:
+        await db.execute(select(Source.id).where(Source.id == source_id))
+
+    async def _broken_route_relations(db, source_id: int) -> None:
+        await db.execute(select(Source.id).where(Source.id == source_id))
+        raise RuntimeError("关系服务不可用")
+
+    monkeypatch.setattr(
+        "app.services.knowledge_agent.candidate.route_source",
+        _ok_route_source,
+    )
+    monkeypatch.setattr(
+        "app.services.knowledge_agent.candidate.route_relations",
+        _broken_route_relations,
+    )
+    async with async_session_factory() as db:
+        user = await create_user(db, "确认DB关系")
+        workspace = await create_workspace(db, user)
+        project = await create_project(db, workspace, "确认DB关系项目")
+        conversation, source_run, _entry, _source, _attachment, evidence = (
+            await _answer_run_with_evidence(db, user, workspace, project)
+        )
+        message, run, draft = await submit_draft_candidate(
+            db,
+            conversation,
+            _draft_action(source_run_id=source_run.id),
+        )
+        await db.commit()
+        run_id = run.id
+        draft.title = "闭水试验要点"
+        draft.content = "闭水试验通常持续 24 小时。"
+        draft.status = DRAFT_DRAFT
+        draft.evidence_handles_json = __import__("json").dumps([evidence.handle])
+        await db.commit()
+
+        confirmed, candidate = await confirm_draft(
+            db,
+            draft,
+            f"op-{uuid.uuid4().hex[:8]}",
+        )
+        await db.commit()
+        await db.refresh(candidate)
+        assert confirmed.status == DRAFT_CONFIRMED
+        assert candidate.status == "pending"
+        route_tools = (
+            (
+                await db.execute(
+                    select(KnowledgeAgentToolCall).where(
+                        KnowledgeAgentToolCall.run_id == run_id,
+                        KnowledgeAgentToolCall.tool_name == "draft_confirm_route",
+                    )
+                )
+            )
+            .scalars()
+            .all()
+        )
+        assert len(route_tools) == 1
+        assert route_tools[0].status == "error"
 
 
 @pytest.mark.asyncio

@@ -1160,6 +1160,10 @@ async def confirm_draft(
     # Candidate 已创建：目录推荐/关系判断失败不影响待确认 Candidate，
     # 只暴露真实 pending 或失败状态，不把辅助阶段伪装为正常。
     route_ok = True
+    # rollback 会过期会话内全部对象：在回滚前固化候选与操作 Run 主键，
+    # 回滚后重新查询再记录与返回，避免读取过期属性触发 MissingGreenlet
+    candidate_id = candidate.id
+    operation_run_id = draft.operation_run_id
     try:
         await route_source(db, candidate.source_id)
         await route_relations(db, candidate.source_id)
@@ -1168,21 +1172,32 @@ async def confirm_draft(
         await db.rollback()
         route_ok = False
         logger.warning("候选确认后路由/关系判断失败，Candidate 保持待确认：%s", exc)
+    fresh_candidate = await db.get(Candidate, candidate_id)
+    fresh_draft = await db.get(KnowledgeCandidateDraft, draft_id)
+    if fresh_candidate is None or fresh_draft is None:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="确认结果当前不可用，请刷新后重试",
+        )
+    # rollback 后 identity map 中可能仍是过期实例（db.get 不刷新已存在对象）：
+    # 强制刷新，避免后续组装响应时读取过期属性触发 MissingGreenlet
+    await db.refresh(fresh_candidate)
+    await db.refresh(fresh_draft)
     try:
-        sequence = await next_tool_sequence(db, draft.operation_run_id)
+        sequence = await next_tool_sequence(db, operation_run_id)
         await record_tool_call(
             db,
-            run_id=draft.operation_run_id,
+            run_id=operation_run_id,
             sequence=sequence,
             tool_name="draft_confirm_route",
             status="ok" if route_ok else "error",
             params_summary=json.dumps(
-                {"candidate_id": candidate.id}, ensure_ascii=False
+                {"candidate_id": fresh_candidate.id}, ensure_ascii=False
             ),
             result_summary=json.dumps(
                 {
-                    "routing_status": candidate.routing_status,
-                    "relation_status": candidate.relation_status,
+                    "routing_status": fresh_candidate.routing_status,
+                    "relation_status": fresh_candidate.relation_status,
                 },
                 ensure_ascii=False,
             ),
@@ -1193,5 +1208,4 @@ async def confirm_draft(
     except Exception as exc:  # noqa: BLE001
         # 可观测记录失败不影响已创建的待确认 Candidate
         logger.warning("候选确认路由可观测记录失败：%s", exc)
-    await db.refresh(draft)
-    return draft, candidate
+    return fresh_draft, fresh_candidate
