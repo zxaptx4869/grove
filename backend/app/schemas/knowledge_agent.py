@@ -217,6 +217,8 @@ class KnowledgeEntryResultItemOut(BaseModel):
     info_nature: str | None = None
     updated_at: datetime
     source_count: int = 0
+    # 生成时 Entry 内容/归属指纹：详情对比「已更新/当前」使用
+    fingerprint: str | None = None
     # 服务端可验证的匹配线索；纯语义召回无法证明时省略
     match_hint: str | None = None
     matched_fields: list[str] = []

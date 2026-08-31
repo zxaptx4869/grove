@@ -31,6 +31,8 @@ class EntryOut(BaseModel):
     note: str | None
     created_at: datetime
     updated_at: datetime
+    # 内容/归属指纹：结果快照与当前对象对比「已更新」使用（sha256）
+    fingerprint: str | None = None
     evidences: list[EntryEvidenceOut] = []
 
 

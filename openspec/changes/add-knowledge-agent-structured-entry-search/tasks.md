@@ -37,13 +37,13 @@
 
 ## 5. 结果分页、历史恢复与工作集边界
 
-- [ ] 5.1 新增 `GET /api/knowledge-agent/runs/{run_id}/entry-results`：按 owner + Workspace + Conversation + Run 读取同一持久快照，支持服务端限制的 limit 和绑定 run/schema/offset 的不透明游标
-- [ ] 5.2 对游标篡改、跨 Run/用户/Workspace 使用、越界和非 entries Run 返回稳定 400/404；分页不得重新搜索或因当前数据库变化改写历史快照
-- [ ] 5.3 Message Page/Run 查询批量归并实际结果形态与首屏结果，避免 N+1；旧 Run、旧响应和兼容助手摘要按设计兜底
-- [ ] 5.4 打开结果详情复用当前 Entry API 并重新校验权限；通过 snapshot updated_at/指纹表达当前、已变化或不可用，不把历史快照当当前数据
-- [ ] 5.5 确保 entries Run 无论 continue/new_topic、命中多少或分页多少都不创建 output context version、不切换活动工作集；模式纠正使用新消息而非修改旧 Run
-- [ ] 5.6 补首屏/后续页、稳定顺序、重复/跳过、游标篡改、历史分页、重启恢复、Entry 后续更新/移动/删除、工作集不推进和幂等提交测试
-- [ ] 5.7 用开发后端 `curl` 验证新增提交字段、Run 轮询和结果分页端点的 401/200/4xx 而非 404，运行本组 pytest/ruff，完成本地提交 `feat: 支持知识查找结果分页与恢复`
+- [x] 5.1 新增 `GET /api/knowledge-agent/runs/{run_id}/entry-results`：按 owner + Workspace + Conversation + Run 读取同一持久快照，支持服务端限制的 limit 和绑定 run/schema/offset 的不透明游标
+- [x] 5.2 对游标篡改、跨 Run/用户/Workspace 使用、越界和非 entries Run 返回稳定 400/404；分页不得重新搜索或因当前数据库变化改写历史快照
+- [x] 5.3 Message Page/Run 查询批量归并实际结果形态与首屏结果，避免 N+1；旧 Run、旧响应和兼容助手摘要按设计兜底
+- [x] 5.4 打开结果详情复用当前 Entry API 并重新校验权限；通过 snapshot updated_at/指纹表达当前、已变化或不可用，不把历史快照当当前数据
+- [x] 5.5 确保 entries Run 无论 continue/new_topic、命中多少或分页多少都不创建 output context version、不切换活动工作集；模式纠正使用新消息而非修改旧 Run
+- [x] 5.6 补首屏/后续页、稳定顺序、重复/跳过、游标篡改、历史分页、重启恢复、Entry 后续更新/移动/删除、工作集不推进和幂等提交测试
+- [x] 5.7 用开发后端 `curl` 验证新增提交字段、Run 轮询和结果分页端点的 401/200/4xx 而非 404，运行本组 pytest/ruff，完成本地提交 `feat: 支持知识查找结果分页与恢复`
 
 ## 6. 原生领域协议与控制器
 

@@ -131,6 +131,7 @@ def entry_out(entry: Entry) -> EntryOut:
         note=entry.note,
         created_at=entry.created_at,
         updated_at=entry.updated_at,
+        fingerprint=entry_fingerprint(entry_baseline(entry)),
         evidences=[
             EntryEvidenceOut(
                 id=item.id,

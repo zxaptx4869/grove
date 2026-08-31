@@ -9,10 +9,16 @@
 - 候选/结果/摘要/JSON 字节上限全部由服务端 settings 控制。
 """
 
+import base64
+import hashlib
+import hmac
+import json
 import logging
 from datetime import UTC, datetime
 from time import perf_counter
 
+from fastapi import HTTPException, status
+from pydantic import ValidationError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.agents.semantic import run_semantic_agent
@@ -23,6 +29,7 @@ from app.models.knowledge_agent import (
     RESULT_COMPLETENESS_COMPLETE,
     RESULT_COMPLETENESS_LIMITED,
     RESULT_COMPLETENESS_UNKNOWN,
+    RESULT_MODE_ENTRIES,
     RUN_COMPLETED,
     RUN_PARTIAL,
     SCOPE_PROJECT,
@@ -33,7 +40,9 @@ from app.models.knowledge_agent import (
 from app.schemas.knowledge_agent import (
     KnowledgeEntryResultItemOut,
     KnowledgeEntryResultSnapshotOut,
+    KnowledgeEntryResultsPageOut,
 )
+from app.services.entry import entry_baseline, entry_fingerprint
 from app.services.knowledge_agent.evidence import build_node_path_map
 from app.services.knowledge_agent.observability import (
     StageMeta,
@@ -55,6 +64,161 @@ from app.services.vector_search import hybrid_recall_by_query_with_meta
 logger = logging.getLogger(__name__)
 
 ENTRY_SEARCH_PROMPT_VERSION = "v1"
+RESULT_CURSOR_VERSION = 1
+_CURSOR_SECRET_FALLBACK = "grove-entry-result-cursor-v1"
+
+
+def _cursor_secret() -> str:
+    """返回游标签名密钥：优先应用密钥，未配置时使用稳定兜底。"""
+    return get_settings().auth_secret_key or _CURSOR_SECRET_FALLBACK
+
+
+def _encode_result_cursor(
+    *,
+    run_id: int,
+    workspace_id: int,
+    owner_user_id: int,
+    schema_version: str,
+    offset: int,
+) -> str:
+    """生成绑定 Run/范围/schema/偏移的不透明分页游标（带签名）。"""
+    payload = {
+        "v": RESULT_CURSOR_VERSION,
+        "run": run_id,
+        "ws": workspace_id,
+        "owner": owner_user_id,
+        "schema": schema_version,
+        "offset": offset,
+    }
+    raw = json.dumps(payload, ensure_ascii=False, separators=(",", ":"))
+    signature = hmac.new(
+        _cursor_secret().encode("utf-8"),
+        raw.encode("utf-8"),
+        hashlib.sha256,
+    ).hexdigest()[:24]
+    encoded = base64.urlsafe_b64encode(f"{signature}.{raw}".encode()).decode(
+        "ascii"
+    )
+    return encoded
+
+
+def _decode_result_cursor(raw: str) -> dict | None:
+    """解析并校验游标；签名不匹配或结构非法返回 None。"""
+    try:
+        decoded = base64.urlsafe_b64decode(raw.encode("ascii")).decode("utf-8")
+    except (ValueError, UnicodeDecodeError):
+        return None
+    signature, sep, payload = decoded.partition(".")
+    if not sep:
+        return None
+    expected = hmac.new(
+        _cursor_secret().encode("utf-8"),
+        payload.encode("utf-8"),
+        hashlib.sha256,
+    ).hexdigest()[:24]
+    if not hmac.compare_digest(signature, expected):
+        return None
+    try:
+        data = json.loads(payload)
+    except (json.JSONDecodeError, TypeError):
+        return None
+    if not isinstance(data, dict):
+        return None
+    if (
+        data.get("v") != RESULT_CURSOR_VERSION
+        or not isinstance(data.get("offset"), int)
+        or data["offset"] < 0
+    ):
+        return None
+    return data
+
+
+async def paginate_entry_results(
+    db: AsyncSession,
+    run,
+    *,
+    cursor: str | None,
+    limit: int | None,
+    default_page_size: int,
+    max_page_size: int,
+) -> KnowledgeEntryResultsPageOut:
+    """从同一持久化快照读取结果页；不重新搜索、不改写历史。
+
+    游标绑定 Run / owner / Workspace / schema / 偏移并带签名；篡改、
+    跨 Run/用户/Workspace 使用与越界返回稳定 400；非 entries Run 或
+    无快照返回 404。
+    """
+    if run.actual_result_mode != RESULT_MODE_ENTRIES or not run.entry_result_json:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="该 Run 没有结构化结果",
+        )
+    try:
+        snapshot = KnowledgeEntryResultSnapshotOut.model_validate_json(
+            run.entry_result_json
+        )
+    except ValidationError:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="结果快照不可用",
+        ) from None
+
+    offset = 0
+    if cursor:
+        data = _decode_result_cursor(cursor)
+        if data is None:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="无效的结果游标",
+            )
+        if (
+            data.get("run") != run.id
+            or data.get("ws") != run.workspace_id
+            or data.get("owner") != run.owner_user_id
+            or data.get("schema") != snapshot.schema_version
+        ):
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="游标与结果 Run 不匹配",
+            )
+        offset = int(data["offset"])
+
+    total = len(snapshot.items)
+    if offset > total:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="结果游标越界",
+        )
+    page_size = (
+        default_page_size
+        if limit is None
+        else max(1, min(int(limit), max_page_size))
+    )
+    items = snapshot.items[offset : offset + page_size]
+    next_offset = offset + len(items)
+    has_more = next_offset < total
+    next_cursor = None
+    if has_more:
+        next_cursor = _encode_result_cursor(
+            run_id=run.id,
+            workspace_id=run.workspace_id,
+            owner_user_id=run.owner_user_id,
+            schema_version=snapshot.schema_version,
+            offset=next_offset,
+        )
+    return KnowledgeEntryResultsPageOut(
+        schema_version=snapshot.schema_version,
+        status=snapshot.status,
+        completeness=snapshot.completeness,
+        items=items,
+        returned_count=len(items),
+        total_in_snapshot=total,
+        candidate_limit=snapshot.candidate_limit,
+        has_more=has_more,
+        next_cursor=next_cursor,
+        warning=snapshot.warning,
+        snapshot_updated_at=snapshot.snapshot_updated_at,
+    )
 
 
 def _bound(text: str, limit: int) -> str:
@@ -83,6 +247,26 @@ def _content_excerpt(content: str, query: str, excerpt_chars: int) -> str:
     return _bound(snippet, excerpt_chars)
 
 
+def _longest_common_substring(left: str, right: str) -> str:
+    """返回两个字符串的最长公共子串（大小写不敏感，限制长度避免大输入）。"""
+    a = left.casefold()
+    b = right.casefold()
+    if not a or not b:
+        return ""
+    # 只取查询侧的有意义片段，避免长正文上的 O(n*m) 退化
+    if len(a) > 200:
+        a = a[:200]
+    best = ""
+    for start in range(len(a)):
+        for end in range(start + 2, len(a) + 1):
+            if end - start > 120:
+                break
+            segment = a[start:end]
+            if segment in b and len(segment) > len(best):
+                best = segment
+    return best
+
+
 def _match_hint_for_entry(
     query: str,
     entry: Entry,
@@ -100,6 +284,11 @@ def _match_hint_for_entry(
     if title and q in title.casefold():
         fields.append("title")
         hint = f"标题命中「{_bound(title, 60)}」"
+    elif title:
+        common = _longest_common_substring(q, title)
+        if len(common) >= 2:
+            fields.append("title")
+            hint = f"标题包含「{_bound(common, 60)}」"
     content = entry.content or ""
     if content and q in content.casefold():
         fields.append("content")
@@ -108,13 +297,28 @@ def _match_hint_for_entry(
         end = min(len(content), position + len(q) + 80)
         snippet = _bound(content[start:end], match_hint_chars)
         hint = f"正文命中「…{snippet}…」"
+    elif content:
+        common = _longest_common_substring(q, content)
+        if len(common) >= 2:
+            fields.append("content")
+            hint = f"正文包含「{_bound(common, 60)}」"
     if node_path and q in node_path.casefold():
         fields.append("node")
         hint = hint or f"目录命中「{_bound(node_path, 60)}」"
+    elif node_path:
+        common = _longest_common_substring(q, node_path)
+        if len(common) >= 2:
+            fields.append("node")
+            hint = hint or f"目录包含「{_bound(common, 60)}」"
     for title_item in source_titles:
         if title_item and q in title_item.casefold():
             fields.append("source")
             hint = hint or f"来源命中「{_bound(title_item, 60)}」"
+        elif title_item:
+            common = _longest_common_substring(q, title_item)
+            if len(common) >= 2:
+                fields.append("source")
+                hint = hint or f"来源包含「{_bound(common, 60)}」"
     if hint is not None:
         hint = _bound(hint, match_hint_chars)
     return hint, fields
@@ -202,6 +406,7 @@ async def _assemble_items(
                 info_nature=entry.info_nature,
                 updated_at=entry.updated_at,
                 source_count=len(entry.evidences),
+                fingerprint=entry_fingerprint(entry_baseline(entry)),
                 match_hint=hint,
                 matched_fields=matched_fields,
             )

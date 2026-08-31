@@ -7,6 +7,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
 from sqlalchemy import select
 
 from app.api.deps import DbSession, get_current_user, get_current_workspace
+from app.core.config import get_settings
 from app.models import (
     KnowledgeAgentModelInvocation,
     KnowledgeAgentRun,
@@ -34,6 +35,7 @@ from app.schemas.knowledge_agent import (
     KnowledgeDraftConfirmOut,
     KnowledgeDraftConfirmRequest,
     KnowledgeDraftEditRequest,
+    KnowledgeEntryResultsPageOut,
     KnowledgeEntryRevisionDraftOut,
     KnowledgeInvestigationDetailOut,
     KnowledgeInvestigationQueryOut,
@@ -86,6 +88,7 @@ from app.services.knowledge_agent.entry_revision import (
     submit_entry_revision,
     undo_entry_revision,
 )
+from app.services.knowledge_agent.entry_search import paginate_entry_results
 from app.services.knowledge_agent.runs import (
     cancel_run,
     get_owned_run,
@@ -739,6 +742,31 @@ async def get_run_observability_endpoint(
             )
             for item in invocations
         ],
+    )
+
+
+@router.get(
+    "/runs/{run_id}/entry-results",
+    response_model=KnowledgeEntryResultsPageOut,
+)
+async def get_run_entry_results_endpoint(
+    run_id: int,
+    db: DbSession,
+    user: CurrentUser,
+    workspace: CurrentWorkspace,
+    cursor: str | None = Query(default=None),
+    limit: int | None = Query(default=None, ge=1, le=100),
+) -> KnowledgeEntryResultsPageOut:
+    """从同一持久化快照分页读取结构化 Entry 结果（不重新搜索）。"""
+    run = await get_owned_run(db, workspace.id, user.id, run_id)
+    settings = get_settings()
+    return await paginate_entry_results(
+        db,
+        run,
+        cursor=cursor,
+        limit=limit,
+        default_page_size=settings.knowledge_agent_result_default_page_size,
+        max_page_size=settings.knowledge_agent_result_max_page_size,
     )
 
 

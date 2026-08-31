@@ -121,6 +121,8 @@ async def _load_scope_entries(
         .join(Project, Entry.project_id == Project.id)
         .options(*entry_eager_options(), selectinload(Entry.project))
         .where(Project.workspace_id == workspace_id)
+        # 稳定基线顺序：重排并列时按 Entry id 确定性回退，避免分页顺序漂移
+        .order_by(Entry.id)
     )
     if project_id is not None:
         stmt = stmt.where(Entry.project_id == project_id)
