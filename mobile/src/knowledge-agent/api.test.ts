@@ -203,6 +203,25 @@ describe("知识 Agent API 序列化", () => {
     });
   });
 
+  test("读取当前正式知识使用 Bearer 与 entry 路径", async () => {
+    mockFetch({ id: 3, title: "闭水试验", content: "内容", updated_at: "2026-08-29T10:00:00Z" });
+    const result = await api.knowledgeAgentApi.getEntryCurrent("token-r", 3);
+    const [url, init] = (globalThis.fetch as jest.Mock).mock.calls[0] as [
+      string,
+      RequestInit,
+    ];
+    expect(url).toBe("http://example.test/api/entries/3");
+    expect((init.headers as Record<string, string>).Authorization).toBe(
+      "Bearer token-r",
+    );
+    expect(result).toMatchObject({
+      id: 3,
+      title: "闭水试验",
+      content: "内容",
+      updatedAt: "2026-08-29T10:00:00Z",
+    });
+  });
+
   test("整理动作序列化 source_run_id 与目标项目", async () => {
     mockFetch(
       {

@@ -13,6 +13,7 @@ import type {
   KnowledgeDraftConfirmRequest,
   KnowledgeDraftEditRequest,
   KnowledgeEntryRevisionDraft,
+  KnowledgeEntryCurrent,
   KnowledgeRevisionAction,
   KnowledgeRevisionActionRequest,
   KnowledgeRevisionConfirm,
@@ -378,6 +379,13 @@ export const knowledgeAgentApi = {
         t,
       ),
     ) as Promise<KnowledgeRevisionUndo>;
+  },
+
+  /** 引用弹窗展示目标 Entry 的当前正式内容（owner+Workspace 由服务端校验）。 */
+  getEntryCurrent(token: string, entryId: number): Promise<KnowledgeEntryCurrent> {
+    return withToken(token, (t) =>
+      request<KnowledgeEntryCurrent>(`/api/entries/${entryId}`, {}, t),
+    ) as Promise<KnowledgeEntryCurrent>;
   },
 
   getRun(token: string, runId: number): Promise<KnowledgeRun> {

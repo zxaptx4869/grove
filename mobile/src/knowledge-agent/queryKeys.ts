@@ -13,4 +13,7 @@ export const knowledgeAgentKeys = {
     ["knowledge-agent", "revision-drafts", conversationId] as const,
   revisionDraft: (id: number) =>
     ["knowledge-agent", "revision-draft", id] as const,
+  /** 引用弹窗展示的当前正式知识（按 Entry id 缓存，避免重复请求）。 */
+  entryCurrent: (entryId: number) =>
+    ["knowledge-agent", "entry-current", entryId] as const,
 };

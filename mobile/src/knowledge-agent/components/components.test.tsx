@@ -80,6 +80,7 @@ jest.mock("@/src/knowledge-agent/api", () => ({
     cancelEntryRevisionDraft: jest.fn(),
     confirmEntryRevision: jest.fn(),
     undoEntryRevision: jest.fn(),
+    getEntryCurrent: jest.fn(),
   },
 }));
 
@@ -621,6 +622,21 @@ test("冲突卡并列展示双边完整 citation 与项目归属", async () => {
 
 test("引用 Sheet 分区展示 Entry、项目/目录、Source 原文快照", async () => {
   const onClose = jest.fn();
+  const api = knowledgeAgentApi as jest.Mocked<typeof knowledgeAgentApi>;
+  (api.getEntryCurrent as jest.Mock).mockResolvedValue({
+    id: 3,
+    projectId: 1,
+    nodeId: 1,
+    nodeName: "施工",
+    title: "闭水试验时长",
+    content: "闭水试验通常持续 24 小时，验收前不得放水。",
+    mainType: "method",
+    infoNature: "advice",
+    applicableCondition: null,
+    note: null,
+    createdAt: "2026-08-29T09:00:00Z",
+    updatedAt: "2026-08-29T10:00:00Z",
+  });
   const view = await render(
     <CitationSheet
       citation={citation(3, {
@@ -643,13 +659,17 @@ test("引用 Sheet 分区展示 Entry、项目/目录、Source 原文快照", as
       onRevise={jest.fn()}
       onClose={onClose}
     />,
+    { wrapper },
+  );
+  await waitFor(() =>
+    expect(view.getByText(/闭水试验通常持续 24 小时/)).toBeOnTheScreen(),
   );
   expect(view.getByText("闭水试验时长")).toBeOnTheScreen();
   expect(view.getByText("新房装修 / 施工 / 防水")).toBeOnTheScreen();
-  expect(view.getByText(/本次回答核验的 SOURCE 原文/)).toBeOnTheScreen();
+  expect(view.getByText(/闭水试验通常持续 24 小时/)).toBeOnTheScreen();
+  expect(view.getByText(/本次回答核验的原文/)).toBeOnTheScreen();
   expect(view.getByText(/“闭水期间应持续观察水位变化”/)).toBeOnTheScreen();
   expect(view.getByText(/来源：验收记录\.md/)).toBeOnTheScreen();
-  expect(view.getByText("查看当前知识（暂不可用）")).toBeOnTheScreen();
   expect(view.getByText("开始修订")).toBeOnTheScreen();
   // 精简后的快照说明与内部校验话术
   expect(view.getByText(/回答生成时的快照/)).toBeOnTheScreen();
@@ -657,6 +677,41 @@ test("引用 Sheet 分区展示 Entry、项目/目录、Source 原文快照", as
   expect(view.queryByText(/不是模型自由生成/)).toBeNull();
   await fireEvent.press(view.getAllByLabelText("关闭")[0]);
   expect(onClose).toHaveBeenCalled();
+});
+
+test("引用对象当前不可用时回退快照并隐藏修订入口", async () => {
+  const api = knowledgeAgentApi as jest.Mocked<typeof knowledgeAgentApi>;
+  (api.getEntryCurrent as jest.Mock).mockRejectedValue({ status: 404 });
+  const onRevise = jest.fn();
+  const view = await render(
+    <CitationSheet
+      citation={citation(9, {
+        entryTitle: "已删除知识",
+        projectName: "新房装修",
+        nodePath: "施工",
+        sourceTitle: "旧来源.md",
+        quote: "历史核验原文片段",
+      })}
+      revisionTargets={[
+        {
+          entryId: 9,
+          entryTitle: "已删除知识",
+          projectId: 1,
+          projectName: "新房装修",
+          nodePath: "施工",
+        },
+      ]}
+      sourceRunId={9}
+      onRevise={onRevise}
+      onClose={jest.fn()}
+    />,
+    { wrapper },
+  );
+  await waitFor(() => expect(view.getByText("该知识当前不可用")).toBeOnTheScreen());
+  // 历史快照仍可核验阅读
+  expect(view.getByText(/历史核验原文片段/)).toBeOnTheScreen();
+  expect(view.queryByText("开始修订")).toBeNull();
+  expect(onRevise).not.toHaveBeenCalled();
 });
 
 test("历史 Sheet 展示范围、最近 Run 状态并支持选择/新建", async () => {
@@ -1429,6 +1484,20 @@ test("对话内从引用发起修订并提交非空指令", async () => {
       targetEntryId: 1,
     },
     draft: revisionDraftFixture({ id: 40, operationRunId: 40 }),
+  });
+  (api.getEntryCurrent as jest.Mock).mockResolvedValue({
+    id: 1,
+    projectId: 1,
+    nodeId: 1,
+    nodeName: "施工",
+    title: "闭水试验时长",
+    content: "闭水试验通常持续 24 小时。",
+    mainType: "method",
+    infoNature: "advice",
+    applicableCondition: null,
+    note: null,
+    createdAt: "2026-08-29T09:00:00Z",
+    updatedAt: "2026-08-29T10:00:00Z",
   });
 
   const view = await render(<ConversationScreen />, { wrapper });

@@ -339,6 +339,22 @@ export interface KnowledgeRevisionEntry {
   updatedAt: string;
 }
 
+/** 引用弹窗展示的当前正式知识（服务端 /api/entries/{id} 归一化结果）。 */
+export interface KnowledgeEntryCurrent {
+  id: number;
+  projectId: number;
+  nodeId: number;
+  nodeName: string;
+  title: string;
+  content: string;
+  mainType: string;
+  infoNature: string | null;
+  applicableCondition: string | null;
+  note: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
 export interface KnowledgeRevisionActionRequest {
   clientMessageId: string;
   sourceRunId: number;
