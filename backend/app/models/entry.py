@@ -85,7 +85,9 @@ class EntryVersion(Base):
     applicable_condition: Mapped[str | None] = mapped_column(Text, nullable=True)
     note: Mapped[str | None] = mapped_column(Text, nullable=True)
     node_id: Mapped[int] = mapped_column(BigInteger, nullable=False)
-    change_type: Mapped[str] = mapped_column(String(16), nullable=False)
+    # 知识 Agent 修订版本类型 knowledge_agent_revision 为 24 字符，
+    # 列容量需覆盖；MySQL 8 严格模式按 varchar 长度拒绝超长写入
+    change_type: Mapped[str] = mapped_column(String(32), nullable=False)
     change_summary: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False

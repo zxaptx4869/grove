@@ -453,6 +453,22 @@ def test_migration_upgrade_creates_revision_tables(tmp_path: Path) -> None:
             "VALUES (1, 1, 1, '闭水试验', '内容', 'method', ?)",
             (now,),
         )
+        # change_type 已扩到 32：knowledge_agent_revision（24 字符）可写入
+        entry_versions_cols = {
+            row[1]: row[2]
+            for row in conn.execute(
+                "PRAGMA table_info(entry_versions)"
+            ).fetchall()
+        }
+        assert entry_versions_cols["change_type"].upper() == "VARCHAR(32)"
+        conn.execute(
+            "INSERT INTO entry_versions "
+            "(entry_id, version_number, title, content, main_type, "
+            " applicable_condition, note, node_id, change_type, change_summary, created_at) "
+            "VALUES (1, 1, '闭水试验', '内容', 'method', NULL, NULL, 1, "
+            " 'knowledge_agent_revision', '按用户要求改写', ?)",
+            (now,),
+        )
         conn.execute(
             "INSERT INTO knowledge_conversations "
             "(id, workspace_id, owner_user_id, scope_type, project_id, title) "
