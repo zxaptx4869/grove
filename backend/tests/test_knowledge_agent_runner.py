@@ -146,6 +146,25 @@ def _default_decision(monkeypatch):
         _resolve_mode,
     )
 
+    async def _resolve_result_mode(
+        db,
+        *,
+        workspace_id,
+        request_mode,
+        objective,
+        scope_label,
+        topic_summary,
+    ):
+        # 默认走综合回答路径：不产生结果形态路由调用，避免污染既有断言
+        from app.services.knowledge_agent.result_mode import ResultModeResolution
+
+        return ResultModeResolution(mode="answer")
+
+    monkeypatch.setattr(
+        "app.services.knowledge_agent.runner.resolve_result_mode",
+        _resolve_result_mode,
+    )
+
 
 def run_id_counter() -> str:
     global _counter

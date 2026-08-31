@@ -11,6 +11,7 @@ from sqlalchemy.orm import selectinload
 from app.agents.investigation import ANSWER_MODE_ROUTE_PROMPT_VERSION
 from app.agents.knowledge_agent import ANSWER_PROMPT_VERSION, run_knowledge_answer_agent
 from app.agents.knowledge_context import CONTEXT_DECISION_PROMPT_VERSION
+from app.agents.result_mode import RESULT_MODE_ROUTE_PROMPT_VERSION
 from app.core.config import get_settings
 from app.models import (
     Entry,
@@ -26,6 +27,8 @@ from app.models.knowledge_agent import (
     CONTEXT_DECISION_CONTINUE,
     CONTEXT_MODE_AUTO,
     PURPOSE_CONTEXT_DECISION,
+    RESULT_MODE_AUTO,
+    RESULT_MODE_ENTRIES,
     RUN_COMPLETED,
     RUN_PARTIAL,
     RUN_PROCESSING,
@@ -35,6 +38,7 @@ from app.models.knowledge_agent import (
     STEP_ORGANIZE_ANSWER,
     STEP_READ_ENTRIES,
     STEP_READ_EVIDENCE,
+    STEP_RESULT_MODE_ROUTE,
     STEP_SEARCH,
     STEP_VALIDATE_REFERENCES,
 )
@@ -53,6 +57,7 @@ from app.services.knowledge_agent.observability import (
     record_reference_validation,
     run_fallback_summary,
 )
+from app.services.knowledge_agent.result_mode import resolve_result_mode
 from app.services.knowledge_agent.runs import (
     finalize_run,
     read_run_cancel_state,
@@ -289,6 +294,36 @@ async def execute_run(db: AsyncSession, run: KnowledgeAgentRun) -> None:
             status=RUN_COMPLETED,
             fallback_summary=summary,
         )
+        return
+
+    # 结果形态路由：上下文决策后先解析；显式 answer/entries 跳过路由，
+    # entries 进入独立有界查找图（跳过回答模式、调查、Evidence 与回答模型）。
+    await _check_cancelled(run.id)
+    await update_run_step(run.id, STEP_RESULT_MODE_ROUTE)
+    if run.actual_result_mode is None:
+        resolution = await resolve_result_mode(
+            db,
+            workspace_id=run.workspace_id,
+            request_mode=run.request_result_mode or RESULT_MODE_AUTO,
+            objective=decision.standalone_query or query,
+            scope_label=scope,
+            topic_summary=decision.topic_label,
+        )
+        run.actual_result_mode = resolution.mode
+        if resolution.meta is not None:
+            await record_model_invocation(
+                db,
+                run_id=run.id,
+                meta=resolution.meta,
+                prompt_version=RESULT_MODE_ROUTE_PROMPT_VERSION,
+            )
+        await db.commit()
+    if run.actual_result_mode == RESULT_MODE_ENTRIES:
+        from app.services.knowledge_agent.entry_search import (
+            execute_structured_entry_search,
+        )
+
+        await execute_structured_entry_search(db, run, decision, ctx)
         return
 
     # 工作集种子复验可观测：删除/越权/移出范围的项只记录不可用

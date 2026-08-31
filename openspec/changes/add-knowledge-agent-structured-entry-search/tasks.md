@@ -18,12 +18,12 @@
 
 ## 3. 结果形态路由与可观测性
 
-- [ ] 3.1 新增 PydanticAI 结构化结果形态路由，只接收 standalone query、范围标签和必要上下文，输出 answer/entries；不得接收或生成 Workspace、Project、Node、Entry 授权参数
-- [ ] 3.2 在上下文决策后接入 result route：clarify 直接结束；显式 answer/entries 跳过路由；entries 跳过 answer mode、调查、Evidence 和回答模型
-- [ ] 3.3 新增 `result_mode_route` purpose、模型调用与 fallback summary，记录真实 provider/model/is_fallback/error/duration；未配置、超时、异常和非法结构显式回退 answer
-- [ ] 3.4 保证 request answer mode 在 entries 路径仍可审计但 actual answer mode 为空，进度步骤只展示“判断结果形式/查找正式知识/整理结果”等可验证状态
-- [ ] 3.5 补 auto 两类路由、显式覆盖、clarify、路由失败/非法输出、取消边界、旧客户端默认和无隐藏关键词路由测试
-- [ ] 3.6 运行路由/Run 定向 pytest 与 ruff，完成本地提交 `feat: 增加知识 Agent 结果形态路由`
+- [x] 3.1 新增 PydanticAI 结构化结果形态路由，只接收 standalone query、范围标签和必要上下文，输出 answer/entries；不得接收或生成 Workspace、Project、Node、Entry 授权参数
+- [x] 3.2 在上下文决策后接入 result route：clarify 直接结束；显式 answer/entries 跳过路由；entries 跳过 answer mode、调查、Evidence 和回答模型
+- [x] 3.3 新增 `result_mode_route` purpose、模型调用与 fallback summary，记录真实 provider/model/is_fallback/error/duration；未配置、超时、异常和非法结构显式回退 answer
+- [x] 3.4 保证 request answer mode 在 entries 路径仍可审计但 actual answer mode 为空，进度步骤只展示“判断结果形式/查找正式知识/整理结果”等可验证状态
+- [x] 3.5 补 auto 两类路由、显式覆盖、clarify、路由失败/非法输出、取消边界、旧客户端默认和无隐藏关键词路由测试
+- [x] 3.6 运行路由/Run 定向 pytest 与 ruff，完成本地提交 `feat: 增加知识 Agent 结果形态路由`
 
 ## 4. 有界 Entry 搜索与稳定结果快照
 
