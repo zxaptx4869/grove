@@ -95,7 +95,7 @@ Web 与原生 App 使用相同范围语义，不提供目录节点级范围选�
 
 ## 4. 已经完成的能力
 
-以下状态以 2026-08-30 已归档 OpenSpec change 为准。
+以下已完成状态以 2026-08-31 已归档 OpenSpec change 为准；当前 active change 另在对应小节标明。
 
 ### 4.1 原生移动基础
 
@@ -162,6 +162,16 @@ Web 与原生 App 使用相同范围语义，不提供目录节点级范围选�
 - 不直接创建或修改正式 Entry；
 - 移动端尚未承担 Candidate 到正式 Entry 的最终确认台闭环。
 
+### 4.7 单 Entry 修订、确认与撤销
+
+`add-knowledge-agent-entry-revision` 已完成：
+
+- 只能从回答实际有效 Citation 明确选择一条 Entry 发起，不从普通文本猜测写意图；
+- Agent 基于当前 Entry 和允许 Evidence 生成可编辑 Revision Draft，并提供完整字段差异；
+- 用户明确确认后，应用服务原子更新正式 Entry、追加版本并保留/补充真实来源；
+- 保存操作前后快照、版本和 Evidence 增量，未发生后续修改时可以安全撤销；
+- Entry 已被后来修改或 Evidence 失效时拒绝覆盖，历史与执行回执可以在对话中恢复。
+
 ## 5. 当前“找知识”能力及缺口
 
 ### 5.1 已支持：问答式查找
@@ -176,7 +186,7 @@ Agent 会在当前 Workspace 或项目范围搜索正式 Entry，读取相关内
 
 这种形态适合“找到以后理解它”，但它的主要结果仍是一份回答，不保证把所有匹配 Entry 作为完整、可操作的列表返回。快速回答和深度查找都受检索与 Evidence 预算限制，不能把“相关结果”误解成“穷尽全部结果”。
 
-### 5.2 待讨论：结构化知识查找结果
+### 5.2 已规划：结构化知识查找结果
 
 后续需要考虑第二种结果形态：**查找对象，而不是综合回答。**
 
@@ -184,41 +194,36 @@ Agent 会在当前 Workspace 或项目范围搜索正式 Entry，读取相关内
 用户要求查找一条或多条知识
   → Agent 理解查询条件并检索
   → 返回结构化 Entry 结果卡
-  → 用户打开、勾选或缩小范围
-  → 对选中对象发起修订、整理或批量操作
+  → 用户打开当前 Entry 或缩小范围继续查找
 ```
 
-结果卡可能需要表达：Entry 标题、摘要、项目、目录、匹配原因、来源状态和是否已穷尽；并允许打开、选择、修订或进入后续批量整理。
+`add-knowledge-agent-structured-entry-search` 已完成 OpenSpec 规划、尚未开发。当前方案已经锁定：
 
-这个方向已经形成产品共识，但尚未形成正式 change。仍需讨论：
+- 普通消息默认自动判断返回综合回答或 Entry 列表，用户可显式覆盖或纠正；
+- 结果以有界快照持久化并随历史恢复，区分同一快照分页与搜索是否穷尽；
+- Entry 卡展示正式知识标题、摘要、项目、目录、类型、来源和当前状态；
+- 结果命中不自动推进事实工作集，打开详情时重新校验当前 Entry；
+- 本 change 不做勾选、选择集、搜索结果直接修订或批量操作。
 
-- 由 Agent 自动判断“回答模式 / 找对象模式”，还是提供显式入口；
-- 多结果如何分页、继续查找和表达不完整覆盖；
-- 对话中的选择是否形成临时对象集，以及何时失效；
-- 它单独建设，还是作为多 Entry 整理 change 的前置部分。
+因此这一轮先建立“可找到、可扫描、可打开”的只读对象结果协议，再根据真实使用决定选择集和多 Entry 操作，不提前把历史搜索快照当成写入授权。
 
-## 6. 已规划、尚未实施
+## 6. 当前已规划、尚未实施
 
-### 6.1 单 Entry 修订、确认与撤销
+### 6.1 结构化 Entry 查找
 
-`add-knowledge-agent-entry-revision` 已完成 OpenSpec 规划，尚未开发。
+`add-knowledge-agent-structured-entry-search` 是当前 active change，只包含文档，等待新会话开发。
 
 目标路径：
 
 ```text
-Agent 回答并引用某条 Entry
-  → 用户从引用明确选择“修订这条知识”
-  → 输入修改要求
-  → Agent 基于当前 Entry 与允许 Evidence 生成修订草稿
-  → 用户编辑并查看完整差异
-  → 用户明确确认
-  → 应用服务创建 Entry 新版本
-  → 返回操作回执，可在没有后续修改时安全撤销
+用户自然语言要求“找一条/几条知识”
+  → Agent 自动或按用户覆盖选择 Entry 结果形态
+  → 在 Workspace/项目范围有界检索正式 Entry
+  → 返回可恢复、可分页的对象列表与完整性说明
+  → 用户打开当前 Entry；如结果形态不对，可预填原问题重新发送
 ```
 
-当前规划只允许修订某条已完成或部分完成回答实际引用的 Entry。这样目标由用户明确选择，避免 Agent 猜测对象。普通 Composer 仍然只读。
-
-撤销不是无条件覆盖旧值：如果本次操作后 Entry 又被修改，系统拒绝一键撤销，避免抹掉后来的版本。
+结构化搜索结果仍是只读对象快照，不直接提供修订或多选。这样先验证用户是否经常需要“找到对象而不是获得答案”，再决定下一步对象选择协议。
 
 ## 7. 后续路线草案
 
@@ -226,9 +231,9 @@ Agent 回答并引用某条 Entry
 
 ### 7.1 近期闭环
 
-1. 完成 `add-knowledge-agent-entry-revision`，验证第一条正式知识修改工具。
+1. 实施 `add-knowledge-agent-structured-entry-search`，验证回答/找对象自动路由、结果卡、分页和历史恢复。
 2. 补齐移动端 pending Candidate 的最终确认、拒绝与正式 Entry 归档闭环。
-3. 决定结构化“知识查找结果卡”是单独 change，还是与多 Entry 操作共同建设。
+3. 基于结构化查找真实使用决定对象选择集的持久化、失效和授权边界。
 4. 建设多 Entry 整理：对象选择、重复合并、冲突保留、分阶段确认、事务执行和恢复。
 5. Web 接入统一 Knowledge Agent 对话，并迁移或移除旧 Reader / AI 阅读入口。
 
@@ -245,12 +250,11 @@ Agent 回答并引用某条 Entry
 
 后续讨论可以优先回答这些问题：
 
-1. “找知识”什么时候应该返回答案，什么时候应该返回可选择的 Entry 列表？
-2. 单 Entry 修订完成后，下一步优先补 Candidate 最终确认，还是多 Entry 操作？
+1. 结构化结果完成后，下一步优先补 Candidate 最终确认，还是持久对象选择集？
+2. 选择集应该属于某次 Run、某段对话主题还是独立临时集合，何时因 Entry 更新或范围切换失效？
 3. 多 Entry 操作的第一条黄金路径应选“合并重复知识”还是“处理冲突”？
 4. Web 的统一对话入口放在全局层、项目层，还是两处共享同一个当前会话？
-5. 对话中的结构化对象卡如何在长历史中恢复，避免用户误操作旧对象？
-6. 哪些操作可以由 Agent 自动准备，哪些必须先向用户澄清对象、范围或后果？
+5. 哪些操作可以由 Agent 自动准备，哪些必须先向用户澄清对象、范围或后果？
 
 ## 9. 文档维护方式
 
@@ -275,4 +279,5 @@ Agent 回答并引用某条 Entry
 - [有界调查 change](../../openspec/changes/archive/2026-08-28-add-knowledge-agent-bounded-investigation/proposal.md)
 - [原生对话 change](../../openspec/changes/archive/2026-08-30-add-native-knowledge-agent-conversation/proposal.md)
 - [Candidate Draft change](../../openspec/changes/archive/2026-08-30-add-knowledge-agent-candidate-drafting/proposal.md)
-- [单 Entry 修订 change](../../openspec/changes/add-knowledge-agent-entry-revision/proposal.md)
+- [单 Entry 修订 change](../../openspec/changes/archive/2026-08-31-add-knowledge-agent-entry-revision/proposal.md)
+- [结构化 Entry 查找 change](../../openspec/changes/add-knowledge-agent-structured-entry-search/proposal.md)
