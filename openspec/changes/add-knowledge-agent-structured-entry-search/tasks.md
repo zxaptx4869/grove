@@ -27,13 +27,13 @@
 
 ## 4. 有界 Entry 搜索与稳定结果快照
 
-- [ ] 4.1 实现 `execute_structured_entry_search` 服务，复用 RunToolContext 与现有召回/重排，按 owner/Workspace/项目复验并只保留正式 Entry；模型不得决定范围或对象 id
-- [ ] 4.2 实现按 Entry id 去重与稳定排序，批量加载 Project/Node/Evidence 数量避免 N+1；Workspace 结果逐项保存项目归属，目录仅作定位信息
-- [ ] 4.3 从正式 Entry 装配有界标题、摘要、类型、更新时间、来源数和可选可验证 match hint；不保存完整正文、Source 原文、prompt、伪相关度或模型编造理由
-- [ ] 4.4 集中配置候选/结果/摘要/JSON 字节上限，序列化前拒绝超限；明确 complete/limited/unknown、returned_count、warning 与 has_more 的独立语义
-- [ ] 4.5 在同一终态事务保存兼容助手摘要、actual result mode、结果 JSON、Run completed/partial/failed、fallback 与活动槽；空结果正常完成，partial 保留合法项，失败/取消不提交半份快照或推进工作集
-- [ ] 4.6 补 Workspace/项目隔离、跨用户/Workspace、Candidate 排除、范围外召回、去重/排序、字段命中与纯语义无 hint、空/limited/unknown、JSON 上限、事务回滚、取消与崩溃恢复测试
-- [ ] 4.7 运行搜索/Worker 定向 pytest 与 ruff，完成本地提交 `feat: 持久化有界正式知识查找结果`
+- [x] 4.1 实现 `execute_structured_entry_search` 服务，复用 RunToolContext 与现有召回/重排，按 owner/Workspace/项目复验并只保留正式 Entry；模型不得决定范围或对象 id
+- [x] 4.2 实现按 Entry id 去重与稳定排序，批量加载 Project/Node/Evidence 数量避免 N+1；Workspace 结果逐项保存项目归属，目录仅作定位信息
+- [x] 4.3 从正式 Entry 装配有界标题、摘要、类型、更新时间、来源数和可选可验证 match hint；不保存完整正文、Source 原文、prompt、伪相关度或模型编造理由
+- [x] 4.4 集中配置候选/结果/摘要/JSON 字节上限，序列化前拒绝超限；明确 complete/limited/unknown、returned_count、warning 与 has_more 的独立语义
+- [x] 4.5 在同一终态事务保存兼容助手摘要、actual result mode、结果 JSON、Run completed/partial/failed、fallback 与活动槽；空结果正常完成，partial 保留合法项，失败/取消不提交半份快照或推进工作集
+- [x] 4.6 补 Workspace/项目隔离、跨用户/Workspace、Candidate 排除、范围外召回、去重/排序、字段命中与纯语义无 hint、空/limited/unknown、JSON 上限、事务回滚、取消与崩溃恢复测试
+- [x] 4.7 运行搜索/Worker 定向 pytest 与 ruff，完成本地提交 `feat: 持久化有界正式知识查找结果`
 
 ## 5. 结果分页、历史恢复与工作集边界
 

@@ -91,6 +91,11 @@ async def _check_cancelled(run_id: int) -> None:
         raise RunCancelled()
 
 
+async def check_run_cancelled(run_id: int) -> None:
+    """公开的取消边界检查：供结构化查找等子执行图复用。"""
+    await _check_cancelled(run_id)
+
+
 def _insufficient_answer(text: str, note: str) -> KnowledgeAnswerOut:
     """确定性知识不足回答：不调用模型，不编造内容。"""
     return KnowledgeAnswerOut(

@@ -29,6 +29,7 @@ from app.models.knowledge_agent import (
     MESSAGE_ROLE_USER,
     MESSAGE_TYPE_ASSISTANT,
     MESSAGE_TYPE_USER,
+    RESULT_MODE_ENTRIES,
     REVISION_DRAFT_CANCELLED,
     REVISION_DRAFT_CONFIRMING,
     REVISION_DRAFT_FAILED,
@@ -456,6 +457,38 @@ async def finalize_run(
         assistant = await db.get(KnowledgeMessage, run.assistant_message_id)
         if assistant is not None:
             assistant.content = answer.answer
+    await db.flush()
+
+
+async def finalize_entry_run(
+    db: AsyncSession,
+    run: KnowledgeAgentRun,
+    *,
+    status: str,
+    entry_snapshot: KnowledgeEntryResultSnapshotOut,
+    fallback_summary: dict,
+    assistant_text: str,
+    error: str | None = None,
+) -> None:
+    """终态事务提交：兼容助手摘要、actual result mode、结果快照与活动槽释放。
+
+    结构化 Entry 查找不生成综合回答/Citation，也不创建输出工作集版本；
+    失败/取消路径不得调用本函数，避免提交半份快照。
+    """
+    if run.status in RUN_TERMINAL_STATUSES:
+        return
+    run.status = status
+    run.current_step = None
+    run.active_slot = None
+    run.actual_result_mode = RESULT_MODE_ENTRIES
+    run.entry_result_json = entry_snapshot.model_dump_json()
+    run.answer_json = None
+    run.fallback_summary = json.dumps(fallback_summary, ensure_ascii=False)
+    run.error = error
+    if run.assistant_message_id is not None:
+        assistant = await db.get(KnowledgeMessage, run.assistant_message_id)
+        if assistant is not None:
+            assistant.content = assistant_text
     await db.flush()
 
 
