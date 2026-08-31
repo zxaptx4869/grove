@@ -104,9 +104,10 @@ export function ConversationScreen() {
   const [editDraftId, setEditDraftId] = useState<number | null>(null);
   const [confirmDraftId, setConfirmDraftId] = useState<number | null>(null);
   // ---- 单 Entry 修订界面状态 ----
-  const [revisionTarget, setRevisionTarget] = useState<RevisionTarget | null>(
-    null,
-  );
+  const [revisionTarget, setRevisionTarget] = useState<{
+    target: RevisionTarget;
+    sourceRunId: number;
+  } | null>(null);
   const [revisionEditId, setRevisionEditId] = useState<number | null>(null);
   const [revisionConfirmId, setRevisionConfirmId] = useState<number | null>(null);
   const [revisionUndoId, setRevisionUndoId] = useState<number | null>(null);
@@ -210,11 +211,14 @@ export function ConversationScreen() {
     [controller],
   );
 
-  const handleRevise = useCallback((target: RevisionTarget) => {
-    controller.clearRevisionEditError();
-    setCitationContext(null);
-    setRevisionTarget(target);
-  }, [controller]);
+  const handleRevise = useCallback(
+    (target: RevisionTarget, sourceRunId: number) => {
+      controller.clearRevisionEditError();
+      setCitationContext(null);
+      setRevisionTarget({ target, sourceRunId });
+    },
+    [controller],
+  );
 
   const handleRevisionSubmit = useCallback(
     (sourceRunId: number, targetEntryId: number, instruction: string) => {
@@ -621,7 +625,11 @@ export function ConversationScreen() {
         revisionTargets={
           citationContext ? revisionEligibility(citationContext.run).targets : []
         }
-        onRevise={handleRevise}
+        onRevise={(target) => {
+          if (citationContext !== null) {
+            handleRevise(target, citationContext.run.id);
+          }
+        }}
         onClose={() => setCitationContext(null)}
       />
       <TargetProjectSheet
@@ -665,8 +673,8 @@ export function ConversationScreen() {
       />
       <RevisionInstructionSheet
         visible={revisionTarget !== null}
-        target={revisionTarget}
-        sourceRunId={citationContext?.run.id ?? null}
+        target={revisionTarget?.target ?? null}
+        sourceRunId={revisionTarget?.sourceRunId ?? null}
         submitting={controller.revisionActionPending}
         error={controller.revisionActionError}
         onSubmit={handleRevisionSubmit}

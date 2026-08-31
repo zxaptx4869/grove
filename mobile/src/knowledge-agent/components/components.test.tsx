@@ -37,12 +37,17 @@ import type {
   KnowledgeConflict,
   KnowledgeConversation,
   KnowledgeEntryRevisionDraft,
+  KnowledgeMessage,
   KnowledgeRun,
   KnowledgeRunCitation,
 } from "@/src/knowledge-agent/types";
 
 jest.mock("@/src/auth", () => ({
   useAuth: () => ({ token: "token", me: null }),
+}));
+
+jest.mock("expo-crypto", () => ({
+  randomUUID: () => "test-client-id",
 }));
 
 jest.mock("@/src/api", () => ({
@@ -69,6 +74,12 @@ jest.mock("@/src/knowledge-agent/api", () => ({
     editDraft: jest.fn(),
     cancelDraft: jest.fn(),
     confirmDraft: jest.fn(),
+    submitEntryRevision: jest.fn(),
+    getEntryRevisionDraft: jest.fn(),
+    editEntryRevisionDraft: jest.fn(),
+    cancelEntryRevisionDraft: jest.fn(),
+    confirmEntryRevision: jest.fn(),
+    undoEntryRevision: jest.fn(),
   },
 }));
 
@@ -200,6 +211,36 @@ function conversation(id: number): KnowledgeConversation {
     recentRunUpdatedAt: "2026-08-29T10:00:00Z",
     lastActivityAt: "2026-08-29T10:00:00Z",
     createdAt: "2026-08-29T09:00:00Z",
+  };
+}
+
+function message(
+  id: number,
+  role: "user" | "assistant",
+  runId: number | null,
+  content = "",
+): KnowledgeMessage {
+  return {
+    id,
+    conversationId: 1,
+    role,
+    messageType: role,
+    content,
+    clientMessageId: null,
+    runId,
+    scopeType: "workspace",
+    projectId: null,
+    projectName: null,
+    requestContextMode: null,
+    contextDecision: null,
+    standaloneQuery: null,
+    topicLabel: null,
+    requestAnswerMode: null,
+    actualAnswerMode: null,
+    currentRound: 0,
+    inputContextVersionId: null,
+    outputContextVersionId: null,
+    createdAt: new Date(id * 1000).toISOString(),
   };
 }
 
@@ -1296,4 +1337,70 @@ test("修订编辑 Sheet 可编辑长正文与变更摘要并保存", async () =
       changeSummary: "修订摘要",
     }),
   );
+});
+
+test("对话内从引用发起修订并提交非空指令", async () => {
+  const api = knowledgeAgentApi as jest.Mocked<typeof knowledgeAgentApi>;
+  const answeredRun = run(5, "completed", {
+    answer: "闭水试验通常持续 24 小时。",
+    status: "completed",
+    insufficientNote: null,
+    citations: [
+      citation(1, {
+        entryTitle: "闭水试验时长",
+        projectId: 1,
+        projectName: "新房装修",
+        scopeType: "project",
+      }),
+    ],
+    conflicts: [],
+  });
+  api.listConversations.mockResolvedValue([conversation(1)]);
+  api.getConversation.mockResolvedValue(conversation(1));
+  api.listMessages.mockResolvedValue({
+    items: [message(1, "user", 5, "闭水试验多久？"), message(2, "assistant", 5)],
+    nextCursor: null,
+    runs: [
+      {
+        ...answeredRun,
+        scopeType: "project",
+        projectId: 1,
+        projectName: "新房装修",
+      },
+    ],
+    candidateDrafts: [],
+  });
+  api.submitEntryRevision.mockResolvedValue({
+    userMessage: message(3, "user", 40, "修订《闭水试验时长》：补充适用条件"),
+    run: {
+      ...run(40, "waiting", null),
+      runKind: "entry_revision",
+      sourceRunId: 5,
+      targetEntryId: 1,
+    },
+    draft: revisionDraftFixture({ id: 40, operationRunId: 40 }),
+  });
+
+  const view = await render(<ConversationScreen />, { wrapper });
+  // 打开引用 Sheet 并点击「修订这条知识」
+  await waitFor(() =>
+    expect(view.getByLabelText("查看引用：闭水试验时长")).toBeOnTheScreen(),
+  );
+  await fireEvent.press(view.getByLabelText("查看引用：闭水试验时长"));
+  await waitFor(() => expect(view.getByText("修订这条知识")).toBeOnTheScreen());
+  await fireEvent.press(view.getByText("修订这条知识"));
+
+  // 指令 Sheet 出现，输入内容后提交
+  await waitFor(() => expect(view.getByLabelText("修订要求")).toBeOnTheScreen());
+  await fireEvent.changeText(view.getByLabelText("修订要求"), "补充适用条件");
+  await fireEvent.press(view.getByLabelText("提交修订"));
+
+  await waitFor(() => {
+    expect(api.submitEntryRevision).toHaveBeenCalledWith("token", 1, {
+      clientMessageId: expect.any(String),
+      sourceRunId: 5,
+      targetEntryId: 1,
+      instruction: "补充适用条件",
+    });
+  });
 });
