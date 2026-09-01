@@ -47,10 +47,9 @@ python3 -m venv .venv
 cp .env.example .env
 
 # 启动（默认 http://127.0.0.1:8000）
-.venv/bin/uvicorn app.main:app --reload
-
-# 数据库迁移（默认 SQLite；生产通过 DATABASE_URL 切换 MySQL 8）
-.venv/bin/alembic upgrade head
+# 先幂等补齐 pending 迁移（已最新时零操作），再启动；涉及迁移的代码改动后，
+# 正在运行的 --reload 进程不会自动应用迁移，需手动再执行一次 upgrade head。
+.venv/bin/alembic upgrade head && .venv/bin/uvicorn app.main:app --reload
 ```
 
 验证：`GET http://127.0.0.1:8000/healthz` 返回 200。
