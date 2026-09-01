@@ -29,15 +29,20 @@ from app.models.knowledge_agent import (
     MESSAGE_ROLE_USER,
     MESSAGE_TYPE_ASSISTANT,
     MESSAGE_TYPE_USER,
+    RESULT_MODE_ANSWER,
+    RESULT_MODE_AUTO,
     RESULT_MODE_ENTRIES,
     REVISION_DRAFT_CANCELLED,
     REVISION_DRAFT_CONFIRMING,
     REVISION_DRAFT_FAILED,
     REVISION_DRAFT_TERMINAL_STATUSES,
     RUN_CANCELLED,
+    RUN_COMPLETED,
     RUN_FAILED,
+    RUN_KIND_ANSWER,
     RUN_KIND_DRAFT_CANDIDATE,
     RUN_KIND_ENTRY_REVISION,
+    RUN_PARTIAL,
     RUN_PROCESSING,
     RUN_TERMINAL_STATUSES,
     RUN_WAITING,
@@ -149,13 +154,6 @@ async def submit_message(
     payload: KnowledgeRunSubmitRequest,
 ) -> tuple[KnowledgeMessage, KnowledgeAgentRun]:
     """在同一事务中幂等提交用户消息、助手占位消息与 waiting Run。"""
-    message_text = payload.message.strip()
-    if not message_text:
-        raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
-            detail="消息不能为空",
-        )
-
     existing = (
         await db.execute(
             select(KnowledgeMessage).where(
@@ -169,6 +167,13 @@ async def submit_message(
         run = await _run_by_message(db, existing)
         return existing, run
 
+    message_text = payload.message.strip()
+    if payload.source_run_id is None and not message_text:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail="消息不能为空",
+        )
+
     active = await active_run_for_conversation(db, conversation.id)
     if active is not None:
         raise HTTPException(
@@ -176,15 +181,62 @@ async def submit_message(
             detail="对话存在进行中的问答，请等待完成或取消后再提问",
         )
 
-    scope_type, project_id, project_name = await _scope_snapshot(db, conversation)
-    # 固化提交时的输入工作集版本；显式新话题在提交事务立即关闭旧活动版本
-    active_version = await get_active_context_version(db, conversation.id)
-    input_context_version_id = active_version.id if active_version is not None else None
-    if payload.context_mode == CONTEXT_MODE_NEW_TOPIC and active_version is not None:
-        await close_active_context_version(
-            db,
-            conversation.id,
-            reason=CONTEXT_CLOSE_REASON_NEW_TOPIC,
+    context_mode = payload.context_mode
+    answer_mode = payload.answer_mode
+    result_mode = payload.result_mode
+    source_run: KnowledgeAgentRun | None = None
+    if payload.source_run_id is not None:
+        source_run = await db.get(KnowledgeAgentRun, payload.source_run_id)
+        if (
+            source_run is None
+            or source_run.conversation_id != conversation.id
+            or source_run.workspace_id != conversation.workspace_id
+            or source_run.owner_user_id != conversation.owner_user_id
+            or source_run.run_kind != RUN_KIND_ANSWER
+            or source_run.status not in {RUN_COMPLETED, RUN_PARTIAL}
+        ):
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="来源 Run 不存在",
+            )
+        source_result_mode = source_run.actual_result_mode or RESULT_MODE_ANSWER
+        if result_mode == RESULT_MODE_AUTO or result_mode == source_result_mode:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+                detail="模式纠正必须显式切换结果形式",
+            )
+        source_message = await db.get(KnowledgeMessage, source_run.user_message_id)
+        if (
+            source_message is None
+            or source_message.conversation_id != conversation.id
+            or source_message.message_type != MESSAGE_TYPE_USER
+        ):
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="来源消息不存在",
+            )
+        message_text = source_message.content.strip()
+        context_mode = source_run.request_context_mode or "auto"
+        answer_mode = "auto"
+        scope_type = source_run.scope_type
+        project_id = source_run.project_id
+        project_name = source_run.project_name
+        input_context_version_id = source_run.input_context_version_id
+    else:
+        scope_type, project_id, project_name = await _scope_snapshot(db, conversation)
+        # 固化提交时的输入工作集版本；显式新话题在提交事务立即关闭旧活动版本
+        active_version = await get_active_context_version(db, conversation.id)
+        input_context_version_id = active_version.id if active_version is not None else None
+        if context_mode == CONTEXT_MODE_NEW_TOPIC and active_version is not None:
+            await close_active_context_version(
+                db,
+                conversation.id,
+                reason=CONTEXT_CLOSE_REASON_NEW_TOPIC,
+            )
+    if not message_text:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail="消息不能为空",
         )
     user_message = KnowledgeMessage(
         conversation_id=conversation.id,
@@ -226,15 +278,23 @@ async def submit_message(
         project_id=project_id,
         project_name=project_name,
         user_message_id=user_message.id,
-        request_context_mode=payload.context_mode,
-        request_answer_mode=payload.answer_mode,
-        request_result_mode=payload.result_mode,
+        request_context_mode=context_mode,
+        request_answer_mode=answer_mode,
+        request_result_mode=result_mode,
         input_context_version_id=input_context_version_id,
         status=RUN_WAITING,
         current_step="waiting",
         active_slot=ACTIVE_SLOT,
         max_retries=1,
     )
+    if source_run is not None:
+        # 模式纠正复用来源 Run 已固化的独立问题与上下文决策，避免后续历史消息
+        # 重新影响同一问题的解释；执行器会把这些字段视为可恢复决策而跳过分类模型。
+        run.context_decision = source_run.context_decision
+        run.standalone_query = source_run.standalone_query
+        run.topic_label = source_run.topic_label
+        run.history_message_ids_json = source_run.history_message_ids_json
+        run.context_meta_json = source_run.context_meta_json
     db.add(run)
     try:
         await db.flush()

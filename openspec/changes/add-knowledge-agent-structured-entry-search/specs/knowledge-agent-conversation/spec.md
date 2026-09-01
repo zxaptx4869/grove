@@ -28,7 +28,7 @@
 - **THEN** 系统只返回该用户创建的对话并按最近活动排序，同时用批量查询附最近 Run 摘要，不产生逐对话 N+1
 
 ### Requirement: 用户消息幂等提交
-系统 MUST 要求客户端提交稳定的 `client_message_id`，并接受默认 `auto` 的 `context_mode`、默认 `auto` 的 `result_mode` 与默认 `auto` 的 `answer_mode`；同一对话内重复提交相同标识 MUST 返回首次创建的用户消息、请求模式和 Run，不得按重试载荷改变上下文、结果形态、回答模式或再次执行路由与问答。
+系统 MUST 要求客户端提交稳定的 `client_message_id`，并接受默认 `auto` 的 `context_mode`、默认 `auto` 的 `result_mode` 与默认 `auto` 的 `answer_mode`；同一对话内重复提交相同标识 MUST 返回首次创建的用户消息、请求模式和 Run，不得按重试载荷改变上下文、结果形态、回答模式或再次执行路由与问答。模式纠正可额外提交同 Conversation 的 `source_run_id` 与相反的显式结果形态；服务端 MUST 校验来源归属并以来源 Run 的原用户消息、已固化独立问题与上下文决策、范围、上下文模式和输入工作集创建新 Run，不信任客户端重传这些字段。
 
 #### Scenario: 首次提交问题
 - **WHEN** 用户以新的 `client_message_id`、非空问题、合法上下文模式、合法结果形态和合法回答模式向空闲对话提交
@@ -41,6 +41,10 @@
 #### Scenario: 网络重试重复提交
 - **WHEN** 客户端在同一对话重复提交已使用的 `client_message_id` 且携带不同模式
 - **THEN** 系统返回原用户消息和原 Run，且不创建重复记录、不改变首次上下文模式、结果形态或回答模式
+
+#### Scenario: 按来源 Run 纠正结果形态
+- **WHEN** 客户端以新 `client_message_id`、同 Conversation 的终态 answer Run 和相反显式 `result_mode` 提交模式纠正
+- **THEN** 系统从来源 Run 恢复原消息、独立问题、上下文决策、范围快照、上下文模式与输入工作集，创建独立新 Run，且提交时不提前关闭当前活动工作集
 
 #### Scenario: 空问题不入队
 - **WHEN** 用户提交空白问题

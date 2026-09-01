@@ -63,6 +63,19 @@ test("终态 failed 的重新提问生成新 client_message_id", () => {
   expect(retried.text).toBe("同一个问题");
 });
 
+test("模式纠正网络重试保留来源 Run", () => {
+  const pending = createPendingSubmission({
+    text: "原问题",
+    contextMode: "continue",
+    answerMode: "auto",
+    resultMode: "entries",
+    sourceRunId: 17,
+    random: fixedId,
+  });
+  const retried = retrySubmissionWithNewId(pending, () => "new-client-id");
+  expect(retried.sourceRunId).toBe(17);
+});
+
 test("409 冲突标记后不创建第二个本地任务", () => {
   const pending = markConflict(
     attachConversation(

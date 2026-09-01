@@ -1,6 +1,6 @@
 # 验证记录（任务组 8）
 
-> 日期：2026-08-31；分支：`codex/add-knowledge-agent-structured-entry-search`；
+> 日期：2026-09-01；分支：`codex/add-knowledge-agent-structured-entry-search`；
 > 环境：macOS 本机开发环境，无运行中的 MySQL 8 / Docker 守护进程 / iOS 模拟器。
 
 ## 1. 自动化测试与静态检查
@@ -9,7 +9,7 @@
 
 | 检查项 | 结果 |
 |---|---|
-| `backend/.venv/bin/pytest backend/tests` | 538 passed（基线 497，本 change 新增 41） |
+| `backend/.venv/bin/pytest backend/tests` | 543 passed（基线 497，本 change 新增 46） |
 | `backend/.venv/bin/ruff check backend/app backend/tests` | All checks passed |
 | 新增测试文件 | `test_knowledge_agent_result_protocol.py`（协议/迁移）、`test_knowledge_agent_result_mode_route.py`（路由）、`test_knowledge_agent_entry_search.py`（查找）、`test_knowledge_agent_entry_results_api.py`（分页） |
 
@@ -17,7 +17,7 @@
 
 | 检查项 | 结果 |
 |---|---|
-| `npx jest --runInBand` | 11 suites / 115 tests passed（基线 101，本 change 新增 14） |
+| `npx jest --runInBand` | 11 suites / 122 tests passed（基线 101，本 change 新增 21） |
 | `npm run lint` | 通过 |
 | `npm run typecheck` | 通过 |
 | Jest 退出 | 正常退出，无 `--forceExit`，无未解释 act/open handle warning |
@@ -89,6 +89,8 @@ embedding、rerank、回答）按设计走离线 fallback 并写入 provider/mod
    已补 `total` 并加断言（工具状态 ok）。
 2. 快照指纹缺失时详情 Sheet 不得误报「当前内容与结果一致」；改为仅在可比对时展示。
 3. 移动端结果形态/entryResult 字段改为可选，强化旧响应兜底。
+4. 真实重排成功返回空结果时曾按召回顺序重新加入全部候选；现只在模型降级或错误时兜底，并补“成功空重排保持为空”测试。
+5. 模式纠正曾依赖客户端已加载原用户消息，并使用当前历史/范围/工作集重新提交；现携带 `source_run_id`，由服务端恢复原问题、独立问题、上下文决策、生成时范围、上下文模式与输入工作集，同时覆盖跨 Conversation 拒绝、来源消息未加载、网络重试和冲突测试。
 
 ## 6. 未验证项与剩余差异
 
@@ -97,5 +99,4 @@ embedding、rerank、回答）按设计走离线 fallback 并写入 provider/mod
 - 真实 iOS/Android 设备截图、键盘、安全区、动态字体、底栏与读屏：未验证。
 - 有意偏离：见 `validation/visual-baseline.md`「已实现基线核对」；
   对话内结果容器、指纹比对、LCS 匹配线索为本 change 相对原型的新增基线。
-- 剩余差异：无已知功能性缺陷；等待用户在真实 App 手动验收自动路由、结果卡、
-  分页、详情与模式纠正。
+- 剩余差异：无已知功能性缺陷；Run/消息首屏响应仍携带完整有界快照，已作为性能优化登记。等待用户在真实 App 手动验收自动路由、结果卡、分页、详情与模式纠正。

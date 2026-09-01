@@ -69,6 +69,30 @@ describe("知识 Agent API 序列化", () => {
     });
   });
 
+  test("模式纠正提交来源 Run，由服务端恢复原问题上下文", async () => {
+    mockFetch({ user_message: {}, run: {} }, 201);
+    await api.knowledgeAgentApi.submitMessage("token-2", 9, {
+      clientMessageId: "resubmit-id",
+      message: "展示用问题",
+      contextMode: "auto",
+      answerMode: "auto",
+      resultMode: "answer",
+      sourceRunId: 17,
+    });
+    const [, init] = (globalThis.fetch as jest.Mock).mock.calls[0] as [
+      string,
+      RequestInit,
+    ];
+    expect(JSON.parse(String(init.body))).toEqual({
+      client_message_id: "resubmit-id",
+      message: "展示用问题",
+      context_mode: "auto",
+      answer_mode: "auto",
+      result_mode: "answer",
+      source_run_id: 17,
+    });
+  });
+
   test("消息分页使用不透明 before 游标", async () => {
     mockFetch({
       items: [

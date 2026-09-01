@@ -571,7 +571,7 @@ async def execute_structured_entry_search(
             if len(ordered) >= settings.knowledge_agent_result_persist_limit:
                 break
         rerank_kept = len(ordered)
-        if not ordered:
+        if not ordered and (is_fallback or error is not None):
             ordered = candidates[: settings.knowledge_agent_result_persist_limit]
         rerank_duration = int((perf_counter() - started) * 1000)
     if embedding_meta:

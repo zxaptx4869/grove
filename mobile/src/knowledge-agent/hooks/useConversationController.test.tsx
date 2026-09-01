@@ -220,6 +220,7 @@ function revisionDraft(
 function answeredRun(
   id: number,
   status: "completed" | "partial",
+  overrides: Partial<KnowledgeRun> = {},
 ): KnowledgeRun {
   return {
     ...run(id, status),
@@ -249,6 +250,7 @@ function answeredRun(
       ],
       conflicts: [],
     },
+    ...overrides,
   };
 }
 
@@ -1403,6 +1405,7 @@ describe("useConversationController", () => {
       contextMode: "continue",
       answerMode: "auto",
       resultMode: "entries",
+      sourceRunId: 5,
     });
     // 新 Run 进入线程，原 Run 未被修改
     expect(rendered.result.current.thread.runsById.get(5)?.status).toBe("completed");
@@ -1449,6 +1452,7 @@ describe("useConversationController", () => {
     expect(calls[0][2].clientMessageId).toBe("retry-resubmit-id");
     expect(calls[1][2].clientMessageId).toBe("retry-resubmit-id");
     expect(calls[1][2].resultMode).toBe("answer");
+    expect(calls[1][2].sourceRunId).toBe(5);
     await rendered.unmount();
 
     // 409 冲突：不保留发送中状态，只刷新服务端
@@ -1461,6 +1465,44 @@ describe("useConversationController", () => {
     expect(conflictView.result.current.pending).toBeNull();
     expect(conflictView.result.current.submitError).toContain("进行中的回答");
     await conflictView.unmount();
+  });
+
+  test("模式纠正不依赖来源用户消息已加载", async () => {
+    api.listConversations.mockResolvedValue([conversation(1)]);
+    api.getConversation.mockResolvedValue(conversation(1));
+    api.listMessages.mockResolvedValue({
+      items: [message(2, "assistant", 5, "综合回答")],
+      nextCursor: "older-page",
+      runs: [
+        answeredRun(5, "completed", {
+          standaloneQuery: "鞋柜防臭知识",
+          requestContextMode: "continue",
+        }),
+      ],
+      candidateDrafts: [],
+    });
+    api.submitMessage.mockResolvedValue({
+      userMessage: message(3, "user", 6, "原始问题"),
+      run: run(6, "waiting"),
+    });
+
+    const rendered = await renderController();
+    await waitFor(() => expect(rendered.result.current.isDraft).toBe(false));
+    await act(async () => {
+      expect(
+        await rendered.result.current.resubmitWithResultMode(5, "entries"),
+      ).toBe(true);
+    });
+    expect(api.submitMessage).toHaveBeenCalledWith(
+      "token",
+      1,
+      expect.objectContaining({
+        sourceRunId: 5,
+        resultMode: "entries",
+        message: "鞋柜防臭知识",
+      }),
+    );
+    await rendered.unmount();
   });
 });
 

@@ -211,7 +211,7 @@ Agent 会在当前 Workspace 或项目范围搜索正式 Entry，读取相关内
 
 ### 6.1 结构化 Entry 查找
 
-`add-knowledge-agent-structured-entry-search` 是当前 active change，只包含文档，等待新会话开发。
+`add-knowledge-agent-structured-entry-search` 已在特性分支完成实现，当前等待真实 App 验收、归档与合并。
 
 目标路径：
 
@@ -220,7 +220,7 @@ Agent 会在当前 Workspace 或项目范围搜索正式 Entry，读取相关内
   → Agent 自动或按用户覆盖选择 Entry 结果形态
   → 在 Workspace/项目范围有界检索正式 Entry
   → 返回可恢复、可分页的对象列表与完整性说明
-  → 用户打开当前 Entry；如结果形态不对，可预填原问题重新发送
+  → 用户打开当前 Entry；如结果形态不对，可点击后直接以新消息重新发送原问题
 ```
 
 结构化搜索结果仍是只读对象快照，不直接提供修订或多选。这样先验证用户是否经常需要“找到对象而不是获得答案”，再决定下一步对象选择协议。

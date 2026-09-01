@@ -331,10 +331,12 @@ class KnowledgeRunSubmitRequest(BaseModel):
     """提交新问题：client_message_id 用于网络重试幂等；模式默认 auto。"""
 
     client_message_id: str = Field(min_length=1, max_length=64)
-    message: str = Field(min_length=1, max_length=2000)
+    # 模式纠正由 source_run_id 在服务端恢复原问题；普通提交仍由应用服务拒绝空消息。
+    message: str = Field(default="", max_length=2000)
     context_mode: ContextMode = "auto"
     answer_mode: AnswerMode = "auto"
     result_mode: ResultMode = "auto"
+    source_run_id: int | None = None
 
 
 class KnowledgeRunSubmitOut(BaseModel):

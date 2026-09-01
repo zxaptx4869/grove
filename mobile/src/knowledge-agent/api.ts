@@ -65,13 +65,17 @@ function serializeScope(
 function serializeSubmit(
   payload: KnowledgeRunSubmitRequest,
 ): Record<string, unknown> {
-  return {
+  const body: Record<string, unknown> = {
     client_message_id: payload.clientMessageId,
     message: payload.message,
     context_mode: payload.contextMode,
     answer_mode: payload.answerMode,
     result_mode: payload.resultMode,
   };
+  if (payload.sourceRunId !== undefined) {
+    body.source_run_id = payload.sourceRunId;
+  }
+  return body;
 }
 
 function serializeDraftAction(

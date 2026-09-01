@@ -629,6 +629,31 @@ async def test_rerank_filter_is_respected(monkeypatch) -> None:
 
 
 @pytest.mark.asyncio
+async def test_successful_empty_rerank_stays_empty(monkeypatch) -> None:
+    """真实重排成功排除全部候选时不得按召回顺序重新加回。"""
+
+    async def _fake_rerank(db, workspace_id, query, candidates, **kwargs):
+        return SemanticRankingDraft(results=[]), "llm", "fake-rerank", False, None
+
+    monkeypatch.setattr(
+        "app.services.knowledge_agent.entry_search.run_semantic_agent",
+        _fake_rerank,
+    )
+    async with async_session_factory() as db:
+        user, workspace = await _user_workspace(db)
+        await _seed_workspace(db, workspace, entry_count=3)
+        run = await _run_for_search(db, user, workspace)
+        await db.commit()
+        await execute_run(db, run)
+        await db.commit()
+
+        snapshot = _snapshot(run)
+        assert snapshot is not None
+        assert snapshot["items"] == []
+        assert snapshot["returned_count"] == 0
+
+
+@pytest.mark.asyncio
 async def test_no_context_version_created_for_entries_run() -> None:
     """entries Run 不创建输出上下文版本，活动工作集不推进。"""
     async with async_session_factory() as db:

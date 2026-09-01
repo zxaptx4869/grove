@@ -264,7 +264,7 @@ export function AnswerCard({
   onRetry: () => void;
   onOrganize: (run: KnowledgeRun) => void;
   onRefineQuestion?: (run: KnowledgeRun) => void;
-  /** 低强调「列出相关知识」：只预填 Composer 与结果形式，不自动发送。 */
+  /** 低强调「列出相关知识」：以新消息直接重新提交原问题。 */
   onListEntries?: (run: KnowledgeRun) => void;
 }) {
   const answer = run.answer;

@@ -470,6 +470,8 @@ export interface KnowledgeRunSubmitRequest {
   contextMode: ContextMode;
   answerMode: AnswerMode;
   resultMode: ResultMode;
+  /** 模式纠正时由服务端恢复原问题、范围和输入工作集。 */
+  sourceRunId?: number;
 }
 
 export interface KnowledgeRunSubmit {

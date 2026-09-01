@@ -507,13 +507,21 @@ export function useConversationController(
           setPending(current);
         }
         const conversationId = current.conversationId as number;
-        const result = await knowledgeAgentApi.submitMessage(token, conversationId, {
+        const submitPayload = {
           clientMessageId: current.clientMessageId,
           message: current.text,
           contextMode: current.contextMode,
           answerMode: current.answerMode,
           resultMode: current.resultMode,
-        });
+          ...(current.sourceRunId !== undefined
+            ? { sourceRunId: current.sourceRunId }
+            : {}),
+        };
+        const result = await knowledgeAgentApi.submitMessage(
+          token,
+          conversationId,
+          submitPayload,
+        );
         setPending(null);
         setModesState(DEFAULT_MODES);
         setExtraMessages((previous) => [...previous, result.userMessage]);
@@ -615,22 +623,30 @@ export function useConversationController(
   const resubmitWithResultMode = useCallback(
     async (runId: number, resultMode: ResultMode): Promise<boolean> => {
       if (pending || !token) return false;
+      const sourceRun = thread.runsById.get(runId);
+      if (!sourceRun) return false;
       const userMessage = thread.items.find(
         (message) => message.runId === runId && message.role === "user",
       );
-      if (!userMessage) return false;
-      // 模式纠正：新 client_message_id 创建新 Run；保留原消息的上下文模式，
-      // 避免把追问（continue）误当成孤立新话题重发。
+      // 原用户消息可能在尚未加载的历史页；展示文本允许用独立问题兜底，
+      // 服务端始终按 source_run_id 恢复原文、原范围与原输入工作集。
       const submission = createPendingSubmission({
-        text: userMessage.content,
-        contextMode: userMessage.requestContextMode ?? "auto",
+        text:
+          userMessage?.content ??
+          sourceRun.standaloneQuery ??
+          "重新提交原问题",
+        contextMode:
+          userMessage?.requestContextMode ??
+          sourceRun.requestContextMode ??
+          "auto",
         answerMode: "auto",
         resultMode,
+        sourceRunId: runId,
       });
       setPending(submission);
       return performSubmission(submission);
     },
-    [pending, token, thread.items, performSubmission],
+    [pending, token, thread.items, thread.runsById, performSubmission],
   );
 
   const performDraftAction = useCallback(

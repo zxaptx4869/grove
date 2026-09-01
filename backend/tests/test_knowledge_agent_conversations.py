@@ -17,7 +17,10 @@ from app.models import (
 from app.models.knowledge_agent import (
     MESSAGE_TYPE_SCOPE_CHANGE,
     MESSAGE_TYPE_USER,
+    RESULT_MODE_ANSWER,
+    RESULT_MODE_ENTRIES,
     RUN_CANCELLED,
+    RUN_COMPLETED,
     RUN_WAITING,
     SCOPE_PROJECT,
     SCOPE_WORKSPACE,
@@ -38,6 +41,10 @@ from app.services.knowledge_agent.runs import (
     cancel_run,
     get_owned_run,
     submit_message,
+)
+from app.services.knowledge_agent.working_set import (
+    create_context_version,
+    get_active_context_version,
 )
 
 
@@ -177,6 +184,133 @@ async def test_submit_idempotent_and_title() -> None:
         assert run.active_slot == "active"
         assert run.user_message_id == user_message.id
         assert run.assistant_message_id is not None
+
+
+@pytest.mark.asyncio
+async def test_result_mode_resubmit_restores_source_run_context() -> None:
+    """模式纠正由服务端恢复原问题、原范围与原输入工作集。"""
+    async with async_session_factory() as db:
+        user = await _user(db, "模式纠正")
+        workspace = await _workspace_for(db, user)
+        source_project = await _project(db, workspace, "原项目")
+        current_project = await _project(db, workspace, "当前项目")
+        conversation = await create_conversation(
+            db,
+            workspace.id,
+            user.id,
+            KnowledgeConversationCreate(
+                scope_type="project",
+                project_id=source_project.id,
+            ),
+        )
+        source_context = await create_context_version(
+            db,
+            conversation_id=conversation.id,
+            workspace_id=workspace.id,
+            owner_user_id=user.id,
+            scope_type=SCOPE_PROJECT,
+            project_id=source_project.id,
+            project_name=source_project.name,
+            topic_label="原主题",
+            source_run_id=None,
+            items=[],
+        )
+        source_message, source_run = await submit_message(
+            db,
+            conversation,
+            KnowledgeRunSubmitRequest(
+                client_message_id="source-question",
+                message="原始问题",
+                context_mode="continue",
+                result_mode=RESULT_MODE_ANSWER,
+            ),
+        )
+        source_run.status = RUN_COMPLETED
+        source_run.actual_result_mode = RESULT_MODE_ANSWER
+        source_run.context_decision = "continue"
+        source_run.standalone_query = "原主题的独立问题"
+        source_run.topic_label = "原主题"
+        source_run.history_message_ids_json = "[1]"
+        source_run.context_meta_json = '{"provider":"llm","is_fallback":false}'
+        source_run.active_slot = None
+        await db.flush()
+
+        await change_scope(
+            db,
+            conversation,
+            KnowledgeScopeChangeRequest(
+                scope_type=SCOPE_PROJECT,
+                project_id=current_project.id,
+            ),
+        )
+        current_context = await create_context_version(
+            db,
+            conversation_id=conversation.id,
+            workspace_id=workspace.id,
+            owner_user_id=user.id,
+            scope_type=SCOPE_PROJECT,
+            project_id=current_project.id,
+            project_name=current_project.name,
+            topic_label="当前主题",
+            source_run_id=None,
+            items=[],
+        )
+
+        other_conversation = await create_conversation(
+            db,
+            workspace.id,
+            user.id,
+            KnowledgeConversationCreate(scope_type="workspace"),
+        )
+        with pytest.raises(HTTPException) as exc_info:
+            await submit_message(
+                db,
+                other_conversation,
+                KnowledgeRunSubmitRequest(
+                    client_message_id="cross-conversation",
+                    source_run_id=source_run.id,
+                    result_mode=RESULT_MODE_ENTRIES,
+                ),
+            )
+        assert exc_info.value.status_code == 404
+
+        with pytest.raises(HTTPException) as exc_info:
+            await submit_message(
+                db,
+                conversation,
+                KnowledgeRunSubmitRequest(
+                    client_message_id="same-result-mode",
+                    source_run_id=source_run.id,
+                    result_mode=RESULT_MODE_ANSWER,
+                ),
+            )
+        assert exc_info.value.status_code == 422
+
+        repeated_message, repeated_run = await submit_message(
+            db,
+            conversation,
+            KnowledgeRunSubmitRequest(
+                client_message_id="resubmit-question",
+                source_run_id=source_run.id,
+                result_mode=RESULT_MODE_ENTRIES,
+            ),
+        )
+
+        assert repeated_message.content == source_message.content == "原始问题"
+        assert repeated_message.scope_type == SCOPE_PROJECT
+        assert repeated_message.project_id == source_project.id
+        assert repeated_run.scope_type == SCOPE_PROJECT
+        assert repeated_run.project_id == source_project.id
+        assert repeated_run.input_context_version_id == source_context.id
+        assert repeated_run.request_context_mode == "continue"
+        assert repeated_run.request_answer_mode == "auto"
+        assert repeated_run.request_result_mode == RESULT_MODE_ENTRIES
+        assert repeated_run.context_decision == source_run.context_decision
+        assert repeated_run.standalone_query == source_run.standalone_query
+        assert repeated_run.topic_label == source_run.topic_label
+        assert repeated_run.history_message_ids_json == source_run.history_message_ids_json
+        # 创建模式纠正 Run 时不得提前关闭当前对话的活动工作集。
+        assert (await get_active_context_version(db, conversation.id)).id == current_context.id
 
 
 @pytest.mark.asyncio
