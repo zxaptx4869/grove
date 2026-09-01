@@ -53,7 +53,7 @@
 - **WHEN** auto 结果路由失败并按规则回退综合回答
 - **THEN** 结果路由阶段记录 fallback/error，Run 返回实际结果形态 answer 且不得把整次执行标为完全正常
 
-#### Scenario: 回答路由失败后 quick 成功
+#### Scenario: 路由失败后 quick 成功
 - **WHEN** actual result 为 answer 且 auto 回答路由失败并按规则回退 quick，后续问答成功
 - **THEN** 回答路由阶段记录 fallback/error，Run 返回实际回答模式 quick 且不得把整次执行标为完全正常
 

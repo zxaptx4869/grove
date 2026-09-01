@@ -79,5 +79,5 @@
 ## 9. 用户验收与收尾
 
 - [x] 9.1 向用户逐条说明遗留问题、原因与影响；获同意后再登记 `docs/discussions/Grove后续优化清单.md`
-- [ ] 9.2 保持 change 为 active、本地分支可提交但不 push/merge/archive，等待用户在真实 App 手动验收自动路由、结果卡、分页、详情和模式纠正
-- [ ] 9.3 用户明确验收通过后，按 `openspec-archive-change` 同步主规格并归档，复跑严格校验、最终本地提交；再次获得用户确认后才 push 与合并
+- [x] 9.2 保持 change 为 active、本地分支可提交但不 push/merge/archive，等待用户在真实 App 手动验收自动路由、结果卡、分页、详情和模式纠正
+- [x] 9.3 用户明确验收通过后，按 `openspec-archive-change` 同步主规格并归档，复跑严格校验、最终本地提交；再次获得用户确认后才 push 与合并

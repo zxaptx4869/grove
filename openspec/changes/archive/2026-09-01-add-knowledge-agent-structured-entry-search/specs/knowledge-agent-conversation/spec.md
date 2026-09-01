@@ -34,7 +34,7 @@
 - **WHEN** 用户以新的 `client_message_id`、非空问题、合法上下文模式、合法结果形态和合法回答模式向空闲对话提交
 - **THEN** 系统在同一事务中创建用户消息、助手占位消息与待执行 Run，并固化三种请求模式和当时的输入工作集版本
 
-#### Scenario: 未提交模式
+#### Scenario: 未提交上下文模式
 - **WHEN** 兼容客户端不提供 `context_mode`、`result_mode` 或 `answer_mode`
 - **THEN** 系统分别按 `auto` 创建 Run
 
