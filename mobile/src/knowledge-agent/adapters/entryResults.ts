@@ -3,9 +3,16 @@
 import type {
   KnowledgeEntryResultSnapshot,
   ResultCompleteness,
+  ResultMode,
 } from "@/src/knowledge-agent/types";
 
 export const ENTRY_RESULT_PAGE_SIZE = 6;
+
+export function resultModeLabel(mode: ResultMode | null | undefined): string {
+  if (mode === "entries") return "知识列表";
+  if (mode === "answer") return "综合回答";
+  return "";
+}
 
 export function completenessCopy(
   completeness: ResultCompleteness,

@@ -14,6 +14,7 @@ import {
   EntryResultRow,
   EntryResultsCard,
 } from "@/src/knowledge-agent/components/EntryResultsCard";
+import { resultModeLabel } from "@/src/knowledge-agent/adapters/entryResults";
 import type { EntryResultsState } from "@/src/knowledge-agent/hooks/useConversationController";
 import type {
   KnowledgeEntryResultItem,
@@ -42,6 +43,16 @@ afterEach(async () => {
     client.clear();
   }
   sheetClients.length = 0;
+});
+
+describe("resultModeLabel", () => {
+  test("非 auto 结果形态返回可读标签；auto/缺省为空", () => {
+    expect(resultModeLabel("entries")).toBe("知识列表");
+    expect(resultModeLabel("answer")).toBe("综合回答");
+    expect(resultModeLabel("auto")).toBe("");
+    expect(resultModeLabel(null)).toBe("");
+    expect(resultModeLabel(undefined)).toBe("");
+  });
 });
 
 function item(

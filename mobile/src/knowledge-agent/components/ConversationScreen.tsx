@@ -60,6 +60,7 @@ import {
   type RevisionTarget,
 } from "@/src/knowledge-agent/adapters/answer";
 import { scopeLabel } from "@/src/knowledge-agent/adapters/scope";
+import { resultModeLabel } from "@/src/knowledge-agent/adapters/entryResults";
 import { toUserErrorMessage } from "@/src/knowledge-agent/errors";
 import type {
   KnowledgeCandidateDraft,
@@ -875,8 +876,14 @@ function ThreadMessage({
     );
   }
   if (message.role === "user") {
+    const modeLabel = resultModeLabel(message.requestResultMode);
     return (
       <View style={styles.userMessage}>
+        {modeLabel !== "" && (
+          <View style={styles.userModeTag}>
+            <Text style={styles.userModeTagText}>以「{modeLabel}」发送</Text>
+          </View>
+        )}
         <View style={styles.userBubble}>
           <Text style={styles.userBubbleText}>{message.content}</Text>
         </View>
@@ -1299,6 +1306,14 @@ const styles = StyleSheet.create({
   },
   pressed: { opacity: 0.85 },
   userMessage: { alignItems: "flex-end", marginBottom: 14 },
+  userModeTag: {
+    marginBottom: 4,
+    paddingHorizontal: 7,
+    paddingVertical: 2,
+    borderRadius: 5,
+    backgroundColor: theme.aiSoft,
+  },
+  userModeTagText: { color: theme.ai, fontSize: 10, fontWeight: "600" },
   userBubble: {
     maxWidth: "84%",
     paddingHorizontal: 12,
