@@ -167,7 +167,9 @@ export interface KnowledgeEntryResultItem {
   updatedAt: string;
   sourceCount: number;
   /** 生成时内容/归属指纹：与当前 Entry 对比判断「已更新」。 */
-  fingerprint: string | null;
+  /** 生成时内容/归属指纹：与当前 Entry 对比判断「已更新」；旧快照可能缺失。 */
+  /** 内容/归属指纹（服务端计算）；旧服务端响应可能缺失。 */
+  fingerprint?: string | null;
   matchHint: string | null;
   matchedFields: string[];
 }
@@ -408,7 +410,8 @@ export interface KnowledgeEntryCurrent {
   note: string | null;
   createdAt: string;
   updatedAt: string;
-  fingerprint: string | null;
+  /** 生成时内容/归属指纹：与当前 Entry 对比判断「已更新」；旧快照可能缺失。 */
+  fingerprint?: string | null;
   /** 当前 Entry 的真实来源摘要（服务端 /api/entries/{id} 归一化结果）。 */
   evidences?: {
     id: number;

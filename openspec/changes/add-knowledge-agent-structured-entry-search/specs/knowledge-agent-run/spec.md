@@ -101,4 +101,3 @@
 #### Scenario: 显式结果形态跳过路由
 - **WHEN** `request_result_mode` 为 answer 或 entries
 - **THEN** Worker 直接固化对应 actual 结果形态，且可观测记录中不伪造一次未发生的结果路由模型调用
-

@@ -402,4 +402,35 @@ describe("EntryResultSheet", () => {
     expect(screen.queryByText("当前内容")).toBeNull();
     await view.unmount();
   });
+
+  test("旧快照缺少指纹时不误报「已更新」或「一致」", async () => {
+    api.getEntryCurrent.mockResolvedValue({
+      id: 3,
+      projectId: 1,
+      nodeId: 1,
+      nodeName: "施工",
+      title: "闭水试验 3",
+      content: "当前内容",
+      mainType: "knowledge",
+      infoNature: "fact",
+      applicableCondition: null,
+      note: null,
+      createdAt: "2026-08-29T09:00:00Z",
+      updatedAt: "2026-08-29T10:00:00Z",
+      fingerprint: "fp-current",
+      evidences: [],
+    });
+    const legacyItem = item(3);
+    delete legacyItem.fingerprint;
+    const view = await render(
+      <EntryResultSheet item={legacyItem} onClose={noop} />,
+      { wrapper: wrapper() },
+    );
+    await waitFor(() => {
+      expect(screen.getByText("当前内容")).toBeOnTheScreen();
+    });
+    expect(screen.queryByText("结果生成后已更新")).toBeNull();
+    expect(screen.queryByText("当前内容与结果一致")).toBeNull();
+    await view.unmount();
+  });
 });

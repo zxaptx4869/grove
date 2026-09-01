@@ -40,7 +40,9 @@ export function EntryResultSheet({
     item !== null &&
     current !== null &&
     item.fingerprint !== null &&
-    current.fingerprint !== null;
+    item.fingerprint !== undefined &&
+    current.fingerprint !== null &&
+    current.fingerprint !== undefined;
   const changed = comparable && item!.fingerprint !== current!.fingerprint;
 
   return (

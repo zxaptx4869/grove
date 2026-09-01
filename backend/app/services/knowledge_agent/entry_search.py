@@ -93,7 +93,6 @@ _QUERY_FRAME_PREFIXES = (
     "有关",
     "什么",
     "一下",
-    "请",
 )
 _QUERY_FRAME_SUFFIXES = (
     "相关的知识点",
