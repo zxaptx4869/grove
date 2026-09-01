@@ -13,8 +13,11 @@ import type {
 } from "@/src/knowledge-agent/types";
 
 jest.mock("expo-crypto", () => ({
-  randomUUID: () => "test-client-id",
+  randomUUID: jest.fn(() => "test-client-id"),
 }));
+
+// eslint-disable-next-line @typescript-eslint/no-require-imports
+const cryptoMock = require("expo-crypto") as { randomUUID: jest.Mock };
 
 jest.mock("@/src/knowledge-agent/api", () => ({
   knowledgeAgentApi: {
@@ -272,6 +275,8 @@ describe("useConversationController", () => {
   beforeEach(() => {
     // resetAllMocks 会连同 once 实现队列一起清空，避免分页 mock 跨测试串线
     jest.resetAllMocks();
+    // expo-crypto 的默认幂等键实现也会被清空：恢复默认返回值
+    cryptoMock.randomUUID.mockReturnValue("test-client-id");
   });
 
   test("draft 首次发送懒创建对话并重置一次性模式", async () => {
@@ -1364,6 +1369,98 @@ describe("useConversationController", () => {
     });
     expect(rendered.result.current.entryResultsForRun(10)?.error).toBeNull();
     await rendered.unmount();
+  });
+
+  test("模式纠正直接重发：新 client_message_id + 结果形态，不修改历史 Run", async () => {
+    api.listConversations.mockResolvedValue([conversation(1)]);
+    api.getConversation.mockResolvedValue(conversation(1));
+    api.listMessages.mockResolvedValue({
+      items: [
+        { ...message(1, "user", 5, "帮我找一下鞋柜防臭的知识"), requestContextMode: "continue" },
+        message(2, "assistant", 5, "综合回答"),
+      ],
+      nextCursor: null,
+      runs: [answeredRun(5, "completed")],
+      candidateDrafts: [],
+    });
+    api.submitMessage.mockResolvedValue({
+      userMessage: message(3, "user", 6, "帮我找一下鞋柜防臭的知识"),
+      run: run(6, "waiting"),
+    });
+    // 纠正必须使用新的 client_message_id，而不是复用原消息
+    cryptoMock.randomUUID.mockReturnValueOnce("resubmit-client-id");
+
+    const rendered = await renderController();
+    await waitFor(() => expect(rendered.result.current.isDraft).toBe(false));
+    await act(async () => {
+      const sent = await rendered.result.current.resubmitWithResultMode(5, "entries");
+      expect(sent).toBe(true);
+    });
+    expect(api.submitMessage).toHaveBeenCalledTimes(1);
+    expect(api.submitMessage).toHaveBeenCalledWith("token", 1, {
+      clientMessageId: "resubmit-client-id",
+      message: "帮我找一下鞋柜防臭的知识",
+      contextMode: "continue",
+      answerMode: "auto",
+      resultMode: "entries",
+    });
+    // 新 Run 进入线程，原 Run 未被修改
+    expect(rendered.result.current.thread.runsById.get(5)?.status).toBe("completed");
+    expect(rendered.result.current.thread.runsById.has(6)).toBe(true);
+    expect(rendered.result.current.pending).toBeNull();
+    await rendered.unmount();
+  });
+
+  test("模式纠正网络失败保留同一幂等键可重试；409 冲突清空 pending", async () => {
+    api.listConversations.mockResolvedValue([conversation(1)]);
+    api.getConversation.mockResolvedValue(conversation(1));
+    api.listMessages.mockResolvedValue({
+      items: [message(1, "user", 5, "列出血压知识"), message(2, "assistant", 5, "回答")],
+      nextCursor: null,
+      runs: [answeredRun(5, "completed")],
+      candidateDrafts: [],
+    });
+    api.submitMessage
+      .mockRejectedValueOnce(new TypeError("Network request failed"))
+      .mockResolvedValueOnce({
+        userMessage: message(3, "user", 6, "列出血压知识"),
+        run: run(6, "waiting"),
+      });
+    cryptoMock.randomUUID
+      .mockReturnValueOnce("retry-resubmit-id")
+      .mockReturnValueOnce("retry-resubmit-id");
+
+    const rendered = await renderController();
+    await waitFor(() => expect(rendered.result.current.isDraft).toBe(false));
+    let firstResult: boolean | undefined;
+    await act(async () => {
+      firstResult = await rendered.result.current.resubmitWithResultMode(5, "answer");
+    });
+    expect(firstResult).toBe(false);
+    expect(rendered.result.current.pending?.clientMessageId).toBe("retry-resubmit-id");
+    expect(rendered.result.current.pending?.resultMode).toBe("answer");
+
+    let retried: boolean | undefined;
+    await act(async () => {
+      retried = await rendered.result.current.retrySubmit();
+    });
+    expect(retried).toBe(true);
+    const calls = api.submitMessage.mock.calls;
+    expect(calls[0][2].clientMessageId).toBe("retry-resubmit-id");
+    expect(calls[1][2].clientMessageId).toBe("retry-resubmit-id");
+    expect(calls[1][2].resultMode).toBe("answer");
+    await rendered.unmount();
+
+    // 409 冲突：不保留发送中状态，只刷新服务端
+    api.submitMessage.mockRejectedValue({ status: 409, message: "进行中" });
+    const conflictView = await renderController();
+    await waitFor(() => expect(conflictView.result.current.isDraft).toBe(false));
+    await act(async () => {
+      await conflictView.result.current.resubmitWithResultMode(5, "entries");
+    });
+    expect(conflictView.result.current.pending).toBeNull();
+    expect(conflictView.result.current.submitError).toContain("进行中的回答");
+    await conflictView.unmount();
   });
 });
 

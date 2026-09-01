@@ -157,16 +157,11 @@ export function ConversationScreen() {
     setText(suggestion);
   }, []);
 
-  /** 模式纠正：只把原问题填回 Composer 并预设结果形式，不自动发送。 */
-  const handleResultModeCorrection = useCallback(
+  /** 模式纠正：以新的 client_message_id 和相反结果形态直接重发原问题。 */
+  const handleResultModeResubmit = useCallback(
     (run: KnowledgeRun, resultMode: ResultMode) => {
-      const userMessage = controller.thread.items.find(
-        (item) => item.runId === run.id && item.role === "user",
-      );
-      if (!userMessage) return;
-      setText(userMessage.content);
-      controller.setModes({ ...controller.modes, resultMode });
       scrollRef.current?.scrollToEnd({ animated: true });
+      void controller.resubmitWithResultMode(run.id, resultMode);
     },
     [controller],
   );
@@ -192,7 +187,7 @@ export function ConversationScreen() {
     retry: (runId: number) => controller.retryEntryResults(runId),
     openItem: (item: KnowledgeEntryResultItem) => setEntryResultItem(item),
     correctMode: (run: KnowledgeRun) =>
-      handleResultModeCorrection(run, "answer"),
+      handleResultModeResubmit(run, "answer"),
     refine: (run: KnowledgeRun) => handleRefineEntrySearch(run),
   };
 
@@ -523,9 +518,8 @@ export function ConversationScreen() {
                   }
                 }}
                 onOrganize={handleOrganize}
-                onResultModeCorrection={handleResultModeCorrection}
                 entryResultsUi={entryResultsUi}
-                onListEntries={(run) => handleResultModeCorrection(run, "entries")}
+                onListEntries={(run) => handleResultModeResubmit(run, "entries")}
               />
             ))}
           {controller.pending !== null && (
@@ -815,7 +809,6 @@ function ThreadMessage({
   onCancelDraft,
   onRetryDraft,
   onOrganize,
-  onResultModeCorrection,
   entryResultsUi,
   onListEntries,
   confirmingRevisionDraftId,
@@ -849,7 +842,6 @@ function ThreadMessage({
   onCancelDraft: (draftId: number) => void;
   onRetryDraft: (sourceRunId: number, targetProjectId: number | null) => void;
   onOrganize: (run: KnowledgeRun) => void;
-  onResultModeCorrection: (run: KnowledgeRun, resultMode: ResultMode) => void;
   entryResultsUi: {
     stateFor: (runId: number) => EntryResultsState | null;
     prime: (runId: number) => void;

@@ -128,6 +128,8 @@ export interface ConversationController {
   submit: (text: string) => Promise<boolean>;
   retrySubmit: () => Promise<boolean>;
   retryRun: (runId: number) => Promise<boolean>;
+  /** 模式纠正：以新的 client_message_id 和相反结果形态直接重发原问题。 */
+  resubmitWithResultMode: (runId: number, resultMode: ResultMode) => Promise<boolean>;
   /** 候选草稿：按 id 与 operation Run id 检索，状态以服务端为权威 */
   draftsById: Map<number, KnowledgeCandidateDraft>;
   draftByRunId: (runId: number) => KnowledgeCandidateDraft | null;
@@ -603,6 +605,27 @@ export function useConversationController(
         contextMode: modesRef.current.contextMode,
         answerMode: modesRef.current.answerMode,
         resultMode: modesRef.current.resultMode,
+      });
+      setPending(submission);
+      return performSubmission(submission);
+    },
+    [pending, token, thread.items, performSubmission],
+  );
+
+  const resubmitWithResultMode = useCallback(
+    async (runId: number, resultMode: ResultMode): Promise<boolean> => {
+      if (pending || !token) return false;
+      const userMessage = thread.items.find(
+        (message) => message.runId === runId && message.role === "user",
+      );
+      if (!userMessage) return false;
+      // 模式纠正：新 client_message_id 创建新 Run；保留原消息的上下文模式，
+      // 避免把追问（continue）误当成孤立新话题重发。
+      const submission = createPendingSubmission({
+        text: userMessage.content,
+        contextMode: userMessage.requestContextMode ?? "auto",
+        answerMode: "auto",
+        resultMode,
       });
       setPending(submission);
       return performSubmission(submission);
@@ -1515,6 +1538,7 @@ export function useConversationController(
     submit,
     retrySubmit,
     retryRun,
+    resubmitWithResultMode,
     draftsById: thread.draftsById,
     draftByRunId,
     submitDraftAction,
