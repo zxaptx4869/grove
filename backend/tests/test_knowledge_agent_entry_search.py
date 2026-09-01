@@ -7,9 +7,11 @@ from types import SimpleNamespace
 import pytest
 from sqlalchemy import func, select
 
+from app.agents.semantic import SemanticRankingDraft, SemanticRankResult
 from app.db.session import async_session_factory
 from app.models import (
     Candidate,
+    Entry,
     Extraction,
     KnowledgeAgentEvidence,
     KnowledgeAgentModelInvocation,
@@ -30,6 +32,8 @@ from app.models.knowledge_agent import (
 from app.schemas.knowledge_agent import KnowledgeRunSubmitRequest
 from app.services.knowledge_agent.entry_search import (
     _completeness_for,
+    _match_hint_for_entry,
+    _strip_query_frames,
 )
 from app.services.knowledge_agent.follow_up import ContextDecisionResult
 from app.services.knowledge_agent.observability import StageMeta
@@ -63,6 +67,51 @@ def _decision() -> ContextDecisionResult:
             duration_ms=0,
         ),
     )
+
+
+def test_strip_query_frames_keeps_core_intent() -> None:
+    """中文查询框架词剥离：保留核心检索意图，剥离失败时回退原文。"""
+    assert _strip_query_frames("鞋柜防臭相关的知识点") == "鞋柜防臭"
+    assert _strip_query_frames("帮我找一下鞋柜防臭相关的知识点") == "鞋柜防臭"
+    assert _strip_query_frames("关于鞋柜防臭的知识") == "鞋柜防臭"
+    assert _strip_query_frames("有哪些鞋柜防臭的知识点") == "鞋柜防臭"
+    assert _strip_query_frames("马桶防臭") == "马桶防臭"
+    assert _strip_query_frames("防臭") == "防臭"
+    # 全部是框架词时回退原文，避免产生空匹配
+    assert _strip_query_frames("相关的知识点") == "相关的知识点"
+
+
+def test_match_hint_ignores_query_frame_noise() -> None:
+    """框架词不产生「关的」这类噪音命中；核心词查询仍可验证命中。"""
+    socket_entry = Entry(
+        id=1,
+        title="厨房台面应多留插座并可安装带开关的插座",
+        content="厨房台面应多留插座。",
+    )
+    hint, fields = _match_hint_for_entry(
+        "鞋柜防臭相关的知识点",
+        socket_entry,
+        "施工阶段/水电工程",
+        [],
+        120,
+    )
+    assert hint is None
+    assert fields == []
+
+    shoe_entry = Entry(
+        id=2,
+        title="鞋柜防臭的三个设计细节",
+        content="鞋柜防臭需注意通风与材质。",
+    )
+    hint2, fields2 = _match_hint_for_entry(
+        "帮我找一下鞋柜防臭相关的知识点",
+        shoe_entry,
+        "设计规划/收纳设计",
+        [],
+        120,
+    )
+    assert fields2
+    assert "鞋柜" in (hint2 or "")
 
 
 @pytest.fixture(autouse=True)
@@ -532,6 +581,51 @@ async def test_replay_produces_same_snapshot_and_no_duplicates() -> None:
         assert second is not None
         assert [item["entry_id"] for item in second["items"]] == first_ids
         assert run.status == RUN_COMPLETED
+
+
+@pytest.mark.asyncio
+async def test_rerank_filter_is_respected(monkeypatch) -> None:
+    """重排模型明确排除的候选不得被重新加回；工具记录保留条数。"""
+
+    async def _fake_rerank(db, workspace_id, query, candidates, **kwargs):
+        kept = [candidates[0].id]
+        return (
+            SemanticRankingDraft(
+                results=[SemanticRankResult(entry_id=kept[0], reason="仅保留最相关")]
+            ),
+            "llm",
+            "fake-rerank",
+            False,
+            None,
+        )
+
+    monkeypatch.setattr(
+        "app.services.knowledge_agent.entry_search.run_semantic_agent",
+        _fake_rerank,
+    )
+    async with async_session_factory() as db:
+        user, workspace = await _user_workspace(db)
+        await _seed_workspace(db, workspace, entry_count=3)
+        run = await _run_for_search(db, user, workspace)
+        await db.commit()
+        await execute_run(db, run)
+        await db.commit()
+        snapshot = _snapshot(run)
+        assert snapshot is not None
+        assert len(snapshot["items"]) == 1
+        from app.models import KnowledgeAgentToolCall
+
+        tool = (
+            await db.execute(
+                select(KnowledgeAgentToolCall).where(
+                    KnowledgeAgentToolCall.run_id == run.id,
+                    KnowledgeAgentToolCall.tool_name == "structured_entry_search",
+                )
+            )
+        ).scalar_one()
+        result = json.loads(tool.result_summary)
+        assert result["rerank_kept"] == 1
+        assert result["persisted"] == 1
 
 
 @pytest.mark.asyncio

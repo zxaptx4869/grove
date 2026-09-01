@@ -56,7 +56,6 @@ from app.services.knowledge_agent.runs import (
 )
 from app.services.knowledge_agent.tools import (
     _load_scope_entries,
-    _ordered_entries,
     record_tool_result,
 )
 from app.services.vector_search import hybrid_recall_by_query_with_meta
@@ -66,6 +65,87 @@ logger = logging.getLogger(__name__)
 ENTRY_SEARCH_PROMPT_VERSION = "v1"
 RESULT_CURSOR_VERSION = 1
 _CURSOR_SECRET_FALLBACK = "grove-entry-result-cursor-v1"
+
+# 中文查询常见框架词（按长度优先）：不携带检索意图，只用于匹配线索与摘要窗口，
+# 不影响主召回与持久化查询文本。
+_QUERY_FRAME_PREFIXES = (
+    "请帮我",
+    "麻烦帮我",
+    "帮我",
+    "请问",
+    "麻烦",
+    "帮忙",
+    "有哪些",
+    "有什么",
+    "找一下",
+    "查找一下",
+    "搜索一下",
+    "查询一下",
+    "看看",
+    "找出",
+    "查找",
+    "搜索",
+    "列出",
+    "整理",
+    "查询",
+    "了解",
+    "关于",
+    "有关",
+    "什么",
+    "一下",
+    "请",
+)
+_QUERY_FRAME_SUFFIXES = (
+    "相关的知识点",
+    "相关知识要点",
+    "相关知识点",
+    "相关的知识",
+    "相关知识条目",
+    "相关知识",
+    "相关条目",
+    "知识要点",
+    "知识点",
+    "知识条目",
+    "知识内容",
+    "知识信息",
+    "知识资料",
+    "知识库",
+    "知识",
+    "有哪些",
+    "有什么",
+    "是什么",
+    "是哪些",
+    "哪些",
+    "什么",
+)
+
+
+def _strip_query_frames(query: str) -> str:
+    """剥离中文查询框架词，保留核心检索意图（仅用于匹配线索与摘要窗口）。"""
+    text = query.strip()
+    changed = True
+    while changed and text:
+        changed = False
+        for token in _QUERY_FRAME_PREFIXES:
+            if text.startswith(token):
+                text = text[len(token) :].strip()
+                changed = True
+                break
+        for token in _QUERY_FRAME_SUFFIXES:
+            if text.endswith(token) and len(text) > len(token):
+                text = text[: -len(token)].strip()
+                changed = True
+                break
+        if text.startswith(("的", "和", "与")):
+            text = text[1:].strip()
+            changed = True
+        if text.endswith("的") and len(text) > 1:
+            text = text[:-1].strip()
+            changed = True
+    if len(text) < 2 or text in {"相关", "的", "和", "与"}:
+        # 框架词剥离失败或只剩框架残留：回退原始查询，避免匹配语义漂移
+        return query.strip()
+    return text
 
 
 def _cursor_secret() -> str:
@@ -234,7 +314,7 @@ def _content_excerpt(content: str, query: str, excerpt_chars: int) -> str:
     text = (content or "").strip()
     if not text:
         return ""
-    q = query.strip().casefold()
+    q = _strip_query_frames(query).casefold()
     if not q:
         return _bound(text, excerpt_chars)
     position = text.casefold().find(q)
@@ -275,7 +355,7 @@ def _match_hint_for_entry(
     match_hint_chars: int,
 ) -> tuple[str | None, list[str]]:
     """生成服务端可验证的匹配线索与命中字段；纯语义召回无命中时留空。"""
-    q = query.strip().casefold()
+    q = _strip_query_frames(query).casefold()
     if not q:
         return None, []
     fields: list[str] = []
@@ -296,12 +376,12 @@ def _match_hint_for_entry(
         start = max(0, position - 40)
         end = min(len(content), position + len(q) + 80)
         snippet = _bound(content[start:end], match_hint_chars)
-        hint = f"正文命中「…{snippet}…」"
+        hint = hint or f"正文命中「…{snippet}…」"
     elif content:
         common = _longest_common_substring(q, content)
         if len(common) >= 2:
             fields.append("content")
-            hint = f"正文包含「{_bound(common, 60)}」"
+            hint = hint or f"正文包含「{_bound(common, 60)}」"
     if node_path and q in node_path.casefold():
         fields.append("node")
         hint = hint or f"目录命中「{_bound(node_path, 60)}」"
@@ -394,7 +474,11 @@ async def _assemble_items(
             KnowledgeEntryResultItemOut(
                 entry_id=entry.id,
                 title=entry.title,
-                excerpt=_content_excerpt(entry.content or "", query, excerpt_chars),
+                excerpt=_content_excerpt(
+                    entry.content or "",
+                    query,
+                    excerpt_chars,
+                ),
                 project_id=entry.project_id,
                 project_name=entry.project.name if entry.project else None,
                 node_id=entry.node_id,
@@ -423,6 +507,8 @@ async def execute_structured_entry_search(
     """执行有界结构化 Entry 查找：终态一次性提交结果快照。"""
     settings = get_settings()
     query = (decision.standalone_query or "").strip()
+    # 重排输入使用剥离框架词后的核心查询，避免「相关的知识点」稀释相关性判断
+    match_query = _strip_query_frames(query)
     # 快照时间使用应用时钟：Run.updated_at 带 onupdate，提交后读取会触发
     # ORM 惰性刷新（async 下 MissingGreenlet），且快照时间只作展示元数据。
     snapshot_updated_at = datetime.now(UTC)
@@ -455,13 +541,15 @@ async def execute_structured_entry_search(
     rerank_meta = None
     ordered: list[Entry] = []
     rerank_duration = 0
+    rerank_kept = 0
     if candidates:
         started = perf_counter()
         draft, provider, model, is_fallback, error = await run_semantic_agent(
             db,
             ctx.workspace_id,
-            query,
+            match_query,
             candidates,
+            strict=True,
         )
         rerank_meta = StageMeta(
             purpose=PURPOSE_RERANK,
@@ -471,11 +559,21 @@ async def execute_structured_entry_search(
             error=error,
             duration_ms=int((perf_counter() - started) * 1000),
         )
-        ordered = _ordered_entries(
-            candidates,
-            draft,
-            settings.knowledge_agent_result_persist_limit,
-        )
+        # 只采用重排模型明确保留的候选；模型输出被截断/降级时按召回顺序兜底，
+        # 不再把模型明确排除的条目重新加回（避免重排过滤被静默撤销）。
+        by_id = {entry.id: entry for entry in candidates}
+        ordered = []
+        kept_ids: set[int] = set()
+        for item in draft.results:
+            entry = by_id.get(item.entry_id)
+            if entry is not None and entry.id not in kept_ids:
+                ordered.append(entry)
+                kept_ids.add(entry.id)
+            if len(ordered) >= settings.knowledge_agent_result_persist_limit:
+                break
+        rerank_kept = len(ordered)
+        if not ordered:
+            ordered = candidates[: settings.knowledge_agent_result_persist_limit]
         rerank_duration = int((perf_counter() - started) * 1000)
     if embedding_meta:
         await record_model_invocation(
@@ -552,11 +650,11 @@ async def execute_structured_entry_search(
     )
     if assembly_failed:
         warning = "部分匹配对象当前不可用，结果可能不完整"
-    elif (
-        len(candidates) > settings.knowledge_agent_result_persist_limit
-        or scope_total > settings.knowledge_agent_result_candidate_limit
-    ):
-        warning = "结果达到候选或数量上限，可能还有更多"
+    elif capacity_truncated:
+        # 字节上限循环已写入容量提示，保持不变
+        warning = warning or "结果容量超出限制，已按服务端上限保留"
+    elif len(persisted) >= settings.knowledge_agent_result_persist_limit:
+        warning = "结果达到数量上限，可能还有更多"
 
     snapshot = KnowledgeEntryResultSnapshotOut(
         query=query,
@@ -577,6 +675,7 @@ async def execute_structured_entry_search(
             "total": len(persisted),
             "scope_total": scope_total,
             "candidates": len(candidates),
+            "rerank_kept": rerank_kept,
             "persisted": len(persisted),
             "denied": 0,
             "unavailable": len(unavailable),
