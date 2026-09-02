@@ -1,6 +1,7 @@
 """知识对话与消息服务：所有权、范围、游标分页与范围变更。"""
 
 import base64
+import json
 import logging
 from datetime import UTC, datetime
 
@@ -23,6 +24,7 @@ from app.models.knowledge_agent import (
     SCOPE_WORKSPACE,
 )
 from app.schemas.knowledge_agent import (
+    KnowledgeAnswerBasisOut,
     KnowledgeConversationCreate,
     KnowledgeConversationOut,
     KnowledgeMessageOut,
@@ -37,6 +39,19 @@ logger = logging.getLogger(__name__)
 
 DEFAULT_CONVERSATION_TITLE = "新对话"
 _SCOPE_LABELS = {SCOPE_WORKSPACE: "全部知识"}
+
+
+def answer_basis_out(raw: str | None) -> KnowledgeAnswerBasisOut | None:
+    """解析 Run 上持久化的实际回答依据；缺失或损坏返回 None（旧 Run 兼容）。"""
+    if not raw:
+        return None
+    try:
+        data = json.loads(raw)
+    except (json.JSONDecodeError, TypeError):
+        return None
+    if not isinstance(data, dict):
+        return None
+    return KnowledgeAnswerBasisOut.model_validate(data)
 
 
 async def get_owned_conversation(
@@ -317,6 +332,8 @@ def message_out(
         actual_answer_mode=run.actual_answer_mode if run else None,
         request_result_mode=run.request_result_mode if run else None,
         actual_result_mode=run.actual_result_mode if run else None,
+        request_basis_mode=run.request_basis_mode if run else None,
+        answer_basis=answer_basis_out(run.answer_basis_json) if run else None,
         current_round=run.current_round if run else 0,
         input_context_version_id=run.input_context_version_id if run else None,
         output_context_version_id=run.output_context_version_id if run else None,

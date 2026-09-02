@@ -15,6 +15,8 @@ from app.models import (
     WorkspaceMember,
 )
 from app.models.knowledge_agent import (
+    BASIS_MODE_AUTO,
+    BASIS_MODE_KNOWLEDGE_ONLY,
     MESSAGE_TYPE_SCOPE_CHANGE,
     MESSAGE_TYPE_USER,
     RESULT_MODE_ANSWER,
@@ -184,6 +186,59 @@ async def test_submit_idempotent_and_title() -> None:
         assert run.active_slot == "active"
         assert run.user_message_id == user_message.id
         assert run.assistant_message_id is not None
+
+
+@pytest.mark.asyncio
+async def test_submit_basis_mode_compat_and_retry_keeps_first() -> None:
+    """依据模式固化：显式 auto 保存；缺省兼容 knowledge_only；重试不改首次模式。"""
+    async with async_session_factory() as db:
+        user = await _user(db, "依据")
+        workspace = await _workspace_for(db, user)
+        conversation = await create_conversation(
+            db,
+            workspace.id,
+            user.id,
+            KnowledgeConversationCreate(scope_type="workspace"),
+        )
+        auto_message, auto_run = await submit_message(
+            db,
+            conversation,
+            KnowledgeRunSubmitRequest(
+                client_message_id="basis-service-auto",
+                message="解释一下预算分配",
+                basis_mode=BASIS_MODE_AUTO,
+            ),
+        )
+        assert auto_run.request_basis_mode == BASIS_MODE_AUTO
+        auto_run_id = auto_run.id
+        del auto_message
+
+        # 同 client_message_id 重试携带不同依据模式：返回首次 Run，不更新固化模式
+        retry_message, retry_run = await submit_message(
+            db,
+            conversation,
+            KnowledgeRunSubmitRequest(
+                client_message_id="basis-service-auto",
+                message="解释一下预算分配",
+                basis_mode=BASIS_MODE_KNOWLEDGE_ONLY,
+            ),
+        )
+        assert retry_run.id == auto_run_id
+        assert retry_run.request_basis_mode == BASIS_MODE_AUTO
+
+        # 取消活动 Run 后旧客户端缺省提交：兼容为 knowledge_only
+        auto_run.status = RUN_CANCELLED
+        auto_run.active_slot = None
+        await db.flush()
+        _legacy_message, legacy_run = await submit_message(
+            db,
+            conversation,
+            KnowledgeRunSubmitRequest(
+                client_message_id="basis-service-legacy",
+                message="闭水试验通常持续多久？",
+            ),
+        )
+        assert legacy_run.request_basis_mode == BASIS_MODE_KNOWLEDGE_ONLY
 
 
 @pytest.mark.asyncio

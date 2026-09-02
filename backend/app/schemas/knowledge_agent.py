@@ -53,6 +53,15 @@ ContextDecision = Literal["continue", "new_topic", "clarify"]
 AnswerMode = Literal["auto", "quick", "investigate"]
 ResultMode = Literal["auto", "answer", "entries"]
 ActualResultMode = Literal["answer", "entries"]
+BasisMode = Literal["auto", "knowledge_only"]
+BasisStrategy = Literal[
+    "knowledge_only",
+    "knowledge_first",
+    "model_first",
+    "hybrid",
+    "external_needed",
+]
+ExternalMaterialStatus = Literal["not_used", "required_unavailable"]
 ResultCompleteness = Literal["complete", "limited", "unknown"]
 InvestigationStopReason = Literal[
     "controller_complete",
@@ -123,6 +132,8 @@ class KnowledgeMessageOut(BaseModel):
     actual_answer_mode: AnswerMode | None = None
     request_result_mode: ResultMode | None = None
     actual_result_mode: ActualResultMode | None = None
+    request_basis_mode: BasisMode | None = None
+    answer_basis: "KnowledgeAnswerBasisOut | None" = None
     current_round: int = 0
     input_context_version_id: int | None = None
     output_context_version_id: int | None = None
@@ -197,6 +208,50 @@ class KnowledgeAnswerOut(BaseModel):
     # 只由本 Run 最终有效引用支撑的终态覆盖/缺口，不复用控制器搜索前计划。
     coverage: list[str] = []
     gaps: list[str] = []
+
+
+class KnowledgeAnswerBasisGroveOut(BaseModel):
+    """Grove 依据：数量只从最终通过校验的 Citation/Entry 派生。"""
+
+    used: bool = False
+    citation_count: int = 0
+    entry_count: int = 0
+
+
+class KnowledgeAnswerBasisUserStatementsOut(BaseModel):
+    """用户提供的信息：只保存服务端允许集合内的消息 ID。"""
+
+    message_ids: list[int] = []
+
+
+class KnowledgeAnswerBasisModelKnowledgeOut(BaseModel):
+    """模型通用知识依据：由服务端按执行分支与提示权限保守标记。"""
+
+    used: bool = False
+
+
+class KnowledgeAnswerBasisExternalMaterialOut(BaseModel):
+    """外部材料边界：只允许 not_used 或 required_unavailable。"""
+
+    status: ExternalMaterialStatus = "not_used"
+
+
+class KnowledgeAnswerBasisOut(BaseModel):
+    """服务端校验后的版本化实际回答依据（AnswerBasis v1）。"""
+
+    schema_version: Literal["v1"] = "v1"
+    grove: KnowledgeAnswerBasisGroveOut = Field(
+        default_factory=KnowledgeAnswerBasisGroveOut
+    )
+    user_statements: KnowledgeAnswerBasisUserStatementsOut = Field(
+        default_factory=KnowledgeAnswerBasisUserStatementsOut
+    )
+    model_knowledge: KnowledgeAnswerBasisModelKnowledgeOut = Field(
+        default_factory=KnowledgeAnswerBasisModelKnowledgeOut
+    )
+    external_material: KnowledgeAnswerBasisExternalMaterialOut = Field(
+        default_factory=KnowledgeAnswerBasisExternalMaterialOut
+    )
 
 
 class KnowledgeEntryResultItemOut(BaseModel):
@@ -315,6 +370,9 @@ class KnowledgeRunOut(BaseModel):
     actual_answer_mode: AnswerMode | None = None
     request_result_mode: ResultMode | None = None
     actual_result_mode: ActualResultMode | None = None
+    # 依据契约：请求模式与最终实际依据（规划策略属内部诊断，不在此暴露）
+    request_basis_mode: BasisMode | None = None
+    answer_basis: KnowledgeAnswerBasisOut | None = None
     current_round: int = 0
     input_context_version_id: int | None = None
     output_context_version_id: int | None = None
@@ -336,6 +394,9 @@ class KnowledgeRunSubmitRequest(BaseModel):
     context_mode: ContextMode = "auto"
     answer_mode: AnswerMode = "auto"
     result_mode: ResultMode = "auto"
+    # 公开请求依据模式：新客户端显式提交 auto/knowledge_only；旧客户端缺省时
+    # 服务端按 knowledge_only 兼容处理，避免向无法展示依据的界面意外开放模型通用回答。
+    basis_mode: BasisMode | None = None
     source_run_id: int | None = None
 
 

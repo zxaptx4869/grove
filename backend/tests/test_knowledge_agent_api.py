@@ -271,6 +271,70 @@ async def test_message_page_normalizes_runs(client: httpx.AsyncClient) -> None:
 
 
 @pytest.mark.asyncio
+async def test_submit_basis_mode_compat_and_idempotent_reuse(
+    client: httpx.AsyncClient,
+) -> None:
+    """新客户端显式 basis_mode；旧客户端缺省按 knowledge_only；同标识重试不改模式。"""
+    await _register(client)
+    conversation = await _conversation(client)
+
+    auto = await client.post(
+        f"/api/knowledge-agent/conversations/{conversation['id']}/messages",
+        json={
+            "client_message_id": "basis-auto-1",
+            "message": "什么是闭水试验？",
+            "basis_mode": "auto",
+        },
+    )
+    assert auto.status_code == 201
+    auto_payload = auto.json()
+    assert auto_payload["run"]["request_basis_mode"] == "auto"
+    assert auto_payload["run"]["answer_basis"] is None
+    assert auto_payload["user_message"]["request_basis_mode"] == "auto"
+    auto_run_id = auto_payload["run"]["id"]
+
+    # 同一 client_message_id 以不同 basis_mode 重试：返回首次 Run 与固化模式
+    retry = await client.post(
+        f"/api/knowledge-agent/conversations/{conversation['id']}/messages",
+        json={
+            "client_message_id": "basis-auto-1",
+            "message": "什么是闭水试验？",
+            "basis_mode": "knowledge_only",
+        },
+    )
+    assert retry.status_code == 200
+    retry_payload = retry.json()
+    assert retry_payload["run"]["id"] == auto_run_id
+    assert retry_payload["run"]["request_basis_mode"] == "auto"
+
+    # 取消活动 Run 后旧客户端缺省提交：兼容为 knowledge_only
+    cancelled = await client.post(f"/api/knowledge-agent/runs/{auto_run_id}/cancel")
+    assert cancelled.status_code == 200
+    legacy = await client.post(
+        f"/api/knowledge-agent/conversations/{conversation['id']}/messages",
+        json={
+            "client_message_id": "basis-legacy-1",
+            "message": "闭水试验通常持续多久？",
+        },
+    )
+    assert legacy.status_code == 201
+    assert legacy.json()["run"]["request_basis_mode"] == "knowledge_only"
+    assert legacy.json()["run"]["request_result_mode"] == "auto"
+
+    # Run 详情与消息页继续返回可选 basis 字段（旧 Run 无实际依据时为空）
+    run = (await client.get(f"/api/knowledge-agent/runs/{auto_run_id}")).json()
+    assert run["request_basis_mode"] == "auto"
+    assert run["answer_basis"] is None
+    page = (
+        await client.get(
+            f"/api/knowledge-agent/conversations/{conversation['id']}/messages"
+        )
+    ).json()
+    assert "request_basis_mode" in page["items"][0]
+    assert "answer_basis" in page["runs"][0]
+
+
+@pytest.mark.asyncio
 async def test_submit_active_conflict_and_cancel(client: httpx.AsyncClient) -> None:
     """活动 Run 期间新问题 409；取消后不再产生回答。"""
     await _register(client)

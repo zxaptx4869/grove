@@ -20,6 +20,7 @@ from app.models import (
 )
 from app.models.knowledge_agent import (
     ACTIVE_SLOT,
+    BASIS_MODE_KNOWLEDGE_ONLY,
     CONTEXT_CLOSE_REASON_NEW_TOPIC,
     CONTEXT_MODE_NEW_TOPIC,
     DRAFT_CANCELLED,
@@ -58,6 +59,7 @@ from app.schemas.knowledge_agent import (
 from app.services.knowledge_agent.conversations import (
     DEFAULT_CONVERSATION_TITLE,
     active_run_for_conversation,
+    answer_basis_out,
 )
 from app.services.knowledge_agent.working_set import (
     close_active_context_version,
@@ -184,6 +186,9 @@ async def submit_message(
     context_mode = payload.context_mode
     answer_mode = payload.answer_mode
     result_mode = payload.result_mode
+    # 公开依据模式：新客户端显式提交 auto/knowledge_only；旧客户端缺省按
+    # knowledge_only 兼容，避免向无法展示依据的旧界面意外开放模型通用回答。
+    basis_mode = payload.basis_mode or BASIS_MODE_KNOWLEDGE_ONLY
     source_run: KnowledgeAgentRun | None = None
     if payload.source_run_id is not None:
         source_run = await db.get(KnowledgeAgentRun, payload.source_run_id)
@@ -218,6 +223,8 @@ async def submit_message(
         message_text = source_message.content.strip()
         context_mode = source_run.request_context_mode or "auto"
         answer_mode = "auto"
+        # 模式纠正继承来源 Run 已固化的依据限制，不允许重试参数放宽
+        basis_mode = source_run.request_basis_mode or BASIS_MODE_KNOWLEDGE_ONLY
         scope_type = source_run.scope_type
         project_id = source_run.project_id
         project_name = source_run.project_name
@@ -281,6 +288,7 @@ async def submit_message(
         request_context_mode=context_mode,
         request_answer_mode=answer_mode,
         request_result_mode=result_mode,
+        request_basis_mode=basis_mode,
         input_context_version_id=input_context_version_id,
         status=RUN_WAITING,
         current_step="waiting",
@@ -449,6 +457,8 @@ def run_out(run: KnowledgeAgentRun) -> KnowledgeRunOut:
         actual_answer_mode=run.actual_answer_mode,
         request_result_mode=run.request_result_mode,
         actual_result_mode=run.actual_result_mode,
+        request_basis_mode=run.request_basis_mode,
+        answer_basis=answer_basis_out(run.answer_basis_json),
         current_round=run.current_round,
         input_context_version_id=run.input_context_version_id,
         output_context_version_id=run.output_context_version_id,

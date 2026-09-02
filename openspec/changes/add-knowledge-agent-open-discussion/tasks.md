@@ -1,8 +1,8 @@
 ## 1. 数据与协议骨架
 
-- [ ] 1.1 在 Knowledge Agent 领域常量、SQLAlchemy Run 模型和设置中增加 `basis_mode`、规划策略、`answer_basis`、`basis_route` 步骤/用途及开放讨论特性开关，保持旧记录字段可空。验收：`cd backend && .venv/bin/ruff check app/models/knowledge_agent.py app/config.py`
-- [ ] 1.2 新增同时兼容 SQLite 与 MySQL 8 的 Alembic 迁移，为 `knowledge_agent_runs` 增加请求依据模式、规划策略和实际依据 JSON 字段，不回填猜测旧回答。验收：`cd backend && .venv/bin/alembic upgrade head && .venv/bin/alembic current`
-- [ ] 1.3 扩展 Pydantic 请求/响应与 API 适配，要求新客户端显式提交 `basis_mode=auto`、旧客户端缺少字段时兼容为 `knowledge_only`，并支持同 `client_message_id` 重试复用首次模式及 Run/消息页可选 basis 字段。验收：`cd backend && .venv/bin/pytest -q tests/test_knowledge_agent_api.py tests/test_knowledge_agent_conversations.py`
+- [x] 1.1 在 Knowledge Agent 领域常量、SQLAlchemy Run 模型和设置中增加 `basis_mode`、规划策略、`answer_basis`、`basis_route` 步骤/用途及开放讨论特性开关，保持旧记录字段可空。验收：`cd backend && .venv/bin/ruff check app/models/knowledge_agent.py app/config.py`
+- [x] 1.2 新增同时兼容 SQLite 与 MySQL 8 的 Alembic 迁移，为 `knowledge_agent_runs` 增加请求依据模式、规划策略和实际依据 JSON 字段，不回填猜测旧回答。验收：`cd backend && .venv/bin/alembic upgrade head && .venv/bin/alembic current`
+- [x] 1.3 扩展 Pydantic 请求/响应与 API 适配，要求新客户端显式提交 `basis_mode=auto`、旧客户端缺少字段时兼容为 `knowledge_only`，并支持同 `client_message_id` 重试复用首次模式及 Run/消息页可选 basis 字段。验收：`cd backend && .venv/bin/pytest -q tests/test_knowledge_agent_api.py tests/test_knowledge_agent_conversations.py`
 
 ## 2. 依据规划与用户陈述边界
 
