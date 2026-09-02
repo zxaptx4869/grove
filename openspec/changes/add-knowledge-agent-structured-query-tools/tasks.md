@@ -30,7 +30,7 @@
 ## 5. 原生端结构化统计与历史恢复
 
 - [x] 5.1 扩展原生领域类型、snake_case 适配和 API 客户端以解析 v2 集合摘要、count/group_count、排序和分输出完整性，同时保持 v1 与缺字段服务端兼容。验收：`cd mobile && npm test -- --runInBand src/knowledge-agent/api.test.ts src/knowledge-agent/adapters/entryResults.test.ts`
-- [ ] 5.2 在现有 entries 结果内实现“范围/筛选 → 完整性 → 统计/分组 → 排序 → Entry 卡”展示；只有 complete count 使用“共 N 条”，limited/unknown 使用本次匹配边界，客户端不从卡片数量自行计算聚合。验收：`cd mobile && npm test -- --runInBand src/knowledge-agent/components/components.test.tsx -t '结构化查询|精确计数|分组'`
+- [x] 5.2 在现有 entries 结果内实现“范围/筛选 → 完整性 → 统计/分组 → 排序 → Entry 卡”展示；只有 complete count 使用“共 N 条”，limited/unknown 使用本次匹配边界，客户端不从卡片数量自行计算聚合。验收：`cd mobile && npm test -- --runInBand src/knowledge-agent/components/components.test.tsx -t '结构化查询|精确计数|分组'`
 - [ ] 5.3 覆盖空集合、未标注 info_nature、长分组、桶截断、聚合成功但列表 partial、分页失败与旧 v1 结果；打开历史 Entry 继续读取当前对象并显示已更新/不可用。验收：`cd mobile && npm test -- --runInBand src/knowledge-agent/components/components.test.tsx src/knowledge-agent/hooks/useConversationController.test.tsx -t '查询结果|历史|分页'`
 - [ ] 5.4 保持现有自动/综合回答/知识列表覆盖和纠正动作；结构化统计不新增顶层结果形态，不显示 Citation、写入动作、勾选或批量操作，并满足三目标视口与辅助名称要求。验收：`cd mobile && npm test -- --runInBand src/knowledge-agent/state/modes.test.ts src/knowledge-agent/components/components.test.tsx -t '结果形态|可访问|结构化查询'`
 

@@ -16,6 +16,7 @@ import {
 import { DraftConfirmSheet } from "@/src/knowledge-agent/components/DraftConfirmSheet";
 import { DraftEditSheet } from "@/src/knowledge-agent/components/DraftEditSheet";
 import { HistorySheet } from "@/src/knowledge-agent/components/HistorySheet";
+import { EntryResultsCard } from "@/src/knowledge-agent/components/EntryResultsCard";
 import { ProcessCard } from "@/src/knowledge-agent/components/ProcessCard";
 import { RevisionConfirmSheet } from "@/src/knowledge-agent/components/RevisionConfirmSheet";
 import { RevisionDiffScreen } from "@/src/knowledge-agent/components/RevisionDiffScreen";
@@ -36,11 +37,14 @@ import type {
   KnowledgeCandidateDraft,
   KnowledgeConflict,
   KnowledgeConversation,
+  KnowledgeEntryResultItem,
+  KnowledgeEntryResultSnapshot,
   KnowledgeEntryRevisionDraft,
   KnowledgeMessage,
   KnowledgeRun,
   KnowledgeRunCitation,
 } from "@/src/knowledge-agent/types";
+import type { EntryResultsState } from "@/src/knowledge-agent/hooks/useConversationController";
 
 jest.mock("@/src/auth", () => ({
   useAuth: () => ({ token: "token", me: null }),
@@ -217,6 +221,144 @@ function conversation(id: number): KnowledgeConversation {
     createdAt: "2026-08-29T09:00:00Z",
   };
 }
+
+function structuredEntry(entryId: number): KnowledgeEntryResultItem {
+  return {
+    entryId,
+    title: `防水经验 ${entryId}`,
+    excerpt: "正式知识摘要",
+    projectId: 1,
+    projectName: "新房装修",
+    nodeId: 2,
+    nodePath: "施工 / 防水",
+    mainType: "knowledge",
+    infoNature: "experience",
+    updatedAt: "2026-09-02T00:00:00Z",
+    sourceCount: 1,
+    fingerprint: `fp-${entryId}`,
+    matchHint: null,
+    matchedFields: [],
+  };
+}
+
+function structuredState(items: KnowledgeEntryResultItem[]): EntryResultsState {
+  return {
+    runId: 30,
+    items,
+    nextCursor: null,
+    hasMore: false,
+    loadingMore: false,
+    error: null,
+    primed: true,
+  };
+}
+
+function structuredSnapshot(
+  overrides: Partial<KnowledgeEntryResultSnapshot> = {},
+): KnowledgeEntryResultSnapshot {
+  const items = [structuredEntry(1), structuredEntry(2)];
+  return {
+    schemaVersion: "v2",
+    query: "最近的防水经验",
+    status: "completed",
+    completeness: "limited",
+    items,
+    returnedCount: items.length,
+    candidateLimit: 6,
+    warning: null,
+    snapshotUpdatedAt: "2026-09-02T00:00:00Z",
+    setSummary: {
+      schemaVersion: "v1",
+      scopeType: "workspace",
+      projectId: null,
+      projectName: null,
+      semanticQuery: null,
+      mainTypes: ["knowledge"],
+      infoNatures: ["experience"],
+      updatedAtFrom: "2026-08-01T00:00:00Z",
+      updatedAtTo: "2026-09-01T00:00:00Z",
+      completeness: "complete",
+    },
+    sort: { field: "updated_at", direction: "desc", tieBreaker: "entry_id" },
+    count: { value: 23, completeness: "complete", status: "completed" },
+    groupCounts: [
+      {
+        groupBy: "info_nature",
+        buckets: [
+          { key: "experience", count: 10 },
+          { key: "unspecified", count: 5 },
+        ],
+        completeness: "complete",
+        status: "completed",
+        truncated: false,
+      },
+    ],
+    outputCompleteness: {
+      entries: "limited",
+      count: "complete",
+      groupCount: { infoNature: "complete" },
+    },
+    warnings: [],
+    ...overrides,
+  };
+}
+
+test("结构化查询精确计数、分组与排序按服务端结果展示", async () => {
+  const entryResult = structuredSnapshot();
+  const view = await render(
+    <EntryResultsCard
+      run={run(30, "completed", null, {
+        actualResultMode: "entries",
+        entryResult,
+      })}
+      scopeLabel="全部知识"
+      state={structuredState(entryResult.items)}
+      onPrime={jest.fn()}
+      onLoadMore={jest.fn()}
+      onRetry={jest.fn()}
+      onOpenItem={jest.fn()}
+      onCorrectMode={jest.fn()}
+      onRefine={jest.fn()}
+    />,
+  );
+  expect(view.getByText("共 23 条")).toBeOnTheScreen();
+  expect(view.getByText("类型：知识")).toBeOnTheScreen();
+  expect(view.getByText("性质：经验")).toBeOnTheScreen();
+  expect(view.getByText("按信息性质")).toBeOnTheScreen();
+  expect(view.getByText("未标注")).toBeOnTheScreen();
+  expect(view.getByText("知识列表 · 按更新时间倒序")).toBeOnTheScreen();
+  expect(view.queryByText("Citation")).toBeNull();
+});
+
+test("结构化查询 limited 计数使用本次匹配边界而非精确全集", async () => {
+  const entryResult = structuredSnapshot({
+    setSummary: {
+      ...structuredSnapshot().setSummary!,
+      semanticQuery: "防水",
+      completeness: "limited",
+    },
+    count: { value: 9, completeness: "limited", status: "limited" },
+  });
+  const view = await render(
+    <EntryResultsCard
+      run={run(31, "completed", null, {
+        actualResultMode: "entries",
+        entryResult,
+      })}
+      scopeLabel="全部知识"
+      state={structuredState(entryResult.items)}
+      onPrime={jest.fn()}
+      onLoadMore={jest.fn()}
+      onRetry={jest.fn()}
+      onOpenItem={jest.fn()}
+      onCorrectMode={jest.fn()}
+      onRefine={jest.fn()}
+    />,
+  );
+  expect(view.getByText("本次匹配到 9 条")).toBeOnTheScreen();
+  expect(view.getByText(/不代表当前范围内的全部知识/)).toBeOnTheScreen();
+  expect(view.queryByText("共 9 条")).toBeNull();
+});
 
 function message(
   id: number,
