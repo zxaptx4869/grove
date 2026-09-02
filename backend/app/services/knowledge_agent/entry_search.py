@@ -297,6 +297,12 @@ async def paginate_entry_results(
         next_cursor=next_cursor,
         warning=snapshot.warning,
         snapshot_updated_at=snapshot.snapshot_updated_at,
+        set_summary=snapshot.set_summary,
+        sort=snapshot.sort,
+        count=snapshot.count,
+        group_counts=snapshot.group_counts,
+        output_completeness=snapshot.output_completeness,
+        warnings=snapshot.warnings,
     )
 
 

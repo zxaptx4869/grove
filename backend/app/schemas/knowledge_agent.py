@@ -63,6 +63,18 @@ BasisStrategy = Literal[
 ]
 ExternalMaterialStatus = Literal["not_used", "required_unavailable"]
 ResultCompleteness = Literal["complete", "limited", "unknown"]
+StructuredQueryToolStatus = Literal[
+    "completed",
+    "empty",
+    "limited",
+    "partial",
+    "denied",
+    "error",
+    "cancelled",
+]
+StructuredQuerySortField = Literal["relevance", "updated_at", "created_at"]
+StructuredQuerySortDirection = Literal["asc", "desc"]
+StructuredQueryGroupField = Literal["main_type", "info_nature", "updated_month"]
 InvestigationStopReason = Literal[
     "controller_complete",
     "insufficient",
@@ -279,10 +291,66 @@ class KnowledgeEntryResultItemOut(BaseModel):
     matched_fields: list[str] = []
 
 
+class KnowledgeEntrySetSummaryOut(BaseModel):
+    """v2 共享集合摘要：范围由 Run 注入，客户端只读展示。"""
+
+    schema_version: Literal["v1"] = "v1"
+    scope_type: KnowledgeScopeType
+    project_id: int | None = None
+    project_name: str | None = None
+    semantic_query: str | None = None
+    main_types: list[str] = []
+    info_natures: list[str] = []
+    updated_at_from: datetime | None = None
+    updated_at_to: datetime | None = None
+    completeness: ResultCompleteness
+
+
+class KnowledgeEntrySortOut(BaseModel):
+    """v2 Entry 列表稳定排序摘要。"""
+
+    field: StructuredQuerySortField
+    direction: StructuredQuerySortDirection
+    tie_breaker: Literal["entry_id"] = "entry_id"
+
+
+class KnowledgeCountResultOut(BaseModel):
+    """直接查询共享集合得到的 count；不是卡片数量反推。"""
+
+    value: int = Field(ge=0)
+    completeness: ResultCompleteness
+    status: StructuredQueryToolStatus
+
+
+class KnowledgeGroupBucketOut(BaseModel):
+    """受限、稳定排序的单个分组桶。"""
+
+    key: str
+    count: int = Field(ge=0)
+
+
+class KnowledgeGroupCountResultOut(BaseModel):
+    """直接查询共享集合得到的 group_count。"""
+
+    group_by: StructuredQueryGroupField
+    buckets: list[KnowledgeGroupBucketOut] = []
+    completeness: ResultCompleteness
+    status: StructuredQueryToolStatus
+    truncated: bool = False
+
+
+class KnowledgeOutputCompletenessOut(BaseModel):
+    """v2 各输出独立完整性，避免用列表 limit 推断聚合边界。"""
+
+    entries: ResultCompleteness | None = None
+    count: ResultCompleteness | None = None
+    group_count: dict[StructuredQueryGroupField, ResultCompleteness] = {}
+
+
 class KnowledgeEntryResultSnapshotOut(BaseModel):
     """Run 上持久化的有界 Entry 结果快照（首屏随 Run/消息页返回）。"""
 
-    schema_version: str = "v1"
+    schema_version: Literal["v1", "v2"] = "v1"
     query: str
     status: Literal["completed", "partial"]
     completeness: ResultCompleteness
@@ -291,12 +359,19 @@ class KnowledgeEntryResultSnapshotOut(BaseModel):
     candidate_limit: int
     warning: str | None = None
     snapshot_updated_at: datetime
+    # v2 追加字段均可选；旧 v1 快照不回填、不猜测
+    set_summary: KnowledgeEntrySetSummaryOut | None = None
+    sort: KnowledgeEntrySortOut | None = None
+    count: KnowledgeCountResultOut | None = None
+    group_counts: list[KnowledgeGroupCountResultOut] = []
+    output_completeness: KnowledgeOutputCompletenessOut | None = None
+    warnings: list[str] = []
 
 
 class KnowledgeEntryResultsPageOut(BaseModel):
     """结果分页响应：只读取同一持久化快照，不重新搜索。"""
 
-    schema_version: str = "v1"
+    schema_version: Literal["v1", "v2"] = "v1"
     status: Literal["completed", "partial"]
     completeness: ResultCompleteness
     items: list[KnowledgeEntryResultItemOut]
@@ -307,6 +382,12 @@ class KnowledgeEntryResultsPageOut(BaseModel):
     next_cursor: str | None = None
     warning: str | None = None
     snapshot_updated_at: datetime
+    set_summary: KnowledgeEntrySetSummaryOut | None = None
+    sort: KnowledgeEntrySortOut | None = None
+    count: KnowledgeCountResultOut | None = None
+    group_counts: list[KnowledgeGroupCountResultOut] = []
+    output_completeness: KnowledgeOutputCompletenessOut | None = None
+    warnings: list[str] = []
 
 
 class FallbackStageOut(BaseModel):
