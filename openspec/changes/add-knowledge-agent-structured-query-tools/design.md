@@ -116,6 +116,10 @@ Run 追加可空 `structured_query_plan_json`，保存通过服务端校验、�
 
 统计块是应用根据服务端结构化数据渲染的对象结果，不是 AI 综合回答、Citation 或正式 Entry。分组桶按服务端稳定顺序显示并受上限控制；长列表继续使用持久化快照分页，打开卡片时读取当前 Entry 并提示变化。
 
+### 9. B1 保留现有范围索引，不提前增加组合索引
+
+本地 SQLite 代表性 `EXPLAIN QUERY PLAN` 显示项目范围查询使用现有 `ix_entries_project_id`；Workspace 范围先使用 `projects.workspace_id` 索引收敛项目，再通过 Entry 的项目索引连接。MySQL 8 方言编译也保留同样的范围谓词。结构化条件与排序存在多种可选组合，目前没有生产数据规模、选择性和慢查询基准证明某一种 `(project_id, 类型/性质/时间)` 组合值得承担额外写入和存储成本，因此 B1 不新增组合索引。上线后按可观测耗时与真实 MySQL `EXPLAIN` 决定具体索引，不为所有排列预建索引。
+
 ## Risks / Trade-offs
 
 - [模型经常生成非法或过宽计划] → 使用严格 schema、枚举和数量预算；拒绝改变语义的未知条件，显式回退旧查找并建立代表性评估集。
@@ -137,5 +141,4 @@ Run 追加可空 `structured_query_plan_json`，保存通过服务端校验、�
 
 ## Open Questions
 
-- 第一版是否需要为结构化字段补充组合索引，应根据真实 Explain/基准结果决定，不能只凭预期提前增加写入成本。
 - `updated_month` 在用户本地时区还是 UTC 分组：本 change 默认按 UTC 保持跨端确定性；若真实体验中跨月边界明显，再单独设计 Workspace 时区能力。

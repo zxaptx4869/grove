@@ -162,6 +162,32 @@ def _updated_month_expression(dialect_name: str):
     return func.to_char(Entry.updated_at, "YYYY-MM")
 
 
+def structured_aggregate_statement(
+    ctx: RunToolContext,
+    params: AggregateEntriesParams,
+    *,
+    dialect_name: str,
+    bucket_limit: int,
+) -> Select:
+    """构造可按 SQLite/MySQL 8 编译验证的直接聚合查询。"""
+    base_ids = _aggregate_scope_stmt(ctx, params.entry_set).subquery()
+    if params.operation == "count":
+        return select(func.count()).select_from(base_ids)
+    if params.group_by == "main_type":
+        bucket_expr = Entry.main_type
+    elif params.group_by == "info_nature":
+        bucket_expr = func.coalesce(Entry.info_nature, "unspecified")
+    else:
+        bucket_expr = _updated_month_expression(dialect_name)
+    return (
+        select(bucket_expr.label("bucket"), func.count(Entry.id).label("count"))
+        .where(Entry.id.in_(select(base_ids.c.id)))
+        .group_by(bucket_expr)
+        .order_by(asc(bucket_expr))
+        .limit(bucket_limit + 1)
+    )
+
+
 async def aggregate_entries_handler(
     db: AsyncSession,
     ctx: RunToolContext,
@@ -174,17 +200,19 @@ async def aggregate_entries_handler(
         and ctx.structured_query_entry_ids is None
     ):
         await prepare_semantic_entry_set(db, ctx, params.entry_set)
-    base_ids = _aggregate_scope_stmt(ctx, params.entry_set).subquery()
     semantic = params.entry_set.semantic_query is not None
     base_completeness = (
         RESULT_COMPLETENESS_LIMITED if semantic else RESULT_COMPLETENESS_COMPLETE
     )
+    dialect_name = db.bind.dialect.name if db.bind is not None else "sqlite"
+    stmt = structured_aggregate_statement(
+        ctx,
+        params,
+        dialect_name=dialect_name,
+        bucket_limit=settings.knowledge_agent_structured_query_bucket_limit,
+    )
     if params.operation == "count":
-        value = int(
-            (
-                await db.execute(select(func.count()).select_from(base_ids))
-            ).scalar_one()
-        )
+        value = int((await db.execute(stmt)).scalar_one())
         status = TOOL_EMPTY if value == 0 else (
             TOOL_LIMITED if semantic else "completed"
         )
@@ -201,20 +229,6 @@ async def aggregate_entries_handler(
             },
         )
 
-    dialect_name = db.bind.dialect.name if db.bind is not None else "sqlite"
-    if params.group_by == "main_type":
-        bucket_expr = Entry.main_type
-    elif params.group_by == "info_nature":
-        bucket_expr = func.coalesce(Entry.info_nature, "unspecified")
-    else:
-        bucket_expr = _updated_month_expression(dialect_name)
-    stmt = (
-        select(bucket_expr.label("bucket"), func.count(Entry.id).label("count"))
-        .where(Entry.id.in_(select(base_ids.c.id)))
-        .group_by(bucket_expr)
-        .order_by(asc(bucket_expr))
-        .limit(settings.knowledge_agent_structured_query_bucket_limit + 1)
-    )
     rows = list((await db.execute(stmt)).all())
     truncated = len(rows) > settings.knowledge_agent_structured_query_bucket_limit
     rows = rows[: settings.knowledge_agent_structured_query_bucket_limit]

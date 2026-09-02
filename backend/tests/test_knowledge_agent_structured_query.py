@@ -4,7 +4,8 @@ from datetime import UTC, datetime
 from types import SimpleNamespace
 
 import pytest
-from sqlalchemy import select
+from sqlalchemy import select, text
+from sqlalchemy.dialects import mysql, sqlite
 
 from app.agents.semantic import SemanticRankingDraft, SemanticRankResult
 from app.agents.structured_query import StructuredQueryPlanDraft
@@ -31,6 +32,8 @@ from app.services.knowledge_agent.structured_query_tools import (
     aggregate_entries_handler,
     query_entries_handler,
     restore_query_entries_handler,
+    structured_aggregate_statement,
+    structured_entry_select,
 )
 from app.services.knowledge_agent.tools import RunToolContext
 from tests._knowledge_agent_fixtures import (
@@ -608,6 +611,152 @@ async def test_aggregate_groups_null_nature_and_utc_month_stably() -> None:
         {"key": "2026-02", "count": 2},
     ]
     assert nature.completeness == months.completeness == "complete"
+
+
+@pytest.mark.parametrize(
+    ("dialect", "month_expression"),
+    [
+        pytest.param(sqlite.dialect(), "strftime('%y-%m'", id="sqlite"),
+        pytest.param(mysql.dialect(), "date_format(entries.updated_at, '%%y-%%m')", id="mysql8"),
+    ],
+)
+def test_dialect_generates_equivalent_filters_aggregates_and_stable_sort(
+    dialect,
+    month_expression: str,
+) -> None:
+    """两方言共享闭开时间/NULL/排序语义，月桶只替换为各自原生函数。"""
+    ctx = RunToolContext(
+        run_id=1,
+        workspace_id=7,
+        owner_user_id=2,
+        scope_type="project",
+        project_id=11,
+        project_name="项目",
+    )
+    entry_set = normalize_structured_query_plan(
+        {
+            "entry_set": {
+                "main_types": ["knowledge"],
+                "info_natures": ["fact", "unspecified"],
+                "updated_at": {
+                    "from": "2026-01-01T00:00:00Z",
+                    "to": "2026-02-01T00:00:00Z",
+                },
+            },
+            "outputs": [{"kind": "count"}],
+        }
+    ).entry_set
+    list_stmt = structured_entry_select(
+        ctx,
+        entry_set,
+        normalize_structured_query_plan(
+            {
+                "entry_set": {},
+                "outputs": [
+                    {
+                        "kind": "entries",
+                        "limit": 6,
+                        "sort": {"field": "updated_at", "direction": "desc"},
+                    }
+                ],
+            }
+        ).outputs[0].sort,
+    ).limit(6)
+    count_stmt = structured_aggregate_statement(
+        ctx,
+        AggregateEntriesParams(entry_set=entry_set, operation="count"),
+        dialect_name=dialect.name,
+        bucket_limit=12,
+    )
+    nature_stmt = structured_aggregate_statement(
+        ctx,
+        AggregateEntriesParams(
+            entry_set=entry_set,
+            operation="group_count",
+            group_by="info_nature",
+        ),
+        dialect_name=dialect.name,
+        bucket_limit=12,
+    )
+    month_stmt = structured_aggregate_statement(
+        ctx,
+        AggregateEntriesParams(
+            entry_set=entry_set,
+            operation="group_count",
+            group_by="updated_month",
+        ),
+        dialect_name=dialect.name,
+        bucket_limit=12,
+    )
+    compiled_list = str(
+        list_stmt.compile(dialect=dialect, compile_kwargs={"literal_binds": True})
+    ).lower()
+    compiled_count = str(
+        count_stmt.compile(dialect=dialect, compile_kwargs={"literal_binds": True})
+    ).lower()
+    compiled_nature = str(
+        nature_stmt.compile(dialect=dialect, compile_kwargs={"literal_binds": True})
+    ).lower()
+    compiled_month = str(
+        month_stmt.compile(dialect=dialect, compile_kwargs={"literal_binds": True})
+    ).lower()
+
+    assert "projects.workspace_id = 7" in compiled_list
+    assert "entries.project_id = 11" in compiled_list
+    assert "entries.updated_at >= '2026-01-01" in compiled_list
+    assert "entries.updated_at < '2026-02-01" in compiled_list
+    assert "entries.info_nature is null" in compiled_list
+    assert "order by entries.updated_at desc, entries.id desc" in compiled_list
+    assert "select count(*)" in compiled_count
+    assert "coalesce(entries.info_nature, 'unspecified')" in compiled_nature
+    assert month_expression in compiled_month
+
+
+@pytest.mark.asyncio
+async def test_dialect_sqlite_explain_uses_existing_scope_index() -> None:
+    """代表性项目查询使用既有 project_id 索引，因此 B1 暂不增加组合索引。"""
+    async with async_session_factory() as db:
+        user = await create_user(db, "SQLite Explain")
+        workspace = await create_workspace(db, user)
+        project = await create_project(db, workspace)
+        ctx = RunToolContext(
+            run_id=1,
+            workspace_id=workspace.id,
+            owner_user_id=user.id,
+            scope_type="project",
+            project_id=project.id,
+            project_name=project.name,
+        )
+        plan = normalize_structured_query_plan(
+            {
+                "entry_set": {
+                    "main_types": ["knowledge"],
+                    "updated_at": {
+                        "from": "2026-01-01T00:00:00Z",
+                        "to": "2027-01-01T00:00:00Z",
+                    },
+                },
+                "outputs": [
+                    {
+                        "kind": "entries",
+                        "limit": 5,
+                        "sort": {"field": "updated_at", "direction": "desc"},
+                    }
+                ],
+            }
+        )
+        stmt = structured_entry_select(
+            ctx, plan.entry_set, plan.outputs[0].sort
+        ).limit(6)
+        compiled = stmt.compile(
+            dialect=sqlite.dialect(), compile_kwargs={"literal_binds": True}
+        )
+        rows = (
+            await db.execute(text(f"EXPLAIN QUERY PLAN {compiled}"))
+        ).all()
+
+    details = " ".join(str(row[-1]) for row in rows).lower()
+    assert "ix_entries_project_id" in details
 
 
 async def _no_cancel() -> None:
