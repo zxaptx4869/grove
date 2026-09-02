@@ -9,9 +9,12 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models import KnowledgeAgentModelInvocation, KnowledgeAgentToolCall
 from app.models.knowledge_agent import (
+    TOOL_CANCELLED,
+    TOOL_COMPLETED,
     TOOL_DENIED,
     TOOL_EMPTY,
     TOOL_ERROR,
+    TOOL_LIMITED,
     TOOL_OK,
     TOOL_PARTIAL,
     TOOL_UNAVAILABLE,
@@ -20,7 +23,14 @@ from app.models.knowledge_agent import (
 logger = logging.getLogger(__name__)
 
 # 进入受影响阶段的工具状态：正常 ok 与正常 empty 不在此集合
-AFFECTED_TOOL_STATUSES = {TOOL_PARTIAL, TOOL_DENIED, TOOL_UNAVAILABLE, TOOL_ERROR}
+AFFECTED_TOOL_STATUSES = {
+    TOOL_PARTIAL,
+    TOOL_DENIED,
+    TOOL_UNAVAILABLE,
+    TOOL_ERROR,
+    TOOL_LIMITED,
+    TOOL_CANCELLED,
+}
 
 
 @dataclass
@@ -173,7 +183,7 @@ async def run_fallback_summary(
         for item in invocations
     ]
     for item in tool_calls:
-        if item.status == TOOL_OK or item.status == TOOL_EMPTY:
+        if item.status in {TOOL_OK, TOOL_COMPLETED, TOOL_EMPTY}:
             # 正常完成与正常空结果不算 fallback
             continue
         stages.append(
