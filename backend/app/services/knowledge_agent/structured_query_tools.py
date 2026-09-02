@@ -270,22 +270,91 @@ async def semantic_query_entries_handler(
     query = params.entry_set.semantic_query
     if query is None:
         raise ValueError("semantic_query 不能为空")
+    ranked = await prepare_semantic_entry_set(db, ctx, params.entry_set)
+    ordered = _sort_semantic_candidates(ranked, params.sort)
+    truncated = (
+        len(ranked)
+        >= settings.knowledge_agent_structured_query_semantic_candidate_limit
+        or len(ordered) > params.limit
+    )
+    selected = ordered[: params.limit]
+    items, unavailable = await _assemble_items(
+        db,
+        ctx,
+        selected,
+        query,
+        excerpt_chars=settings.knowledge_agent_result_excerpt_chars,
+        node_path_chars=settings.knowledge_agent_result_node_path_chars,
+        match_hint_chars=settings.knowledge_agent_result_match_hint_chars,
+    )
+    for item in items:
+        ctx.discovered_entry_ids.add(item.entry_id)
+    if unavailable:
+        completeness = RESULT_COMPLETENESS_UNKNOWN
+        status = "partial"
+        error = "部分语义候选在快照装配时不可用"
+    else:
+        completeness = RESULT_COMPLETENESS_LIMITED
+        status = TOOL_LIMITED if items else TOOL_EMPTY
+        error = None
+    return ReadToolExecution(
+        status=status,
+        payload={
+            "items": [item.model_dump(mode="json") for item in items],
+            "returned_count": len(items),
+            "has_more": truncated,
+            "semantic_candidate_count": len(ranked),
+        },
+        completeness=completeness,
+        audit_summary={
+            "returned_count": len(items),
+            "semantic_candidate_count": len(ranked),
+            "semantic": True,
+            "truncated": truncated,
+            "unavailable_count": len(unavailable),
+            "completeness": completeness,
+        },
+        error=error,
+    )
+
+
+async def prepare_semantic_entry_set(
+    db: AsyncSession,
+    ctx: RunToolContext,
+    entry_set: NormalizedEntrySetSpec,
+) -> list[Entry]:
+    """准备一次共享语义集合；同一 ctx 后续输出只复用，不再次召回/重排。"""
+    settings = get_settings()
+    query = entry_set.semantic_query
+    if query is None:
+        raise ValueError("semantic_query 不能为空")
+    if ctx.structured_query_entry_ids is not None:
+        rows = list(
+            (
+                await db.execute(
+                    structured_scope_select(ctx, entry_set).where(
+                        Entry.id.in_(ctx.structured_query_entry_ids)
+                    )
+                )
+            )
+            .scalars()
+            .all()
+        )
+        by_id = {entry.id: entry for entry in rows}
+        return [
+            by_id[entry_id]
+            for entry_id in (ctx.structured_query_entry_order or [])
+            if entry_id in by_id
+        ]
     scope_rows = list(
-        (await db.execute(structured_scope_select(ctx, params.entry_set)))
+        (await db.execute(structured_scope_select(ctx, entry_set)))
         .scalars()
         .all()
     )
     if not scope_rows:
-        return ReadToolExecution(
-            status=TOOL_EMPTY,
-            payload={"items": [], "returned_count": 0, "has_more": False},
-            completeness=RESULT_COMPLETENESS_LIMITED,
-            audit_summary={
-                "returned_count": 0,
-                "semantic": True,
-                "completeness": RESULT_COMPLETENESS_LIMITED,
-            },
-        )
+        ctx.structured_query_entry_ids = set()
+        ctx.structured_query_entry_order = []
+        return []
     candidates, _cosine, embedding_meta = await hybrid_recall_by_query_with_meta(
         db,
         ctx.workspace_id,
@@ -335,51 +404,9 @@ async def semantic_query_entries_handler(
             seen.add(entry.id)
         if not ranked and (is_fallback or error):
             ranked = list(candidates)
-    ordered = _sort_semantic_candidates(ranked, params.sort)
-    truncated = (
-        len(candidates)
-        >= settings.knowledge_agent_structured_query_semantic_candidate_limit
-        or len(ordered) > params.limit
-    )
-    selected = ordered[: params.limit]
-    items, unavailable = await _assemble_items(
-        db,
-        ctx,
-        selected,
-        query,
-        excerpt_chars=settings.knowledge_agent_result_excerpt_chars,
-        node_path_chars=settings.knowledge_agent_result_node_path_chars,
-        match_hint_chars=settings.knowledge_agent_result_match_hint_chars,
-    )
-    for item in items:
-        ctx.discovered_entry_ids.add(item.entry_id)
-    if unavailable:
-        completeness = RESULT_COMPLETENESS_UNKNOWN
-        status = "partial"
-        error = "部分语义候选在快照装配时不可用"
-    else:
-        completeness = RESULT_COMPLETENESS_LIMITED
-        status = TOOL_LIMITED if items else TOOL_EMPTY
-        error = None
-    return ReadToolExecution(
-        status=status,
-        payload={
-            "items": [item.model_dump(mode="json") for item in items],
-            "returned_count": len(items),
-            "has_more": truncated,
-            "semantic_candidate_count": len(candidates),
-        },
-        completeness=completeness,
-        audit_summary={
-            "returned_count": len(items),
-            "semantic_candidate_count": len(candidates),
-            "semantic": True,
-            "truncated": truncated,
-            "unavailable_count": len(unavailable),
-            "completeness": completeness,
-        },
-        error=error,
-    )
+    ctx.structured_query_entry_ids = {entry.id for entry in ranked}
+    ctx.structured_query_entry_order = [entry.id for entry in ranked]
+    return ranked
 
 
 async def query_entries_handler(

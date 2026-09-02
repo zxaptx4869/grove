@@ -20,6 +20,11 @@ from app.services.knowledge_agent.structured_query import (
     plan_and_persist_structured_query,
     restore_structured_query_plan,
 )
+from app.services.knowledge_agent.structured_query_execution import (
+    StructuredQueryExecutionResult,
+    apply_execution_byte_budget,
+    execute_structured_query_plan,
+)
 from app.services.knowledge_agent.structured_query_tools import (
     AggregateEntriesParams,
     QueryEntriesParams,
@@ -602,3 +607,128 @@ async def test_aggregate_groups_null_nature_and_utc_month_stably() -> None:
         {"key": "2026-02", "count": 2},
     ]
     assert nature.completeness == months.completeness == "complete"
+
+
+async def _no_cancel() -> None:
+    return None
+
+
+@pytest.mark.asyncio
+async def test_combined_count_group_and_list_share_collection() -> None:
+    """统计、分组、列表共享筛选；列表 limit 不降低精确 count/group。"""
+    async with async_session_factory() as db:
+        user = await create_user(db, "组合查询")
+        workspace = await create_workspace(db, user)
+        project = await create_project(db, workspace)
+        node = await create_child_node(db, project, "记录")
+        source, attachment = await create_source_attachment(db, workspace, project)
+        conversation = KnowledgeConversation(
+            workspace_id=workspace.id,
+            owner_user_id=user.id,
+            scope_type="project",
+            project_id=project.id,
+            title="组合查询",
+        )
+        db.add(conversation)
+        await db.flush()
+        run = KnowledgeAgentRun(
+            conversation_id=conversation.id,
+            workspace_id=workspace.id,
+            owner_user_id=user.id,
+            scope_type="project",
+            project_id=project.id,
+            project_name=project.name,
+            status=RUN_PROCESSING,
+            active_slot=ACTIVE_SLOT,
+        )
+        db.add(run)
+        await db.flush()
+        for index, nature in enumerate(["experience", "experience", "fact"]):
+            await create_entry_with_evidence(
+                db,
+                project,
+                node,
+                source,
+                attachment,
+                title=f"记录{index}",
+                info_nature=nature,
+            )
+        plan = normalize_structured_query_plan(
+            {
+                "entry_set": {},
+                "outputs": [
+                    {"kind": "count"},
+                    {"kind": "group_count", "group_by": "info_nature"},
+                    {
+                        "kind": "entries",
+                        "limit": 1,
+                        "sort": {"field": "updated_at", "direction": "desc"},
+                    },
+                ],
+            }
+        )
+        ctx = RunToolContext(
+            run_id=run.id,
+            workspace_id=run.workspace_id,
+            owner_user_id=run.owner_user_id,
+            scope_type=run.scope_type,
+            project_id=run.project_id,
+            project_name=run.project_name,
+        )
+
+        result = await execute_structured_query_plan(
+            db, ctx, plan, cancel_check=_no_cancel
+        )
+
+    assert result.count == {
+        "value": 3,
+        "status": "completed",
+        "completeness": "complete",
+    }
+    assert result.group_counts[0]["buckets"] == [
+        {"key": "experience", "count": 2},
+        {"key": "fact", "count": 1},
+    ]
+    assert result.output_completeness["group_count"]["info_nature"] == "complete"
+    assert result.entries is not None and result.entries["returned_count"] == 1
+    assert result.output_completeness["entries"] == "limited"
+
+
+def test_truncation_preserves_count_and_marks_affected_outputs() -> None:
+    """JSON 字节截断只降低列表/分组，不篡改已经完成的精确 count。"""
+    result = StructuredQueryExecutionResult(
+        status="completed",
+        set_completeness="complete",
+        entries={
+            "items": [{"entry_id": index, "excerpt": "长正文" * 100} for index in range(5)],
+            "returned_count": 5,
+            "has_more": False,
+            "completeness": "complete",
+        },
+        count={"value": 50, "status": "completed", "completeness": "complete"},
+        group_counts=[
+            {
+                "group_by": "updated_month",
+                "buckets": [
+                    {"key": f"2026-{month:02d}", "count": month}
+                    for month in range(1, 13)
+                ],
+                "truncated": False,
+                "completeness": "complete",
+            }
+        ],
+        output_completeness={
+            "entries": "complete",
+            "count": "complete",
+            "group_count": {"updated_month": "complete"},
+        },
+        warnings=[],
+    )
+
+    bounded = apply_execution_byte_budget(result, max_bytes=900)
+
+    assert bounded.count == result.count
+    assert bounded.output_completeness["count"] == "complete"
+    assert bounded.output_completeness["entries"] == "limited"
+    assert bounded.entries is not None and bounded.entries["has_more"] is True
+    assert bounded.warnings
