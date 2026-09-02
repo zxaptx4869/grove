@@ -3,9 +3,10 @@
 来源 change：`add-knowledge-agent-open-discussion`（任务 8.1）
 验证日期：2026-09-02
 
-> 状态：阶段性记录，尚未完成任务 8.1。当前环境没有真实文本模型，所以下述
-> 结果只证明接口、严格知识库、调查与降级路径；model-first、hybrid 的真实完成
-> 响应仍需配置模型后补验。在补验完成前不得据此归档 change。
+> 状态：本 change 的阶段性 API 验收已完成。当前环境没有真实文本模型，所以下述
+> 结果证明接口、严格知识库、调查与降级路径；model-first、hybrid 的真实完成
+> 响应经用户确认转为生产开启 `KNOWLEDGE_AGENT_OPEN_DISCUSSION_ENABLED` 前的
+> 上线门槛，不阻塞本 change 归档。
 
 环境：本地开发后端，独立验收库 `backend/grove_accept_open.db`（迁移到
 `c7d8e9f0a1b2`），端口 8022，进程内 Worker 开启，
@@ -75,3 +76,10 @@ model-first 正常开放回答、hybrid 多类依据与 knowledge_first 带引�
 - `tests/test_knowledge_agent_investigation_runner.py`：显式 investigate
   强制真实 Grove、自动 model-first 不伪造调查、无证据一般回答；
 - `tests/test_knowledge_agent_worker.py`：取消不提交迟到回答、恢复不漂移。
+
+## 生产开启前上线门槛
+
+在生产环境将 `KNOWLEDGE_AGENT_OPEN_DISCUSSION_ENABLED` 设为 `true` 前，必须配置
+真实文本模型，补验 model-first、hybrid 与 knowledge_first 的完成态响应，并将
+provider、model、fallback、`answer_basis` 和界面展示结果回填本记录。补验未通过时
+保持特性开关关闭。

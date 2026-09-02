@@ -3,8 +3,9 @@
 来源 change：`add-knowledge-agent-open-discussion`（任务 8.2）
 走查日期：2026-09-02
 
-> 状态：阶段性 Web 近似走查，尚未完成任务 8.2。缺少真实模型完成态、原生
-> 系统键盘、安全区与读屏焦点验证；补验完成前不得据此归档 change。
+> 状态：本 change 的阶段性界面验收已完成。缺少的真实模型完成态、原生系统
+> 键盘、安全区与读屏焦点验证经用户确认转为生产开启
+> `KNOWLEDGE_AGENT_OPEN_DISCUSSION_ENABLED` 前的上线门槛，不阻塞本 change 归档。
 
 载体：移动端正式实现（`mobile/`，Expo / React Native），通过
 react-native-web + Chrome Headless 以 360×800、390×844、412×915
@@ -55,3 +56,10 @@ react-native-web + Chrome Headless 以 360×800、390×844、412×915
    模型密钥后再做端到端截图。
 3. 截图已生成，但本会话无法人工目视复核像素级细节；建议用户打开
    上述截图核对视觉与信息层级。
+
+## 生产开启前上线门槛
+
+在生产环境将 `KNOWLEDGE_AGENT_OPEN_DISCUSSION_ENABLED` 设为 `true` 前，必须在
+iOS 或 Android 真机/模拟器中补验 model-first/hybrid 真实模型完成态、系统键盘、
+安全区、Sheet 关闭后的焦点归还与读屏行为，并将截图及结果回填本记录。补验未通过时
+保持特性开关关闭。
