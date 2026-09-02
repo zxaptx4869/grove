@@ -7,7 +7,7 @@
 ## 2. 一次结构化计划与服务端校验
 
 - [x] 2.1 实现版本化 structured query planner 提示与结构化输出，只在 `actual_result_mode=entries` 且新开关开启时调用；记录 purpose、provider、model、fallback、error、duration、prompt version 和 usage。验收：`cd backend && .venv/bin/pytest -q tests/test_knowledge_agent_models.py -k structured_query`
-- [ ] 2.2 实现 `EntrySetSpec` 规范化与硬校验：范围只从 Run 注入；允许 semantic_query、main_type、info_nature、UTC 更新时间区间和受限排序；拒绝项目/目录/Entry id、未知字段、任意运算符、SQL、无语义相关性排序及相互矛盾时间范围。验收：`cd backend && .venv/bin/pytest -q tests/test_knowledge_agent_structured_query.py -k validation`
+- [x] 2.2 实现 `EntrySetSpec` 规范化与硬校验：范围只从 Run 注入；允许 semantic_query、main_type、info_nature、UTC 更新时间区间和受限排序；拒绝项目/目录/Entry id、未知字段、任意运算符、SQL、无语义相关性排序及相互矛盾时间范围。验收：`cd backend && .venv/bin/pytest -q tests/test_knowledge_agent_structured_query.py -k validation`
 - [ ] 2.3 校验共享集合上的 entries/count/group_count 输出、去重、稳定执行顺序和服务端预算；计划非法、模型未配置或调用失败时显式回退旧结构化查找，不生成聚合或精确承诺。验收：`cd backend && .venv/bin/pytest -q tests/test_knowledge_agent_structured_query.py -k 'plan or fallback or budget'`
 - [ ] 2.4 持久化服务端规范化后的计划快照而非原始模型输出；同 `client_message_id` 重试和已有计划的恢复不得再次规划或改变计划。验收：`cd backend && .venv/bin/pytest -q tests/test_knowledge_agent_runner.py tests/test_knowledge_agent_worker.py -k structured_query_plan`
 
