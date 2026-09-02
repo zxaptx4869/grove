@@ -40,3 +40,9 @@ test("模式覆盖只作用于下一条消息", () => {
   expect(afterSend.resultMode).toBe("auto");
   expect(afterSend.basisMode).toBe("auto");
 });
+
+test("结果形态仍只支持自动、综合回答与知识列表", () => {
+  expect(DEFAULT_MODES.resultMode).toBe("auto");
+  expect(withResultMode(DEFAULT_MODES, "answer").resultMode).toBe("answer");
+  expect(withResultMode(DEFAULT_MODES, "entries").resultMode).toBe("entries");
+});

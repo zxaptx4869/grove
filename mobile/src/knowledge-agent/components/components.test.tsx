@@ -473,6 +473,55 @@ test("查询结果聚合成功但列表 partial 时不降低精确计数", async
   expect(view.getByText("防水经验 1")).toBeOnTheScreen();
 });
 
+test("结构化查询保持知识列表结果形态并满足可访问只读边界", async () => {
+  const entryResult = structuredSnapshot({
+    groupCounts: [
+      {
+        groupBy: "info_nature",
+        buckets: [
+          { key: "fact", count: 8 },
+          { key: "experience", count: 7 },
+          { key: "advice", count: 6 },
+          { key: "speculation", count: 5 },
+          { key: "unspecified", count: 4 },
+        ],
+        completeness: "complete",
+        status: "completed",
+        truncated: false,
+      },
+    ],
+  });
+  const view = await render(
+    <EntryResultsCard
+      run={run(35, "completed", null, {
+        requestResultMode: "auto",
+        actualResultMode: "entries",
+        entryResult,
+      })}
+      scopeLabel="全部知识"
+      state={{ ...structuredState(entryResult.items), hasMore: true }}
+      onPrime={jest.fn()}
+      onLoadMore={jest.fn()}
+      onRetry={jest.fn()}
+      onOpenItem={jest.fn()}
+      onCorrectMode={jest.fn()}
+      onRefine={jest.fn()}
+    />,
+  );
+  expect(view.getByText("结构化知识查询")).toBeOnTheScreen();
+  expect(view.queryByText("综合回答")).toBeNull();
+  expect(view.queryByText(/Citation|引用|整理成知识|修订|勾选|全选|批量/)).toBeNull();
+  expect(view.getByLabelText(/筛选条件：/)).toBeOnTheScreen();
+  expect(view.getByLabelText("第 1 条，正式知识，防水经验 1，新房装修 / 施工 / 防水"))
+    .toBeOnTheScreen();
+  const expand = view.getByLabelText("展开按信息性质其余 1 组");
+  expect(StyleSheet.flatten(expand.props.style).minHeight).toBeGreaterThanOrEqual(44);
+  const loadMore = view.getByLabelText("加载更多结果");
+  expect(StyleSheet.flatten(loadMore.props.style).minHeight).toBeGreaterThanOrEqual(44);
+  const correct = view.getByLabelText("改为综合回答");
+  expect(StyleSheet.flatten(correct.props.style).minHeight).toBeGreaterThanOrEqual(44);
+});
+
 function message(
   id: number,
   role: "user" | "assistant",
