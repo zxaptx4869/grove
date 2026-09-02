@@ -49,6 +49,8 @@ class RunToolContext:
     project_id: int | None
     project_name: str | None
     discovered_entry_ids: set[int] = field(default_factory=set)
+    # 结构化语义计划由服务端准备的共享候选集合；模型参数中不存在此字段
+    structured_query_entry_ids: set[int] | None = None
 
 
 class SearchResultItem(BaseModel):

@@ -21,7 +21,9 @@ from app.services.knowledge_agent.structured_query import (
     restore_structured_query_plan,
 )
 from app.services.knowledge_agent.structured_query_tools import (
+    AggregateEntriesParams,
     QueryEntriesParams,
+    aggregate_entries_handler,
     query_entries_handler,
 )
 from app.services.knowledge_agent.tools import RunToolContext
@@ -485,3 +487,118 @@ async def test_semantic_query_combines_structured_filters_and_stays_limited(
     ]
     assert result.status == "limited"
     assert result.completeness == "limited"
+
+
+@pytest.mark.asyncio
+async def test_aggregate_count_queries_full_shared_set_not_entry_limit() -> None:
+    """count 直接覆盖共享集合，不从有界列表返回数反推。"""
+    async with async_session_factory() as db:
+        user = await create_user(db, "精确聚合")
+        workspace = await create_workspace(db, user)
+        project = await create_project(db, workspace)
+        node = await create_child_node(db, project, "记录")
+        source, attachment = await create_source_attachment(db, workspace, project)
+        for index in range(7):
+            await create_entry_with_evidence(
+                db,
+                project,
+                node,
+                source,
+                attachment,
+                title=f"经验{index}",
+                info_nature="experience",
+            )
+        ctx = RunToolContext(
+            run_id=1,
+            workspace_id=workspace.id,
+            owner_user_id=user.id,
+            scope_type="project",
+            project_id=project.id,
+            project_name=project.name,
+        )
+        params = AggregateEntriesParams.model_validate(
+            {
+                "entry_set": {"info_natures": ["experience"]},
+                "operation": "count",
+            }
+        )
+
+        result = await aggregate_entries_handler(db, ctx, params)
+
+    assert result.payload == {"value": 7}
+    assert result.completeness == "complete"
+    assert result.status == "completed"
+
+
+@pytest.mark.asyncio
+async def test_aggregate_groups_null_nature_and_utc_month_stably() -> None:
+    """NULL 性质统一为 unspecified，UTC 月桶按 YYYY-MM 稳定排序。"""
+    async with async_session_factory() as db:
+        user = await create_user(db, "分组聚合")
+        workspace = await create_workspace(db, user)
+        project = await create_project(db, workspace)
+        node = await create_child_node(db, project, "记录")
+        source, attachment = await create_source_attachment(db, workspace, project)
+        first = await create_entry_with_evidence(
+            db,
+            project,
+            node,
+            source,
+            attachment,
+            title="未标注一",
+            info_nature=None,
+        )
+        second = await create_entry_with_evidence(
+            db,
+            project,
+            node,
+            source,
+            attachment,
+            title="未标注二",
+            info_nature=None,
+        )
+        third = await create_entry_with_evidence(
+            db,
+            project,
+            node,
+            source,
+            attachment,
+            title="事实",
+            info_nature="fact",
+        )
+        first.updated_at = datetime(2026, 2, 1, tzinfo=UTC)
+        second.updated_at = datetime(2026, 1, 31, 23, 59, tzinfo=UTC)
+        third.updated_at = datetime(2026, 2, 15, tzinfo=UTC)
+        await db.flush()
+        ctx = RunToolContext(
+            run_id=1,
+            workspace_id=workspace.id,
+            owner_user_id=user.id,
+            scope_type="project",
+            project_id=project.id,
+            project_name=project.name,
+        )
+        nature = await aggregate_entries_handler(
+            db,
+            ctx,
+            AggregateEntriesParams.model_validate(
+                {"entry_set": {}, "operation": "group_count", "group_by": "info_nature"}
+            ),
+        )
+        months = await aggregate_entries_handler(
+            db,
+            ctx,
+            AggregateEntriesParams.model_validate(
+                {"entry_set": {}, "operation": "group_count", "group_by": "updated_month"}
+            ),
+        )
+
+    assert nature.payload["buckets"] == [
+        {"key": "fact", "count": 1},
+        {"key": "unspecified", "count": 2},
+    ]
+    assert months.payload["buckets"] == [
+        {"key": "2026-01", "count": 1},
+        {"key": "2026-02", "count": 2},
+    ]
+    assert nature.completeness == months.completeness == "complete"

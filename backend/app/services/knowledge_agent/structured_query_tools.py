@@ -5,9 +5,10 @@
 """
 
 from time import perf_counter
+from typing import Literal
 
-from pydantic import Field
-from sqlalchemy import Select, asc, desc, or_, select
+from pydantic import Field, model_validator
+from sqlalchemy import Select, asc, desc, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -47,6 +48,23 @@ class QueryEntriesParams(ReadToolParams):
     entry_set: NormalizedEntrySetSpec
     limit: int = Field(ge=1, le=100)
     sort: NormalizedEntrySort
+
+
+class AggregateEntriesParams(ReadToolParams):
+    """aggregate_entries v1 参数；聚合直接针对共享集合执行。"""
+
+    entry_set: NormalizedEntrySetSpec
+    operation: Literal["count", "group_count"]
+    group_by: Literal["main_type", "info_nature", "updated_month"] | None = None
+
+    @model_validator(mode="after")
+    def validate_operation(self) -> "AggregateEntriesParams":
+        """count 不接受分组字段，group_count 必须指定白名单字段。"""
+        if self.operation == "count" and self.group_by is not None:
+            raise ValueError("count 不接受 group_by")
+        if self.operation == "group_count" and self.group_by is None:
+            raise ValueError("group_count 必须指定 group_by")
+        return self
 
 
 def _apply_entry_set_filters(
@@ -112,6 +130,119 @@ def structured_scope_select(
     if ctx.project_id is not None:
         stmt = stmt.where(Entry.project_id == ctx.project_id)
     return _apply_entry_set_filters(stmt, entry_set)
+
+
+def _aggregate_scope_stmt(
+    ctx: RunToolContext,
+    entry_set: NormalizedEntrySetSpec,
+) -> Select:
+    """构造聚合共享集合范围；语义集合只能使用服务端预先固化的候选 id。"""
+    stmt = (
+        select(Entry.id)
+        .join(Project, Entry.project_id == Project.id)
+        .where(Project.workspace_id == ctx.workspace_id)
+    )
+    if ctx.project_id is not None:
+        stmt = stmt.where(Entry.project_id == ctx.project_id)
+    stmt = _apply_entry_set_filters(stmt, entry_set)
+    if entry_set.semantic_query is not None:
+        if ctx.structured_query_entry_ids is None:
+            raise ValueError("semantic_query 共享集合尚未由服务端准备")
+        stmt = stmt.where(Entry.id.in_(ctx.structured_query_entry_ids))
+    return stmt
+
+
+def _updated_month_expression(dialect_name: str):
+    """为 SQLite/MySQL 8 生成一致的 UTC YYYY-MM 月桶表达式。"""
+    if dialect_name == "mysql":
+        return func.date_format(Entry.updated_at, "%Y-%m")
+    if dialect_name == "sqlite":
+        return func.strftime("%Y-%m", Entry.updated_at)
+    # 测试/未来方言的保守表达；生产范围当前只支持 SQLite/MySQL 8
+    return func.to_char(Entry.updated_at, "YYYY-MM")
+
+
+async def aggregate_entries_handler(
+    db: AsyncSession,
+    ctx: RunToolContext,
+    params: AggregateEntriesParams,
+) -> ReadToolExecution:
+    """直接对共享集合执行 count/group_count，不依赖任何列表输出。"""
+    settings = get_settings()
+    base_ids = _aggregate_scope_stmt(ctx, params.entry_set).subquery()
+    semantic = params.entry_set.semantic_query is not None
+    base_completeness = (
+        RESULT_COMPLETENESS_LIMITED if semantic else RESULT_COMPLETENESS_COMPLETE
+    )
+    if params.operation == "count":
+        value = int(
+            (
+                await db.execute(select(func.count()).select_from(base_ids))
+            ).scalar_one()
+        )
+        status = TOOL_EMPTY if value == 0 else (
+            TOOL_LIMITED if semantic else "completed"
+        )
+        return ReadToolExecution(
+            status=status,
+            payload={"value": value},
+            completeness=base_completeness,
+            audit_summary={
+                "operation": "count",
+                "value": value,
+                "semantic": semantic,
+                "completeness": base_completeness,
+            },
+        )
+
+    dialect_name = db.bind.dialect.name if db.bind is not None else "sqlite"
+    if params.group_by == "main_type":
+        bucket_expr = Entry.main_type
+    elif params.group_by == "info_nature":
+        bucket_expr = func.coalesce(Entry.info_nature, "unspecified")
+    else:
+        bucket_expr = _updated_month_expression(dialect_name)
+    stmt = (
+        select(bucket_expr.label("bucket"), func.count(Entry.id).label("count"))
+        .where(Entry.id.in_(select(base_ids.c.id)))
+        .group_by(bucket_expr)
+        .order_by(asc(bucket_expr))
+        .limit(settings.knowledge_agent_structured_query_bucket_limit + 1)
+    )
+    rows = list((await db.execute(stmt)).all())
+    truncated = len(rows) > settings.knowledge_agent_structured_query_bucket_limit
+    rows = rows[: settings.knowledge_agent_structured_query_bucket_limit]
+    buckets = [
+        {"key": str(row.bucket), "count": int(row.count)}
+        for row in rows
+        if row.bucket is not None
+    ]
+    completeness = (
+        RESULT_COMPLETENESS_LIMITED if semantic or truncated else base_completeness
+    )
+    if not buckets:
+        status = TOOL_EMPTY
+    elif semantic or truncated:
+        status = TOOL_LIMITED
+    else:
+        status = "completed"
+    return ReadToolExecution(
+        status=status,
+        payload={
+            "group_by": params.group_by,
+            "buckets": buckets,
+            "truncated": truncated,
+        },
+        completeness=completeness,
+        audit_summary={
+            "operation": "group_count",
+            "group_by": params.group_by,
+            "bucket_count": len(buckets),
+            "semantic": semantic,
+            "truncated": truncated,
+            "completeness": completeness,
+        },
+    )
 
 
 def _sort_semantic_candidates(
@@ -344,5 +475,11 @@ STRUCTURED_QUERY_TOOL_REGISTRY: dict[str, ReadToolSpec] = {
         version=STRUCTURED_QUERY_TOOL_VERSION,
         params_model=QueryEntriesParams,
         handler=query_entries_handler,
-    )
+    ),
+    "aggregate_entries": ReadToolSpec(
+        name="aggregate_entries",
+        version=STRUCTURED_QUERY_TOOL_VERSION,
+        params_model=AggregateEntriesParams,
+        handler=aggregate_entries_handler,
+    ),
 }
