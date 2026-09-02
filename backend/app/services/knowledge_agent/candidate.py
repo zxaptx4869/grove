@@ -117,6 +117,21 @@ def _parse_answer_json(run: KnowledgeAgentRun):
     return KnowledgeAnswerOut.model_validate(data)
 
 
+def _parse_answer_basis_json(run: KnowledgeAgentRun):
+    """解析 Run 实际依据；缺失/损坏返回 None（旧 Run 兼容）。"""
+    if not run.answer_basis_json:
+        return None
+    try:
+        data = json.loads(run.answer_basis_json)
+    except (json.JSONDecodeError, TypeError):
+        return None
+    if not isinstance(data, dict):
+        return None
+    from app.schemas.knowledge_agent import KnowledgeAnswerBasisOut
+
+    return KnowledgeAnswerBasisOut.model_validate(data)
+
+
 def _final_citation_handles(answer) -> list[str]:
     """收集最终回答采用的 Evidence 句柄（引用 + 冲突双方，去重）。"""
     handles = [citation.evidence_handle for citation in answer.citations]
@@ -206,6 +221,23 @@ async def get_source_run_for_draft(
             status_code=status.HTTP_409_CONFLICT,
             detail="来源回答没有最终有效引用，无法整理成知识",
         )
+    basis = _parse_answer_basis_json(run)
+    if basis is not None:
+        # 新 Run：只有可证明的纯 Grove 依据才能进入旧 draft_candidate；
+        # 模型优先、混合、用户陈述或外部材料缺口即使含 Citation 也拒绝。
+        used_model_knowledge = basis.model_knowledge.used
+        used_user_statements = bool(basis.user_statements.message_ids)
+        external_unavailable = (
+            basis.external_material.status == "required_unavailable"
+        )
+        if used_model_knowledge or used_user_statements or external_unavailable:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail=(
+                    "该回答使用了模型通用知识、用户提供的信息或存在外部材料缺口，"
+                    "暂不支持旧“整理成知识”入口"
+                ),
+            )
     return run, answer
 
 

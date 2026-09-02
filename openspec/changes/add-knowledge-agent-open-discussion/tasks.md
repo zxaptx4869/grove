@@ -21,8 +21,8 @@
 
 ## 4. 旧 Candidate Draft 兼容
 
-- [ ] 4.1 在服务端增加旧 `draft_candidate` 资格校验：新 Run 仅允许可证明的纯 Grove 依据回答，模型优先、混合、用户陈述或外部缺口回答即使有 Citation 也拒绝；旧 Run 沿用最终 Evidence 复验。验收：`cd backend && .venv/bin/pytest -q tests/test_knowledge_agent_candidate_drafts.py tests/test_knowledge_agent_draft_api.py`
-- [ ] 4.2 验证旧 pending Candidate、历史 Draft、旧 Reader 共享创建服务和单 Entry Revision 不受 basis 字段影响，不创建或覆盖正式 Entry。验收：`cd backend && .venv/bin/pytest -q tests/test_knowledge_agent_candidate_drafts.py tests/test_knowledge_agent_entry_revision.py`
+- [x] 4.1 在服务端增加旧 `draft_candidate` 资格校验：新 Run 仅允许可证明的纯 Grove 依据回答，模型优先、混合、用户陈述或外部缺口回答即使有 Citation 也拒绝；旧 Run 沿用最终 Evidence 复验。验收：`cd backend && .venv/bin/pytest -q tests/test_knowledge_agent_candidate_drafts.py tests/test_knowledge_agent_draft_api.py`
+- [x] 4.2 验证旧 pending Candidate、历史 Draft、旧 Reader 共享创建服务和单 Entry Revision 不受 basis 字段影响，不创建或覆盖正式 Entry。验收：`cd backend && .venv/bin/pytest -q tests/test_knowledge_agent_candidate_drafts.py tests/test_knowledge_agent_entry_revision.py`
 
 ## 5. 原生端协议与一次性模式
 

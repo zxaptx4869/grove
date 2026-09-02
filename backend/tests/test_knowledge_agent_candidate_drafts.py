@@ -745,6 +745,107 @@ async def test_submit_rejects_ineligible_and_cross_conversation_source() -> None
 
 
 @pytest.mark.asyncio
+async def test_submit_rejects_hybrid_basis_even_with_citation() -> None:
+    """新 Run 混合/模型依据：即使含 Citation 也拒绝旧整理入口。"""
+    from fastapi import HTTPException
+
+    from app.services.knowledge_agent.basis import build_answer_basis
+
+    async with async_session_factory() as db:
+        user = await create_user(db, "混合整理")
+        workspace = await create_workspace(db, user)
+        project = await create_project(db, workspace, "混合项目")
+        conversation, source_run, _entry, _source, _attachment, evidence = (
+            await _answer_run_with_evidence(db, user, workspace, project)
+        )
+        answer = KnowledgeAnswerOut.model_validate_json(source_run.answer_json)
+        basis = build_answer_basis(
+            answer=answer,
+            user_statement_ids=[evidence.id],
+            model_knowledge_used=True,
+            external_material_required=False,
+        )
+        source_run.answer_basis_json = basis.model_dump_json()
+        await db.commit()
+
+        with pytest.raises(HTTPException) as exc_info:
+            await submit_draft_candidate(
+                db,
+                conversation,
+                _draft_action(source_run_id=source_run.id),
+            )
+        assert exc_info.value.status_code == 409
+        assert "模型通用知识" in exc_info.value.detail
+
+
+@pytest.mark.asyncio
+async def test_submit_rejects_external_material_gap_basis() -> None:
+    """外部材料缺口回答：即使含 Citation 也拒绝旧整理入口。"""
+    from fastapi import HTTPException
+
+    from app.services.knowledge_agent.basis import build_answer_basis
+
+    async with async_session_factory() as db:
+        user = await create_user(db, "外部缺口")
+        workspace = await create_workspace(db, user)
+        project = await create_project(db, workspace, "外部项目")
+        conversation, source_run, _entry, _source, _attachment, _evidence = (
+            await _answer_run_with_evidence(db, user, workspace, project)
+        )
+        answer = KnowledgeAnswerOut.model_validate_json(source_run.answer_json)
+        basis = build_answer_basis(
+            answer=answer,
+            user_statement_ids=[],
+            model_knowledge_used=False,
+            external_material_required=True,
+        )
+        source_run.answer_basis_json = basis.model_dump_json()
+        await db.commit()
+
+        with pytest.raises(HTTPException) as exc_info:
+            await submit_draft_candidate(
+                db,
+                conversation,
+                _draft_action(source_run_id=source_run.id),
+            )
+        assert exc_info.value.status_code == 409
+        assert "外部材料" in exc_info.value.detail
+
+
+@pytest.mark.asyncio
+async def test_submit_allows_pure_grove_basis() -> None:
+    """纯 Grove 新 Run：可证明未用模型/陈述/外部材料时仍可整理。"""
+    from app.services.knowledge_agent.basis import build_answer_basis
+
+    async with async_session_factory() as db:
+        user = await create_user(db, "纯Grove整理")
+        workspace = await create_workspace(db, user)
+        project = await create_project(db, workspace, "纯Grove项目")
+        conversation, source_run, _entry, _source, _attachment, _evidence = (
+            await _answer_run_with_evidence(db, user, workspace, project)
+        )
+        answer = KnowledgeAnswerOut.model_validate_json(source_run.answer_json)
+        basis = build_answer_basis(
+            answer=answer,
+            user_statement_ids=[],
+            model_knowledge_used=False,
+            external_material_required=False,
+        )
+        source_run.answer_basis_json = basis.model_dump_json()
+        await db.commit()
+
+        message, run, draft = await submit_draft_candidate(
+            db,
+            conversation,
+            _draft_action(source_run_id=source_run.id),
+        )
+        await db.commit()
+        assert run.source_run_id == source_run.id
+        assert draft.source_run_id == source_run.id
+        assert draft.status == DRAFT_GENERATING
+
+
+@pytest.mark.asyncio
 async def test_submit_rejects_cross_workspace_target_project() -> None:
     """越权 target_project_id 返回 404，不暴露对象是否存在。"""
     from fastapi import HTTPException
