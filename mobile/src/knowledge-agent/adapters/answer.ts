@@ -2,6 +2,7 @@
 
 import type {
   AnswerStatus,
+  ExternalMaterialStatus,
   InvestigationStopReason,
   KnowledgeAnswer,
   KnowledgeRun,
@@ -24,6 +25,21 @@ export interface DraftActionEligibility {
   fixedProjectId: number | null;
   /** partial 回答只整理有依据部分。 */
   note: string | null;
+}
+
+/** 依据概览：只从服务端结构化 answer_basis 派生，不解析正文或工具过程。 */
+export interface AnswerBasisView {
+  basisKind: "grove" | "model" | "hybrid";
+  /** 卡片语义标签：基于你的知识 / AI 即时回答 / 混合依据。 */
+  label: string;
+  /** 紧凑展示片段（用「 · 」连接）。 */
+  segments: string[];
+  groveCitationCount: number;
+  userStatementIds: number[];
+  modelKnowledgeUsed: boolean;
+  externalStatus: ExternalMaterialStatus | null;
+  /** 是否有可展开详情（Grove/用户陈述/模型知识/外部边界）。 */
+  hasDetail: boolean;
 }
 
 export interface RevisionTarget {
@@ -131,17 +147,132 @@ export function presentAnswer(
   }
 }
 
+/** 依据展示只读派生：旧回答缺少 answer_basis 时返回 null，沿用现有展示。 */
+export function answerBasisView(
+  run: KnowledgeRun,
+): AnswerBasisView | null {
+  const basis = run.answerBasis;
+  if (!basis) return null;
+  const groveCount = basis.grove.citationCount;
+  const userStatementIds = [...basis.userStatements.messageIds];
+  const modelUsed = basis.modelKnowledge.used;
+  const external = basis.externalMaterial;
+  const nothingUsed =
+    !basis.grove.used &&
+    !modelUsed &&
+    userStatementIds.length === 0 &&
+    external.status === "not_used";
+  if (nothingUsed) {
+    // 严格知识不足/无实际形成依据：不伪造“AI 即时回答”或“混合依据”。
+    return null;
+  }
+  if (
+    !basis.grove.used &&
+    !modelUsed &&
+    userStatementIds.length === 0 &&
+    external.status === "required_unavailable"
+  ) {
+    return {
+      basisKind: "hybrid",
+      label: "需要外部材料",
+      segments: ["未检索实时外部资料，当前需要外部材料"],
+      groveCitationCount: 0,
+      userStatementIds,
+      modelKnowledgeUsed: false,
+      externalStatus: external.status,
+      hasDetail: true,
+    };
+  }
+  const groveOnly =
+    basis.grove.used && !modelUsed && userStatementIds.length === 0;
+  const modelOnly =
+    !basis.grove.used && modelUsed && userStatementIds.length === 0;
+
+  const segments: string[] = [];
+  if (groveCount > 0) {
+    segments.push(`你的知识 ${groveCount} 条`);
+  }
+  if (userStatementIds.length > 0) {
+    segments.push(`结合你提供的 ${userStatementIds.length} 条信息`);
+  }
+  if (modelUsed) {
+    segments.push(groveOnly ? "AI 通用知识" : "AI 通用知识补充");
+  }
+  if (external.status === "required_unavailable") {
+    segments.push("当前需要外部材料，未检索实时外部资料");
+  } else if (modelOnly) {
+    segments.push("未使用你的知识库", "未检索实时外部资料");
+  }
+
+  if (groveOnly) {
+    return {
+      basisKind: "grove",
+      label: "基于你的知识",
+      segments: segments.length > 0 ? segments : ["基于你的知识"],
+      groveCitationCount: groveCount,
+      userStatementIds,
+      modelKnowledgeUsed: false,
+      externalStatus: external.status,
+      hasDetail: groveCount > 0,
+    };
+  }
+  if (modelOnly) {
+    return {
+      basisKind: "model",
+      label: "AI 即时回答",
+      segments:
+        segments.length > 0
+          ? segments
+          : ["AI 通用知识", "未检索实时外部资料"],
+      groveCitationCount: 0,
+      userStatementIds,
+      modelKnowledgeUsed: true,
+      externalStatus: external.status,
+      hasDetail:
+        external.status === "required_unavailable" ||
+        userStatementIds.length > 0,
+    };
+  }
+  // 混合依据：Grove 与用户陈述/模型知识并存
+  return {
+    basisKind: "hybrid",
+    label: "混合依据",
+    segments:
+      segments.length > 0
+        ? segments
+        : ["结合你提供的信息", "AI 通用知识补充"],
+    groveCitationCount: groveCount,
+    userStatementIds,
+    modelKnowledgeUsed: modelUsed,
+    externalStatus: external.status,
+    hasDetail:
+      groveCount > 0 ||
+      userStatementIds.length > 0 ||
+      external.status === "required_unavailable",
+  };
+}
+
 export function draftActionEligibility(
   run: KnowledgeRun,
 ): DraftActionEligibility {
   const answer = run.answer;
   const status = answer?.status ?? null;
+  const basis = run.answerBasis;
   // 旧客户端/旧缓存可能缺少 runKind：默认视为普通 answer Run，保持兼容
   const runKind = run.runKind ?? "answer";
+  // 新 Run：只有可证明的纯 Grove 依据才能进入旧整理入口；模型知识、
+  // 用户陈述或外部材料缺口即使含 Citation 也隐藏入口（服务端仍会再次校验）。
+  const openBasisIneligible =
+    basis !== undefined &&
+    basis !== null &&
+    (basis.modelKnowledge.used ||
+      basis.userStatements.messageIds.length > 0 ||
+      basis.externalMaterial.status === "required_unavailable");
   const eligible =
     runKind === "answer" &&
     (status === "completed" || status === "partial") &&
-    (answer?.citations.length ?? 0) > 0;
+    (answer?.citations.length ?? 0) > 0 &&
+    !openBasisIneligible;
   const options = new Map<number, string | null>();
   for (const citation of answer?.citations ?? []) {
     if (citation.projectId && !options.has(citation.projectId)) {

@@ -426,6 +426,174 @@ test("五种回答状态区分展示，知识不足不显示成功文案", async
   }
 });
 
+test("依据概览区分 AI 即时回答与基于你的知识，无引用完成回答正常", async () => {
+  const modelOnly = await render(
+    <AnswerCard
+      run={run(
+        1,
+        "completed",
+        {
+          answer: "这是一段开放通用回答。",
+          status: "completed",
+          insufficientNote: null,
+          citations: [],
+          conflicts: [],
+        },
+        {
+          answerBasis: {
+            schemaVersion: "v1",
+            grove: { used: false, citationCount: 0, entryCount: 0 },
+            userStatements: { messageIds: [] },
+            modelKnowledge: { used: true },
+            externalMaterial: { status: "not_used" },
+          },
+        },
+      )}
+      scopeLabel="全部知识"
+      onCitationPress={jest.fn()}
+      onRetry={jest.fn()}
+      onOrganize={jest.fn()}
+    />,
+    { wrapper },
+  );
+  expect(modelOnly.getAllByText("AI 即时回答").length).toBeGreaterThan(0);
+  expect(modelOnly.getByText("综合回答")).toBeOnTheScreen();
+  expect(modelOnly.getByText(/AI 通用知识/)).toBeOnTheScreen();
+  expect(modelOnly.getByText(/未使用你的知识库/)).toBeOnTheScreen();
+  expect(modelOnly.queryByText("整理成知识")).toBeNull();
+  await modelOnly.unmount();
+
+  const groveOnly = await render(
+    <AnswerCard
+      run={run(
+        2,
+        "completed",
+        {
+          answer: "基于正式知识的回答。",
+          status: "completed",
+          insufficientNote: null,
+          citations: [citation(1)],
+          conflicts: [],
+        },
+        {
+          answerBasis: {
+            schemaVersion: "v1",
+            grove: { used: true, citationCount: 1, entryCount: 1 },
+            userStatements: { messageIds: [] },
+            modelKnowledge: { used: false },
+            externalMaterial: { status: "not_used" },
+          },
+        },
+      )}
+      scopeLabel="全部知识"
+      onCitationPress={jest.fn()}
+      onRetry={jest.fn()}
+      onOrganize={jest.fn()}
+    />,
+    { wrapper },
+  );
+  expect(groveOnly.getAllByText("基于你的知识").length).toBeGreaterThan(0);
+  expect(groveOnly.getByText("整理成知识")).toBeOnTheScreen();
+  await groveOnly.unmount();
+});
+
+test("依据详情展示用户陈述与外部材料边界并可定位消息", async () => {
+  const onCitationPress = jest.fn();
+  const onLocateMessage = jest.fn();
+  const messagesById = new Map<number, KnowledgeMessage>([
+    [
+      3,
+      {
+        id: 3,
+        conversationId: 1,
+        role: "user",
+        messageType: "user",
+        content: "我的预算上限是 30 万",
+        clientMessageId: "c-3",
+        runId: 1,
+        scopeType: "workspace",
+        projectId: null,
+        projectName: null,
+        requestContextMode: null,
+        contextDecision: null,
+        standaloneQuery: null,
+        topicLabel: null,
+        requestAnswerMode: null,
+        actualAnswerMode: null,
+        requestResultMode: null,
+        actualResultMode: null,
+        currentRound: 0,
+        inputContextVersionId: null,
+        outputContextVersionId: null,
+        createdAt: "2026-08-29T10:00:00Z",
+      },
+    ],
+  ]);
+  const view = await render(
+    <AnswerCard
+      run={run(
+        1,
+        "completed",
+        {
+          answer: "混合建议。",
+          status: "completed",
+          insufficientNote: null,
+          citations: [citation(1)],
+          conflicts: [],
+        },
+        {
+          answerBasis: {
+            schemaVersion: "v1",
+            grove: { used: true, citationCount: 1, entryCount: 1 },
+            userStatements: { messageIds: [3] },
+            modelKnowledge: { used: true },
+            externalMaterial: { status: "required_unavailable" },
+          },
+        },
+      )}
+      scopeLabel="全部知识"
+      onCitationPress={onCitationPress}
+      onRetry={jest.fn()}
+      onOrganize={jest.fn()}
+      messagesById={messagesById}
+      onLocateMessage={onLocateMessage}
+    />,
+    { wrapper },
+  );
+  expect(view.getAllByText("混合依据").length).toBeGreaterThan(0);
+  await fireEvent.press(view.getByLabelText(/回答依据：/));
+  expect(view.getByText("你提供的信息")).toBeOnTheScreen();
+  expect(view.getByText("我的预算上限是 30 万")).toBeOnTheScreen();
+  expect(view.getByText("外部材料边界")).toBeOnTheScreen();
+  expect(view.getByText(/未接入实时外部检索/)).toBeOnTheScreen();
+  await fireEvent.press(view.getByLabelText("定位到消息 3"));
+  expect(onLocateMessage).toHaveBeenCalledWith(3);
+  await view.unmount();
+});
+
+test("旧回答缺少 basis 时维持现有展示且历史整理入口可恢复", async () => {
+  const view = await render(
+    <AnswerCard
+      run={run(1, "completed", {
+        answer: "历史回答。",
+        status: "completed",
+        insufficientNote: null,
+        citations: [citation(1)],
+        conflicts: [],
+      })}
+      scopeLabel="全部知识"
+      onCitationPress={jest.fn()}
+      onRetry={jest.fn()}
+      onOrganize={jest.fn()}
+    />,
+    { wrapper },
+  );
+  expect(view.getAllByText("基于正式知识").length).toBeGreaterThan(0);
+  expect(view.queryByLabelText(/回答依据：/)).toBeNull();
+  expect(view.getByText("整理成知识")).toBeOnTheScreen();
+  await view.unmount();
+});
+
 test("insufficient 带引用时仍遵循后端知识不足状态", async () => {
   const view = await render(
     <AnswerCard

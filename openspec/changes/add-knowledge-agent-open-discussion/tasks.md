@@ -31,10 +31,10 @@
 
 ## 6. 原生回答依据展示
 
-- [ ] 6.1 新增 basis 展示适配器，完全根据服务端结构化字段生成紧凑概览，不解析正文或工具过程；旧回答缺少 basis 时维持现有展示。验收：`cd mobile && npm test -- --runInBand src/knowledge-agent/adapters/answer.test.ts`
-- [ ] 6.2 在 AnswerCard 中区分“AI 即时回答”“基于你的知识”和混合依据，支持无 Citation 的 completed 回答，不把回答、用户陈述或模型知识显示为 Candidate/Entry。验收：`cd mobile && npm test -- --runInBand src/knowledge-agent/components/components.test.tsx -t '依据|无引用|开放回答'`
-- [ ] 6.3 实现可滚动依据详情：Grove 项复用 Citation Sheet，用户陈述显示服务端摘要并可定位消息，模型知识与外部材料只显示性质和边界；关闭后恢复对话位置与焦点。验收：`cd mobile && npm test -- --runInBand src/knowledge-agent/components/components.test.tsx -t '依据详情|用户陈述|外部材料'`
-- [ ] 6.4 按服务端资格控制固定“整理成知识”入口，确保混合/模型回答隐藏、旧历史回答继续可恢复，服务端拒绝时显示就地错误。验收：`cd mobile && npm test -- --runInBand src/knowledge-agent/adapters/answer.test.ts src/knowledge-agent/hooks/useConversationController.test.tsx`
+- [x] 6.1 新增 basis 展示适配器，完全根据服务端结构化字段生成紧凑概览，不解析正文或工具过程；旧回答缺少 basis 时维持现有展示。验收：`cd mobile && npm test -- --runInBand src/knowledge-agent/adapters/answer.test.ts`
+- [x] 6.2 在 AnswerCard 中区分“AI 即时回答”“基于你的知识”和混合依据，支持无 Citation 的 completed 回答，不把回答、用户陈述或模型知识显示为 Candidate/Entry。验收：`cd mobile && npm test -- --runInBand src/knowledge-agent/components/components.test.tsx -t '依据|无引用|开放回答'`
+- [x] 6.3 实现可滚动依据详情：Grove 项复用 Citation Sheet，用户陈述显示服务端摘要并可定位消息，模型知识与外部材料只显示性质和边界；关闭后恢复对话位置与焦点。验收：`cd mobile && npm test -- --runInBand src/knowledge-agent/components/components.test.tsx -t '依据详情|用户陈述|外部材料'`
+- [x] 6.4 按服务端资格控制固定“整理成知识”入口，确保混合/模型回答隐藏、旧历史回答继续可恢复，服务端拒绝时显示就地错误。验收：`cd mobile && npm test -- --runInBand src/knowledge-agent/adapters/answer.test.ts src/knowledge-agent/hooks/useConversationController.test.tsx`
 
 ## 7. 代表性评估与自动验证
 

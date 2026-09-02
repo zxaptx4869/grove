@@ -14,9 +14,11 @@ import {
   Card,
   CardBody,
   Eyebrow,
+  Sheet,
   type BadgeTone,
 } from "@/src/knowledge-agent/components/ui";
 import {
+  answerBasisView,
   cleanAnswerText,
   draftActionEligibility,
   investigationSummaryLine,
@@ -27,6 +29,7 @@ import { presentFallback } from "@/src/knowledge-agent/adapters/fallback";
 import type {
   KnowledgeConflict,
   KnowledgeAnswerPoint,
+  KnowledgeMessage,
   KnowledgeRun,
   KnowledgeRunCitation,
 } from "@/src/knowledge-agent/types";
@@ -79,6 +82,132 @@ function CitationStrip({
         ))}
       </ScrollView>
     </View>
+  );
+}
+
+function AnswerBasisOverview({
+  run,
+  messagesById,
+  onCitationPress,
+  onLocateMessage,
+}: {
+  run: KnowledgeRun;
+  messagesById?: ReadonlyMap<number, KnowledgeMessage>;
+  onCitationPress: (citation: KnowledgeRunCitation) => void;
+  onLocateMessage?: (messageId: number) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const view = answerBasisView(run);
+  if (!view || (view.segments.length === 0 && !view.hasDetail)) {
+    return null;
+  }
+  const answer = run.answer;
+  const citations = answer?.citations ?? [];
+  const compactText = view.segments.join(" · ");
+  return (
+    <>
+      <Pressable
+        accessibilityRole="button"
+        accessibilityLabel={`回答依据：${compactText}`}
+        onPress={() => setOpen(true)}
+        style={({ pressed }) => [
+          styles.basisRow,
+          pressed && styles.basisRowPressed,
+        ]}
+      >
+        <AgentIcon name="book" size={14} color={theme.green} />
+        <Text style={styles.basisRowText} numberOfLines={2}>
+          {compactText}
+        </Text>
+        <AgentIcon name="chevron" size={14} color={theme.muted} />
+      </Pressable>
+      <Sheet visible={open} title="回答依据" onClose={() => setOpen(false)}>
+        <View style={styles.basisHeadlineRow}>
+          <Text style={styles.basisHeadline}>{view.label}</Text>
+          <Text style={styles.basisHint}>依据来自本次回答的服务端快照</Text>
+        </View>
+        {citations.length > 0 && view.groveCitationCount > 0 && (
+          <View style={styles.basisSection}>
+            <Text style={styles.basisSectionTitle}>你的知识</Text>
+            {citations.slice(0, view.groveCitationCount).map((citation) => (
+              <Pressable
+                key={citation.evidenceId}
+                accessibilityRole="button"
+                accessibilityLabel={`查看知识条目：${citation.entryTitle}`}
+                onPress={() => onCitationPress(citation)}
+                style={({ pressed }) => [
+                  styles.basisItem,
+                  pressed && styles.basisRowPressed,
+                ]}
+              >
+                <View style={styles.basisItemMain}>
+                  <Text style={styles.basisItemTitle}>{citation.entryTitle}</Text>
+                  <Text style={styles.basisItemQuote} numberOfLines={2}>
+                    {citation.sourceTitle} · {citation.quote}
+                  </Text>
+                </View>
+                <AgentIcon name="chevron" size={14} color={theme.muted} />
+              </Pressable>
+            ))}
+          </View>
+        )}
+        {view.userStatementIds.length > 0 && (
+          <View style={styles.basisSection}>
+            <Text style={styles.basisSectionTitle}>你提供的信息</Text>
+            {view.userStatementIds.map((messageId) => {
+              const statement = messagesById?.get(messageId);
+              return (
+                <View key={messageId} style={styles.basisItem}>
+                  <View style={styles.basisItemMain}>
+                    <Text style={styles.basisItemQuote} numberOfLines={3}>
+                      {statement?.content ?? `用户消息 #${messageId}`}
+                    </Text>
+                    <Text style={styles.basisItemMeta}>
+                      只作为本次回答的个人前提，不是正式知识
+                    </Text>
+                  </View>
+                  {statement && onLocateMessage && (
+                    <Pressable
+                      accessibilityRole="button"
+                      accessibilityLabel={`定位到消息 ${messageId}`}
+                      onPress={() => {
+                        setOpen(false);
+                        onLocateMessage(messageId);
+                      }}
+                      hitSlop={8}
+                      style={styles.basisLocate}
+                    >
+                      <Text style={styles.basisLocateText}>定位</Text>
+                    </Pressable>
+                  )}
+                </View>
+              );
+            })}
+          </View>
+        )}
+        {view.modelKnowledgeUsed && (
+          <View style={styles.basisSection}>
+            <Text style={styles.basisSectionTitle}>AI 通用知识</Text>
+            <Text style={styles.basisBoundary}>
+              本回答使用了模型通用能力补充；通用知识不生成引用，不代表已核验事实。
+            </Text>
+          </View>
+        )}
+        {view.externalStatus === "required_unavailable" && (
+          <View style={styles.basisSection}>
+            <Text style={styles.basisSectionTitle}>外部材料边界</Text>
+            <Text style={styles.basisBoundary}>
+              当前未接入实时外部检索，本次没有核验实时政策/价格/规则等材料，
+              相关边界内容请另行核对。
+            </Text>
+          </View>
+        )}
+        <Text style={styles.basisFootnote}>
+          依据概览由服务端结构化字段生成；Grove 引用可打开原文，AI 通用知识与
+          你提供的信息不会显示为正式知识条目。
+        </Text>
+      </Sheet>
+    </>
   );
 }
 
@@ -257,6 +386,8 @@ export function AnswerCard({
   onOrganize,
   onRefineQuestion,
   onListEntries,
+  messagesById,
+  onLocateMessage,
 }: {
   run: KnowledgeRun;
   scopeLabel: string;
@@ -266,6 +397,8 @@ export function AnswerCard({
   onRefineQuestion?: (run: KnowledgeRun) => void;
   /** 低强调「列出相关知识」：以新消息直接重新提交原问题。 */
   onListEntries?: (run: KnowledgeRun) => void;
+  messagesById?: ReadonlyMap<number, KnowledgeMessage>;
+  onLocateMessage?: (messageId: number) => void;
 }) {
   const answer = run.answer;
   const presentation = presentAnswer(answer, run.status);
@@ -290,6 +423,8 @@ export function AnswerCard({
     );
   }
   const organize = draftActionEligibility(run);
+  const basisView = answerBasisView(run);
+  const displayHeadline = basisView?.label ?? presentation.headline;
 
   return (
     <>
@@ -318,7 +453,7 @@ export function AnswerCard({
                     />
                   }
                 >
-                  {presentation.headline}
+                  {displayHeadline}
                 </Eyebrow>
                 <Text style={styles.answerTitle}>
                   {presentation.status === "clarification"
@@ -330,7 +465,7 @@ export function AnswerCard({
                         : "综合回答"}
                 </Text>
               </View>
-              <Badge tone={tone}>{presentation.headline}</Badge>
+              <Badge tone={tone}>{displayHeadline}</Badge>
             </View>
             {presentation.note !== null && (
               <Text
@@ -376,6 +511,12 @@ export function AnswerCard({
               citations={citations}
               workspaceScope={workspaceScope}
               onCitationPress={onCitationPress}
+            />
+            <AnswerBasisOverview
+              run={run}
+              messagesById={messagesById}
+              onCitationPress={onCitationPress}
+              onLocateMessage={onLocateMessage}
             />
             <ScopeStamp label={scopeLabel} />
             {onListEntries !== undefined &&
@@ -678,4 +819,65 @@ const styles = StyleSheet.create({
     letterSpacing: 0.2,
   },
   investigationItem: { fontSize: 11, lineHeight: 18, color: theme.muted },
+  basisRow: {
+    minHeight: 40,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+    marginTop: 10,
+    paddingHorizontal: 9,
+    paddingVertical: 7,
+    borderWidth: 1,
+    borderColor: "#CFE4D7",
+    borderRadius: 7,
+    backgroundColor: theme.greenSoft,
+  },
+  basisRowPressed: { opacity: 0.85 },
+  basisRowText: {
+    flex: 1,
+    fontSize: 11,
+    lineHeight: 17,
+    color: theme.green,
+    fontWeight: "600",
+  },
+  basisHeadlineRow: { gap: 3, marginBottom: 4 },
+  basisHeadline: { fontSize: 15, lineHeight: 22, fontWeight: "700", color: theme.ink },
+  basisHint: { fontSize: 10, lineHeight: 16, color: theme.muted },
+  basisSection: { gap: 7, marginTop: 12 },
+  basisSectionTitle: {
+    fontSize: 10,
+    fontWeight: "700",
+    color: theme.muted,
+    letterSpacing: 0.2,
+  },
+  basisItem: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+    padding: 9,
+    borderWidth: 1,
+    borderColor: theme.border,
+    borderRadius: 7,
+    backgroundColor: theme.surface,
+  },
+  basisItemMain: { flex: 1, minWidth: 0, gap: 3 },
+  basisItemTitle: { fontSize: 13, lineHeight: 18, fontWeight: "600", color: theme.ink },
+  basisItemQuote: { fontSize: 11, lineHeight: 17, color: theme.muted },
+  basisItemMeta: { fontSize: 10, lineHeight: 15, color: theme.muted },
+  basisLocate: {
+    minHeight: 32,
+    alignItems: "center",
+    justifyContent: "center",
+    paddingHorizontal: 8,
+    borderRadius: 6,
+    backgroundColor: theme.greenSoft,
+  },
+  basisLocateText: { fontSize: 11, fontWeight: "600", color: theme.green },
+  basisBoundary: { fontSize: 12, lineHeight: 19, color: theme.ink },
+  basisFootnote: {
+    marginTop: 14,
+    fontSize: 10,
+    lineHeight: 16,
+    color: theme.muted,
+  },
 });

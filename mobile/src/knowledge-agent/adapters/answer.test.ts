@@ -1,4 +1,5 @@
 import {
+  answerBasisView,
   cleanAnswerText,
   draftActionEligibility,
   presentAnswer,
@@ -323,4 +324,156 @@ test("draft_candidate Run 与旧缺省 runKind 都按只读回答判定", () => 
     }),
   );
   expect(legacyRun.eligible).toBe(true);
+});
+
+function basisAnswerRun(overrides: Partial<KnowledgeRun> = {}): KnowledgeRun {
+  return run({
+    answer: {
+      answer: "开放回答内容。",
+      status: "completed",
+      insufficientNote: null,
+      citations: [],
+      conflicts: [],
+    },
+    ...overrides,
+  });
+}
+
+test("旧回答缺少 answer_basis 时 basis 视图为空，沿用现有展示", () => {
+  expect(answerBasisView(run({ answer: null }))).toBeNull();
+  expect(
+    answerBasisView(
+      basisAnswerRun({
+        answerBasis: undefined,
+      }),
+    ),
+  ).toBeNull();
+});
+
+test("model-first 依据视图：AI 即时回答且不含伪来源", () => {
+  const view = answerBasisView(
+    basisAnswerRun({
+      answerBasis: {
+        schemaVersion: "v1",
+        grove: { used: false, citationCount: 0, entryCount: 0 },
+        userStatements: { messageIds: [] },
+        modelKnowledge: { used: true },
+        externalMaterial: { status: "not_used" },
+      },
+    }),
+  );
+  expect(view?.basisKind).toBe("model");
+  expect(view?.label).toBe("AI 即时回答");
+  expect(view?.segments.join(" · ")).toContain("AI 通用知识");
+  expect(view?.segments.join(" · ")).toContain("未使用你的知识库");
+  expect(view?.segments.join(" · ")).toContain("未检索实时外部资料");
+});
+
+test("Grove-only 依据视图：基于你的知识并派生引用数量", () => {
+  const view = answerBasisView(
+    basisAnswerRun({
+      answer: {
+        answer: "引用回答。",
+        status: "completed",
+        insufficientNote: null,
+        citations: [
+          citation(1, "项目甲"),
+          citation(1, "项目甲"),
+          citation(2, "项目乙"),
+        ],
+        conflicts: [],
+      },
+      answerBasis: {
+        schemaVersion: "v1",
+        grove: { used: true, citationCount: 3, entryCount: 2 },
+        userStatements: { messageIds: [] },
+        modelKnowledge: { used: false },
+        externalMaterial: { status: "not_used" },
+      },
+    }),
+  );
+  expect(view?.basisKind).toBe("grove");
+  expect(view?.label).toBe("基于你的知识");
+  expect(view?.segments).toContain("你的知识 3 条");
+});
+
+test("混合依据视图：三类依据分开展示，不解析正文", () => {
+  const view = answerBasisView(
+    basisAnswerRun({
+      answerBasis: {
+        schemaVersion: "v1",
+        grove: { used: true, citationCount: 2, entryCount: 1 },
+        userStatements: { messageIds: [11, 9] },
+        modelKnowledge: { used: true },
+        externalMaterial: { status: "not_used" },
+      },
+    }),
+  );
+  expect(view?.basisKind).toBe("hybrid");
+  expect(view?.label).toBe("混合依据");
+  expect(view?.segments).toContain("你的知识 2 条");
+  expect(view?.segments).toContain("结合你提供的 2 条信息");
+  expect(view?.segments).toContain("AI 通用知识补充");
+  expect(view?.userStatementIds).toEqual([11, 9]);
+});
+
+test("外部材料缺口在依据视图可见且不暗示已联网", () => {
+  const view = answerBasisView(
+    basisAnswerRun({
+      answerBasis: {
+        schemaVersion: "v1",
+        grove: { used: false, citationCount: 0, entryCount: 0 },
+        userStatements: { messageIds: [] },
+        modelKnowledge: { used: true },
+        externalMaterial: { status: "required_unavailable" },
+      },
+    }),
+  );
+  expect(view?.label).toBe("AI 即时回答");
+  expect(view?.externalStatus).toBe("required_unavailable");
+  expect(view?.segments.join(" · ")).toContain("未检索实时外部资料");
+});
+
+test("draft 入口按服务端 basis 资格隐藏模型/混合回答", () => {
+  const hybrid = draftActionEligibility(
+    basisAnswerRun({
+      answer: {
+        answer: "混合回答",
+        status: "completed",
+        insufficientNote: null,
+        citations: [citation(1, "项目甲")],
+        conflicts: [],
+      },
+      answerBasis: {
+        schemaVersion: "v1",
+        grove: { used: true, citationCount: 1, entryCount: 1 },
+        userStatements: { messageIds: [9] },
+        modelKnowledge: { used: true },
+        externalMaterial: { status: "not_used" },
+      },
+    }),
+  );
+  expect(hybrid.eligible).toBe(false);
+  expect(hybrid.sourceRunId).toBeNull();
+
+  const pureGrove = draftActionEligibility(
+    basisAnswerRun({
+      answer: {
+        answer: "纯 Grove 回答",
+        status: "completed",
+        insufficientNote: null,
+        citations: [citation(1, "项目甲")],
+        conflicts: [],
+      },
+      answerBasis: {
+        schemaVersion: "v1",
+        grove: { used: true, citationCount: 1, entryCount: 1 },
+        userStatements: { messageIds: [] },
+        modelKnowledge: { used: false },
+        externalMaterial: { status: "not_used" },
+      },
+    }),
+  );
+  expect(pureGrove.eligible).toBe(true);
+  expect(pureGrove.sourceRunId).toBe(1);
 });

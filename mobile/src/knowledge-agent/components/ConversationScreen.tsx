@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   ActivityIndicator,
   LayoutAnimation,
@@ -220,6 +220,21 @@ export function ConversationScreen() {
       void controller.changeScope(scope);
     },
     [controller],
+  );
+
+  const locateUserMessage = useCallback(
+    (messageId: number) => {
+      // 依据详情中的“定位”：把对话滚到包含该用户消息的区域附近。
+      // ScrollView 子项高度不固定，采用按消息序号估算的偏移；加载更早
+      // 消息后内容高度变化，仍可再次点击定位。
+      const index = controller.thread.items.findIndex(
+        (item) => item.id === messageId,
+      );
+      if (index < 0) return;
+      const estimatedY = Math.max(0, index * 140);
+      scrollRef.current?.scrollTo({ y: estimatedY, animated: true });
+    },
+    [controller.thread.items],
   );
 
   const handleOrganize = useCallback(
@@ -460,6 +475,8 @@ export function ConversationScreen() {
               <ThreadMessage
                 key={message.id}
                 message={message}
+                allMessages={controller.thread.items}
+                onLocateMessage={locateUserMessage}
                 run={controller.thread.runsById.get(message.runId ?? -1) ?? null}
                 cancelling={controller.cancelling}
                 pollingError={controller.runPollingError}
@@ -825,6 +842,8 @@ function ThreadMessage({
   onViewRevisionDiff,
   onCancelRevision,
   onRetryRevision,
+  allMessages,
+  onLocateMessage,
 }: {
   message: KnowledgeMessage;
   run: KnowledgeRun | null;
@@ -866,7 +885,13 @@ function ThreadMessage({
   onViewRevisionDiff: (draftId: number) => void;
   onCancelRevision: (draftId: number) => void;
   onRetryRevision: (draft: KnowledgeEntryRevisionDraft) => void;
+  allMessages?: KnowledgeMessage[];
+  onLocateMessage?: (messageId: number) => void;
 }) {
+  const messagesById = useMemo(
+    () => new Map((allMessages ?? []).map((item) => [item.id, item])),
+    [allMessages],
+  );
   if (message.messageType === "scope_change") {
     return (
       <View style={styles.scopeDivider}>
@@ -1134,6 +1159,8 @@ function ThreadMessage({
           onRetry={() => {
             onRetryRun(run.id);
           }}
+          messagesById={messagesById}
+          onLocateMessage={onLocateMessage}
         />
       )}
     </View>
