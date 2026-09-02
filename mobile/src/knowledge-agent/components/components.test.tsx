@@ -360,6 +360,119 @@ test("结构化查询 limited 计数使用本次匹配边界而非精确全集",
   expect(view.queryByText("共 9 条")).toBeNull();
 });
 
+test("查询结果空集合保留服务端精确零计数和可操作空态", async () => {
+  const entryResult = structuredSnapshot({
+    items: [],
+    returnedCount: 0,
+    completeness: "complete",
+    count: { value: 0, completeness: "complete", status: "empty" },
+    groupCounts: [],
+    outputCompleteness: {
+      entries: null,
+      count: "complete",
+      groupCount: {},
+    },
+    sort: null,
+  });
+  const onRefine = jest.fn();
+  const view = await render(
+    <EntryResultsCard
+      run={run(32, "completed", null, {
+        actualResultMode: "entries",
+        entryResult,
+      })}
+      scopeLabel="全部知识"
+      state={structuredState([])}
+      onPrime={jest.fn()}
+      onLoadMore={jest.fn()}
+      onRetry={jest.fn()}
+      onOpenItem={jest.fn()}
+      onCorrectMode={jest.fn()}
+      onRefine={onRefine}
+    />,
+  );
+  expect(view.getByText("共 0 条")).toBeOnTheScreen();
+  expect(view.getByText("没有找到匹配的正式知识")).toBeOnTheScreen();
+  await fireEvent.press(view.getByLabelText("修改问题"));
+  expect(onRefine).toHaveBeenCalled();
+});
+
+test("查询结果长分组有界展开并保留服务端桶截断提示", async () => {
+  const entryResult = structuredSnapshot({
+    groupCounts: [
+      {
+        groupBy: "info_nature",
+        buckets: [
+          { key: "fact", count: 8 },
+          { key: "experience", count: 7 },
+          { key: "advice", count: 6 },
+          { key: "speculation", count: 5 },
+          { key: "other", count: 4 },
+          { key: "unspecified", count: 3 },
+        ],
+        completeness: "complete",
+        status: "limited",
+        truncated: true,
+      },
+    ],
+  });
+  const view = await render(
+    <EntryResultsCard
+      run={run(33, "completed", null, {
+        actualResultMode: "entries",
+        entryResult,
+      })}
+      scopeLabel="全部知识"
+      state={structuredState(entryResult.items)}
+      onPrime={jest.fn()}
+      onLoadMore={jest.fn()}
+      onRetry={jest.fn()}
+      onOpenItem={jest.fn()}
+      onCorrectMode={jest.fn()}
+      onRefine={jest.fn()}
+    />,
+  );
+  expect(view.queryByText("未标注")).toBeNull();
+  expect(view.getByText(/仅显示服务端返回的前几组/)).toBeOnTheScreen();
+  await fireEvent.press(view.getByLabelText("展开按信息性质其余 2 组"));
+  expect(view.getByText("未标注")).toBeOnTheScreen();
+});
+
+test("查询结果聚合成功但列表 partial 时不降低精确计数", async () => {
+  const entryResult = structuredSnapshot({
+    status: "partial",
+    completeness: "unknown",
+    items: [structuredEntry(1)],
+    returnedCount: 1,
+    outputCompleteness: {
+      entries: "unknown",
+      count: "complete",
+      groupCount: { infoNature: "complete" },
+    },
+    warnings: ["一条历史 Entry 当前不可用"],
+  });
+  const view = await render(
+    <EntryResultsCard
+      run={run(34, "partial", null, {
+        actualResultMode: "entries",
+        entryResult,
+      })}
+      scopeLabel="全部知识"
+      state={structuredState(entryResult.items)}
+      onPrime={jest.fn()}
+      onLoadMore={jest.fn()}
+      onRetry={jest.fn()}
+      onOpenItem={jest.fn()}
+      onCorrectMode={jest.fn()}
+      onRefine={jest.fn()}
+    />,
+  );
+  expect(view.getByText("共 23 条")).toBeOnTheScreen();
+  expect(view.getByText(/部分匹配对象当前不可用/)).toBeOnTheScreen();
+  expect(view.getByText("一条历史 Entry 当前不可用")).toBeOnTheScreen();
+  expect(view.getByText("防水经验 1")).toBeOnTheScreen();
+});
+
 function message(
   id: number,
   role: "user" | "assistant",
