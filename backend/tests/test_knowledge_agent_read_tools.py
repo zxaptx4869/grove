@@ -16,6 +16,9 @@ from app.models.knowledge_agent import (
     TOOL_COMPLETED,
     TOOL_DENIED,
 )
+from app.services.knowledge_agent.read_tool_adapters import (
+    KNOWLEDGE_AGENT_READ_TOOL_REGISTRY,
+)
 from app.services.knowledge_agent.read_tools import (
     ReadToolBudget,
     ReadToolExecution,
@@ -175,3 +178,42 @@ async def test_dispatcher_denies_scope_fields_before_handler() -> None:
 
 async def _noop_cancel() -> None:
     return None
+
+
+def test_dispatcher_registry_contains_structured_and_existing_read_tools() -> None:
+    """统一静态 registry 明确列出工具，不通过模块扫描或名称猜测发现。"""
+    assert set(KNOWLEDGE_AGENT_READ_TOOL_REGISTRY) == {
+        "query_entries",
+        "aggregate_entries",
+        "search_knowledge",
+        "read_entries",
+        "read_evidence",
+    }
+
+
+@pytest.mark.asyncio
+async def test_read_entries_adapter_keeps_discovered_set_boundary() -> None:
+    """统一入口不能让未发现 Entry id 绕过既有权限边界。"""
+    async with async_session_factory() as db:
+        run, ctx = await _run_context(db)
+        result = await dispatch_read_tool(
+            db,
+            ctx,
+            tool_name="read_entries",
+            tool_version="v1",
+            params={"entry_ids": [999999]},
+            budget=ReadToolBudget(1, 1, 4000),
+            cancel_check=_noop_cancel,
+            registry=KNOWLEDGE_AGENT_READ_TOOL_REGISTRY,
+        )
+        call = (
+            await db.execute(
+                select(KnowledgeAgentToolCall).where(
+                    KnowledgeAgentToolCall.run_id == run.id
+                )
+            )
+        ).scalar_one()
+
+    assert result.status == TOOL_DENIED
+    assert result.payload["denied_entry_ids"] == [999999]
+    assert "content" not in (call.result_summary or "")
