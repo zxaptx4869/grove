@@ -156,6 +156,40 @@ class Settings(BaseSettings):
             "65535 字节上限，SQLite 无上限）"
         ),
     )
+    # 一次结构化查询计划（阶段 B1）：默认关闭，范围只由 Run 固化上下文注入
+    knowledge_agent_structured_query_enabled: bool = Field(
+        default=False, description="知识 Agent 一次结构化查询计划是否启用"
+    )
+    knowledge_agent_structured_query_planner_timeout_seconds: float = Field(
+        default=20.0, description="结构化查询规划模型调用超时（秒）"
+    )
+    knowledge_agent_structured_query_plan_bytes_limit: int = Field(
+        default=12000, description="规范化结构化查询计划 JSON 最大字节数"
+    )
+    knowledge_agent_structured_query_max_outputs: int = Field(
+        default=3, description="单个结构化查询计划最多输出数"
+    )
+    knowledge_agent_structured_query_max_tool_calls: int = Field(
+        default=3, description="单个结构化查询计划最多只读工具调用数"
+    )
+    knowledge_agent_structured_query_entry_limit: int = Field(
+        default=30, description="query_entries 单次最多返回并持久化的 Entry 数"
+    )
+    knowledge_agent_structured_query_semantic_candidate_limit: int = Field(
+        default=50, description="含 semantic_query 时最多处理的语义候选数"
+    )
+    knowledge_agent_structured_query_bucket_limit: int = Field(
+        default=24, description="group_count 单次最多返回的分组桶数"
+    )
+    knowledge_agent_structured_query_execution_timeout_seconds: float = Field(
+        default=15.0, description="结构化查询确定性执行总超时（秒）"
+    )
+    knowledge_agent_structured_query_result_json_bytes_limit: int = Field(
+        default=60000,
+        description=(
+            "结构化查询 v2 结果 JSON 最大字节数（低于 MySQL TEXT 65535 字节）"
+        ),
+    )
     # 结果形态路由：auto 请求独立路由；关闭时 auto 一律 answer
     knowledge_agent_result_mode_router_enabled: bool = Field(
         default=True, description="auto 结果形态路由是否启用；关闭时 auto 一律综合回答"
