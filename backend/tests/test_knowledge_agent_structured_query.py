@@ -4,14 +4,22 @@ from datetime import UTC, datetime
 from types import SimpleNamespace
 
 import pytest
+from sqlalchemy import select
 
+from app.agents.structured_query import StructuredQueryPlanDraft
 from app.core.config import Settings
+from app.db.session import async_session_factory
+from app.models import KnowledgeAgentModelInvocation, KnowledgeAgentRun, KnowledgeConversation
+from app.models.knowledge_agent import ACTIVE_SLOT, RUN_PROCESSING, SCOPE_WORKSPACE
+from app.services.knowledge_agent.observability import StageMeta
 from app.services.knowledge_agent.structured_query import (
     StructuredQueryPlanError,
     normalize_structured_query_plan,
     persist_structured_query_plan,
+    plan_and_persist_structured_query,
     restore_structured_query_plan,
 )
+from tests._knowledge_agent_fixtures import create_user, create_workspace
 
 
 def _plan(**entry_set) -> dict:
@@ -164,3 +172,80 @@ def test_structured_query_plan_snapshot_is_normalized_and_immutable() -> None:
     restored = persist_structured_query_plan(run, different)
     assert restored == first
     assert run.structured_query_plan_json == raw
+
+
+@pytest.mark.asyncio
+async def test_plan_validation_fallback_is_observable(monkeypatch) -> None:
+    """服务端硬校验失败时留痕并返回旧查找信号，不固化非法计划。"""
+
+    async def _invalid_planner(db, workspace_id, **kwargs):
+        del db, workspace_id, kwargs
+        return (
+            StructuredQueryPlanDraft.model_validate(
+                {
+                    "entry_set": {},
+                    "outputs": [
+                        {
+                            "kind": "entries",
+                            "limit": 5,
+                            "sort": {"field": "relevance", "direction": "desc"},
+                        }
+                    ],
+                }
+            ),
+            StageMeta(
+                purpose="structured_query_plan",
+                provider="test",
+                model="test-model",
+                is_fallback=False,
+                error=None,
+                duration_ms=3,
+                usage={"requests": 1},
+            ),
+        )
+
+    monkeypatch.setattr(
+        "app.services.knowledge_agent.structured_query.run_structured_query_planner",
+        _invalid_planner,
+    )
+    async with async_session_factory() as db:
+        user = await create_user(db, "计划降级")
+        workspace = await create_workspace(db, user)
+        conversation = KnowledgeConversation(
+            workspace_id=workspace.id,
+            owner_user_id=user.id,
+            scope_type=SCOPE_WORKSPACE,
+            title="计划降级",
+        )
+        db.add(conversation)
+        await db.flush()
+        run = KnowledgeAgentRun(
+            conversation_id=conversation.id,
+            workspace_id=workspace.id,
+            owner_user_id=user.id,
+            scope_type=SCOPE_WORKSPACE,
+            status=RUN_PROCESSING,
+            active_slot=ACTIVE_SLOT,
+        )
+        db.add(run)
+        await db.flush()
+
+        plan = await plan_and_persist_structured_query(
+            db,
+            run,
+            objective="列出相关知识",
+            scope_label="全部知识",
+        )
+
+        invocation = (
+            await db.execute(
+                select(KnowledgeAgentModelInvocation).where(
+                    KnowledgeAgentModelInvocation.run_id == run.id
+                )
+            )
+        ).scalar_one()
+        assert plan is None
+        assert run.structured_query_plan_json is None
+        assert invocation.is_fallback is True
+        assert "relevance" in (invocation.error or "")
+        assert invocation.usage_json is not None
