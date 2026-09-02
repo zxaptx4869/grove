@@ -102,6 +102,8 @@ async def create_entry_with_evidence(
     title: str = "闭水试验",
     content: str = "闭水试验通常持续 24 小时。",
     quote: str | None = None,
+    main_type: str = "knowledge",
+    info_nature: str | None = None,
 ) -> Entry:
     """创建已确认 Entry 与真实来源证据（quote 为候选引用片段）。"""
     entry = Entry(
@@ -109,7 +111,8 @@ async def create_entry_with_evidence(
         node_id=node.id,
         title=title,
         content=content,
-        main_type="knowledge",
+        main_type=main_type,
+        info_nature=info_nature,
     )
     db.add(entry)
     await db.flush()

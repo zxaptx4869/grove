@@ -14,7 +14,7 @@
 ## 3. 受控只读执行器与确定性工具
 
 - [x] 3.1 建立应用控制的只读工具 registry/dispatcher，统一注入 Run 可信上下文、工具版本、预算、取消检查、状态与有界审计；未知工具不得通过动态导入、反射或名称猜测执行。验收：`cd backend && .venv/bin/pytest -q tests/test_knowledge_agent_read_tools.py -k dispatcher`
-- [ ] 3.2 实现 `query_entries` 的纯结构化范围查询，只读取正式 Entry，支持 main_type、info_nature、UTC updated_at 过滤及 updated_at/created_at 稳定排序，并以 Entry id 作为 tie-breaker。验收：`cd backend && .venv/bin/pytest -q tests/test_knowledge_agent_structured_query.py -k query_entries`
+- [x] 3.2 实现 `query_entries` 的纯结构化范围查询，只读取正式 Entry，支持 main_type、info_nature、UTC updated_at 过滤及 updated_at/created_at 稳定排序，并以 Entry id 作为 tie-breaker。验收：`cd backend && .venv/bin/pytest -q tests/test_knowledge_agent_structured_query.py -k query_entries`
 - [ ] 3.3 将可选 semantic_query 接入既有混合召回与重排，再与结构化条件组合；相关性集合必须标记 limited/unknown，不能因局部关键词命中或 top-k 返回而声明完整。验收：`cd backend && .venv/bin/pytest -q tests/test_knowledge_agent_structured_query.py -k semantic`
 - [ ] 3.4 实现 `aggregate_entries` 的直接 count 与按 main_type、info_nature、UTC updated_month 分组，不能从截断 Entry 列表反推；空 info_nature 统一为 unspecified，SQLite/MySQL 8 的时间桶、空值和稳定顺序语义一致。验收：`cd backend && .venv/bin/pytest -q tests/test_knowledge_agent_structured_query.py -k aggregate`
 - [ ] 3.5 实现共享集合上的“统计 + 分组 + 列表”执行和分输出完整性派生；分别处理列表 limit、聚合桶、语义候选、超时、对象失效与 JSON 字节截断。验收：`cd backend && .venv/bin/pytest -q tests/test_knowledge_agent_structured_query.py -k 'combined or completeness or truncation'`

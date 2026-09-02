@@ -19,7 +19,19 @@ from app.services.knowledge_agent.structured_query import (
     plan_and_persist_structured_query,
     restore_structured_query_plan,
 )
-from tests._knowledge_agent_fixtures import create_user, create_workspace
+from app.services.knowledge_agent.structured_query_tools import (
+    QueryEntriesParams,
+    query_entries_handler,
+)
+from app.services.knowledge_agent.tools import RunToolContext
+from tests._knowledge_agent_fixtures import (
+    create_child_node,
+    create_entry_with_evidence,
+    create_project,
+    create_source_attachment,
+    create_user,
+    create_workspace,
+)
 
 
 def _plan(**entry_set) -> dict:
@@ -249,3 +261,133 @@ async def test_plan_validation_fallback_is_observable(monkeypatch) -> None:
         assert invocation.is_fallback is True
         assert "relevance" in (invocation.error or "")
         assert invocation.usage_json is not None
+
+
+@pytest.mark.asyncio
+async def test_query_entries_filters_scope_type_nature_time_and_stable_sort() -> None:
+    """纯结构化查询只读当前范围正式 Entry，并按时间 + id 稳定排序。"""
+    async with async_session_factory() as db:
+        user = await create_user(db, "结构化列表")
+        workspace = await create_workspace(db, user)
+        project = await create_project(db, workspace, "目标项目")
+        node = await create_child_node(db, project, "记录")
+        other_project = await create_project(db, workspace, "其他项目")
+        other_node = await create_child_node(db, other_project, "其他")
+        source, attachment = await create_source_attachment(db, workspace, project)
+        first = await create_entry_with_evidence(
+            db,
+            project,
+            node,
+            source,
+            attachment,
+            title="经验一",
+            main_type="knowledge",
+            info_nature="experience",
+        )
+        second = await create_entry_with_evidence(
+            db,
+            project,
+            node,
+            source,
+            attachment,
+            title="经验二",
+            main_type="knowledge",
+            info_nature="experience",
+        )
+        await create_entry_with_evidence(
+            db,
+            project,
+            node,
+            source,
+            attachment,
+            title="项目内其他类型",
+            main_type="method",
+            info_nature="experience",
+        )
+        other_source, other_attachment = await create_source_attachment(
+            db, workspace, other_project
+        )
+        await create_entry_with_evidence(
+            db,
+            other_project,
+            other_node,
+            other_source,
+            other_attachment,
+            title="范围外经验",
+            info_nature="experience",
+        )
+        tied = datetime(2026, 5, 1, tzinfo=UTC)
+        first.updated_at = tied
+        second.updated_at = tied
+        await db.flush()
+        ctx = RunToolContext(
+            run_id=1,
+            workspace_id=workspace.id,
+            owner_user_id=user.id,
+            scope_type="project",
+            project_id=project.id,
+            project_name=project.name,
+        )
+        params = QueryEntriesParams.model_validate(
+            {
+                "entry_set": {
+                    "main_types": ["knowledge"],
+                    "info_natures": ["experience"],
+                    "updated_at": {
+                        "from": "2026-01-01T00:00:00Z",
+                        "to": "2027-01-01T00:00:00Z",
+                    },
+                },
+                "limit": 10,
+                "sort": {"field": "updated_at", "direction": "desc"},
+            }
+        )
+
+        result = await query_entries_handler(db, ctx, params)
+
+    ids = [item["entry_id"] for item in result.payload["items"]]
+    assert ids == sorted([first.id, second.id], reverse=True)
+    assert result.completeness == "complete"
+    assert result.payload["has_more"] is False
+
+
+@pytest.mark.asyncio
+async def test_query_entries_limit_marks_only_list_as_limited() -> None:
+    """列表达到 limit 时明确 limited，不把返回卡片数冒充集合总数。"""
+    async with async_session_factory() as db:
+        user = await create_user(db, "结构化列表上限")
+        workspace = await create_workspace(db, user)
+        project = await create_project(db, workspace)
+        node = await create_child_node(db, project, "记录")
+        source, attachment = await create_source_attachment(db, workspace, project)
+        for index in range(3):
+            await create_entry_with_evidence(
+                db,
+                project,
+                node,
+                source,
+                attachment,
+                title=f"记录{index}",
+            )
+        ctx = RunToolContext(
+            run_id=1,
+            workspace_id=workspace.id,
+            owner_user_id=user.id,
+            scope_type="project",
+            project_id=project.id,
+            project_name=project.name,
+        )
+        params = QueryEntriesParams.model_validate(
+            {
+                "entry_set": {},
+                "limit": 2,
+                "sort": {"field": "created_at", "direction": "asc"},
+            }
+        )
+
+        result = await query_entries_handler(db, ctx, params)
+
+    assert result.status == "limited"
+    assert result.completeness == "limited"
+    assert result.payload["returned_count"] == 2
+    assert "total" not in result.payload
