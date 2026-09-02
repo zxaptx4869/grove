@@ -543,6 +543,8 @@ class KnowledgeAgentRun(Base):
     answer_json: Mapped[str | None] = mapped_column(Text, nullable=True)
     # 结构化 Entry 结果 JSON（终态一次性写入；有界快照，不保存完整正文）
     entry_result_json: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # StructuredQueryPlan v1：只保存服务端校验、规范化后的计划；旧 Run 保持为空
+    structured_query_plan_json: Mapped[str | None] = mapped_column(Text, nullable=True)
     error: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False

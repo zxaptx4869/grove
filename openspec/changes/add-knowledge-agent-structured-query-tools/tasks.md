@@ -1,7 +1,7 @@
 ## 1. 数据、协议与兼容骨架
 
 - [x] 1.1 增加 `StructuredQueryPlan v1`、`EntrySetSpec v1`、结构化输出、工具状态与完整性领域类型，并配置结构化查询特性开关、计划/输出/调用/桶数/耗时/字节预算；所有模型可控字段使用闭合枚举和长度限制。验收：`cd backend && .venv/bin/ruff check app/agents app/core/config.py app/models/knowledge_agent.py app/schemas/knowledge_agent.py`
-- [ ] 1.2 以追加 Alembic 迁移为 Knowledge Agent Run 增加可空规范化查询计划快照字段，不回填或猜测旧 Run；迁移必须兼容 SQLite 与 MySQL 8，并明确降级/回滚只移除新增列。验收：`cd backend && .venv/bin/alembic upgrade head && .venv/bin/alembic current`
+- [x] 1.2 以追加 Alembic 迁移为 Knowledge Agent Run 增加可空规范化查询计划快照字段，不回填或猜测旧 Run；迁移必须兼容 SQLite 与 MySQL 8，并明确降级/回滚只移除新增列。验收：`cd backend && .venv/bin/alembic upgrade head && .venv/bin/alembic current`
 - [ ] 1.3 将 `entry_result_json` 协议扩展为向后兼容的 v2，保留 v1 的 query、items、分页、完整性与助手兼容字段，新增集合摘要、排序、聚合块和分输出完整性；API 能同时读取旧 v1 和新 v2。验收：`cd backend && .venv/bin/pytest -q tests/test_knowledge_agent_api.py tests/test_knowledge_agent_conversations.py tests/test_knowledge_agent_structured_entry_search.py`
 
 ## 2. 一次结构化计划与服务端校验
