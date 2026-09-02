@@ -160,6 +160,83 @@ describe("知识 Agent API 序列化", () => {
     expect(page.runs[0].answer?.insufficientNote).toBeNull();
   });
 
+  test("Run 与结果分页递归适配 v2 结构化查询字段", async () => {
+    const structured = {
+      schema_version: "v2",
+      status: "completed",
+      completeness: "limited",
+      items: [],
+      returned_count: 0,
+      total_in_snapshot: 0,
+      candidate_limit: 6,
+      has_more: false,
+      next_cursor: null,
+      warning: null,
+      snapshot_updated_at: "2026-09-02T00:00:00Z",
+      set_summary: {
+        schema_version: "v1",
+        scope_type: "workspace",
+        project_id: null,
+        project_name: null,
+        semantic_query: "防水",
+        main_types: ["knowledge"],
+        info_natures: ["fact"],
+        updated_at_from: null,
+        updated_at_to: null,
+        completeness: "limited",
+      },
+      sort: {
+        field: "relevance",
+        direction: "desc",
+        tie_breaker: "entry_id",
+      },
+      count: { value: 3, completeness: "limited", status: "limited" },
+      group_counts: [
+        {
+          group_by: "info_nature",
+          buckets: [{ key: "unspecified", count: 1 }],
+          completeness: "limited",
+          status: "limited",
+          truncated: false,
+        },
+      ],
+      output_completeness: {
+        entries: "limited",
+        count: "limited",
+        group_count: { info_nature: "limited" },
+      },
+      warnings: ["语义查询只覆盖本次候选集合"],
+    };
+    mockFetch(structured);
+    const page = await api.knowledgeAgentApi.getEntryResults("token-v2", 8, null, 6);
+    expect(page.setSummary?.semanticQuery).toBe("防水");
+    expect(page.sort?.tieBreaker).toBe("entry_id");
+    expect(page.groupCounts?.[0].groupBy).toBe("info_nature");
+    expect(page.outputCompleteness?.groupCount.infoNature).toBe("limited");
+
+    mockFetch({
+      id: 8,
+      structured_query_plan: {
+        schema_version: "v1",
+        prompt_version: "v1",
+        entry_set: {
+          schema_version: "v1",
+          semantic_query: null,
+          main_types: ["knowledge"],
+          info_natures: [],
+          updated_at: null,
+        },
+        outputs: [{ kind: "group_count", group_by: "main_type" }],
+      },
+    });
+    const run = await api.knowledgeAgentApi.getRun("token-v2", 8);
+    expect(run.structuredQueryPlan?.entrySet.mainTypes).toEqual(["knowledge"]);
+    expect(run.structuredQueryPlan?.outputs[0]).toMatchObject({
+      kind: "group_count",
+      groupBy: "main_type",
+    });
+  });
+
   test("提交修订动作序列化 source/target/instruction 并携带 client_message_id", async () => {
     mockFetch({ user_message: {}, run: {}, draft: {} }, 201);
     await api.knowledgeAgentApi.submitEntryRevision("token-r", 9, {

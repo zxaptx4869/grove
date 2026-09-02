@@ -45,6 +45,22 @@ export type ResultMode = "auto" | "answer" | "entries";
 export type ActualResultMode = "answer" | "entries";
 export type BasisMode = "auto" | "knowledge_only";
 export type ResultCompleteness = "complete" | "limited" | "unknown";
+export type StructuredQueryToolStatus =
+  | "completed"
+  | "empty"
+  | "limited"
+  | "partial"
+  | "denied"
+  | "error"
+  | "cancelled";
+export type StructuredQuerySortField = "relevance" | "updated_at" | "created_at";
+export type StructuredQuerySortDirection = "asc" | "desc";
+export type StructuredQueryGroupField =
+  | "main_type"
+  | "info_nature"
+  | "updated_month";
+/** snake_case 对象键经 API 适配后使用 camelCase。 */
+export type StructuredQueryGroupKey = "mainType" | "infoNature" | "updatedMonth";
 export type ExternalMaterialStatus = "not_used" | "required_unavailable";
 
 export type InvestigationStopReason =
@@ -206,6 +222,90 @@ export interface KnowledgeEntryResultItem {
   matchedFields: string[];
 }
 
+export interface KnowledgeEntrySetSummary {
+  schemaVersion: "v1";
+  scopeType: KnowledgeScopeType;
+  projectId: number | null;
+  projectName: string | null;
+  semanticQuery: string | null;
+  mainTypes: string[];
+  infoNatures: string[];
+  updatedAtFrom: string | null;
+  updatedAtTo: string | null;
+  completeness: ResultCompleteness;
+}
+
+export interface KnowledgeEntrySort {
+  field: StructuredQuerySortField;
+  direction: StructuredQuerySortDirection;
+  tieBreaker: "entry_id";
+}
+
+export interface KnowledgeCountResult {
+  value: number;
+  completeness: ResultCompleteness;
+  status: StructuredQueryToolStatus;
+}
+
+export interface KnowledgeGroupBucket {
+  key: string;
+  count: number;
+}
+
+export interface KnowledgeGroupCountResult {
+  groupBy: StructuredQueryGroupField;
+  buckets: KnowledgeGroupBucket[];
+  completeness: ResultCompleteness;
+  status: StructuredQueryToolStatus;
+  truncated: boolean;
+}
+
+export interface KnowledgeOutputCompleteness {
+  entries: ResultCompleteness | null;
+  count: ResultCompleteness | null;
+  groupCount: Partial<Record<StructuredQueryGroupKey, ResultCompleteness>>;
+}
+
+export interface KnowledgeStructuredUpdatedAt {
+  from: string | null;
+  to: string | null;
+}
+
+export interface KnowledgeStructuredEntrySetPlan {
+  schemaVersion: "v1";
+  semanticQuery: string | null;
+  mainTypes: string[];
+  infoNatures: string[];
+  updatedAt: KnowledgeStructuredUpdatedAt | null;
+}
+
+export interface KnowledgeStructuredEntriesOutput {
+  kind: "entries";
+  limit: number;
+  sort: Pick<KnowledgeEntrySort, "field" | "direction">;
+}
+
+export interface KnowledgeStructuredCountOutput {
+  kind: "count";
+}
+
+export interface KnowledgeStructuredGroupCountOutput {
+  kind: "group_count";
+  groupBy: StructuredQueryGroupField;
+}
+
+export type KnowledgeStructuredOutput =
+  | KnowledgeStructuredEntriesOutput
+  | KnowledgeStructuredCountOutput
+  | KnowledgeStructuredGroupCountOutput;
+
+export interface KnowledgeStructuredQueryPlan {
+  schemaVersion: "v1";
+  promptVersion: "v1";
+  entrySet: KnowledgeStructuredEntrySetPlan;
+  outputs: KnowledgeStructuredOutput[];
+}
+
 export interface KnowledgeEntryResultSnapshot {
   schemaVersion: string;
   query: string;
@@ -216,6 +316,13 @@ export interface KnowledgeEntryResultSnapshot {
   candidateLimit: number;
   warning: string | null;
   snapshotUpdatedAt: string;
+  /** v2 字段均可缺省，兼容旧服务端与历史 v1 快照。 */
+  setSummary?: KnowledgeEntrySetSummary | null;
+  sort?: KnowledgeEntrySort | null;
+  count?: KnowledgeCountResult | null;
+  groupCounts?: KnowledgeGroupCountResult[];
+  outputCompleteness?: KnowledgeOutputCompleteness | null;
+  warnings?: string[];
 }
 
 export interface KnowledgeEntryResultsPage {
@@ -230,6 +337,12 @@ export interface KnowledgeEntryResultsPage {
   nextCursor: string | null;
   warning: string | null;
   snapshotUpdatedAt: string;
+  setSummary?: KnowledgeEntrySetSummary | null;
+  sort?: KnowledgeEntrySort | null;
+  count?: KnowledgeCountResult | null;
+  groupCounts?: KnowledgeGroupCountResult[];
+  outputCompleteness?: KnowledgeOutputCompleteness | null;
+  warnings?: string[];
 }
 
 export interface FallbackStage {
@@ -289,6 +402,7 @@ export interface KnowledgeRun extends KnowledgeScope {
   contextDegraded: boolean;
   fallbackSummary: FallbackSummary | null;
   investigationSummary: InvestigationSummary | null;
+  structuredQueryPlan?: KnowledgeStructuredQueryPlan | null;
   answer: KnowledgeAnswer | null;
   entryResult?: KnowledgeEntryResultSnapshot | null;
   createdAt: string;
