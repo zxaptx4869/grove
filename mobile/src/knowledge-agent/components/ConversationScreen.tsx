@@ -421,7 +421,7 @@ export function ConversationScreen() {
               </View>
               <Text style={styles.introTitle}>和你的知识一起想</Text>
               <Text style={styles.introCopy}>
-                当前只读取「{headerScopeLabel}」的正式知识。回答会展示可核验的来源，不会直接修改知识。
+                我会按问题需要结合「{headerScopeLabel}」中的正式知识、你提供的信息与 AI 通用能力，并说明回答依据；不会直接修改知识。
               </Text>
               <View style={styles.suggestions}>
                 {SUGGESTIONS.map((suggestion) => (

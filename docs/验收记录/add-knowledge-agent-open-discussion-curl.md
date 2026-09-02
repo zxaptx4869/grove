@@ -2,6 +2,11 @@
 
 来源 change：`add-knowledge-agent-open-discussion`（任务 8.1）
 验证日期：2026-09-02
+
+> 状态：阶段性记录，尚未完成任务 8.1。当前环境没有真实文本模型，所以下述
+> 结果只证明接口、严格知识库、调查与降级路径；model-first、hybrid 的真实完成
+> 响应仍需配置模型后补验。在补验完成前不得据此归档 change。
+
 环境：本地开发后端，独立验收库 `backend/grove_accept_open.db`（迁移到
 `c7d8e9f0a1b2`），端口 8022，进程内 Worker 开启，
 `KNOWLEDGE_AGENT_OPEN_DISCUSSION_ENABLED=true`；未配置模型密钥，因此

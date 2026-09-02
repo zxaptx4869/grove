@@ -250,7 +250,8 @@
 
 45. **开放讨论 basis 迁移的 MySQL 8 真实验证**
     - 背景：本 change 的 `knowledge_agent_runs` 依据字段迁移（request_basis_mode /
-      planned_basis_strategy / answer_basis_json）只在 SQLite 执行过 upgrade/downgrade；
+      planned_basis_strategy / planned_basis_json / answer_basis_json）只在 SQLite
+      执行过 upgrade/downgrade；
       本机没有可用 MySQL 8 实例。
     - 影响：生产 MySQL 8 首次升级存在未实测风险（batch ALTER、Text 列、旧行兼容）。
     - 方向：在可用 MySQL 8 环境复跑 upgrade/downgrade 与旧 Run 读取；与既有条目
@@ -272,8 +273,10 @@
       子集不会原样回放。
     - 影响：恢复后的提示上下文可能与首次执行略有差异（均在服务端允许集合内），
       不影响范围隔离与依据真实性。
-    - 方向：若需要恢复与首次执行严格一致，后续为 Run 增加内部 basis plan JSON
-      列并随规划检查点提交。
+    - 处理：已在原 change 验收修复中增加版本化 `planned_basis_json` 与追加迁移；
+      规划检查点保存经校验的候选消息 ID，恢复只取原子集与当前允许集合的交集，
+      缺少快照的旧 Run 按空子集恢复。
+    - 状态：已修复（2026-09-02）。
     - 来源：2026-09-02，add-knowledge-agent-open-discussion（实现取舍）。
 
 48. **依据详情“定位用户消息”为估算滚动**

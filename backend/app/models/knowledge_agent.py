@@ -454,9 +454,10 @@ class KnowledgeAgentRun(Base):
     # ---- 结果形态契约：请求形态与路由后的实际形态分开保存 ----
     request_result_mode: Mapped[str | None] = mapped_column(String(8), nullable=True)
     actual_result_mode: Mapped[str | None] = mapped_column(String(8), nullable=True)
-    # ---- 依据契约：请求模式、规划策略与实际形成依据（AnswerBasis v1 JSON） ----
+    # ---- 依据契约：请求模式、可恢复规划与实际形成依据（AnswerBasis v1 JSON） ----
     request_basis_mode: Mapped[str | None] = mapped_column(String(16), nullable=True)
     planned_basis_strategy: Mapped[str | None] = mapped_column(String(16), nullable=True)
+    planned_basis_json: Mapped[str | None] = mapped_column(Text, nullable=True)
     answer_basis_json: Mapped[str | None] = mapped_column(Text, nullable=True)
     # JSON：实际用于判断的历史消息 ID（不保存原始 prompt）
     history_message_ids_json: Mapped[str | None] = mapped_column(Text, nullable=True)

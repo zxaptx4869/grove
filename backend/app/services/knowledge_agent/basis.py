@@ -1,6 +1,8 @@
 """知识 Agent 依据规划应用层服务：显式限制优先、有界用户陈述与安全回退。"""
 
+import json
 import logging
+import re
 from dataclasses import dataclass, field
 
 from sqlalchemy import select
@@ -55,6 +57,33 @@ _KNOWLEDGE_ONLY_PHRASES = (
     "只靠我的知识库",
 )
 
+# 不能仅靠上面的固定短语：用户也可能通过“不要补充 AI 常识”或
+# “仅依据 Grove 里的内容”等等价表达收紧依据。这里仅识别明确的限制，
+# 同时排除“不要只看知识库”“不限于知识库”等主动放宽表达。
+_KNOWLEDGE_TARGET_PATTERN = (
+    r"(?:我的|个人|已有|现有|已确认|正式)?"
+    r"(?:知识库|知识|记录)|grove|知林"
+)
+_EXCLUSIVE_KNOWLEDGE_PATTERN = re.compile(
+    rf"(?:只|仅|只能|只看|只参考|只依据|仅看|仅参考|仅依据|仅根据)"
+    rf".{{0,10}}(?:{_KNOWLEDGE_TARGET_PATTERN})"
+    rf"|(?:{_KNOWLEDGE_TARGET_PATTERN}).{{0,8}}(?:即可|就好|为准)"
+)
+_NEGATIVE_MODEL_KNOWLEDGE_PATTERN = re.compile(
+    r"(?:不要|别|不得|禁止|不用|无需|不需要|不使用|不参考|不采用|不补充|别用|别参考|别补充)"
+    r".{0,10}(?:ai|模型|通用|外部|网络|联网).{0,6}(?:知识|常识|能力|资料|信息)?"
+)
+_BROADEN_MODEL_PATTERN = re.compile(
+    r"(?:(?:不要|别|不必|无需|不能)(?:只|仅)|不只|不仅)"
+    r".{0,8}(?:ai|模型|通用|外部|网络|联网).{0,6}(?:知识|常识|能力|资料|信息)?"
+)
+_BROADEN_KNOWLEDGE_PATTERN = re.compile(
+    rf"(?:不要|别|不必|无需|不能|不只|不仅)(?:只|仅)?"
+    rf".{{0,6}}(?:根据|使用|看|参考|依据|依赖)?"
+    rf".{{0,6}}(?:{_KNOWLEDGE_TARGET_PATTERN})"
+    rf"|(?:不局限于|不限于).{{0,6}}(?:{_KNOWLEDGE_TARGET_PATTERN})"
+)
+
 # 遍历上下文版本链的安全上限（防止异常数据导致无限循环）
 _CONTEXT_CHAIN_LIMIT = 100
 
@@ -86,8 +115,21 @@ def basis_route_prompt_version() -> str:
 
 def _contains_knowledge_only_restriction(*texts: str) -> bool:
     """确定性识别「仅使用我的知识库」等显式限制。"""
-    combined = " ".join(text for text in texts if text)
-    return any(phrase in combined for phrase in _KNOWLEDGE_ONLY_PHRASES)
+    combined = " ".join(text for text in texts if text).casefold()
+    compact = re.sub(r"[\s，。！？、；：,.!?;:]", "", combined)
+    # 先移除“不要只用某类依据”这种主动放宽片段，再判断剩余文本中是否
+    # 存在真正的排除模型知识或仅限 Grove 约束；同一句中的后续严格约束仍生效。
+    without_model_broadening = _BROADEN_MODEL_PATTERN.sub("", compact)
+    if _NEGATIVE_MODEL_KNOWLEDGE_PATTERN.search(without_model_broadening):
+        return True
+    without_knowledge_broadening = _BROADEN_KNOWLEDGE_PATTERN.sub("", compact)
+    return bool(
+        any(
+            phrase in without_knowledge_broadening
+            for phrase in _KNOWLEDGE_ONLY_PHRASES
+        )
+        or _EXCLUSIVE_KNOWLEDGE_PATTERN.search(without_knowledge_broadening)
+    )
 
 
 def _server_knowledge_only_plan() -> BasisPlan:
@@ -128,25 +170,49 @@ def basis_strategy_uses_user_statements(strategy: str) -> bool:
 def restore_basis_plan(
     strategy: str,
     allowed_statements: list[UserStatementCandidate],
+    planned_basis_json: str | None,
 ) -> BasisPlan:
-    """崩溃恢复：按已持久化的规划策略重建确定性计划，不重新调用规划器。
-
-    候选用户消息句柄未单独持久化；恢复时对允许使用用户陈述的策略采用当前
-    有界允许集合（服务端重新确定性加载，范围/话题链校验一致），策略本身
-    不会漂移，也不会从 knowledge_only 放宽到模型通用知识。
-    """
+    """崩溃恢复：重放已持久化计划，且只允许收紧用户消息子集。"""
     uses_statements = basis_strategy_uses_user_statements(strategy)
+    allowed_ids = {item.message_id for item in allowed_statements}
+    restored_ids: list[int] = []
+    if planned_basis_json:
+        try:
+            raw = json.loads(planned_basis_json)
+            raw_ids = raw.get("candidate_statement_ids", [])
+            if (
+                isinstance(raw, dict)
+                and raw.get("schema_version") == "v1"
+                and raw.get("strategy") == strategy
+                and isinstance(raw_ids, list)
+                and all(isinstance(item, int) for item in raw_ids)
+            ):
+                # 消息若在恢复时已不可用只能删除，绝不补入原计划未选择的消息。
+                restored_ids, _invalid = validate_statement_ids(raw_ids, allowed_ids)
+        except (json.JSONDecodeError, TypeError, AttributeError):
+            logger.warning("basis 计划快照损坏，恢复时不采用用户陈述")
     return BasisPlan(
         strategy=strategy,
         needs_grove=basis_strategy_needs_grove(strategy),
         requires_external_material=strategy == "external_needed",
-        candidate_statement_ids=(
-            [item.message_id for item in allowed_statements]
-            if uses_statements
-            else []
-        ),
+        candidate_statement_ids=restored_ids if uses_statements else [],
         degraded=False,
         meta=None,
+    )
+
+
+def dump_basis_plan(plan: BasisPlan) -> str:
+    """序列化可恢复的最小 basis 计划，不复制用户消息正文。"""
+    return json.dumps(
+        {
+            "schema_version": "v1",
+            "strategy": plan.strategy,
+            "candidate_statement_ids": list(
+                dict.fromkeys(plan.candidate_statement_ids)
+            ),
+        },
+        ensure_ascii=False,
+        separators=(",", ":"),
     )
 
 

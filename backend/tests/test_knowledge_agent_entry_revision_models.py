@@ -517,7 +517,7 @@ def test_migration_upgrade_creates_revision_tables(tmp_path: Path) -> None:
 
 
 def test_migration_downgrade_then_upgrade(tmp_path: Path) -> None:
-    """downgrade→upgrade 往返不丢既有表，修订表可重建。"""
+    """按明确父 revision 往返，不丢既有表且修订表可重建。"""
     db_path = tmp_path / "revision_roundtrip.db"
     env = os.environ.copy()
     env["DATABASE_URL"] = f"sqlite+aiosqlite:///{db_path}"
@@ -531,7 +531,7 @@ def test_migration_downgrade_then_upgrade(tmp_path: Path) -> None:
     )
     assert upgrade.returncode == 0, upgrade.stdout + upgrade.stderr
     downgrade = subprocess.run(
-        [sys.executable, "-m", "alembic", "downgrade", "-1"],
+        [sys.executable, "-m", "alembic", "downgrade", "d5e6f7a8b9c0"],
         cwd=backend,
         env=env,
         capture_output=True,

@@ -57,7 +57,7 @@
 
 ### 2. 区分规划策略与服务端确认的实际依据
 
-为 `knowledge_agent_runs` 增加可空的 `request_basis_mode`、`planned_basis_strategy` 与 `answer_basis_json`：
+为 `knowledge_agent_runs` 增加可空的 `request_basis_mode`、`planned_basis_strategy`、`planned_basis_json` 与 `answer_basis_json`：
 
 ```text
 AnswerBasis v1
@@ -74,7 +74,9 @@ AnswerBasis v1
    └─ status: not_used / required_unavailable
 ```
 
-`planned_basis_strategy` 记录规划结果，`answer_basis_json` 记录最终回答实际允许并采用的形成依据。Grove 数量从最终通过校验的 Citation 派生；用户陈述 ID 从服务端允许集合与规划器选择的交集派生；模型知识是否使用由实际执行分支和提示权限保守标记，不依赖模型自由文本自报；外部状态只能由服务端根据规划结果写为“未使用”或“需要但当前不可用”。
+`planned_basis_strategy` 记录规划策略，`planned_basis_json` 只保存版本号、策略和经服务端校验后的候选用户消息 ID，不复制消息正文。规划检查点原子提交两者；崩溃恢复只重放该 ID 子集与当前允许集合的交集，消息失效时可以收紧但不得补入原计划未选择的消息。缺少计划快照的过渡 Run 恢复为空用户陈述子集，不猜测原规划结果。
+
+`answer_basis_json` 记录最终回答实际允许并采用的形成依据。Grove 数量从最终通过校验的 Citation 派生；用户陈述 ID 从服务端允许集合与规划器选择的交集派生；模型知识是否使用由实际执行分支和提示权限保守标记，不依赖模型自由文本自报；外部状态只能由服务端根据规划结果写为“未使用”或“需要但当前不可用”。
 
 不复制 Entry/Source 原文或整条用户消息到 `answer_basis_json`。历史 API 按消息 ID 读取同一 Conversation 中的用户消息并输出必要的短摘要；Citation 继续复用现有 Evidence 快照。这样既可恢复，又避免形成第二份不可同步的来源文本。
 
@@ -164,7 +166,7 @@ Run/Message API 增加可选的请求依据模式、规划策略（仅诊断需�
 - [依据规划器误把个性化问题选为 `model_first`] → 显式用户限制优先；规划提示包含“我的项目/记录/以前决定”等强信号；评估集覆盖同义表达；失败默认回退 Grove-only。
 - [允许无引用要点后弱化 Citation 边界] → 只放宽正文是否必须引用，不放宽 Evidence 句柄校验；Grove 标签、引用数量和 Source 原文仍完全由服务端派生。
 - [难以精确判断模型是否用了通用知识] → 按执行分支与提示权限保守标记；允许模型通用知识即展示该依据，宁可多提示，不让模型自行隐藏。
-- [当前话题用户陈述被错误跨话题复用] → 只使用服务端有界集合、上下文链和范围快照；new_topic/范围切换切断；保存实际消息 ID 供测试和审计。
+- [当前话题用户陈述被错误跨话题复用或恢复时扩大] → 只使用服务端有界集合、上下文链和范围快照；new_topic/范围切换切断；规划检查点保存候选消息 ID，恢复只允许取原子集与当前允许集合的交集；终态保存实际消息 ID 供测试和审计。
 - [开放回答使旧“整理成知识”产生不完整来源] → 新 Run 只允许可证明的纯 Grove 回答进入旧流程；历史 Run 沿用旧证据规则；混合沉淀留给后续 Operation Plan。
 - [新增规划调用增加延迟和成本] → model-first 跳过搜索/重排可抵消部分成本；保持单次结构化规划；记录阶段耗时与 usage，在真实评估后再调预算。
 - [自动模式与显式深度查找发生语义冲突] → 显式 investigate 强制实际 Grove 调查；实际模式和停止原因可见，不能把纯模型生成包装为调查。
@@ -172,7 +174,7 @@ Run/Message API 增加可选的请求依据模式、规划策略（仅诊断需�
 
 ## Migration Plan
 
-1. 新增可空 Run 字段与服务端枚举，Alembic 升级同时支持 SQLite 和 MySQL 8；旧记录不回填猜测依据。
+1. 新增可空 Run 字段与服务端枚举，并以追加迁移增加计划快照；Alembic 升级同时支持 SQLite 和 MySQL 8，旧记录不回填猜测依据。
 2. 在特性开关关闭状态部署后端：新 API 字段可选，新客户端显式提交 `auto`，缺少字段的旧请求按 `knowledge_only` 执行并保持当前 Grove-only 行为。
 3. 部署原生 App 的可选字段解析、依据模式、依据概览和服务端资格响应；旧服务端缺字段时沿用原展示。
 4. 完成后端单元/集成测试、原生组件与控制器测试、代表性评估集和三视口手动走查后开启特性开关。

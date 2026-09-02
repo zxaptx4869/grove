@@ -2,6 +2,10 @@
 
 来源 change：`add-knowledge-agent-open-discussion`（任务 8.2）
 走查日期：2026-09-02
+
+> 状态：阶段性 Web 近似走查，尚未完成任务 8.2。缺少真实模型完成态、原生
+> 系统键盘、安全区与读屏焦点验证；补验完成前不得据此归档 change。
+
 载体：移动端正式实现（`mobile/`，Expo / React Native），通过
 react-native-web + Chrome Headless 以 360×800、390×844、412×915
 三个目标视口走查；后端为 8.1 验收实例（`grove_accept_open.db`，

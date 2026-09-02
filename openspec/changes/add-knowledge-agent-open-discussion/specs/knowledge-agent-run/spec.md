@@ -1,7 +1,7 @@
 ## ADDED Requirements
 
 ### Requirement: Run 持久化请求策略与实际回答依据
-系统 MUST 为 answer Run 固化 `request_basis_mode`，并在规划后持久化内部 `planned_basis_strategy`；终态回答 MUST 保存服务端校验后的版本化实际依据。客户端查询 Run 或恢复消息历史时 MUST 获得生成时的请求依据模式和实际依据摘要，旧 Run 缺少这些字段时 MUST 保持可读且不得反向猜测未记录的依据。
+系统 MUST 为 answer Run 固化 `request_basis_mode`，并在规划后持久化内部 `planned_basis_strategy` 与经服务端校验的版本化计划快照；计划快照 MUST 只保存恢复所需的策略和候选用户消息 ID，不复制消息正文。崩溃恢复 MUST 复用原计划子集，只可因消息失效而收紧，不得补入原计划未选择的消息；终态回答 MUST 保存服务端校验后的版本化实际依据。客户端查询 Run 或恢复消息历史时 MUST 获得生成时的请求依据模式和实际依据摘要，旧 Run 缺少这些字段时 MUST 保持可读且不得反向猜测未记录的依据。
 
 #### Scenario: 新问题固化依据覆盖
 - **WHEN** 空闲 Conversation 接受一条 `basis_mode=knowledge_only` 的新问题
@@ -9,7 +9,7 @@
 
 #### Scenario: 自动规划结果持久化
 - **WHEN** basis planner 为自动请求选择 `hybrid`
-- **THEN** Run 保存规划策略，并在崩溃恢复时复用该结果而不重新漂移到另一策略
+- **THEN** Run 保存规划策略和候选用户消息 ID 子集，并在崩溃恢复时复用该结果而不重新规划、扩大消息集合或漂移到另一策略
 
 #### Scenario: 历史 Run 缺少 basis 字段
 - **WHEN** 客户端恢复本 change 上线前生成的回答 Run

@@ -55,8 +55,11 @@ from app.schemas.knowledge_agent import (
     KnowledgeRunSubmitRequest,
 )
 from app.services.knowledge_agent.basis import (
+    BasisPlan,
     UserStatementCandidate,
+    dump_basis_plan,
     resolve_basis_plan,
+    restore_basis_plan,
     validate_statement_ids,
 )
 from app.services.knowledge_agent.runs import run_out
@@ -475,6 +478,93 @@ def test_basis_plan_explicit_and_natural_language_restriction(monkeypatch) -> No
     )
     assert plan_nl.strategy == BASIS_STRATEGY_KNOWLEDGE_ONLY
     assert plan_nl.meta is None
+
+    # 等价的排除模型知识/仅限 Grove 表达同样是服务端硬门禁。
+    restrictions = (
+        "不要使用通用知识，只参考 Grove",
+        "别用 AI 常识，按我的记录回答",
+        "只看我已有的记录",
+        "仅依据 Grove 里的内容",
+    )
+    for restriction in restrictions:
+        plan_equivalent = asyncio.run(
+            _resolve(BASIS_MODE_AUTO, restriction, restriction)
+        )
+        assert plan_equivalent.strategy == BASIS_STRATEGY_KNOWLEDGE_ONLY
+        assert plan_equivalent.meta is None
+
+
+@pytest.mark.parametrize(
+    "message",
+    (
+        "不要只根据我的知识库，也结合通用知识",
+        "不要只使用通用知识，也结合我的知识库",
+    ),
+)
+def test_basis_natural_language_broadening_is_not_misread(
+    monkeypatch,
+    message: str,
+) -> None:
+    """“不要只用某类依据”等放宽表达仍交给规划器，不误锁限制。"""
+    import asyncio
+
+    async def _model_first_planner(*args, **kwargs):
+        return (
+            BasisRouteDraft(strategy=BASIS_STRATEGY_MODEL_FIRST),
+            StageMeta(
+                purpose=PURPOSE_BASIS_ROUTE,
+                provider="llm",
+                model="fake",
+                is_fallback=False,
+                error=None,
+                duration_ms=1,
+            ),
+        )
+
+    from app.services.knowledge_agent.observability import StageMeta
+
+    monkeypatch.setattr(
+        "app.services.knowledge_agent.basis.run_basis_planner",
+        _model_first_planner,
+    )
+    plan = asyncio.run(
+        resolve_basis_plan(
+            object(),
+            workspace_id=1,
+            request_basis_mode=BASIS_MODE_AUTO,
+            objective=message,
+            scope_label="全部知识",
+            topic_summary=None,
+            context_decision="new_topic",
+            current_message=message,
+            allowed_statements=[],
+            feature_enabled=True,
+        )
+    )
+    assert plan.strategy == BASIS_STRATEGY_MODEL_FIRST
+
+
+def test_basis_plan_snapshot_recovery_never_broadens_statement_subset() -> None:
+    """恢复只重放原规划子集；新增、越界或快照缺失时均不得扩大。"""
+    allowed = [
+        UserStatementCandidate(message_id=10, content="旧前提"),
+        UserStatementCandidate(message_id=11, content="当前问题"),
+        UserStatementCandidate(message_id=12, content="后来消息"),
+    ]
+    original = BasisPlan(
+        strategy="hybrid",
+        needs_grove=True,
+        candidate_statement_ids=[11],
+    )
+    snapshot = dump_basis_plan(original)
+    restored = restore_basis_plan("hybrid", allowed, snapshot)
+    assert restored.candidate_statement_ids == [11]
+
+    # 原句柄已不在当前允许集合时只能收紧为空；缺少旧快照也不猜测全部消息。
+    unavailable = restore_basis_plan("hybrid", allowed[:1], snapshot)
+    assert unavailable.candidate_statement_ids == []
+    legacy = restore_basis_plan("hybrid", allowed, None)
+    assert legacy.candidate_statement_ids == []
 
 
 def test_basis_plan_fallback_and_unknown_message_ids(monkeypatch) -> None:

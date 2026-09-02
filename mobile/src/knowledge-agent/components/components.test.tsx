@@ -924,6 +924,10 @@ test("历史 Sheet 展示范围、最近 Run 状态并支持选择/新建", asyn
 test("无历史对话时进入本地 draft 空态，可输入", async () => {
   const view = await render(<ConversationScreen />, { wrapper });
   expect(await view.findByText("和你的知识一起想")).toBeOnTheScreen();
+  expect(
+    view.getByText(/正式知识、你提供的信息与 AI 通用能力/),
+  ).toBeOnTheScreen();
+  expect(view.queryByText(/当前只读取/)).toBeNull();
   const thread = view.getByLabelText("知识 Agent 对话");
   expect(StyleSheet.flatten(thread.props.contentContainerStyle).paddingBottom).toBe(18);
   const input = view.getByLabelText("对话输入");

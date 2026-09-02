@@ -553,7 +553,7 @@ async def test_basis_crash_recovery_reuses_plan_without_replan(monkeypatch) -> N
             strategy="hybrid",
             needs_grove=True,
             requires_external_material=False,
-            candidate_statement_ids=[],
+            candidate_statement_ids=[allowed_statements[-1].message_id],
             degraded=False,
             meta=StageMeta(
                 purpose=PURPOSE_BASIS_ROUTE,
@@ -611,6 +611,7 @@ async def test_basis_crash_recovery_reuses_plan_without_replan(monkeypatch) -> N
             assert run.status == RUN_WAITING
             assert run.retry_count == 1
             assert run.planned_basis_strategy == "hybrid"
+            assert run.planned_basis_json is not None
             assert run.answer_json is None
             assert run.answer_basis_json is None
         assert calls["plan"] == 1
@@ -642,6 +643,7 @@ async def test_basis_crash_recovery_reuses_plan_without_replan(monkeypatch) -> N
             basis = json.loads(run.answer_basis_json)
             assert basis["grove"]["used"] is True
             assert basis["grove"]["citation_count"] == 1
+            assert basis["user_statements"]["message_ids"] == [run.user_message_id]
             invocations = (
                 await db.execute(
                     select(KnowledgeAgentModelInvocation).where(

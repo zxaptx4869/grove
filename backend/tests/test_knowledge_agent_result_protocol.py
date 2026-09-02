@@ -355,8 +355,8 @@ async def test_api_submit_idempotent_keeps_first_result_mode(
     assert second.json()["run"]["request_result_mode"] == "entries"
 
 
-def test_migration_upgrade_creates_result_mode_columns(tmp_path: Path) -> None:
-    """fresh SQLite 上迁移链完整升级并创建结果形态字段。"""
+def test_migration_upgrade_creates_result_and_basis_columns(tmp_path: Path) -> None:
+    """fresh SQLite 上迁移链完整升级并创建结果形态与依据字段。"""
     db_path = tmp_path / "result_protocol_migration.db"
     env = os.environ.copy()
     env["DATABASE_URL"] = f"sqlite+aiosqlite:///{db_path}"
@@ -376,14 +376,25 @@ def test_migration_upgrade_creates_result_mode_columns(tmp_path: Path) -> None:
             row[1]
             for row in conn.execute("PRAGMA table_info(knowledge_agent_runs)").fetchall()
         }
-        assert {"request_result_mode", "actual_result_mode", "entry_result_json"} <= columns
-        # 枚举列长度为 8；结果 JSON 为 Text
+        assert {
+            "request_result_mode",
+            "actual_result_mode",
+            "entry_result_json",
+            "request_basis_mode",
+            "planned_basis_strategy",
+            "planned_basis_json",
+            "answer_basis_json",
+        } <= columns
+        # 枚举列保持约定长度；结果与依据 JSON 为 Text
         info = {
             row[1]: row
             for row in conn.execute("PRAGMA table_info(knowledge_agent_runs)").fetchall()
         }
         assert info["request_result_mode"][2] == "VARCHAR(8)"
         assert info["entry_result_json"][2] == "TEXT"
+        assert info["request_basis_mode"][2] == "VARCHAR(16)"
+        assert info["planned_basis_json"][2] == "TEXT"
+        assert info["answer_basis_json"][2] == "TEXT"
     finally:
         conn.close()
 
@@ -500,8 +511,8 @@ async def test_answer_basis_grove_counts_derive_from_final_citations() -> None:
 def test_migration_downgrade_then_upgrade_roundtrip(tmp_path: Path) -> None:
     """downgrade→upgrade 往返：结果形态字段删除后可重建，历史 Run 行保留。
 
-    head 之后追加了依据字段迁移（c7d8e9f0a1b2），因此降级两步回到
-    结果形态迁移之前，再重新升级验证结果列重建与历史行兼容。
+    直接降级到结果形态迁移的父 revision，再重新升级验证结果列重建与
+    历史行兼容；不使用相对步数，避免后续追加迁移后测试目标漂移。
     """
     db_path = tmp_path / "result_protocol_roundtrip.db"
     env = os.environ.copy()
@@ -546,7 +557,7 @@ def test_migration_downgrade_then_upgrade_roundtrip(tmp_path: Path) -> None:
     conn.commit()
     conn.close()
 
-    downgrade = _run_alembic("downgrade", "-2")
+    downgrade = _run_alembic("downgrade", "e7f8a9b0c1d2")
     assert downgrade.returncode == 0, downgrade.stdout + downgrade.stderr
     re_upgrade = _run_alembic("upgrade", "head")
     assert re_upgrade.returncode == 0, re_upgrade.stdout + re_upgrade.stderr

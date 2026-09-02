@@ -50,6 +50,7 @@ from app.schemas.knowledge_agent import KnowledgeAnswerOut
 from app.services.knowledge_agent.basis import (
     basis_strategy_allows_model_knowledge,
     build_answer_basis,
+    dump_basis_plan,
     load_allowed_user_statements,
     resolve_basis_plan,
     restore_basis_plan,
@@ -593,6 +594,7 @@ async def execute_run(db: AsyncSession, run: KnowledgeAgentRun) -> None:
             ),
         )
         run.planned_basis_strategy = plan.strategy
+        run.planned_basis_json = dump_basis_plan(plan)
         if plan.meta is not None:
             await record_model_invocation(
                 db,
@@ -603,7 +605,11 @@ async def execute_run(db: AsyncSession, run: KnowledgeAgentRun) -> None:
         await db.commit()
     else:
         # 崩溃恢复：复用已持久化的规划策略，不重新调用规划器造成策略漂移
-        plan = restore_basis_plan(run.planned_basis_strategy, allowed_statements)
+        plan = restore_basis_plan(
+            run.planned_basis_strategy,
+            allowed_statements,
+            run.planned_basis_json,
+        )
 
     # 工作集种子复验可观测：删除/越权/移出范围的项只记录不可用
     await record_tool_result(
