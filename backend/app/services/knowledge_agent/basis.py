@@ -20,8 +20,18 @@ from app.models.knowledge_agent import (
     BASIS_STRATEGY_KNOWLEDGE_ONLY,
     BASIS_STRATEGY_MODEL_FIRST,
     CONTEXT_DECISION_CONTINUE,
+    EXTERNAL_MATERIAL_NOT_USED,
+    EXTERNAL_MATERIAL_REQUIRED_UNAVAILABLE,
     MESSAGE_ROLE_USER,
     PURPOSE_BASIS_ROUTE,
+)
+from app.schemas.knowledge_agent import (
+    KnowledgeAnswerBasisExternalMaterialOut,
+    KnowledgeAnswerBasisGroveOut,
+    KnowledgeAnswerBasisModelKnowledgeOut,
+    KnowledgeAnswerBasisOut,
+    KnowledgeAnswerBasisUserStatementsOut,
+    KnowledgeAnswerOut,
 )
 from app.services.knowledge_agent.observability import StageMeta
 
@@ -84,6 +94,100 @@ def _server_knowledge_only_plan() -> BasisPlan:
         candidate_statement_ids=[],
         degraded=False,
         meta=None,
+    )
+
+
+def basis_strategy_needs_grove(strategy: str) -> bool:
+    """策略是否需要执行 Grove 检索/读取（model_first/external_needed 跳过）。"""
+    return strategy in {
+        BASIS_STRATEGY_KNOWLEDGE_ONLY,
+        BASIS_STRATEGY_KNOWLEDGE_FIRST,
+        BASIS_STRATEGY_HYBRID,
+    }
+
+
+def basis_strategy_allows_model_knowledge(strategy: str) -> bool:
+    """策略是否允许回答模型使用通用知识（knowledge_only 严格禁止）。"""
+    return strategy != BASIS_STRATEGY_KNOWLEDGE_ONLY
+
+
+def basis_strategy_uses_user_statements(strategy: str) -> bool:
+    """策略是否允许当前话题用户陈述参与回答。"""
+    return strategy in {
+        BASIS_STRATEGY_KNOWLEDGE_FIRST,
+        BASIS_STRATEGY_HYBRID,
+        BASIS_STRATEGY_MODEL_FIRST,
+    }
+
+
+def restore_basis_plan(
+    strategy: str,
+    allowed_statements: list[UserStatementCandidate],
+) -> BasisPlan:
+    """崩溃恢复：按已持久化的规划策略重建确定性计划，不重新调用规划器。
+
+    候选用户消息句柄未单独持久化；恢复时对允许使用用户陈述的策略采用当前
+    有界允许集合（服务端重新确定性加载，范围/话题链校验一致），策略本身
+    不会漂移，也不会从 knowledge_only 放宽到模型通用知识。
+    """
+    uses_statements = basis_strategy_uses_user_statements(strategy)
+    return BasisPlan(
+        strategy=strategy,
+        needs_grove=basis_strategy_needs_grove(strategy),
+        requires_external_material=strategy == "external_needed",
+        candidate_statement_ids=(
+            [item.message_id for item in allowed_statements]
+            if uses_statements
+            else []
+        ),
+        degraded=False,
+        meta=None,
+    )
+
+
+def build_answer_basis(
+    *,
+    answer: KnowledgeAnswerOut,
+    user_statement_ids: list[int],
+    model_knowledge_used: bool,
+    external_material_required: bool,
+) -> KnowledgeAnswerBasisOut:
+    """服务端装配 AnswerBasis v1：数量只从最终校验后 Citation 派生。
+
+    - Grove 数量来自最终回答 Citation（全部句柄失效时为 0）；
+    - 用户消息 ID 只使用服务端允许集合与规划器选择的交集；
+    - 模型通用知识由执行分支与提示权限保守标记，不依赖模型自由自报；
+    - 外部材料状态只能由服务端写为 not_used 或 required_unavailable。
+    """
+    citation_count = len(answer.citations)
+    entry_count = len(
+        {
+            citation.entry_id
+            for citation in answer.citations
+            if citation.entry_id and citation.entry_id != 0
+        }
+    )
+    unique_statement_ids = sorted(set(user_statement_ids))
+    return KnowledgeAnswerBasisOut(
+        schema_version="v1",
+        grove=KnowledgeAnswerBasisGroveOut(
+            used=citation_count > 0,
+            citation_count=citation_count,
+            entry_count=entry_count,
+        ),
+        user_statements=KnowledgeAnswerBasisUserStatementsOut(
+            message_ids=unique_statement_ids
+        ),
+        model_knowledge=KnowledgeAnswerBasisModelKnowledgeOut(
+            used=model_knowledge_used
+        ),
+        external_material=KnowledgeAnswerBasisExternalMaterialOut(
+            status=(
+                EXTERNAL_MATERIAL_REQUIRED_UNAVAILABLE
+                if external_material_required
+                else EXTERNAL_MATERIAL_NOT_USED
+            )
+        ),
     )
 
 

@@ -13,6 +13,10 @@ from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 
 from app.agents.basis import BASIS_ROUTE_PROMPT_VERSION, BasisRouteDraft
+from app.agents.knowledge_agent import (
+    OPEN_ANSWER_PROMPT_SUFFIX,
+    KnowledgeAnswerPointDraft,
+)
 from app.db.session import async_session_factory
 from app.models import (
     KnowledgeAgentEvidence,
@@ -377,6 +381,16 @@ def test_submit_request_defaults_and_answer_status() -> None:
     )
     answer = KnowledgeAnswerOut(answer="请补充主题", status="clarification")
     assert answer.status == "clarification"
+
+
+def test_open_answer_prompt_contract() -> None:
+    """开放回答提示允许无引用要点，但禁止伪造引用与实时结果。"""
+    assert "允许使用模型通用知识" in OPEN_ANSWER_PROMPT_SUFFIX
+    assert "不得生成 Citation" in OPEN_ANSWER_PROMPT_SUFFIX
+    assert "不得声称已经联网" in OPEN_ANSWER_PROMPT_SUFFIX
+    # 草稿要点本就允许零句柄；是否保留由服务端按依据模式校验
+    point = KnowledgeAnswerPointDraft(text="一般解释")
+    assert point.evidence_handles == []
 
 
 def test_basis_contract_constants_and_request_defaults() -> None:

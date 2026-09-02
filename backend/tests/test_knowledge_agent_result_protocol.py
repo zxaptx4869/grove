@@ -27,10 +27,13 @@ from app.models.knowledge_agent import (
     RESULT_MODE_ANSWER,
     RESULT_MODE_AUTO,
     RESULT_MODE_ENTRIES,
+    RUN_COMPLETED,
     RUN_WAITING,
     SCOPE_WORKSPACE,
 )
 from app.schemas.knowledge_agent import (
+    KnowledgeAnswerBasisOut,
+    KnowledgeAnswerOut,
     KnowledgeEntryResultItemOut,
     KnowledgeEntryResultSnapshotOut,
     KnowledgeEntryResultsPageOut,
@@ -39,7 +42,7 @@ from app.schemas.knowledge_agent import (
     KnowledgeRunSubmitRequest,
 )
 from app.services.knowledge_agent.conversations import message_out
-from app.services.knowledge_agent.runs import run_out, submit_message
+from app.services.knowledge_agent.runs import finalize_run, run_out, submit_message
 
 
 async def _user_and_workspace(db, prefix: str = "协议") -> tuple[User, Workspace]:
@@ -385,8 +388,121 @@ def test_migration_upgrade_creates_result_mode_columns(tmp_path: Path) -> None:
         conn.close()
 
 
+@pytest.mark.asyncio
+async def test_finalize_run_atomically_persists_answer_basis() -> None:
+    """终态提交原子写入回答与实际依据；run_out 返回同一依据快照。"""
+    from app.services.knowledge_agent.basis import build_answer_basis
+
+    async with async_session_factory() as db:
+        user, workspace = await _user_and_workspace(db)
+        conversation = await _conversation(db, user, workspace)
+        _message, run = await submit_message(
+            db,
+            conversation,
+            KnowledgeRunSubmitRequest(
+                client_message_id="basis-finalize-1",
+                message="结合预算与项目记录给建议",
+                basis_mode="auto",
+            ),
+        )
+        run.status = "processing"
+        run.active_slot = "active"
+        run.planned_basis_strategy = "hybrid"
+        await db.flush()
+
+        answer = KnowledgeAnswerOut(
+            answer="建议先核对预算上限。",
+            status="completed",
+            citations=[],
+        )
+        basis = build_answer_basis(
+            answer=answer,
+            user_statement_ids=[11, 9, 11],
+            model_knowledge_used=True,
+            external_material_required=False,
+        )
+        await finalize_run(
+            db,
+            run,
+            answer=answer,
+            status=RUN_COMPLETED,
+            fallback_summary={"has_fallback": False, "stages": []},
+            answer_basis=basis,
+        )
+        await db.commit()
+
+        await db.refresh(run)
+        assert run.answer_basis_json is not None
+        out = run_out(run)
+        assert out.answer_basis is not None
+        assert out.answer_basis.schema_version == "v1"
+        assert out.answer_basis.grove.used is False
+        assert out.answer_basis.grove.citation_count == 0
+        assert out.answer_basis.user_statements.message_ids == [9, 11]
+        assert out.answer_basis.model_knowledge.used is True
+        assert out.answer_basis.external_material.status == "not_used"
+        assert isinstance(out.answer_basis, KnowledgeAnswerBasisOut)
+
+
+@pytest.mark.asyncio
+async def test_answer_basis_grove_counts_derive_from_final_citations() -> None:
+    """Grove 数量只从最终 Citation 派生；失效句柄不进入实际依据。"""
+    from app.schemas.knowledge_agent import KnowledgeRunCitationOut
+    from app.services.knowledge_agent.basis import build_answer_basis
+
+    answer = KnowledgeAnswerOut(
+        answer="两个来源的回答。",
+        status="completed",
+        citations=[
+            KnowledgeRunCitationOut(
+                evidence_id=1,
+                evidence_handle="ev_a",
+                entry_id=10,
+                entry_title="条目一",
+                source_id=1,
+                source_title="来源一",
+                quote="原文一",
+            ),
+            KnowledgeRunCitationOut(
+                evidence_id=2,
+                evidence_handle="ev_b",
+                entry_id=10,
+                entry_title="条目一",
+                source_id=2,
+                source_title="来源二",
+                quote="原文二",
+            ),
+            KnowledgeRunCitationOut(
+                evidence_id=3,
+                evidence_handle="ev_c",
+                entry_id=20,
+                entry_title="条目二",
+                source_id=3,
+                source_title="来源三",
+                quote="原文三",
+            ),
+        ],
+    )
+    basis = build_answer_basis(
+        answer=answer,
+        user_statement_ids=[],
+        model_knowledge_used=False,
+        external_material_required=True,
+    )
+    assert basis.grove.used is True
+    assert basis.grove.citation_count == 3
+    assert basis.grove.entry_count == 2
+    assert basis.user_statements.message_ids == []
+    assert basis.model_knowledge.used is False
+    assert basis.external_material.status == "required_unavailable"
+
+
 def test_migration_downgrade_then_upgrade_roundtrip(tmp_path: Path) -> None:
-    """downgrade→upgrade 往返：字段删除后可重建，历史 Run 行保留。"""
+    """downgrade→upgrade 往返：结果形态字段删除后可重建，历史 Run 行保留。
+
+    head 之后追加了依据字段迁移（c7d8e9f0a1b2），因此降级两步回到
+    结果形态迁移之前，再重新升级验证结果列重建与历史行兼容。
+    """
     db_path = tmp_path / "result_protocol_roundtrip.db"
     env = os.environ.copy()
     env["DATABASE_URL"] = f"sqlite+aiosqlite:///{db_path}"
@@ -430,7 +546,7 @@ def test_migration_downgrade_then_upgrade_roundtrip(tmp_path: Path) -> None:
     conn.commit()
     conn.close()
 
-    downgrade = _run_alembic("downgrade", "-1")
+    downgrade = _run_alembic("downgrade", "-2")
     assert downgrade.returncode == 0, downgrade.stdout + downgrade.stderr
     re_upgrade = _run_alembic("upgrade", "head")
     assert re_upgrade.returncode == 0, re_upgrade.stdout + re_upgrade.stderr

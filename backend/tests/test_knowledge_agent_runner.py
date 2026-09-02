@@ -9,6 +9,7 @@ from sqlalchemy import select
 
 from app.agents.knowledge_agent import (
     KnowledgeAnswerDraft,
+    KnowledgeAnswerPointDraft,
     KnowledgeCitationDraft,
 )
 from app.db.session import async_session_factory
@@ -32,7 +33,9 @@ from app.models.knowledge_agent import (
     CONTEXT_STATUS_ACTIVE,
     CONTEXT_STATUS_SUPERSEDED,
     PURPOSE_BASIS_ROUTE,
+    RESULT_MODE_ENTRIES,
     RUN_COMPLETED,
+    RUN_FAILED,
     RUN_PARTIAL,
     RUN_PROCESSING,
     SCOPE_WORKSPACE,
@@ -1901,3 +1904,386 @@ async def test_basis_unknown_statement_ids_dropped_with_anomaly(monkeypatch) -> 
             stage["error"] or "" for stage in summary["stages"]
         )
         assert "999" in errors
+
+
+@pytest.mark.asyncio
+async def test_model_first_quick_skips_grove_and_completes(monkeypatch) -> None:
+    """model-first 自动模式：跳过 Grove 工具并完成无 Citation 开放回答。"""
+    async def _plan(
+        db,
+        *,
+        workspace_id,
+        request_basis_mode,
+        objective,
+        scope_label,
+        topic_summary,
+        context_decision,
+        current_message,
+        allowed_statements,
+        feature_enabled,
+    ):
+        return BasisPlan(
+            strategy=BASIS_STRATEGY_MODEL_FIRST,
+            needs_grove=False,
+            candidate_statement_ids=[],
+            degraded=False,
+            meta=StageMeta(
+                purpose=PURPOSE_BASIS_ROUTE,
+                provider="llm",
+                model="fake-basis",
+                is_fallback=False,
+                error=None,
+                duration_ms=1,
+            ),
+        )
+
+    monkeypatch.setattr(
+        "app.services.knowledge_agent.runner.resolve_basis_plan",
+        _plan,
+    )
+
+    def _open_answer_agent():
+        async def _fake(db, workspace_id, query, scope_label, entries, **kwargs):
+            assert kwargs.get("allow_model_knowledge") is True
+            return (
+                KnowledgeAnswerDraft(
+                    lead="通用解释。",
+                    points=[
+                        KnowledgeAnswerPointDraft(
+                            text="闭水试验是防水验收的一种现场试验。",
+                            evidence_handles=[],
+                        )
+                    ],
+                    core_question_answered=True,
+                    coverage_complete=True,
+                ),
+                StageMeta(
+                    purpose="answer",
+                    provider="llm",
+                    model="fake-answer",
+                    is_fallback=False,
+                    error=None,
+                    duration_ms=1,
+                ),
+            )
+
+        return _fake
+
+    monkeypatch.setattr(
+        "app.services.knowledge_agent.runner.run_knowledge_answer_agent",
+        _open_answer_agent(),
+    )
+    async with async_session_factory() as db:
+        user = await create_user(db, "模型优先")
+        workspace = await create_workspace(db, user)
+        conversation, run = await _conversation_and_run(
+            db,
+            user,
+            workspace,
+            message="什么是闭水试验？",
+        )
+        run.request_basis_mode = "auto"
+        run.status = RUN_PROCESSING
+        await db.commit()
+
+        await execute_run(db, run)
+        await db.commit()
+
+        assert run.actual_answer_mode == "quick"
+        assert run.planned_basis_strategy == BASIS_STRATEGY_MODEL_FIRST
+        answer = json.loads(run.answer_json)
+        assert answer["status"] == "completed"
+        assert answer["citations"] == []
+        tool_names = [
+            tool.tool_name
+            for tool in (
+                await db.execute(
+                    select(KnowledgeAgentToolCall).where(
+                        KnowledgeAgentToolCall.run_id == run.id
+                    )
+                )
+            ).scalars().all()
+        ]
+        assert "search_confirmed_knowledge" not in tool_names
+        assert "read_source_evidence" not in tool_names
+        # 正常跳过 Grove 不是 fallback：降级摘要不含伪工具错误
+        summary = json.loads(run.fallback_summary)
+        assert summary["has_fallback"] is False
+
+
+@pytest.mark.asyncio
+async def test_entries_result_skips_basis_planning(monkeypatch) -> None:
+    """结构化 Entry 结果不执行依据规划，也不写 planned_basis_strategy。"""
+    async def _fake_entry_search(db, run, decision, ctx):
+        run.status = RUN_COMPLETED
+        run.current_step = None
+        run.active_slot = None
+        run.actual_result_mode = RESULT_MODE_ENTRIES
+        run.entry_result_json = '{"schema_version":"v1","query":"x","status":"completed"}'
+        await db.flush()
+
+    monkeypatch.setattr(
+        "app.services.knowledge_agent.entry_search.execute_structured_entry_search",
+        _fake_entry_search,
+    )
+    async with async_session_factory() as db:
+        user = await create_user(db, "条目跳过规划")
+        workspace = await create_workspace(db, user)
+        conversation = KnowledgeConversation(
+            workspace_id=workspace.id,
+            owner_user_id=user.id,
+            scope_type=SCOPE_WORKSPACE,
+            title="条目跳过规划测试",
+        )
+        db.add(conversation)
+        await db.flush()
+        _message, run = await submit_message(
+            db,
+            conversation,
+            KnowledgeRunSubmitRequest(
+                client_message_id=f"entries-basis-{run_id_counter()}",
+                message="列出相关条目",
+                result_mode=RESULT_MODE_ENTRIES,
+            ),
+        )
+        # 预置可恢复决策与实际结果形态，让执行器跳过路由直接进入 entries 图
+        run.context_decision = "new_topic"
+        run.standalone_query = "列出相关条目"
+        run.topic_label = "列出相关条目"
+        run.history_message_ids_json = "[]"
+        run.context_meta_json = "{}"
+        run.actual_result_mode = RESULT_MODE_ENTRIES
+        run.status = RUN_PROCESSING
+        await db.commit()
+
+        await execute_run(db, run)
+        await db.commit()
+
+        assert run.planned_basis_strategy is None
+        assert run.request_basis_mode == "knowledge_only"
+        invocations = (
+            await db.execute(
+                select(KnowledgeAgentModelInvocation).where(
+                    KnowledgeAgentModelInvocation.run_id == run.id,
+                    KnowledgeAgentModelInvocation.purpose == PURPOSE_BASIS_ROUTE,
+                )
+            )
+        ).scalars().all()
+        assert invocations == []
+
+
+@pytest.mark.asyncio
+async def test_basis_open_empty_search_partial_with_statement_basis(
+    monkeypatch,
+) -> None:
+    """hybrid 空 Grove 结果：保留一般分析并按缺口标记 partial，依据真实可见。"""
+    async def _plan(
+        db,
+        *,
+        workspace_id,
+        request_basis_mode,
+        objective,
+        scope_label,
+        topic_summary,
+        context_decision,
+        current_message,
+        allowed_statements,
+        feature_enabled,
+    ):
+        return BasisPlan(
+            strategy="hybrid",
+            needs_grove=True,
+            requires_external_material=False,
+            candidate_statement_ids=[
+                item.message_id for item in allowed_statements
+            ],
+            degraded=False,
+            meta=StageMeta(
+                purpose=PURPOSE_BASIS_ROUTE,
+                provider="llm",
+                model="fake-basis",
+                is_fallback=False,
+                error=None,
+                duration_ms=1,
+            ),
+        )
+
+    monkeypatch.setattr(
+        "app.services.knowledge_agent.runner.resolve_basis_plan",
+        _plan,
+    )
+
+    def _open_answer_agent():
+        async def _fake(db, workspace_id, query, scope_label, entries, **kwargs):
+            assert kwargs.get("user_statements")
+            assert kwargs.get("allow_model_knowledge") is True
+            return (
+                KnowledgeAnswerDraft(
+                    lead="先给出一般分析。",
+                    points=[
+                        KnowledgeAnswerPointDraft(
+                            text="预算分配一般需要先明确上限与优先级。",
+                            evidence_handles=[],
+                        )
+                    ],
+                    core_question_answered=True,
+                    coverage_complete=True,
+                ),
+                StageMeta(
+                    purpose="answer",
+                    provider="llm",
+                    model="fake-answer",
+                    is_fallback=False,
+                    error=None,
+                    duration_ms=1,
+                ),
+            )
+
+        return _fake
+
+    monkeypatch.setattr(
+        "app.services.knowledge_agent.runner.run_knowledge_answer_agent",
+        _open_answer_agent(),
+    )
+    async with async_session_factory() as db:
+        user = await create_user(db, "开放空搜索")
+        workspace = await create_workspace(db, user)
+        await create_project(db, workspace, "无内容项目")
+        conversation, run = await _conversation_and_run(
+            db,
+            user,
+            workspace,
+            message="预算上限 30 万，怎么分配？",
+        )
+        run.request_basis_mode = "auto"
+        run.status = RUN_PROCESSING
+        await db.commit()
+
+        await execute_run(db, run)
+        await db.commit()
+
+        assert run.status == RUN_PARTIAL
+        answer = json.loads(run.answer_json)
+        assert answer["status"] == "partial"
+        assert any("知识库" in gap for gap in answer["gaps"])
+        basis = json.loads(run.answer_basis_json)
+        assert basis["grove"]["used"] is False
+        assert basis["model_knowledge"]["used"] is True
+        assert basis["user_statements"]["message_ids"]
+        assert basis["external_material"]["status"] == "not_used"
+
+
+@pytest.mark.asyncio
+async def test_knowledge_only_empty_search_keeps_strict_insufficient() -> None:
+    """knowledge_only 空结果：严格依据不足，依据记录不标记模型知识。"""
+    async with async_session_factory() as db:
+        user = await create_user(db, "仅知识空搜索")
+        workspace = await create_workspace(db, user)
+        await create_project(db, workspace, "空项目")
+        conversation, run = await _conversation_and_run(
+            db,
+            user,
+            workspace,
+            message="完全不存在的主题",
+        )
+        run.request_basis_mode = "knowledge_only"
+        run.status = RUN_PROCESSING
+        await db.commit()
+
+        await execute_run(db, run)
+        await db.commit()
+
+        assert run.status == RUN_COMPLETED
+        answer = json.loads(run.answer_json)
+        assert answer["status"] == "insufficient"
+        assert "没有召回相关正式 Entry" in answer["insufficient_note"]
+        basis = json.loads(run.answer_basis_json)
+        assert basis["grove"]["used"] is False
+        assert basis["grove"]["citation_count"] == 0
+        assert basis["model_knowledge"]["used"] is False
+        assert basis["user_statements"]["message_ids"] == []
+
+
+@pytest.mark.asyncio
+async def test_basis_model_first_answer_fallback_fails_run(monkeypatch) -> None:
+    """model-first 回答模型不可用且无工具结果：Run failed，不伪装正常回答。"""
+    async def _plan(
+        db,
+        *,
+        workspace_id,
+        request_basis_mode,
+        objective,
+        scope_label,
+        topic_summary,
+        context_decision,
+        current_message,
+        allowed_statements,
+        feature_enabled,
+    ):
+        return BasisPlan(
+            strategy=BASIS_STRATEGY_MODEL_FIRST,
+            needs_grove=False,
+            candidate_statement_ids=[],
+            degraded=False,
+            meta=StageMeta(
+                purpose=PURPOSE_BASIS_ROUTE,
+                provider="llm",
+                model="fake-basis",
+                is_fallback=False,
+                error=None,
+                duration_ms=1,
+            ),
+        )
+
+    monkeypatch.setattr(
+        "app.services.knowledge_agent.runner.resolve_basis_plan",
+        _plan,
+    )
+
+    def _fallback_open_agent():
+        async def _fake(db, workspace_id, query, scope_label, entries, **kwargs):
+            return (
+                KnowledgeAnswerDraft(
+                    answer="当前没有可用的文本模型，无法生成回答。",
+                    insufficient=True,
+                    insufficient_note="文本模型不可用",
+                ),
+                StageMeta(
+                    purpose="answer",
+                    provider="offline",
+                    model=None,
+                    is_fallback=True,
+                    error="未配置文本模型密钥",
+                    duration_ms=1,
+                ),
+            )
+
+        return _fake
+
+    monkeypatch.setattr(
+        "app.services.knowledge_agent.runner.run_knowledge_answer_agent",
+        _fallback_open_agent(),
+    )
+    async with async_session_factory() as db:
+        user = await create_user(db, "开放失败")
+        workspace = await create_workspace(db, user)
+        conversation, run = await _conversation_and_run(
+            db,
+            user,
+            workspace,
+            message="解释一个通用概念",
+        )
+        run.request_basis_mode = "auto"
+        run.status = RUN_PROCESSING
+        await db.commit()
+
+        await execute_run(db, run)
+        await db.commit()
+
+        assert run.status == RUN_FAILED
+        answer = json.loads(run.answer_json)
+        assert answer["status"] == "failed"
+        summary = json.loads(run.fallback_summary)
+        assert summary["has_fallback"] is True
+        basis = json.loads(run.answer_basis_json)
+        assert basis["model_knowledge"]["used"] is False

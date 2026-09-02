@@ -12,10 +12,10 @@
 
 ## 3. 依据感知回答执行
 
-- [ ] 3.1 调整 answer Run 编排顺序，在 `actual_result_mode=answer` 时先解析 basis；实现 model-first 跳过 Grove、需要 Grove 时复用现有 quick 图、entries 结果跳过 basis 规划。验收：`cd backend && .venv/bin/pytest -q tests/test_knowledge_agent_runner.py tests/test_knowledge_agent_result_protocol.py`
-- [ ] 3.2 扩展结构化回答草稿与提示，使允许模型知识的回答可以包含无 Citation 要点，同时继续由服务端剔除未知 Evidence、派生 Citation、处理冲突并禁止声称联网。验收：`cd backend && .venv/bin/pytest -q tests/test_knowledge_agent_evidence.py tests/test_knowledge_agent_models.py`
-- [ ] 3.3 实现服务端 `AnswerBasis v1` 装配与状态计算：从最终 Citation、已校验用户消息和实际执行权限派生依据；将“无 Citation”与 insufficient 解耦，并原子提交回答、basis、Run 终态和可选工作集。验收：`cd backend && .venv/bin/pytest -q tests/test_knowledge_agent_result_protocol.py tests/test_knowledge_agent_working_set.py`
-- [ ] 3.4 调整空搜索、Entry/Evidence 不可用和回答模型失败路径：允许的开放回答按实际完成度返回 completed/partial/insufficient，`knowledge_only` 保持严格不足，任何降级均可见。验收：`cd backend && .venv/bin/pytest -q tests/test_knowledge_agent_runner.py -k 'empty or unavailable or fallback or knowledge_only'`
+- [x] 3.1 调整 answer Run 编排顺序，在 `actual_result_mode=answer` 时先解析 basis；实现 model-first 跳过 Grove、需要 Grove 时复用现有 quick 图、entries 结果跳过 basis 规划。验收：`cd backend && .venv/bin/pytest -q tests/test_knowledge_agent_runner.py tests/test_knowledge_agent_result_protocol.py`
+- [x] 3.2 扩展结构化回答草稿与提示，使允许模型知识的回答可以包含无 Citation 要点，同时继续由服务端剔除未知 Evidence、派生 Citation、处理冲突并禁止声称联网。验收：`cd backend && .venv/bin/pytest -q tests/test_knowledge_agent_evidence.py tests/test_knowledge_agent_models.py`
+- [x] 3.3 实现服务端 `AnswerBasis v1` 装配与状态计算：从最终 Citation、已校验用户消息和实际执行权限派生依据；将“无 Citation”与 insufficient 解耦，并原子提交回答、basis、Run 终态和可选工作集。验收：`cd backend && .venv/bin/pytest -q tests/test_knowledge_agent_result_protocol.py tests/test_knowledge_agent_working_set.py`
+- [x] 3.4 调整空搜索、Entry/Evidence 不可用和回答模型失败路径：允许的开放回答按实际完成度返回 completed/partial/insufficient，`knowledge_only` 保持严格不足，任何降级均可见。验收：`cd backend && .venv/bin/pytest -q tests/test_knowledge_agent_runner.py -k 'empty or unavailable or fallback or knowledge_only'`
 - [ ] 3.5 将 basis 接入有界调查：显式 investigate 必须真实创建 Investigation；自动 model-first 不伪造调查；无 Grove 结果时按用户限制决定一般回答或不足，并保留真实停止原因。验收：`cd backend && .venv/bin/pytest -q tests/test_knowledge_agent_investigation_runner.py tests/test_knowledge_agent_investigation_recovery.py`
 - [ ] 3.6 覆盖取消、租约恢复、重复执行与终态事务一致性，确保恢复复用已提交的 basis 规划、取消不提交迟到回答、实际 basis 不漂移。验收：`cd backend && .venv/bin/pytest -q tests/test_knowledge_agent_worker.py tests/test_knowledge_agent_investigation_recovery.py`
 

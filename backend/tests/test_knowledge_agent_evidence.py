@@ -1272,3 +1272,161 @@ async def test_fingerprint_and_quote_verification() -> None:
     assert verified is not None
     assert verified.text in "闭水试验 持续24小时。"
     assert locate_verified_quote("原文", "完全不同的内容") is None
+
+
+@pytest.mark.asyncio
+async def test_open_answer_allows_unreferenced_points_without_citation() -> None:
+    """开放回答：允许模型通用知识要点无 Citation 保留并 completed。"""
+    async with async_session_factory() as db:
+        user = await create_user(db, "开放校验")
+        workspace = await create_workspace(db, user)
+        conversation = KnowledgeConversation(
+            workspace_id=workspace.id,
+            owner_user_id=user.id,
+            scope_type="workspace",
+            title="开放校验测试",
+        )
+        db.add(conversation)
+        await db.flush()
+        run = KnowledgeAgentRun(
+            conversation_id=conversation.id,
+            workspace_id=workspace.id,
+            owner_user_id=user.id,
+            scope_type="workspace",
+            status=RUN_PROCESSING,
+            active_slot="active",
+            max_retries=1,
+        )
+        db.add(run)
+        await db.flush()
+        await db.commit()
+
+        draft = KnowledgeAnswerDraft(
+            lead="闭水试验通常需要保持蓄水一段时间。",
+            points=[
+                KnowledgeAnswerPointDraft(
+                    section="一般做法",
+                    text="蓄水时长以验收方案为准，常见做法是持续 24 小时。",
+                    evidence_handles=[],
+                )
+            ],
+            core_question_answered=True,
+            coverage_complete=True,
+        )
+        answer, stats = await build_validated_answer(
+            db,
+            run.id,
+            draft,
+            allow_unreferenced=True,
+        )
+        assert answer.status == "completed"
+        assert answer.citations == []
+        assert len(answer.points) == 1
+        assert answer.points[0].citations == []
+        assert "闭水试验通常需要保持蓄水一段时间" in answer.answer
+        assert stats.requested_count == 0
+        assert stats.valid_count == 0
+
+
+@pytest.mark.asyncio
+async def test_open_answer_drops_points_with_unknown_handles() -> None:
+    """开放模式仍剔除未知 Evidence 句柄：含非法句柄要点整条丢弃。"""
+    async with async_session_factory() as db:
+        user = await create_user(db, "开放句柄")
+        workspace = await create_workspace(db, user)
+        conversation = KnowledgeConversation(
+            workspace_id=workspace.id,
+            owner_user_id=user.id,
+            scope_type="workspace",
+            title="开放句柄测试",
+        )
+        db.add(conversation)
+        await db.flush()
+        run = KnowledgeAgentRun(
+            conversation_id=conversation.id,
+            workspace_id=workspace.id,
+            owner_user_id=user.id,
+            scope_type="workspace",
+            status=RUN_PROCESSING,
+            active_slot="active",
+            max_retries=1,
+        )
+        db.add(run)
+        await db.flush()
+        await db.commit()
+
+        draft = KnowledgeAnswerDraft(
+            lead="先给一般结论。",
+            points=[
+                KnowledgeAnswerPointDraft(
+                    text="这是一般通用知识解释。",
+                    evidence_handles=[],
+                ),
+                KnowledgeAnswerPointDraft(
+                    text="这条引用了伪造证据。",
+                    evidence_handles=["ev_00000000000000000000000000000000"],
+                ),
+            ],
+            core_question_answered=True,
+            coverage_complete=True,
+        )
+        answer, stats = await build_validated_answer(
+            db,
+            run.id,
+            draft,
+            allow_unreferenced=True,
+        )
+        assert answer.status == "partial"
+        assert len(answer.points) == 1
+        assert "伪造证据" not in answer.answer
+        assert stats.requested_count == 1
+        assert stats.discarded_count == 1
+
+
+@pytest.mark.asyncio
+async def test_open_answer_empty_content_stays_insufficient() -> None:
+    """开放模式没有可提交内容时仍为 insufficient，不伪装 completed。"""
+    async with async_session_factory() as db:
+        user = await create_user(db, "开放空答")
+        workspace = await create_workspace(db, user)
+        conversation = KnowledgeConversation(
+            workspace_id=workspace.id,
+            owner_user_id=user.id,
+            scope_type="workspace",
+            title="开放空答测试",
+        )
+        db.add(conversation)
+        await db.flush()
+        run = KnowledgeAgentRun(
+            conversation_id=conversation.id,
+            workspace_id=workspace.id,
+            owner_user_id=user.id,
+            scope_type="workspace",
+            status=RUN_PROCESSING,
+            active_slot="active",
+            max_retries=1,
+        )
+        db.add(run)
+        await db.flush()
+        await db.commit()
+
+        draft = KnowledgeAnswerDraft(
+            answer="",
+            points=[
+                KnowledgeAnswerPointDraft(
+                    text="",
+                    evidence_handles=[],
+                )
+            ],
+            core_question_answered=False,
+            coverage_complete=False,
+            insufficient=True,
+        )
+        answer, _stats = await build_validated_answer(
+            db,
+            run.id,
+            draft,
+            allow_unreferenced=True,
+        )
+        assert answer.status == "insufficient"
+        assert answer.citations == []

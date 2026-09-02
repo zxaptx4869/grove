@@ -51,6 +51,7 @@ from app.models.knowledge_agent import (
 from app.schemas.knowledge_agent import (
     FallbackSummaryOut,
     InvestigationSummaryOut,
+    KnowledgeAnswerBasisOut,
     KnowledgeAnswerOut,
     KnowledgeEntryResultSnapshotOut,
     KnowledgeRunOut,
@@ -513,14 +514,17 @@ async def finalize_run(
     answer: KnowledgeAnswerOut,
     status: str,
     fallback_summary: dict,
+    answer_basis: KnowledgeAnswerBasisOut | None = None,
 ) -> None:
-    """终态事务提交：助手消息、Run 结果与活动槽释放一次性完成。"""
+    """终态事务提交：助手消息、Run 结果、实际依据与活动槽释放一次性完成。"""
     if run.status in RUN_TERMINAL_STATUSES:
         return
     run.status = status
     run.current_step = None
     run.active_slot = None
     run.answer_json = answer.model_dump_json()
+    if answer_basis is not None:
+        run.answer_basis_json = answer_basis.model_dump_json()
     run.fallback_summary = json.dumps(fallback_summary, ensure_ascii=False)
     run.error = None
     if run.assistant_message_id is not None:

@@ -15,6 +15,26 @@ logger = logging.getLogger(__name__)
 
 ANSWER_PROMPT_VERSION = "v3"
 
+# 开放讨论追加提示：由服务端依据计划控制是否附加（prompt 版本随 ANSWER 观测）
+OPEN_ANSWER_PROMPT_SUFFIX = (
+    "\n"
+    "本回答允许使用模型通用知识："
+    "\n"
+    "1. 没有当前 Run Evidence 支撑的一般解释、示例或通用概念要点可以直接保留，"
+    "该要点不要挂 evidence_handles，也不要生成 Citation；"
+    "\n"
+    "2. 只要引用给定的 Grove Evidence，仍必须原样使用 ev_ 句柄并挂在对应要点上；"
+    "不得改写、编造句柄，也不得把通用知识伪装成引用；"
+    "\n"
+    "3. “用户提供的信息”只能作为个人前提表达（例如“你提供的信息”），"
+    "不得生成 Citation、Source 引文或把它当成正式知识；"
+    "\n"
+    "4. 本阶段没有实时外部工具：不得声称已经联网、已核验当前政策/价格/规则，"
+    "也不得把模型训练知识描述为实时结果；"
+    "\n"
+    "5. 用户陈述与 Grove Entry 冲突时，并列说明双方及依据，不替用户裁决。"
+)
+
 
 class KnowledgeCitationDraft(BaseModel):
     """回答模型选择的 Evidence 句柄；服务端最终校验。"""
@@ -118,8 +138,9 @@ def _format_context(
     query: str,
     scope_label: str,
     entries: list[dict],
+    user_statements: list[dict] | None = None,
 ) -> str:
-    """组装回答上下文：只包含已发现 Entry 与可引用 Evidence 句柄。"""
+    """组装回答上下文：只包含已发现 Entry、可引用句柄与允许的用户陈述。"""
     parts = [f"问题：{query}", f"问答范围：{scope_label}", "可用已确认知识："]
     for item in entries:
         parts.append(f"- Entry {item['entry_id']}：{item['title']}")
@@ -135,6 +156,15 @@ def _format_context(
     parts.append(
         "引用规则：citations 只能使用上面列出的句柄；句柄必须完整原样返回；不要把原文片段当成句柄。"
     )
+    statements = user_statements or []
+    if statements:
+        parts.append("用户提供的信息（只作个人前提，不是正式知识）：")
+        for item in statements:
+            parts.append(f"- 消息 {item['message_id']}：「{item['content']}」")
+        parts.append(
+            "规则：只能把上述用户信息表达为“你提供的信息”；不得为它们生成 "
+            "Citation/Source 引文，不得把它们升级为正式知识或“已验证事实”。"
+        )
     return "\n".join(parts)
 
 
@@ -156,6 +186,9 @@ async def run_knowledge_answer_agent(
     *,
     purpose: str = PURPOSE_ANSWER,
     synthesis_context: str | None = None,
+    user_statements: list[dict] | None = None,
+    allow_model_knowledge: bool = False,
+    external_material_required: bool = False,
 ) -> tuple[KnowledgeAnswerDraft, StageMeta]:
     """运行回答 Agent，返回 (草稿, 阶段元数据)。
 
@@ -178,11 +211,20 @@ async def run_knowledge_answer_agent(
             ),
         )
 
-    context = _format_context(query, scope_label, entries)
+    context = _format_context(query, scope_label, entries, user_statements)
     system_prompt = KNOWLEDGE_ANSWER_SYSTEM_PROMPT
+    if allow_model_knowledge:
+        system_prompt = system_prompt + OPEN_ANSWER_PROMPT_SUFFIX
+        if external_material_required:
+            system_prompt = (
+                system_prompt
+                + "\n"
+                + "本问题的核心依赖当前外部材料且当前不可用：只提供一般概念框架与"
+                "待核对事项，明确说明未检索实时外部资料，并按实际完成度返回状态。"
+            )
     if synthesis_context:
         system_prompt = (
-            KNOWLEDGE_ANSWER_SYSTEM_PROMPT
+            system_prompt
             + "\n"
             + "调查已停止，请按以下摘要组织回答："
             + "\n"

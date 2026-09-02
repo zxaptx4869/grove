@@ -254,11 +254,16 @@ async def build_validated_answer(
     draft,
     *,
     verifiable_gaps: list[str] | None = None,
+    allow_unreferenced: bool = False,
 ) -> tuple[KnowledgeAnswerOut, ReferenceValidationStats]:
     """把回答草稿转换为最终回答：只保留本 Run 可引用句柄，丢弃模型自由内容。
 
     返回 (最终回答, 引用校验统计)。事实性回答没有有效引用时降级为
     `insufficient`；部分句柄失效时保留有效引用并标记 `partial`。
+
+    `allow_unreferenced=True` 用于开放讨论：允许模型通用知识/一般解释要点
+    不挂 Evidence 句柄保留；但引用任何句柄仍必须来自本 Run 有效 Evidence，
+    含非法句柄的要点整条丢弃，未知句柄不得被洗成无引用要点。
 
     v3：模型输出 `lead` + `points` 时，逐条校验要点句柄、派生扁平 citations，
     并由服务端从 `lead` + `points` 拼接 `answer` 文本；无 `points`（旧模型/
@@ -284,13 +289,18 @@ async def build_validated_answer(
             if not (point.text or "").strip():
                 # 空正文要点与拼接语义一致：整条丢弃，不产生空展示行
                 continue
-            point_handles = list(
-                dict.fromkeys(
-                    handle for handle in point.evidence_handles if handle in resolved
-                )
+            original_handles = list(dict.fromkeys(point.evidence_handles))
+            has_invalid_handle = any(
+                handle not in resolved for handle in original_handles
             )
-            if not point_handles:
-                # 无有效句柄的要点整条丢弃，并计入失效统计
+            point_handles = [
+                handle for handle in original_handles if handle in resolved
+            ]
+            if has_invalid_handle:
+                # 引用非法/越权句柄的要点整条丢弃：不得把未知引用洗成无引用内容
+                continue
+            if not point_handles and not allow_unreferenced:
+                # Grove-only 模式：无有效句柄的要点整条丢弃
                 continue
             valid_points.append(point)
             for handle in point_handles:
@@ -359,20 +369,30 @@ async def build_validated_answer(
     core_question_answered = getattr(draft, "core_question_answered", None)
     coverage_complete = getattr(draft, "coverage_complete", None)
     assessment_missing = core_question_answered is None or coverage_complete is None
-    if points and not citations:
-        # 全部要点被丢弃（正文为空或句柄失效）：没有可核验内容，不得保持 completed
-        status = "insufficient"
-        citations = []
-        conflicts = []
-    elif stats.valid_count == 0:
-        # 事实性回答但没有一个可引用句柄：不得保持 completed
-        status = "insufficient"
-        citations = []
-        conflicts = []
-    elif draft.insufficient or core_question_answered is False:
+    if draft.insufficient or core_question_answered is False:
         # 边缘 Evidence 不能因存在零散引用伪装为有用的部分结果。
         status = "insufficient"
-    elif stats.discarded_count > 0 or assessment_missing or coverage_complete is False or gaps:
+    elif points and not valid_points:
+        # 全部要点被丢弃（正文为空或句柄失效）：没有可核验/可保留内容
+        status = "insufficient"
+        citations = []
+        conflicts = []
+    elif not allow_unreferenced and stats.valid_count == 0:
+        # Grove-only 事实性回答但没有可引用句柄：不得保持 completed
+        status = "insufficient"
+        citations = []
+        conflicts = []
+    elif allow_unreferenced and not valid_points and not (draft.answer or "").strip():
+        # 开放模式同样不允许空内容完成
+        status = "insufficient"
+        citations = []
+        conflicts = []
+    elif (
+        stats.discarded_count > 0
+        or assessment_missing
+        or coverage_complete is False
+        or gaps
+    ):
         # 部分句柄失效：保留有效引用并标记 partial
         status = "partial"
     else:
