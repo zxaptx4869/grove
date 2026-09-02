@@ -39,7 +39,7 @@
 - [x] 6.1 建立结构化查询评估夹具，覆盖精确筛选/计数/排序/分组、统计后列对象、语义与结构化组合、自然语言日期和结果形态路由，不按单条问法增加关键词规则。验收：`cd backend && .venv/bin/pytest -q tests/test_knowledge_agent_structured_query_eval.py`
 - [x] 6.2 增加安全硬门禁：跨 Workspace/项目结果为零、Candidate/Draft/Extraction 不进入集合、任意 SQL/对象 id/未知工具被拒绝、查询不写知识或推进工作集、语义 top-k 不产生精确总数。验收：`cd backend && .venv/bin/pytest -q tests/test_knowledge_agent_structured_query_eval.py -k guardrail`
 - [x] 6.3 增加 SQLite 与 MySQL 8 方言查询生成/集成覆盖，验证时间闭开区间、UTC 月桶、NULL 归一化、稳定排序、精确计数和索引使用；根据 Explain/基准决定是否增加组合索引并记录理由。验收：`cd backend && .venv/bin/pytest -q tests/test_knowledge_agent_structured_query.py tests/test_migrations.py -k 'dialect or aggregate or migration'`
-- [ ] 6.4 完成迁移往返、后端全量测试与静态检查。验收：`cd backend && .venv/bin/alembic upgrade head && .venv/bin/pytest -q && .venv/bin/ruff check app tests alembic`
+- [x] 6.4 完成迁移往返、后端全量测试与静态检查。验收：`cd backend && .venv/bin/alembic upgrade head && .venv/bin/pytest -q && .venv/bin/ruff check app tests alembic`
 - [ ] 6.5 完成原生端全量单测、类型检查与 lint。验收：`cd mobile && npm test -- --runInBand && npm run typecheck && npm run lint`
 - [ ] 6.6 运行 `openspec validate --all --strict`，确认新增能力和四组主规格增量均严格通过，且没有覆盖现有已上线行为。
 
