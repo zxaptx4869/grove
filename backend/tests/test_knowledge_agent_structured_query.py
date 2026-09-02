@@ -30,6 +30,7 @@ from app.services.knowledge_agent.structured_query_tools import (
     QueryEntriesParams,
     aggregate_entries_handler,
     query_entries_handler,
+    restore_query_entries_handler,
 )
 from app.services.knowledge_agent.tools import RunToolContext
 from tests._knowledge_agent_fixtures import (
@@ -732,3 +733,50 @@ def test_truncation_preserves_count_and_marks_affected_outputs() -> None:
     assert bounded.output_completeness["entries"] == "limited"
     assert bounded.entries is not None and bounded.entries["has_more"] is True
     assert bounded.warnings
+
+
+@pytest.mark.asyncio
+async def test_tool_call_restore_reports_entry_state_change() -> None:
+    """恢复只复用对象句柄；Entry 删除后返回真实 partial/unknown 边界。"""
+    async with async_session_factory() as db:
+        user = await create_user(db, "对象变化")
+        workspace = await create_workspace(db, user)
+        project = await create_project(db, workspace)
+        node = await create_child_node(db, project, "记录")
+        source, attachment = await create_source_attachment(db, workspace, project)
+        entry = await create_entry_with_evidence(
+            db, project, node, source, attachment, title="稍后删除"
+        )
+        ctx = RunToolContext(
+            run_id=1,
+            workspace_id=workspace.id,
+            owner_user_id=user.id,
+            scope_type="project",
+            project_id=project.id,
+            project_name=project.name,
+        )
+        params = QueryEntriesParams.model_validate(
+            {
+                "entry_set": {},
+                "limit": 5,
+                "sort": {"field": "updated_at", "direction": "desc"},
+            }
+        )
+        await db.delete(entry)
+        await db.flush()
+        restored = await restore_query_entries_handler(
+            db,
+            ctx,
+            params,
+            {
+                "entry_ids": [entry.id],
+                "status": "completed",
+                "completeness": "complete",
+                "has_more": False,
+            },
+        )
+
+    assert restored is not None
+    assert restored.status == "partial"
+    assert restored.completeness == "unknown"
+    assert restored.payload["items"] == []

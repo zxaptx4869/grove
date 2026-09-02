@@ -15,6 +15,7 @@ from app.knowledge_agent_worker import (
 from app.models import (
     KnowledgeAgentModelInvocation,
     KnowledgeAgentRun,
+    KnowledgeAgentToolCall,
     KnowledgeConversation,
     KnowledgeMessage,
 )
@@ -30,7 +31,11 @@ from app.models.knowledge_agent import (
 from app.schemas.knowledge_agent import KnowledgeRunSubmitRequest
 from app.services.knowledge_agent.basis import BasisPlan
 from app.services.knowledge_agent.observability import StageMeta
+from app.services.knowledge_agent.read_tools import ReadToolBudget, dispatch_read_tool
 from app.services.knowledge_agent.runs import submit_message
+from app.services.knowledge_agent.structured_query_tools import (
+    STRUCTURED_QUERY_TOOL_REGISTRY,
+)
 from app.services.knowledge_agent.tools import RunToolContext, SearchToolOutput
 from app.services.knowledge_agent.working_set import (
     get_active_context_version,
@@ -52,6 +57,63 @@ from tests.test_knowledge_agent_runner import (
     _fake_answer_agent,
     run_id_counter,
 )
+
+
+async def _never_cancel() -> None:
+    return None
+
+
+@pytest.mark.asyncio
+async def test_tool_call_fingerprint_reuses_committed_aggregate_result() -> None:
+    """同 Run/版本/参数指纹复用已提交 count，不重复执行并追加调用记录。"""
+    async with async_session_factory() as db:
+        user = await create_user(db, "工具恢复")
+        workspace = await create_workspace(db, user)
+        _conversation, run = await _conversation_and_run(db, user, workspace, "有多少知识")
+        run.status = RUN_PROCESSING
+        await db.flush()
+        ctx = RunToolContext(
+            run_id=run.id,
+            workspace_id=run.workspace_id,
+            owner_user_id=run.owner_user_id,
+            scope_type=run.scope_type,
+            project_id=run.project_id,
+            project_name=run.project_name,
+        )
+        params = {"entry_set": {}, "operation": "count"}
+        first = await dispatch_read_tool(
+            db,
+            ctx,
+            tool_name="aggregate_entries",
+            tool_version="v1",
+            params=params,
+            budget=ReadToolBudget(3, 3, 60000),
+            cancel_check=_never_cancel,
+            registry=STRUCTURED_QUERY_TOOL_REGISTRY,
+        )
+        await db.commit()
+        second = await dispatch_read_tool(
+            db,
+            ctx,
+            tool_name="aggregate_entries",
+            tool_version="v1",
+            params=params,
+            budget=ReadToolBudget(3, 3, 60000),
+            cancel_check=_never_cancel,
+            registry=STRUCTURED_QUERY_TOOL_REGISTRY,
+        )
+        calls = (
+            await db.execute(
+                select(KnowledgeAgentToolCall).where(
+                    KnowledgeAgentToolCall.run_id == run.id
+                )
+            )
+        ).scalars().all()
+
+    assert first.reused is False
+    assert second.reused is True
+    assert second.payload == first.payload == {"value": 0}
+    assert len(calls) == 1
 
 
 async def _cancel_other_waiting_runs(

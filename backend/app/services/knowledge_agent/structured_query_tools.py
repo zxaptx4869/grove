@@ -169,6 +169,11 @@ async def aggregate_entries_handler(
 ) -> ReadToolExecution:
     """直接对共享集合执行 count/group_count，不依赖任何列表输出。"""
     settings = get_settings()
+    if (
+        params.entry_set.semantic_query is not None
+        and ctx.structured_query_entry_ids is None
+    ):
+        await prepare_semantic_entry_set(db, ctx, params.entry_set)
     base_ids = _aggregate_scope_stmt(ctx, params.entry_set).subquery()
     semantic = params.entry_set.semantic_query is not None
     base_completeness = (
@@ -190,6 +195,7 @@ async def aggregate_entries_handler(
             audit_summary={
                 "operation": "count",
                 "value": value,
+                "status": status,
                 "semantic": semantic,
                 "completeness": base_completeness,
             },
@@ -238,6 +244,8 @@ async def aggregate_entries_handler(
             "operation": "group_count",
             "group_by": params.group_by,
             "bucket_count": len(buckets),
+            "buckets": buckets,
+            "status": status,
             "semantic": semantic,
             "truncated": truncated,
             "completeness": completeness,
@@ -308,9 +316,12 @@ async def semantic_query_entries_handler(
         completeness=completeness,
         audit_summary={
             "returned_count": len(items),
+            "entry_ids": [item.entry_id for item in items],
             "semantic_candidate_count": len(ranked),
+            "status": status,
             "semantic": True,
             "truncated": truncated,
+            "has_more": truncated,
             "unavailable_count": len(unavailable),
             "completeness": completeness,
         },
@@ -457,6 +468,8 @@ async def query_entries_handler(
             completeness=RESULT_COMPLETENESS_COMPLETE,
             audit_summary={
                 "returned_count": 0,
+                "entry_ids": [],
+                "status": TOOL_EMPTY,
                 "has_more": False,
                 "completeness": RESULT_COMPLETENESS_COMPLETE,
             },
@@ -477,6 +490,8 @@ async def query_entries_handler(
             completeness=completeness,
             audit_summary={
                 "returned_count": len(items),
+                "entry_ids": [item.entry_id for item in items],
+                "status": TOOL_LIMITED,
                 "has_more": True,
                 "completeness": completeness,
             },
@@ -490,9 +505,104 @@ async def query_entries_handler(
         completeness=completeness,
         audit_summary={
             "returned_count": len(items),
+            "entry_ids": [item.entry_id for item in items],
+            "status": "completed",
             "has_more": False,
             "completeness": completeness,
         },
+    )
+
+
+async def restore_query_entries_handler(
+    db: AsyncSession,
+    ctx: RunToolContext,
+    params: QueryEntriesParams,
+    summary: dict,
+) -> ReadToolExecution | None:
+    """按已提交有序 Entry id 重建当前快照；对象变化显式降为 partial。"""
+    entry_ids = summary.get("entry_ids")
+    if not isinstance(entry_ids, list) or not all(
+        isinstance(entry_id, int) for entry_id in entry_ids
+    ):
+        return None
+    rows = list(
+        (
+            await db.execute(
+                structured_scope_select(ctx, params.entry_set).where(
+                    Entry.id.in_(entry_ids)
+                )
+            )
+        )
+        .scalars()
+        .all()
+    )
+    by_id = {entry.id: entry for entry in rows}
+    ordered = [by_id[entry_id] for entry_id in entry_ids if entry_id in by_id]
+    settings = get_settings()
+    items, unavailable = await _assemble_items(
+        db,
+        ctx,
+        ordered,
+        params.entry_set.semantic_query or "",
+        excerpt_chars=settings.knowledge_agent_result_excerpt_chars,
+        node_path_chars=settings.knowledge_agent_result_node_path_chars,
+        match_hint_chars=settings.knowledge_agent_result_match_hint_chars,
+    )
+    missing = len(entry_ids) - len(items) + len(unavailable)
+    if missing:
+        status = "partial"
+        completeness = RESULT_COMPLETENESS_UNKNOWN
+        error = "恢复时部分 Entry 已删除或移出 Run 范围"
+    else:
+        status = str(summary.get("status") or "completed")
+        completeness = str(
+            summary.get("completeness") or RESULT_COMPLETENESS_UNKNOWN
+        )
+        error = None
+    return ReadToolExecution(
+        status=status,
+        payload={
+            "items": [item.model_dump(mode="json") for item in items],
+            "returned_count": len(items),
+            "has_more": bool(summary.get("has_more", False)),
+        },
+        completeness=completeness,
+        audit_summary=summary,
+        error=error,
+    )
+
+
+async def restore_aggregate_entries_handler(
+    db: AsyncSession,
+    ctx: RunToolContext,
+    params: AggregateEntriesParams,
+    summary: dict,
+) -> ReadToolExecution | None:
+    """复用已提交的有界 count/桶摘要，不重新扫描共享集合。"""
+    del db, ctx
+    completeness = summary.get("completeness")
+    status = summary.get("status")
+    if not isinstance(completeness, str) or not isinstance(status, str):
+        return None
+    if params.operation == "count":
+        value = summary.get("value")
+        if not isinstance(value, int):
+            return None
+        payload = {"value": value}
+    else:
+        buckets = summary.get("buckets")
+        if not isinstance(buckets, list):
+            return None
+        payload = {
+            "group_by": params.group_by,
+            "buckets": buckets,
+            "truncated": bool(summary.get("truncated", False)),
+        }
+    return ReadToolExecution(
+        status=status,
+        payload=payload,
+        completeness=completeness,
+        audit_summary=summary,
     )
 
 
@@ -502,11 +612,13 @@ STRUCTURED_QUERY_TOOL_REGISTRY: dict[str, ReadToolSpec] = {
         version=STRUCTURED_QUERY_TOOL_VERSION,
         params_model=QueryEntriesParams,
         handler=query_entries_handler,
+        restore_handler=restore_query_entries_handler,
     ),
     "aggregate_entries": ReadToolSpec(
         name="aggregate_entries",
         version=STRUCTURED_QUERY_TOOL_VERSION,
         params_model=AggregateEntriesParams,
         handler=aggregate_entries_handler,
+        restore_handler=restore_aggregate_entries_handler,
     ),
 }

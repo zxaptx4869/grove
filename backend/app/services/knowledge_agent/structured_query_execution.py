@@ -25,7 +25,6 @@ from app.services.knowledge_agent.structured_query import NormalizedStructuredQu
 from app.services.knowledge_agent.structured_query_tools import (
     STRUCTURED_QUERY_TOOL_REGISTRY,
     STRUCTURED_QUERY_TOOL_VERSION,
-    prepare_semantic_entry_set,
 )
 from app.services.knowledge_agent.tools import RunToolContext
 
@@ -122,10 +121,6 @@ async def execute_structured_query_plan(
     """对同一集合按 count → group_count → entries 固定顺序确定性执行。"""
     settings = get_settings()
     semantic = plan.entry_set.semantic_query is not None
-    if semantic:
-        await cancel_check()
-        await prepare_semantic_entry_set(db, ctx, plan.entry_set)
-        await cancel_check()
     set_completeness = (
         RESULT_COMPLETENESS_LIMITED if semantic else RESULT_COMPLETENESS_COMPLETE
     )
@@ -171,6 +166,8 @@ async def execute_structured_query_plan(
             cancel_check=cancel_check,
             registry=STRUCTURED_QUERY_TOOL_REGISTRY,
         )
+        # 每个成功只读调用单独形成恢复检查点；最终 v2 快照仍在终态原子提交
+        await db.commit()
         await cancel_check()
         if dispatched.status in {TOOL_PARTIAL, TOOL_DENIED, TOOL_ERROR}:
             affected = True

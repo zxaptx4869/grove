@@ -14,13 +14,16 @@ from time import monotonic, perf_counter
 from typing import Any
 
 from pydantic import BaseModel, ConfigDict, ValidationError
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.models import KnowledgeAgentToolCall
 from app.models.knowledge_agent import (
     RESULT_COMPLETENESS_UNKNOWN,
     TOOL_CANCELLED,
     TOOL_COMPLETED,
     TOOL_DENIED,
+    TOOL_EMPTY,
     TOOL_ERROR,
     TOOL_LIMITED,
 )
@@ -54,6 +57,10 @@ ReadToolHandler = Callable[
     [AsyncSession, RunToolContext, BaseModel],
     Awaitable[ReadToolExecution],
 ]
+ReadToolRestoreHandler = Callable[
+    [AsyncSession, RunToolContext, BaseModel, dict],
+    Awaitable[ReadToolExecution | None],
+]
 
 
 @dataclass(frozen=True)
@@ -64,6 +71,7 @@ class ReadToolSpec:
     version: str
     params_model: type[BaseModel]
     handler: ReadToolHandler
+    restore_handler: ReadToolRestoreHandler | None = None
 
 
 @dataclass
@@ -96,6 +104,7 @@ class ReadToolDispatchResult:
     payload: dict
     error: str | None
     duration_ms: int
+    reused: bool = False
 
 
 # 应用静态注册表；具体工具在模块加载时由明确代码一次性装配，不扫描模块。
@@ -273,6 +282,29 @@ async def dispatch_read_tool(
         tool_version=tool_version,
         params=normalized_params,
     )
+    await cancel_check()
+    reusable = await _find_reusable_call(
+        db,
+        run_id=ctx.run_id,
+        tool_name=tool_name,
+        fingerprint=fingerprint,
+    )
+    if reusable is not None and spec.restore_handler is not None:
+        restored = await spec.restore_handler(db, ctx, validated, reusable)
+        if restored is not None:
+            await cancel_check()
+            duration = int((perf_counter() - started) * 1000)
+            return ReadToolDispatchResult(
+                tool_name=tool_name,
+                tool_version=tool_version,
+                fingerprint=fingerprint,
+                status=restored.status,
+                completeness=restored.completeness,
+                payload=restored.payload,
+                error=restored.error,
+                duration_ms=duration,
+                reused=True,
+            )
     if budget.calls_used >= budget.max_calls or budget.remaining_seconds() <= 0:
         error = "只读工具调用预算已耗尽"
         duration = int((perf_counter() - started) * 1000)
@@ -373,6 +405,41 @@ async def dispatch_read_tool(
         error=error,
         duration_ms=duration,
     )
+
+
+async def _find_reusable_call(
+    db: AsyncSession,
+    *,
+    run_id: int,
+    tool_name: str,
+    fingerprint: str,
+) -> dict | None:
+    """查找同 Run 已提交的成功调用摘要；旧/非法摘要不复用。"""
+    rows = (
+        await db.execute(
+            select(KnowledgeAgentToolCall)
+            .where(
+                KnowledgeAgentToolCall.run_id == run_id,
+                KnowledgeAgentToolCall.tool_name == tool_name,
+                KnowledgeAgentToolCall.status.in_(
+                    [TOOL_COMPLETED, TOOL_EMPTY, TOOL_LIMITED]
+                ),
+            )
+            .order_by(KnowledgeAgentToolCall.sequence)
+        )
+    ).scalars().all()
+    for row in rows:
+        try:
+            params_summary = json.loads(row.params_summary or "{}")
+            result_summary = json.loads(row.result_summary or "{}")
+        except (json.JSONDecodeError, TypeError):
+            continue
+        if params_summary.get("fingerprint") != fingerprint:
+            continue
+        if not isinstance(result_summary, dict):
+            continue
+        return result_summary
+    return None
 
 
 def completed_execution(
