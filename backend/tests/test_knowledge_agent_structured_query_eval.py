@@ -8,19 +8,40 @@ from datetime import UTC, datetime
 from types import SimpleNamespace
 
 import pytest
+from sqlalchemy import func, select
 
 from app.agents.result_mode import ResultModeRouteDraft
 from app.agents.semantic import SemanticRankingDraft, SemanticRankResult
 from app.db.session import async_session_factory
-from app.models import KnowledgeAgentRun, KnowledgeConversation
+from app.models import (
+    Candidate,
+    Entry,
+    Extraction,
+    KnowledgeAgentRun,
+    KnowledgeCandidateDraft,
+    KnowledgeContextVersion,
+    KnowledgeConversation,
+    KnowledgeWorkingSetItem,
+    Node,
+    Source,
+)
 from app.models.knowledge_agent import ACTIVE_SLOT, RUN_PROCESSING, SCOPE_PROJECT
 from app.services.knowledge_agent.observability import StageMeta
+from app.services.knowledge_agent.read_tools import ReadToolBudget, dispatch_read_tool
 from app.services.knowledge_agent.result_mode import resolve_result_mode
 from app.services.knowledge_agent.structured_query import (
     normalize_structured_query_plan,
 )
 from app.services.knowledge_agent.structured_query_execution import (
     execute_structured_query_plan,
+)
+from app.services.knowledge_agent.structured_query_tools import (
+    STRUCTURED_QUERY_TOOL_REGISTRY,
+    STRUCTURED_QUERY_TOOL_VERSION,
+    AggregateEntriesParams,
+    QueryEntriesParams,
+    aggregate_entries_handler,
+    query_entries_handler,
 )
 from app.services.knowledge_agent.tools import RunToolContext
 from tests._knowledge_agent_fixtures import (
@@ -224,7 +245,7 @@ async def test_eval_exact_count_group_and_recent_list_share_one_set() -> None:
 
 
 @pytest.mark.asyncio
-async def test_eval_semantic_combination_reuses_top_k_and_never_claims_total(
+async def test_eval_guardrail_semantic_top_k_never_claims_exact_total(
     monkeypatch,
 ) -> None:
     """语义与结构化组合只召回一次，count/list 均保持 limited。"""
@@ -307,6 +328,212 @@ async def test_eval_semantic_combination_reuses_top_k_and_never_claims_total(
     assert result.count["value"] == 2
     assert result.count["completeness"] == "limited"
     assert result.entries["completeness"] == "limited"
+
+
+@pytest.mark.asyncio
+async def test_eval_guardrail_scope_and_formal_entry_only() -> None:
+    """可信 Run 范围只读正式 Entry，跨项目/空间及候选工作对象均不进入集合。"""
+    async with async_session_factory() as db:
+        workspace, project, run, ctx = await _seed_run_context(db, label="范围与正式对象门禁")
+        node = await create_child_node(db, project, "正式知识")
+        source, attachment = await create_source_attachment(db, workspace, project)
+        allowed = await create_entry_with_evidence(
+            db, project, node, source, attachment, title="范围内正式知识"
+        )
+
+        sibling = await create_project(db, workspace, "同空间其他项目")
+        sibling_node = await create_child_node(db, sibling, "范围外")
+        sibling_source, sibling_attachment = await create_source_attachment(db, workspace, sibling)
+        await create_entry_with_evidence(
+            db,
+            sibling,
+            sibling_node,
+            sibling_source,
+            sibling_attachment,
+            title="同空间但项目范围外",
+        )
+
+        other_user = await create_user(db, "其他空间用户")
+        other_workspace = await create_workspace(db, other_user)
+        other_project = await create_project(db, other_workspace, "其他空间项目")
+        other_node = await create_child_node(db, other_project, "范围外")
+        other_source, other_attachment = await create_source_attachment(
+            db, other_workspace, other_project
+        )
+        await create_entry_with_evidence(
+            db,
+            other_project,
+            other_node,
+            other_source,
+            other_attachment,
+            title="其他空间正式知识",
+        )
+
+        extraction = Extraction(
+            source_id=source.id,
+            provider="test",
+            model="eval",
+            prompt_version="v1",
+        )
+        db.add(extraction)
+        await db.flush()
+        db.add(
+            Candidate(
+                extraction_id=extraction.id,
+                source_id=source.id,
+                title="待确认 Candidate",
+                content="不能进入正式集合",
+                main_type="knowledge",
+                status="pending",
+            )
+        )
+        db.add(
+            KnowledgeCandidateDraft(
+                workspace_id=workspace.id,
+                owner_user_id=run.owner_user_id,
+                conversation_id=run.conversation_id,
+                operation_run_id=run.id,
+                target_project_id=project.id,
+                target_project_name=project.name,
+                status="draft",
+                title="未确认 Draft",
+                content="不能进入正式集合",
+                main_type="knowledge",
+            )
+        )
+        await db.flush()
+
+        count = await aggregate_entries_handler(
+            db,
+            ctx,
+            AggregateEntriesParams.model_validate({"entry_set": {}, "operation": "count"}),
+        )
+        listed = await query_entries_handler(
+            db,
+            ctx,
+            QueryEntriesParams.model_validate(
+                {
+                    "entry_set": {},
+                    "limit": 10,
+                    "sort": {"field": "updated_at", "direction": "desc"},
+                }
+            ),
+        )
+
+    assert count.payload == {"value": 1}
+    assert [item["entry_id"] for item in listed.payload["items"]] == [allowed.id]
+    assert "Candidate" not in str(listed.payload)
+    assert "Draft" not in str(listed.payload)
+
+
+@pytest.mark.asyncio
+async def test_eval_guardrail_rejects_sql_ids_and_unknown_tools() -> None:
+    """任意 SQL、对象/范围 id 和未注册工具均整体拒绝，不进入处理器。"""
+    forbidden_plans = [
+        {"sql": "select * from entries"},
+        {"entry_ids": [1]},
+        {"project_id": 1},
+        {"workspace_id": 1},
+    ]
+    for forbidden in forbidden_plans:
+        with pytest.raises(ValueError):
+            normalize_structured_query_plan(
+                {
+                    "entry_set": forbidden,
+                    "outputs": [{"kind": "count"}],
+                }
+            )
+
+    async with async_session_factory() as db:
+        _workspace, _project, _run, ctx = await _seed_run_context(db, label="非法工具门禁")
+        budget = ReadToolBudget(max_calls=3, timeout_seconds=10, max_result_bytes=1000)
+        invalid_params = await dispatch_read_tool(
+            db,
+            ctx,
+            tool_name="query_entries",
+            tool_version=STRUCTURED_QUERY_TOOL_VERSION,
+            params={"entry_set": {}, "entry_ids": [1], "sql": "select 1"},
+            budget=budget,
+            cancel_check=_no_cancel,
+            registry=STRUCTURED_QUERY_TOOL_REGISTRY,
+        )
+        unknown = await dispatch_read_tool(
+            db,
+            ctx,
+            tool_name="write_entry",
+            tool_version="v1",
+            params={"entry_id": 1},
+            budget=budget,
+            cancel_check=_no_cancel,
+            registry=STRUCTURED_QUERY_TOOL_REGISTRY,
+        )
+
+    assert invalid_params.status == "denied"
+    assert invalid_params.payload == {}
+    assert unknown.status == "denied"
+    assert unknown.payload == {}
+
+
+@pytest.mark.asyncio
+async def test_eval_guardrail_query_does_not_mutate_knowledge_or_working_set() -> None:
+    """查询只允许增加审计记录，不创建/修改知识对象或推进事实工作集。"""
+    tracked_models = (
+        Entry,
+        Source,
+        Candidate,
+        KnowledgeCandidateDraft,
+        Node,
+        KnowledgeContextVersion,
+        KnowledgeWorkingSetItem,
+    )
+    async with async_session_factory() as db:
+        workspace, project, run, ctx = await _seed_run_context(db, label="只读不变式")
+        node = await create_child_node(db, project, "只读")
+        source, attachment = await create_source_attachment(db, workspace, project)
+        entry = await create_entry_with_evidence(
+            db, project, node, source, attachment, title="不可被查询修改"
+        )
+        await db.commit()
+        await db.refresh(entry)
+        before_counts = {
+            model.__tablename__: int(
+                (await db.execute(select(func.count()).select_from(model))).scalar_one()
+            )
+            for model in tracked_models
+        }
+        before_entry = (entry.title, entry.content, entry.updated_at)
+        before_context_ids = (
+            run.input_context_version_id,
+            run.output_context_version_id,
+        )
+        plan = normalize_structured_query_plan(
+            {
+                "entry_set": {},
+                "outputs": [
+                    {"kind": "count"},
+                    {
+                        "kind": "entries",
+                        "limit": 5,
+                        "sort": {"field": "updated_at", "direction": "desc"},
+                    },
+                ],
+            }
+        )
+
+        result = await execute_structured_query_plan(db, ctx, plan, cancel_check=_no_cancel)
+        await db.refresh(entry)
+        await db.refresh(run)
+        after_counts = {
+            model.__tablename__: int(
+                (await db.execute(select(func.count()).select_from(model))).scalar_one()
+            )
+            for model in tracked_models
+        }
+
+    assert result.count["value"] == 1
+    assert before_counts == after_counts
+    assert (entry.title, entry.content, entry.updated_at) == before_entry
+    assert (run.input_context_version_id, run.output_context_version_id) == (before_context_ids)
 
 
 @pytest.mark.asyncio
