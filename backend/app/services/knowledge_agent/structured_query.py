@@ -256,6 +256,7 @@ async def plan_and_persist_structured_query(
     *,
     objective: str,
     scope_label: str,
+    cancel_check=None,
 ) -> NormalizedStructuredQueryPlan | None:
     """复用已有计划或调用一次规划器，并在任何工具执行前提交合法快照。"""
     existing = restore_structured_query_plan(run.structured_query_plan_json)
@@ -278,6 +279,9 @@ async def plan_and_persist_structured_query(
                 is_fallback=True,
                 error=f"结构化查询计划校验失败：{exc}",
             )
+    # 规划期间若已取消，迟到计划与调用结果都不得提交
+    if cancel_check is not None:
+        await cancel_check()
     await record_model_invocation(
         db,
         run_id=run.id,

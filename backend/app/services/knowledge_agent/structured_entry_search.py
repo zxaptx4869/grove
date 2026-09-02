@@ -60,6 +60,7 @@ async def execute_structured_query_entry_search(
         run,
         objective=objective,
         scope_label=trusted_scope_label,
+        cancel_check=lambda: check_run_cancelled(run.id),
     )
     await check_run_cancelled(run.id)
     if plan is None:
@@ -136,6 +137,7 @@ async def execute_structured_query_entry_search(
     await check_run_cancelled(run.id)
     await update_run_step(run.id, STEP_FINALIZE)
     summary = await run_fallback_summary(db, run.id)
+    await check_run_cancelled(run.id)
     await finalize_entry_run(
         db,
         run,

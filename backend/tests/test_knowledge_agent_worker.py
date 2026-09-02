@@ -6,6 +6,8 @@ from datetime import UTC, datetime, timedelta
 import pytest
 from sqlalchemy import select
 
+from app.agents.structured_query import StructuredQueryPlanDraft
+from app.core.config import get_settings
 from app.db.session import async_session_factory
 from app.knowledge_agent_worker import (
     claim_next_run,
@@ -30,6 +32,7 @@ from app.models.knowledge_agent import (
 )
 from app.schemas.knowledge_agent import KnowledgeRunSubmitRequest
 from app.services.knowledge_agent.basis import BasisPlan
+from app.services.knowledge_agent.follow_up import ContextDecisionResult
 from app.services.knowledge_agent.observability import StageMeta
 from app.services.knowledge_agent.read_tools import ReadToolBudget, dispatch_read_tool
 from app.services.knowledge_agent.runs import submit_message
@@ -114,6 +117,80 @@ async def test_tool_call_fingerprint_reuses_committed_aggregate_result() -> None
     assert second.reused is True
     assert second.payload == first.payload == {"value": 0}
     assert len(calls) == 1
+
+
+@pytest.mark.asyncio
+async def test_structured_query_cancel_during_plan_discards_late_plan(
+    monkeypatch,
+) -> None:
+    """规划期间取消后，迟到计划不固化且 Worker 原子释放活动槽。"""
+
+    async def _decide(db, **kwargs):
+        del db
+        message = kwargs["current_message"]
+        return ContextDecisionResult(
+            decision="new_topic",
+            standalone_query=message,
+            topic_label=message,
+            clarify_question=None,
+            degraded=False,
+            history_message_ids=[],
+            meta=StageMeta(
+                purpose="context_decision",
+                provider="server",
+                model=None,
+                is_fallback=False,
+                error=None,
+                duration_ms=0,
+            ),
+        )
+
+    async def _planner(db, workspace_id, **kwargs):
+        del db, workspace_id, kwargs
+        async with async_session_factory() as other:
+            row = await other.get(KnowledgeAgentRun, run_id)
+            assert row is not None
+            row.cancel_requested = True
+            await other.commit()
+        return (
+            StructuredQueryPlanDraft.model_validate(
+                {"entry_set": {}, "outputs": [{"kind": "count"}]}
+            ),
+            StageMeta(
+                purpose="structured_query_plan",
+                provider="test",
+                model="test-model",
+                is_fallback=False,
+                error=None,
+                duration_ms=1,
+            ),
+        )
+
+    monkeypatch.setattr("app.services.knowledge_agent.runner.decide_context", _decide)
+    monkeypatch.setattr(
+        "app.services.knowledge_agent.structured_query.run_structured_query_planner",
+        _planner,
+    )
+    monkeypatch.setattr(
+        get_settings(), "knowledge_agent_structured_query_enabled", True
+    )
+    async with async_session_factory() as db:
+        user = await create_user(db, "规划取消")
+        workspace = await create_workspace(db, user)
+        _conversation, run = await _conversation_and_run(db, user, workspace, "统计知识")
+        run.request_result_mode = "entries"
+        run_id = run.id
+        await db.commit()
+        await _cancel_other_waiting_runs(db, keep_run_id=run_id)
+
+    assert await process_one_run() is True
+    async with async_session_factory() as db:
+        final = await db.get(KnowledgeAgentRun, run_id)
+        assert final is not None
+        assert final.status == RUN_CANCELLED
+        assert final.active_slot is None
+        assert final.structured_query_plan_json is None
+        assert final.entry_result_json is None
 
 
 async def _cancel_other_waiting_runs(
