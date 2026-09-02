@@ -48,4 +48,4 @@
 - [x] 8.1 启动后端后用 curl 验证 Conversation、消息提交、Run 查询和历史接口存在且返回预期 401/200 而非 404，并记录 model-first、knowledge-only、hybrid、investigate 和 fallback 响应。验收：将命令与响应摘要写入 `docs/验收记录/add-knowledge-agent-open-discussion-curl.md`
 - [x] 8.2 在 360×800、390×844、412×915 三个原生视口走查空知识开放讨论、混合追问、仅我的知识、依据详情、深度查找、失败重试、历史恢复、键盘和读屏标签。验收：在验收记录中列出各视口结果、截图路径、控制台结果和剩余差异
 - [x] 8.3 更新 Knowledge Agent 产品形态与迭代记录中的“已完成能力/下一步缺口”，只在实现与验收真实完成后移动状态，不提前覆盖主规格。验收：`openspec validate --all --strict`
-- [ ] 8.4 检查本 change 是否存在遗留问题或后续优化项；逐条向用户说明背景、原因与影响，用户同意后再登记到 `docs/discussions/Grove后续优化清单.md`。验收：`git status --short`
+- [x] 8.4 检查本 change 是否存在遗留问题或后续优化项；逐条向用户说明背景、原因与影响，用户同意后再登记到 `docs/discussions/Grove后续优化清单.md`。验收：`git status --short`
