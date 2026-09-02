@@ -55,11 +55,11 @@
 ### Requirement: 回答后续动作使用结构化协议
 原生回答展示 MUST 根据服务端返回的旧 Candidate Draft 资格、回答状态、最终 citations、answer basis、source Run 与可用目标项目构造固定“整理成知识”结构化动作；MUST NOT 通过解析回答正文、仅判断 Citation 非空、固定字符串或模型自报 save_recommended 决定可写状态。动作必须保留来源回答与生成时范围，且本 change 不为开放或混合回答创建新的沉淀入口。
 
-#### Scenario: 纯 Grove completed 回答提供结构化动作
+#### Scenario: completed 回答提供结构化动作
 - **WHEN** 服务端返回 completed 回答、source Run、有效 citations，并明确该 Run 未采用用户陈述、模型通用知识或外部材料
 - **THEN** 客户端可以 source_run_id 发起旧 `draft_candidate`，不从正文反推引用、basis 或项目
 
-#### Scenario: 纯 Grove partial 回答提供受限动作
+#### Scenario: partial 回答提供受限动作
 - **WHEN** 服务端判定 partial 回答仍有完全由有效 Grove Evidence 支撑的可整理部分
 - **THEN** 动作说明只整理有依据部分，未解决 gaps 不进入 Candidate 草稿事实
 

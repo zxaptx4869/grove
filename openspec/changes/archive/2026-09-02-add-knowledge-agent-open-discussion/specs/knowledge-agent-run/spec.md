@@ -43,6 +43,10 @@
 - **WHEN** 调查停止、最终回答、引用与实际依据通过校验且满足工作集推进条件
 - **THEN** 系统原子写入助手消息、Run/Investigation 终态与摘要、实际依据、新工作集版本并释放活动槽
 
+#### Scenario: 回答提交成功
+- **WHEN** quick 回答、最终引用与实际依据通过校验
+- **THEN** 系统原子写入助手消息、Run 结果、实际依据与 `completed` 或 `partial` 终态、可选工作集版本并释放活动槽
+
 #### Scenario: 无引用回答提交成功
 - **WHEN** quick 模型优先回答在允许范围内完整生成且没有 Grove Citation
 - **THEN** 系统原子写入助手消息、`completed` Run 与模型通用知识依据并释放活动槽，不创建包含 Entry 的输出工作集
@@ -86,7 +90,7 @@
 - **WHEN** Run 决策为 `new_topic`
 - **THEN** 系统不使用旧工作集种子或旧话题用户陈述，按当前独立问题执行所选依据与回答模式；只有有效 Citation 对应 Entry 可以进入工作集
 
-#### Scenario: 历史助手消息不作为事实
+#### Scenario: 历史消息不作为事实
 - **WHEN** 同一 Conversation 提交 quick 或 investigate 追问
 - **THEN** 有限历史助手消息只参与意图、路由与查询理解，不成为用户陈述、Grove Evidence 或独立事实依据
 

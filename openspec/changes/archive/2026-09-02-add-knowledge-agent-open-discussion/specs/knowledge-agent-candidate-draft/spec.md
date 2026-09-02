@@ -3,11 +3,11 @@
 ### Requirement: 候选草稿只能由有证据回答显式发起
 系统 MUST 只允许从有最终有效 Citation 且能够证明可整理内容未采用用户陈述、模型通用知识或外部材料的新回答显式发起旧 `draft_candidate`；本 change 上线前没有 basis 字段的历史回答 MUST 继续按既有最终 Citation 与 Evidence 复验规则判断。普通开放讨论、模型优先、混合依据或依赖外部材料的回答 MUST NOT 进入旧 Candidate Draft 流程，即使它们包含部分 Grove Citation。
 
-#### Scenario: 从纯 Grove 有证据回答发起
+#### Scenario: 从有证据回答发起
 - **WHEN** completed 来源回答的实际依据只有当前 Run 有效 Grove Evidence
 - **THEN** 系统允许用户显式提交结构化 `draft_candidate` 动作，并只使用服务端复验后的 Evidence 生成草稿
 
-#### Scenario: 纯 Grove partial 回答只整理可确认部分
+#### Scenario: 部分回答只整理可确认部分
 - **WHEN** partial 来源回答仍有完全由有效 Grove Evidence 支持的可整理内容
 - **THEN** 系统只允许对应 Evidence 进入 Draft，未解决 gaps 与失效内容不得进入候选事实
 
