@@ -8,9 +8,11 @@ import uuid
 from pathlib import Path
 
 import pytest
+from pydantic import ValidationError
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 
+from app.agents.basis import BASIS_ROUTE_PROMPT_VERSION, BasisRouteDraft
 from app.db.session import async_session_factory
 from app.models import (
     KnowledgeAgentEvidence,
@@ -25,9 +27,15 @@ from app.models import (
 )
 from app.models.knowledge_agent import (
     ACTIVE_SLOT,
+    BASIS_MODE_AUTO,
+    BASIS_MODE_KNOWLEDGE_ONLY,
+    BASIS_STRATEGIES,
+    BASIS_STRATEGY_KNOWLEDGE_ONLY,
+    BASIS_STRATEGY_MODEL_FIRST,
     CONTEXT_CLOSE_REASON_NEW_TOPIC,
     CONTEXT_STATUS_ACTIVE,
     CONTEXT_STATUS_CLOSED,
+    PURPOSE_BASIS_ROUTE,
     RUN_ACTIVE_STATUSES,
     RUN_COMPLETED,
     RUN_FAILED,
@@ -35,11 +43,17 @@ from app.models.knowledge_agent import (
     RUN_TERMINAL_STATUSES,
     RUN_WAITING,
     SCOPE_WORKSPACE,
+    STEP_BASIS_ROUTE,
 )
 from app.schemas.knowledge_agent import (
     KnowledgeAnswerOut,
     KnowledgeRunOut,
     KnowledgeRunSubmitRequest,
+)
+from app.services.knowledge_agent.basis import (
+    UserStatementCandidate,
+    resolve_basis_plan,
+    validate_statement_ids,
 )
 from app.services.knowledge_agent.runs import run_out
 
@@ -363,6 +377,214 @@ def test_submit_request_defaults_and_answer_status() -> None:
     )
     answer = KnowledgeAnswerOut(answer="请补充主题", status="clarification")
     assert answer.status == "clarification"
+
+
+def test_basis_contract_constants_and_request_defaults() -> None:
+    """依据模式/策略常量与请求缺省语义保持稳定。"""
+    assert BASIS_MODE_AUTO == "auto"
+    assert BASIS_MODE_KNOWLEDGE_ONLY == "knowledge_only"
+    assert BASIS_STRATEGY_KNOWLEDGE_ONLY in BASIS_STRATEGIES
+    assert BASIS_STRATEGY_MODEL_FIRST in BASIS_STRATEGIES
+    assert STEP_BASIS_ROUTE == "basis_route"
+    assert PURPOSE_BASIS_ROUTE == "basis_route"
+    assert BASIS_ROUTE_PROMPT_VERSION == "v1"
+
+    # 新客户端显式提交 auto；旧客户端缺省 None（服务层按 knowledge_only 兼容）
+    assert (
+        KnowledgeRunSubmitRequest(
+            client_message_id="x", message="问题", basis_mode="auto"
+        ).basis_mode
+        == BASIS_MODE_AUTO
+    )
+    assert (
+        KnowledgeRunSubmitRequest(
+            client_message_id="x", message="问题"
+        ).basis_mode
+        is None
+    )
+    with pytest.raises(ValidationError):
+        KnowledgeRunSubmitRequest(
+            client_message_id="x",
+            message="问题",
+            basis_mode="hybrid",
+        )
+
+    draft = BasisRouteDraft()
+    assert draft.strategy == BASIS_STRATEGY_KNOWLEDGE_ONLY
+    assert draft.user_message_ids == []
+
+
+def test_basis_plan_explicit_and_natural_language_restriction(monkeypatch) -> None:
+    """显式 knowledge_only 与自然语言限制跳过规划器并固化最严格策略。"""
+    async def _forbidden_planner(*args, **kwargs):  # pragma: no cover
+        raise AssertionError("显式限制不应调用规划器")
+
+    monkeypatch.setattr(
+        "app.services.knowledge_agent.basis.run_basis_planner",
+        _forbidden_planner,
+    )
+
+    async def _resolve(
+        mode: str | None,
+        objective: str,
+        message: str,
+    ):
+        return await resolve_basis_plan(
+            object(),
+            workspace_id=1,
+            request_basis_mode=mode,
+            objective=objective,
+            scope_label="全部知识",
+            topic_summary=None,
+            context_decision="continue",
+            current_message=message,
+            allowed_statements=[
+                UserStatementCandidate(message_id=10, content="预算上限是 30 万")
+            ],
+            feature_enabled=True,
+        )
+
+    import asyncio
+
+    plan = asyncio.run(_resolve(BASIS_MODE_KNOWLEDGE_ONLY, "如何分配？", "如何分配？"))
+    assert plan.strategy == BASIS_STRATEGY_KNOWLEDGE_ONLY
+    assert plan.meta is None
+    assert plan.candidate_statement_ids == []
+
+    # 自然语言明确限制：即使 auto 也直接固化 knowledge_only
+    plan_nl = asyncio.run(
+        _resolve(
+            BASIS_MODE_AUTO,
+            "只根据我的知识库回答，如何分配预算？",
+            "只根据我的知识库回答，如何分配预算？",
+        )
+    )
+    assert plan_nl.strategy == BASIS_STRATEGY_KNOWLEDGE_ONLY
+    assert plan_nl.meta is None
+
+
+def test_basis_plan_fallback_and_unknown_message_ids(monkeypatch) -> None:
+    """规划失败回退 Grove-only；非法用户消息句柄被丢弃并记录异常。"""
+    import asyncio
+
+    from app.agents.basis import BasisRouteDraft
+    from app.services.knowledge_agent.observability import StageMeta
+
+    async def _fallback_planner(*args, **kwargs):
+        return (
+            BasisRouteDraft(strategy=BASIS_STRATEGY_KNOWLEDGE_ONLY),
+            StageMeta(
+                purpose=PURPOSE_BASIS_ROUTE,
+                provider="offline",
+                model=None,
+                is_fallback=True,
+                error="未配置文本模型密钥",
+                duration_ms=1,
+            ),
+        )
+
+    monkeypatch.setattr(
+        "app.services.knowledge_agent.basis.run_basis_planner",
+        _fallback_planner,
+    )
+    plan = asyncio.run(
+        resolve_basis_plan(
+            object(),
+            workspace_id=1,
+            request_basis_mode=BASIS_MODE_AUTO,
+            objective="解释概念",
+            scope_label="全部知识",
+            topic_summary=None,
+            context_decision="new_topic",
+            current_message="解释概念",
+            allowed_statements=[],
+            feature_enabled=True,
+        )
+    )
+    assert plan.strategy == BASIS_STRATEGY_KNOWLEDGE_ONLY
+    assert plan.degraded is True
+    assert plan.meta is not None and plan.meta.is_fallback is True
+
+    async def _dirty_planner(*args, **kwargs):
+        return (
+            BasisRouteDraft(
+                strategy=BASIS_STRATEGY_MODEL_FIRST,
+                user_message_ids=[11, 999],
+            ),
+            StageMeta(
+                purpose=PURPOSE_BASIS_ROUTE,
+                provider="llm",
+                model="fake",
+                is_fallback=False,
+                error=None,
+                duration_ms=2,
+            ),
+        )
+
+    monkeypatch.setattr(
+        "app.services.knowledge_agent.basis.run_basis_planner",
+        _dirty_planner,
+    )
+    plan_dirty = asyncio.run(
+        resolve_basis_plan(
+            object(),
+            workspace_id=1,
+            request_basis_mode=BASIS_MODE_AUTO,
+            objective="结合我的预算",
+            scope_label="全部知识",
+            topic_summary=None,
+            context_decision="continue",
+            current_message="结合我的预算说明",
+            allowed_statements=[
+                UserStatementCandidate(message_id=11, content="预算上限是 30 万")
+            ],
+            feature_enabled=True,
+        )
+    )
+    assert plan_dirty.strategy == BASIS_STRATEGY_MODEL_FIRST
+    assert plan_dirty.candidate_statement_ids == [11]
+    assert plan_dirty.degraded is True
+    assert plan_dirty.meta is not None
+    assert "999" in (plan_dirty.meta.error or "")
+
+
+def test_basis_feature_disabled_forces_grove_only(monkeypatch) -> None:
+    """特性开关关闭时即使显式 auto 也固定 Grove-only。"""
+    import asyncio
+
+    async def _forbidden_planner(*args, **kwargs):  # pragma: no cover
+        raise AssertionError("特性关闭不应调用规划器")
+
+    monkeypatch.setattr(
+        "app.services.knowledge_agent.basis.run_basis_planner",
+        _forbidden_planner,
+    )
+    plan = asyncio.run(
+        resolve_basis_plan(
+            object(),
+            workspace_id=1,
+            request_basis_mode=BASIS_MODE_AUTO,
+            objective="解释概念",
+            scope_label="全部知识",
+            topic_summary=None,
+            context_decision="new_topic",
+            current_message="解释概念",
+            allowed_statements=[],
+            feature_enabled=False,
+        )
+    )
+    assert plan.strategy == BASIS_STRATEGY_KNOWLEDGE_ONLY
+    assert plan.meta is None
+
+
+def test_validate_statement_ids_drops_unknown_handles() -> None:
+    """句柄白名单：合法保留、未知丢弃、重复去重。"""
+    valid, invalid = validate_statement_ids(
+        [1, 2, 2, 999],
+        {1, 2},
+    )
+    assert valid == [1, 2]
+    assert invalid == [999]
 
 
 def test_migration_upgrade_and_constraints(tmp_path: Path) -> None:

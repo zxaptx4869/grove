@@ -23,11 +23,15 @@ from app.models import (
 )
 from app.models.knowledge_agent import (
     ACTIVE_SLOT,
+    BASIS_STRATEGY_HYBRID,
+    BASIS_STRATEGY_KNOWLEDGE_ONLY,
+    BASIS_STRATEGY_MODEL_FIRST,
     CONTEXT_DECISION_CLARIFY,
     CONTEXT_DECISION_CONTINUE,
     CONTEXT_DECISION_NEW_TOPIC,
     CONTEXT_STATUS_ACTIVE,
     CONTEXT_STATUS_SUPERSEDED,
+    PURPOSE_BASIS_ROUTE,
     RUN_COMPLETED,
     RUN_PARTIAL,
     RUN_PROCESSING,
@@ -38,6 +42,7 @@ from app.models.knowledge_agent import (
     TOOL_PARTIAL,
 )
 from app.schemas.knowledge_agent import KnowledgeRunSubmitRequest
+from app.services.knowledge_agent.basis import BasisPlan
 from app.services.knowledge_agent.follow_up import ContextDecisionResult
 from app.services.knowledge_agent.observability import StageMeta, run_fallback_summary
 from app.services.knowledge_agent.runner import RunCancelled, execute_run
@@ -1626,3 +1631,273 @@ async def test_answer_agent_offline_when_no_key(monkeypatch) -> None:
         assert "没有可用的文本模型" in draft.answer
         assert meta.is_fallback is True
         assert meta.purpose == "answer"
+
+
+@pytest.mark.asyncio
+async def test_basis_explicit_knowledge_only_skips_planner_invocation(
+    monkeypatch,
+) -> None:
+    """显式 knowledge_only（特性关闭默认）直接固化 Grove-only，不记录规划调用。"""
+    async with async_session_factory() as db:
+        user = await create_user(db, "依据显式")
+        workspace = await create_workspace(db, user)
+        conversation = KnowledgeConversation(
+            workspace_id=workspace.id,
+            owner_user_id=user.id,
+            scope_type=SCOPE_WORKSPACE,
+            title="依据显式测试",
+        )
+        db.add(conversation)
+        await db.flush()
+        _message, run = await submit_message(
+            db,
+            conversation,
+            KnowledgeRunSubmitRequest(
+                client_message_id=f"basis-explicit-{run_id_counter()}",
+                message="只根据我的知识库回答",
+                basis_mode="knowledge_only",
+            ),
+        )
+        run.status = RUN_PROCESSING
+        await db.commit()
+
+        await execute_run(db, run)
+        await db.commit()
+
+        assert run.planned_basis_strategy == BASIS_STRATEGY_KNOWLEDGE_ONLY
+        invocations = (
+            await db.execute(
+                select(KnowledgeAgentModelInvocation).where(
+                    KnowledgeAgentModelInvocation.run_id == run.id,
+                    KnowledgeAgentModelInvocation.purpose == PURPOSE_BASIS_ROUTE,
+                )
+            )
+        ).scalars().all()
+        assert invocations == []
+        summary = await run_fallback_summary(db, run.id)
+        assert not any(
+            stage["purpose"] == PURPOSE_BASIS_ROUTE for stage in summary["stages"]
+        )
+
+
+@pytest.mark.asyncio
+async def test_basis_auto_planner_success_recorded(monkeypatch) -> None:
+    """auto 规划成功：Run 保存策略并记录 basis_route 模型调用。"""
+    async def _plan(
+        db,
+        *,
+        workspace_id,
+        request_basis_mode,
+        objective,
+        scope_label,
+        topic_summary,
+        context_decision,
+        current_message,
+        allowed_statements,
+        feature_enabled,
+    ):
+        return BasisPlan(
+            strategy=BASIS_STRATEGY_HYBRID,
+            needs_grove=True,
+            requires_external_material=False,
+            candidate_statement_ids=[],
+            degraded=False,
+            meta=StageMeta(
+                purpose=PURPOSE_BASIS_ROUTE,
+                provider="llm",
+                model="fake-basis",
+                is_fallback=False,
+                error=None,
+                duration_ms=1,
+            ),
+        )
+
+    monkeypatch.setattr(
+        "app.services.knowledge_agent.runner.resolve_basis_plan",
+        _plan,
+    )
+    async with async_session_factory() as db:
+        user = await create_user(db, "依据自动")
+        workspace = await create_workspace(db, user)
+        conversation = KnowledgeConversation(
+            workspace_id=workspace.id,
+            owner_user_id=user.id,
+            scope_type=SCOPE_WORKSPACE,
+            title="依据自动测试",
+        )
+        db.add(conversation)
+        await db.flush()
+        _message, run = await submit_message(
+            db,
+            conversation,
+            KnowledgeRunSubmitRequest(
+                client_message_id=f"basis-auto-{run_id_counter()}",
+                message="结合我的预算与项目记录给建议",
+                basis_mode="auto",
+            ),
+        )
+        run.status = RUN_PROCESSING
+        await db.commit()
+
+        await execute_run(db, run)
+        await db.commit()
+
+        assert run.planned_basis_strategy == BASIS_STRATEGY_HYBRID
+        invocation = (
+            await db.execute(
+                select(KnowledgeAgentModelInvocation)
+                .where(
+                    KnowledgeAgentModelInvocation.run_id == run.id,
+                    KnowledgeAgentModelInvocation.purpose == PURPOSE_BASIS_ROUTE,
+                )
+                .order_by(KnowledgeAgentModelInvocation.id)
+            )
+        ).scalar_one_or_none()
+        assert invocation is not None
+        assert invocation.provider == "llm"
+        assert invocation.model == "fake-basis"
+        assert invocation.is_fallback is False
+        assert invocation.prompt_version == "v1"
+
+
+@pytest.mark.asyncio
+async def test_basis_planning_fallback_visible_in_summary(monkeypatch) -> None:
+    """规划失败显式回退 Grove-only，且回答即使成功也保留 basis fallback。"""
+    async def _plan(
+        db,
+        *,
+        workspace_id,
+        request_basis_mode,
+        objective,
+        scope_label,
+        topic_summary,
+        context_decision,
+        current_message,
+        allowed_statements,
+        feature_enabled,
+    ):
+        return BasisPlan(
+            strategy=BASIS_STRATEGY_KNOWLEDGE_ONLY,
+            needs_grove=True,
+            candidate_statement_ids=[],
+            degraded=True,
+            meta=StageMeta(
+                purpose=PURPOSE_BASIS_ROUTE,
+                provider="offline",
+                model=None,
+                is_fallback=True,
+                error="未配置文本模型密钥",
+                duration_ms=1,
+            ),
+        )
+
+    monkeypatch.setattr(
+        "app.services.knowledge_agent.runner.resolve_basis_plan",
+        _plan,
+    )
+    async with async_session_factory() as db:
+        user = await create_user(db, "依据回退")
+        workspace = await create_workspace(db, user)
+        conversation = KnowledgeConversation(
+            workspace_id=workspace.id,
+            owner_user_id=user.id,
+            scope_type=SCOPE_WORKSPACE,
+            title="依据回退测试",
+        )
+        db.add(conversation)
+        await db.flush()
+        _message, run = await submit_message(
+            db,
+            conversation,
+            KnowledgeRunSubmitRequest(
+                client_message_id=f"basis-fallback-{run_id_counter()}",
+                message="解释概念",
+                basis_mode="auto",
+            ),
+        )
+        run.status = RUN_PROCESSING
+        await db.commit()
+
+        await execute_run(db, run)
+        await db.commit()
+
+        assert run.planned_basis_strategy == BASIS_STRATEGY_KNOWLEDGE_ONLY
+        summary = await run_fallback_summary(db, run.id)
+        assert summary["has_fallback"] is True
+        basis_stages = [
+            stage
+            for stage in summary["stages"]
+            if stage["purpose"] == PURPOSE_BASIS_ROUTE
+        ]
+        assert basis_stages
+        assert basis_stages[0]["is_fallback"] is True
+        assert "未配置文本模型密钥" in (basis_stages[0]["error"] or "")
+
+
+@pytest.mark.asyncio
+async def test_basis_unknown_statement_ids_dropped_with_anomaly(monkeypatch) -> None:
+    """规划输出未知消息句柄：丢弃并在审计/降级摘要中可见。"""
+    async def _plan(
+        db,
+        *,
+        workspace_id,
+        request_basis_mode,
+        objective,
+        scope_label,
+        topic_summary,
+        context_decision,
+        current_message,
+        allowed_statements,
+        feature_enabled,
+    ):
+        return BasisPlan(
+            strategy=BASIS_STRATEGY_MODEL_FIRST,
+            needs_grove=False,
+            candidate_statement_ids=[11],
+            degraded=True,
+            meta=StageMeta(
+                purpose=PURPOSE_BASIS_ROUTE,
+                provider="llm",
+                model="fake-basis",
+                is_fallback=True,
+                error="依据规划输出含非法句柄；丢弃 1 个不在允许集合内的用户消息 ID：999",
+                duration_ms=1,
+            ),
+        )
+
+    monkeypatch.setattr(
+        "app.services.knowledge_agent.runner.resolve_basis_plan",
+        _plan,
+    )
+    async with async_session_factory() as db:
+        user = await create_user(db, "依据句柄")
+        workspace = await create_workspace(db, user)
+        conversation = KnowledgeConversation(
+            workspace_id=workspace.id,
+            owner_user_id=user.id,
+            scope_type=SCOPE_WORKSPACE,
+            title="依据句柄测试",
+        )
+        db.add(conversation)
+        await db.flush()
+        _message, run = await submit_message(
+            db,
+            conversation,
+            KnowledgeRunSubmitRequest(
+                client_message_id=f"basis-handle-{run_id_counter()}",
+                message="结合我的情况回答",
+                basis_mode="auto",
+            ),
+        )
+        run.status = RUN_PROCESSING
+        await db.commit()
+
+        await execute_run(db, run)
+        await db.commit()
+
+        assert run.planned_basis_strategy == BASIS_STRATEGY_MODEL_FIRST
+        summary = await run_fallback_summary(db, run.id)
+        errors = " | ".join(
+            stage["error"] or "" for stage in summary["stages"]
+        )
+        assert "999" in errors

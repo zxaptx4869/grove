@@ -10,6 +10,7 @@ from app.agents.knowledge_context import (
 from app.db.session import async_session_factory
 from app.models import KnowledgeConversation, KnowledgeMessage
 from app.models.knowledge_agent import (
+    CONTEXT_CLOSE_REASON_SCOPE_CHANGE,
     CONTEXT_DECISION_CLARIFY,
     CONTEXT_DECISION_CONTINUE,
     CONTEXT_DECISION_NEW_TOPIC,
@@ -18,9 +19,14 @@ from app.models.knowledge_agent import (
     CONTEXT_MODE_NEW_TOPIC,
     MESSAGE_ROLE_ASSISTANT,
     MESSAGE_ROLE_USER,
+    RUN_COMPLETED,
+    SCOPE_PROJECT,
     SCOPE_WORKSPACE,
 )
 from app.schemas.knowledge_agent import KnowledgeRunSubmitRequest
+from app.services.knowledge_agent.basis import (
+    load_allowed_user_statements,
+)
 from app.services.knowledge_agent.follow_up import (
     DEFAULT_CLARIFY_QUESTION,
     NO_ACTIVE_TOPIC_CLARIFY,
@@ -28,7 +34,15 @@ from app.services.knowledge_agent.follow_up import (
     select_decision_history,
 )
 from app.services.knowledge_agent.runs import submit_message
-from tests._knowledge_agent_fixtures import create_user, create_workspace
+from app.services.knowledge_agent.working_set import (
+    close_active_context_version,
+    create_context_version,
+)
+from tests._knowledge_agent_fixtures import (
+    create_project,
+    create_user,
+    create_workspace,
+)
 
 
 async def _conversation(db, user, workspace) -> KnowledgeConversation:
@@ -59,6 +73,71 @@ async def _message(
     db.add(message)
     await db.flush()
     return message
+
+
+async def _new_topic_turn(db, conversation, message: str, client_id: str):
+    """创建新话题 Run 并推进一个活动工作集版本。"""
+    user_message, run = await submit_message(
+        db,
+        conversation,
+        KnowledgeRunSubmitRequest(
+            client_message_id=client_id,
+            message=message,
+            context_mode=CONTEXT_MODE_NEW_TOPIC,
+        ),
+    )
+    run.status = RUN_COMPLETED
+    run.active_slot = None
+    run.context_decision = CONTEXT_DECISION_NEW_TOPIC
+    run.standalone_query = message
+    version = await create_context_version(
+        db,
+        conversation_id=conversation.id,
+        workspace_id=conversation.workspace_id,
+        owner_user_id=conversation.owner_user_id,
+        scope_type=conversation.scope_type,
+        project_id=conversation.project_id,
+        project_name=None,
+        topic_label=message[:20],
+        source_run_id=run.id,
+        items=[],
+    )
+    run.output_context_version_id = version.id
+    await db.flush()
+    return user_message, run, version
+
+
+async def _continue_turn(db, conversation, message: str, client_id: str):
+    """创建继续话题 Run 并在同一链上推进版本。"""
+    user_message, run = await submit_message(
+        db,
+        conversation,
+        KnowledgeRunSubmitRequest(
+            client_message_id=client_id,
+            message=message,
+            context_mode=CONTEXT_MODE_CONTINUE,
+        ),
+    )
+    run.status = RUN_COMPLETED
+    run.active_slot = None
+    run.context_decision = CONTEXT_DECISION_CONTINUE
+    run.standalone_query = message
+    version = await create_context_version(
+        db,
+        conversation_id=conversation.id,
+        workspace_id=conversation.workspace_id,
+        owner_user_id=conversation.owner_user_id,
+        scope_type=conversation.scope_type,
+        project_id=conversation.project_id,
+        project_name=None,
+        topic_label=message[:20],
+        source_run_id=run.id,
+        items=[],
+        parent_version_id=run.input_context_version_id,
+    )
+    run.output_context_version_id = version.id
+    await db.flush()
+    return user_message, run, version
 
 
 def _fake_agent(draft: ContextDecisionDraft, *, fallback: bool = False):
@@ -629,3 +708,197 @@ async def test_clarify_without_question_uses_deterministic_text(monkeypatch) -> 
         )
         assert result.decision == CONTEXT_DECISION_CLARIFY
         assert result.clarify_question == DEFAULT_CLARIFY_QUESTION
+
+
+@pytest.mark.asyncio
+async def test_statement_loader_continue_inherits_same_topic_messages() -> None:
+    """继续话题只继承同 Conversation、同范围、当前上下文链内的近期用户消息。"""
+    async with async_session_factory() as db:
+        user = await create_user(db, "陈述继承")
+        workspace = await create_workspace(db, user)
+        conversation = await _conversation(db, user, workspace)
+        first_message, _run1, _v1 = await _new_topic_turn(
+            db, conversation, "我的预算上限是 30 万", "stmt-topic-1"
+        )
+        second_message, _run2, _v2 = await _continue_turn(
+            db, conversation, "那怎么分配比较好？", "stmt-cont-1"
+        )
+        current, run3, _v3 = await _continue_turn(
+            db, conversation, "闭水试验部分怎么排？", "stmt-current-1"
+        )
+        await db.commit()
+
+        allowed = await load_allowed_user_statements(
+            db,
+            workspace_id=workspace.id,
+            owner_user_id=user.id,
+            conversation_id=conversation.id,
+            scope_type=SCOPE_WORKSPACE,
+            project_id=None,
+            context_decision=CONTEXT_DECISION_CONTINUE,
+            current_message_id=current.id,
+            exclude_run_id=run3.id,
+            input_context_version_id=run3.input_context_version_id,
+            limit=6,
+            message_chars=800,
+        )
+        ids = [item.message_id for item in allowed]
+        assert current.id in ids
+        assert first_message.id in ids
+        assert second_message.id in ids
+        assert [item.message_id for item in allowed] == sorted(ids)
+
+
+@pytest.mark.asyncio
+async def test_statement_loader_new_topic_and_clarify_cut_inheritance() -> None:
+    """new_topic 与未完成澄清都不继承旧话题用户陈述。"""
+    async with async_session_factory() as db:
+        user = await create_user(db, "陈述切断")
+        workspace = await create_workspace(db, user)
+        conversation = await _conversation(db, user, workspace)
+        await _new_topic_turn(db, conversation, "预算上限是 30 万", "cut-topic-1")
+        await _continue_turn(db, conversation, "怎么分配？", "cut-cont-1")
+        current, run, _version = await _continue_turn(
+            db, conversation, "换成装修问题", "cut-current-1"
+        )
+        await db.commit()
+
+        for decision in (CONTEXT_DECISION_NEW_TOPIC, CONTEXT_DECISION_CLARIFY):
+            allowed = await load_allowed_user_statements(
+                db,
+                workspace_id=workspace.id,
+                owner_user_id=user.id,
+                conversation_id=conversation.id,
+                scope_type=SCOPE_WORKSPACE,
+                project_id=None,
+                context_decision=decision,
+                current_message_id=current.id,
+                exclude_run_id=run.id,
+                input_context_version_id=run.input_context_version_id,
+                limit=6,
+                message_chars=800,
+            )
+            assert [item.message_id for item in allowed] == [current.id]
+
+
+@pytest.mark.asyncio
+async def test_statement_loader_scope_switch_cuts_old_topic_statements() -> None:
+    """范围切换后新范围回答不得采用切换前范围中的用户陈述。"""
+    async with async_session_factory() as db:
+        user = await create_user(db, "范围陈述")
+        workspace = await create_workspace(db, user)
+        old_project = await create_project(db, workspace, "旧项目")
+        new_project = await create_project(db, workspace, "新项目")
+        conversation = KnowledgeConversation(
+            workspace_id=workspace.id,
+            owner_user_id=user.id,
+            scope_type=SCOPE_PROJECT,
+            project_id=old_project.id,
+            title="范围切换对话",
+        )
+        db.add(conversation)
+        await db.flush()
+        old_message, _old_run, _old_version = await _new_topic_turn(
+            db, conversation, "预算上限是 30 万", "scope-old-1"
+        )
+        # 范围切换：关闭旧活动版本并把对话切到另一项目
+        await close_active_context_version(
+            db,
+            conversation.id,
+            reason=CONTEXT_CLOSE_REASON_SCOPE_CHANGE,
+        )
+        conversation.scope_type = SCOPE_PROJECT
+        conversation.project_id = new_project.id
+        current, run, _version = await _new_topic_turn(
+            db, conversation, "新项目里怎么排预算？", "scope-new-1"
+        )
+        await db.commit()
+
+        allowed = await load_allowed_user_statements(
+            db,
+            workspace_id=workspace.id,
+            owner_user_id=user.id,
+            conversation_id=conversation.id,
+            scope_type=SCOPE_PROJECT,
+            project_id=new_project.id,
+            context_decision=CONTEXT_DECISION_CONTINUE,
+            current_message_id=current.id,
+            exclude_run_id=run.id,
+            input_context_version_id=run.input_context_version_id,
+            limit=6,
+            message_chars=800,
+        )
+        assert [item.message_id for item in allowed] == [current.id]
+        assert old_message.id not in [item.message_id for item in allowed]
+
+
+@pytest.mark.asyncio
+async def test_statement_loader_excludes_assistant_history_and_limits() -> None:
+    """助手历史不是用户陈述；有界集合按数量限制并保持时间正序。"""
+    async with async_session_factory() as db:
+        user = await create_user(db, "陈述边界")
+        workspace = await create_workspace(db, user)
+        conversation = await _conversation(db, user, workspace)
+        _first_message, _r1, _v1 = await _new_topic_turn(
+            db, conversation, "预算上限是 30 万", "bound-topic-1"
+        )
+        second, _r2, _v2 = await _continue_turn(
+            db, conversation, "项目经验是闭水试验", "bound-cont-1"
+        )
+        await _message(
+            db,
+            conversation,
+            MESSAGE_ROLE_ASSISTANT,
+            "这是历史助手回答，不是用户陈述。",
+        )
+        current, run, _v3 = await _continue_turn(
+            db, conversation, "结合前面信息继续", "bound-current-1"
+        )
+        await db.commit()
+
+        allowed = await load_allowed_user_statements(
+            db,
+            workspace_id=workspace.id,
+            owner_user_id=user.id,
+            conversation_id=conversation.id,
+            scope_type=SCOPE_WORKSPACE,
+            project_id=None,
+            context_decision=CONTEXT_DECISION_CONTINUE,
+            current_message_id=current.id,
+            exclude_run_id=run.id,
+            input_context_version_id=run.input_context_version_id,
+            limit=2,
+            message_chars=800,
+        )
+        ids = [item.message_id for item in allowed]
+        assert ids == [second.id, current.id]
+        assert _first_message.id not in ids
+        contents = " | ".join(item.content for item in allowed)
+        assert "历史助手回答" not in contents
+
+
+@pytest.mark.asyncio
+async def test_statement_loader_unknown_current_message_returns_empty() -> None:
+    """未知/越权消息 ID 不加载任何用户陈述。"""
+    async with async_session_factory() as db:
+        user = await create_user(db, "陈述未知")
+        workspace = await create_workspace(db, user)
+        conversation = await _conversation(db, user, workspace)
+        await _new_topic_turn(db, conversation, "预算上限是 30 万", "unknown-topic-1")
+        await db.commit()
+
+        allowed = await load_allowed_user_statements(
+            db,
+            workspace_id=workspace.id,
+            owner_user_id=user.id,
+            conversation_id=conversation.id,
+            scope_type=SCOPE_WORKSPACE,
+            project_id=None,
+            context_decision=CONTEXT_DECISION_CONTINUE,
+            current_message_id=999999,
+            exclude_run_id=None,
+            input_context_version_id=None,
+            limit=6,
+            message_chars=800,
+        )
+        assert allowed == []

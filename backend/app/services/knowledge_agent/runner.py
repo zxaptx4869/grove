@@ -8,6 +8,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
+from app.agents.basis import BASIS_ROUTE_PROMPT_VERSION
 from app.agents.investigation import ANSWER_MODE_ROUTE_PROMPT_VERSION
 from app.agents.knowledge_agent import ANSWER_PROMPT_VERSION, run_knowledge_answer_agent
 from app.agents.knowledge_context import CONTEXT_DECISION_PROMPT_VERSION
@@ -32,6 +33,7 @@ from app.models.knowledge_agent import (
     RUN_COMPLETED,
     RUN_PARTIAL,
     RUN_PROCESSING,
+    STEP_BASIS_ROUTE,
     STEP_CONTEXT_DECISION,
     STEP_FINALIZE,
     STEP_INVESTIGATION_ROUTE,
@@ -43,6 +45,10 @@ from app.models.knowledge_agent import (
     STEP_VALIDATE_REFERENCES,
 )
 from app.schemas.knowledge_agent import KnowledgeAnswerOut
+from app.services.knowledge_agent.basis import (
+    load_allowed_user_statements,
+    resolve_basis_plan,
+)
 from app.services.knowledge_agent.conversations import scope_label
 from app.services.knowledge_agent.evidence import build_validated_answer
 from app.services.knowledge_agent.follow_up import (
@@ -330,6 +336,48 @@ async def execute_run(db: AsyncSession, run: KnowledgeAgentRun) -> None:
 
         await execute_structured_entry_search(db, run, decision, ctx)
         return
+
+    # 依据契约：普通回答在结果形态路由后、回答模式解析前执行依据规划；
+    # 显式 knowledge_only、旧客户端缺省与特性关闭由服务端直接固化 Grove-only，
+    # 不产生规划模型调用；entries 结果不执行依据规划（上方已提前返回）。
+    await _check_cancelled(run.id)
+    await update_run_step(run.id, STEP_BASIS_ROUTE)
+    if run.planned_basis_strategy is None:
+        allowed_statements = await load_allowed_user_statements(
+            db,
+            workspace_id=run.workspace_id,
+            owner_user_id=run.owner_user_id,
+            conversation_id=run.conversation_id,
+            scope_type=run.scope_type,
+            project_id=run.project_id,
+            context_decision=decision.decision,
+            current_message_id=run.user_message_id,
+            exclude_run_id=run.id,
+            input_context_version_id=run.input_context_version_id,
+            limit=settings.knowledge_agent_statement_limit,
+            message_chars=settings.knowledge_agent_statement_message_chars,
+        )
+        plan = await resolve_basis_plan(
+            db,
+            workspace_id=run.workspace_id,
+            request_basis_mode=run.request_basis_mode,
+            objective=decision.standalone_query or query,
+            scope_label=scope,
+            topic_summary=decision.topic_label,
+            context_decision=decision.decision,
+            current_message=query,
+            allowed_statements=allowed_statements,
+            feature_enabled=settings.knowledge_agent_open_discussion_enabled,
+        )
+        run.planned_basis_strategy = plan.strategy
+        if plan.meta is not None:
+            await record_model_invocation(
+                db,
+                run_id=run.id,
+                meta=plan.meta,
+                prompt_version=BASIS_ROUTE_PROMPT_VERSION,
+            )
+        await db.commit()
 
     # 工作集种子复验可观测：删除/越权/移出范围的项只记录不可用
     await record_tool_result(

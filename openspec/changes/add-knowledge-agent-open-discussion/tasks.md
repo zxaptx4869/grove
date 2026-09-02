@@ -6,9 +6,9 @@
 
 ## 2. 依据规划与用户陈述边界
 
-- [ ] 2.1 实现结构化 basis planner 与版本化提示，输出受限策略、是否需要 Grove/外部材料和候选用户消息句柄；显式 `knowledge_only` 由应用直接执行，规划失败显式回退 Grove-only。验收：`cd backend && .venv/bin/pytest -q tests/test_knowledge_agent_models.py -k basis`
-- [ ] 2.2 实现当前话题有界用户陈述加载与服务端句柄校验，只允许同 Conversation、同范围、当前上下文链中的用户消息，并在 new_topic、范围切换和未完成澄清时切断继承。验收：`cd backend && .venv/bin/pytest -q tests/test_knowledge_agent_follow_up.py -k statement`
-- [ ] 2.3 将 basis planner 调用接入现有模型调用审计与 Run fallback 汇总，覆盖成功、非法结构、未配置模型、显式跳过规划和未知消息 ID。验收：`cd backend && .venv/bin/pytest -q tests/test_knowledge_agent_runner.py -k basis`
+- [x] 2.1 实现结构化 basis planner 与版本化提示，输出受限策略、是否需要 Grove/外部材料和候选用户消息句柄；显式 `knowledge_only` 由应用直接执行，规划失败显式回退 Grove-only。验收：`cd backend && .venv/bin/pytest -q tests/test_knowledge_agent_models.py -k basis`
+- [x] 2.2 实现当前话题有界用户陈述加载与服务端句柄校验，只允许同 Conversation、同范围、当前上下文链中的用户消息，并在 new_topic、范围切换和未完成澄清时切断继承。验收：`cd backend && .venv/bin/pytest -q tests/test_knowledge_agent_follow_up.py -k statement`
+- [x] 2.3 将 basis planner 调用接入现有模型调用审计与 Run fallback 汇总，覆盖成功、非法结构、未配置模型、显式跳过规划和未知消息 ID。验收：`cd backend && .venv/bin/pytest -q tests/test_knowledge_agent_runner.py -k basis`
 
 ## 3. 依据感知回答执行
 
