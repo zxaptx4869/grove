@@ -19,6 +19,7 @@ from app.models import (
     KnowledgeMessage,
 )
 from app.models.knowledge_agent import (
+    PURPOSE_BASIS_ROUTE,
     RUN_CANCELLED,
     RUN_COMPLETED,
     RUN_FAILED,
@@ -27,6 +28,8 @@ from app.models.knowledge_agent import (
     SCOPE_WORKSPACE,
 )
 from app.schemas.knowledge_agent import KnowledgeRunSubmitRequest
+from app.services.knowledge_agent.basis import BasisPlan
+from app.services.knowledge_agent.observability import StageMeta
 from app.services.knowledge_agent.runs import submit_message
 from app.services.knowledge_agent.tools import RunToolContext, SearchToolOutput
 from app.services.knowledge_agent.working_set import (
@@ -525,3 +528,248 @@ async def test_crash_recovery_reuses_input_version_without_duplicates(
             assert len(decision_calls) == 1
             assistant = await db.get(KnowledgeMessage, second_run.assistant_message_id)
             assert assistant.content == "闭水试验验收前不得提前放水。"
+
+
+@pytest.mark.asyncio
+async def test_basis_crash_recovery_reuses_plan_without_replan(monkeypatch) -> None:
+    """依据规划已提交后崩溃：恢复复用同一策略，不重复调用规划器。"""
+    calls = {"plan": 0}
+
+    async def _plan(
+        db,
+        *,
+        workspace_id,
+        request_basis_mode,
+        objective,
+        scope_label,
+        topic_summary,
+        context_decision,
+        current_message,
+        allowed_statements,
+        feature_enabled,
+    ):
+        calls["plan"] += 1
+        return BasisPlan(
+            strategy="hybrid",
+            needs_grove=True,
+            requires_external_material=False,
+            candidate_statement_ids=[],
+            degraded=False,
+            meta=StageMeta(
+                purpose=PURPOSE_BASIS_ROUTE,
+                provider="llm",
+                model="fake-basis",
+                is_fallback=False,
+                error=None,
+                duration_ms=1,
+            ),
+        )
+
+    monkeypatch.setattr(
+        "app.services.knowledge_agent.runner.resolve_basis_plan",
+        _plan,
+    )
+    async with async_session_factory() as db:
+        user = await create_user(db, "依据恢复")
+        workspace = await create_workspace(db, user)
+        project = await create_project(db, workspace, "依据恢复项目")
+        node = await create_child_node(db, project, "施工")
+        source, attachment = await create_source_attachment(
+            db,
+            workspace,
+            project,
+            text_content="闭水试验通常持续 24 小时。",
+        )
+        await create_entry_with_evidence(
+            db,
+            project,
+            node,
+            source,
+            attachment,
+            title="闭水试验",
+            content="闭水试验通常持续 24 小时。",
+            quote="闭水试验通常持续 24 小时",
+        )
+        _conversation, run = await _conversation_and_run(db, user, workspace)
+        run.request_basis_mode = "auto"
+        await db.commit()
+        await _cancel_other_waiting_runs(db, keep_run_id=run.id)
+        run_id = run.id
+
+        async def _boom_search(*args, **kwargs):
+            raise RuntimeError("模拟规划提交后、搜索前崩溃")
+
+        with monkeypatch.context() as ctx:
+            ctx.setattr(
+                "app.services.knowledge_agent.runner.search_confirmed_knowledge",
+                _boom_search,
+            )
+            assert await process_one_run() is True
+
+        async with async_session_factory() as db:
+            run = await db.get(KnowledgeAgentRun, run_id)
+            assert run.status == RUN_WAITING
+            assert run.retry_count == 1
+            assert run.planned_basis_strategy == "hybrid"
+            assert run.answer_json is None
+            assert run.answer_basis_json is None
+        assert calls["plan"] == 1
+
+        # 第二次处理：复用已提交规划完成（不重新规划）
+        async with async_session_factory() as db:
+            run = await db.get(KnowledgeAgentRun, run_id)
+            ctx2 = RunToolContext(
+                run_id=run.id,
+                workspace_id=run.workspace_id,
+                owner_user_id=run.owner_user_id,
+                scope_type=run.scope_type,
+                project_id=run.project_id,
+                project_name=run.project_name,
+            )
+            verified = await _evidence_for_run(db, ctx2)
+            handle = verified[0].evidence_handle
+            await db.commit()
+        monkeypatch.setattr(
+            "app.services.knowledge_agent.runner.run_knowledge_answer_agent",
+            _open_fake_answer_agent(handle),
+        )
+        assert await process_one_run() is True
+
+        async with async_session_factory() as db:
+            run = await db.get(KnowledgeAgentRun, run_id)
+            assert run.status == RUN_COMPLETED
+            assert run.planned_basis_strategy == "hybrid"
+            basis = json.loads(run.answer_basis_json)
+            assert basis["grove"]["used"] is True
+            assert basis["grove"]["citation_count"] == 1
+            invocations = (
+                await db.execute(
+                    select(KnowledgeAgentModelInvocation).where(
+                        KnowledgeAgentModelInvocation.run_id == run_id,
+                        KnowledgeAgentModelInvocation.purpose == PURPOSE_BASIS_ROUTE,
+                    )
+                )
+            ).scalars().all()
+            assert len(invocations) == 1
+        assert calls["plan"] == 1
+
+
+def _open_fake_answer_agent(handle: str):
+    """接受开放参数并引用给定句柄的回答替身。"""
+
+    async def _fake(db, workspace_id, query, scope_label, entries, **kwargs):
+        return (
+            KnowledgeAnswerDraft(
+                answer="闭水试验通常持续 24 小时。",
+                citations=[KnowledgeCitationDraft(evidence_handle=handle)],
+                core_question_answered=True,
+                coverage_complete=True,
+            ),
+            StageMeta(
+                purpose="answer",
+                provider="llm",
+                model="fake-answer",
+                is_fallback=False,
+                error=None,
+                duration_ms=1,
+            ),
+        )
+
+    return _fake
+
+
+@pytest.mark.asyncio
+async def test_cancelled_open_run_does_not_commit_late_answer_or_basis(
+    monkeypatch,
+) -> None:
+    """开放 Run 取消：已提交的规划保留，但迟到回答与实际依据都不落库。"""
+    async def _plan(
+        db,
+        *,
+        workspace_id,
+        request_basis_mode,
+        objective,
+        scope_label,
+        topic_summary,
+        context_decision,
+        current_message,
+        allowed_statements,
+        feature_enabled,
+    ):
+        return BasisPlan(
+            strategy="model_first",
+            needs_grove=False,
+            requires_external_material=False,
+            candidate_statement_ids=[],
+            degraded=False,
+            meta=StageMeta(
+                purpose=PURPOSE_BASIS_ROUTE,
+                provider="llm",
+                model="fake-basis",
+                is_fallback=False,
+                error=None,
+                duration_ms=1,
+            ),
+        )
+
+    monkeypatch.setattr(
+        "app.services.knowledge_agent.runner.resolve_basis_plan",
+        _plan,
+    )
+    async with async_session_factory() as db:
+        user = await create_user(db, "取消开放")
+        workspace = await create_workspace(db, user)
+        _conversation, run = await _conversation_and_run(
+            db,
+            user,
+            workspace,
+            message="解释通用概念",
+        )
+        run.request_basis_mode = "auto"
+        await db.commit()
+        await _cancel_other_waiting_runs(db, keep_run_id=run.id)
+        run_id = run.id
+
+    async def _answer_sets_cancel(
+        db,
+        workspace_id,
+        query,
+        scope_label,
+        entries,
+        **kwargs,
+    ):
+        """模拟模型返回前，另一会话提交取消请求。"""
+        async with async_session_factory() as other:
+            other_run = await other.get(KnowledgeAgentRun, run_id)
+            other_run.cancel_requested = True
+            await other.commit()
+        return (
+            KnowledgeAnswerDraft(
+                answer="迟到的一般回答。",
+                core_question_answered=True,
+                coverage_complete=True,
+            ),
+            StageMeta(
+                purpose="answer",
+                provider="llm",
+                model="fake-answer",
+                is_fallback=False,
+                error=None,
+                duration_ms=1,
+            ),
+        )
+
+    monkeypatch.setattr(
+        "app.services.knowledge_agent.runner.run_knowledge_answer_agent",
+        _answer_sets_cancel,
+    )
+    assert await process_one_run() is True
+
+    async with async_session_factory() as db:
+        run = await db.get(KnowledgeAgentRun, run_id)
+        assert run.status == RUN_CANCELLED
+        assert run.active_slot is None
+        assert run.answer_json is None
+        assert run.answer_basis_json is None
+        # 规划检查点已提交：策略保留供审计，未漂移为其他模式
+        assert run.planned_basis_strategy == "model_first"

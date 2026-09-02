@@ -363,6 +363,7 @@ async def _finalize_deterministic_insufficient(
     external_material_required: bool,
 ) -> None:
     """确定性依据不足终态：不调用模型，也持久化真实实际依据。"""
+    await _check_cancelled(run.id)
     await _build_output_version(
         db,
         run,
@@ -640,6 +641,11 @@ async def execute_run(db: AsyncSession, run: KnowledgeAgentRun) -> None:
     # 回答模式：显式覆盖或 auto 路由；investigate 进入有界调查分支
     await _check_cancelled(run.id)
     await update_run_step(run.id, STEP_INVESTIGATION_ROUTE)
+    statement_context = [
+        {"message_id": item.message_id, "content": item.content}
+        for item in allowed_statements
+        if item.message_id in plan.candidate_statement_ids
+    ]
     if run.actual_answer_mode is None:
         requested_mode = run.request_answer_mode or ANSWER_MODE_AUTO
         if (
@@ -680,16 +686,13 @@ async def execute_run(db: AsyncSession, run: KnowledgeAgentRun) -> None:
             working_set=working_set,
             ctx=ctx,
             seed_entries=seed_entries,
+            basis_plan=plan,
+            statement_context=statement_context,
         )
         return
 
     # 依据感知开放分支：规划策略不要求 Grove 时跳过搜索/Entry/Evidence，
     # 直接进入允许模型通用知识的回答器；显式 investigate 已在上方提前返回。
-    statement_context = [
-        {"message_id": item.message_id, "content": item.content}
-        for item in allowed_statements
-        if item.message_id in plan.candidate_statement_ids
-    ]
     allow_model_knowledge = basis_strategy_allows_model_knowledge(plan.strategy)
     if not plan.needs_grove:
         await _run_open_answer_without_grove(

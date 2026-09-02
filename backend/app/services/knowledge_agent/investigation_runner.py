@@ -52,6 +52,11 @@ from app.models.knowledge_agent import (
     KnowledgeInvestigationRound,
 )
 from app.schemas.knowledge_agent import KnowledgeAnswerOut
+from app.services.knowledge_agent.basis import (
+    BasisPlan,
+    basis_strategy_allows_model_knowledge,
+    build_answer_basis,
+)
 from app.services.knowledge_agent.conversations import scope_label
 from app.services.knowledge_agent.evidence import build_validated_answer
 from app.services.knowledge_agent.investigation import (
@@ -668,15 +673,110 @@ async def _synthesize_investigation_answer(
     ledger: InvestigationLedger,
     scope: str,
     working_set: WorkingSetValidation,
-) -> tuple[KnowledgeAnswerOut, str, list[dict]]:
-    """最终综合：只传当前 Run Evidence 与紧凑账本，返回 (回答, Run 状态, 引用线索)。"""
+    basis_plan: BasisPlan,
+    statement_context: list[dict],
+) -> tuple[KnowledgeAnswerOut, str, list[dict], object]:
+    """最终综合：返回 (回答, Run 状态, 引用线索, AnswerBasis)。"""
     await _check_cancelled(run.id)
+    allow_model_knowledge = basis_strategy_allows_model_knowledge(
+        basis_plan.strategy
+    )
+    user_statement_ids = [item["message_id"] for item in statement_context]
     if ledger.distinct_evidence_count() == 0:
-        answer = _insufficient_answer(
-            "调查未获得可核验的当前 Run 证据，无法给出带引用的确定结论。",
-            "没有当前 Run 可核验 Evidence",
+        if not allow_model_knowledge:
+            answer = _insufficient_answer(
+                "调查未获得可核验的当前 Run 证据，无法给出带引用的确定结论。",
+                "没有当前 Run 可核验 Evidence",
+            )
+            return (
+                answer,
+                RUN_PARTIAL,
+                [],
+                build_answer_basis(
+                    answer=answer,
+                    user_statement_ids=[],
+                    model_knowledge_used=False,
+                    external_material_required=basis_plan.requires_external_material,
+                ),
+            )
+        # 用户允许模型通用知识：保留真实调查摘要并明确 Grove 未命中，
+        # 按核心问题完成度提供一般回答（completed/partial）。
+        await update_run_step(run.id, STEP_SYNTHESIZE)
+        synthesis_context = (
+            f"实际模式：investigate；完成轮次：{investigation.current_round}；"
+            f"实际查询数：{investigation.total_queries_executed}；"
+            f"停止原因：{investigation.stop_reason or 'unknown'}；"
+            "本范围内 Grove 调查未命中相关正式知识。"
         )
-        return answer, RUN_PARTIAL, []
+        open_kwargs = {
+            "purpose": PURPOSE_SYNTHESIS,
+            "synthesis_context": synthesis_context,
+        }
+        if statement_context or allow_model_knowledge or basis_plan.requires_external_material:
+            open_kwargs.update(
+                {
+                    "user_statements": statement_context or None,
+                    "allow_model_knowledge": allow_model_knowledge,
+                    "external_material_required": (
+                        basis_plan.requires_external_material
+                    ),
+                }
+            )
+        draft, answer_meta = await run_knowledge_answer_agent(
+            db,
+            run.workspace_id,
+            decision.standalone_query or "",
+            scope,
+            [],
+            **open_kwargs,
+        )
+        await record_model_invocation(
+            db,
+            run_id=run.id,
+            meta=answer_meta,
+            prompt_version=ANSWER_PROMPT_VERSION,
+            investigation_id=investigation.id,
+        )
+        await db.commit()
+        answer, ref_stats = await build_validated_answer(
+            db,
+            run.id,
+            draft,
+            allow_unreferenced=True,
+            verifiable_gaps=list(ledger.gaps),
+        )
+        if ref_stats.discarded_count > 0:
+            await record_reference_validation(
+                db,
+                run.id,
+                stats=ref_stats,
+                note="调查综合部分引用被丢弃",
+            )
+            await db.commit()
+        if answer_meta.is_fallback:
+            answer = KnowledgeAnswerOut(
+                answer=answer.answer,
+                status="failed",
+                insufficient_note=answer.insufficient_note or "回答模型不可用",
+            )
+        run_status = (
+            RUN_PARTIAL
+            if answer_meta.is_fallback or ref_stats.discarded_count
+            else RUN_COMPLETED
+        )
+        return (
+            answer,
+            run_status,
+            [],
+            build_answer_basis(
+                answer=answer,
+                user_statement_ids=user_statement_ids,
+                model_knowledge_used=(
+                    allow_model_knowledge and not answer_meta.is_fallback
+                ),
+                external_material_required=basis_plan.requires_external_material,
+            ),
+        )
 
     entry_ids = [ref.entry_id for ref in ledger.discovered_entries.values() if ref.entry_id != 0]
     entries = await read_entries(db, ctx, entry_ids)
@@ -716,14 +816,27 @@ async def _synthesize_investigation_answer(
         f"停止原因：{investigation.stop_reason or 'unknown'}；"
         f"未解决缺口：{'；'.join(ledger.gaps) or '（无）'}"
     )
+    answer_kwargs = {
+        "purpose": PURPOSE_SYNTHESIS,
+        "synthesis_context": synthesis_context,
+    }
+    if statement_context or allow_model_knowledge or basis_plan.requires_external_material:
+        answer_kwargs.update(
+            {
+                "user_statements": statement_context or None,
+                "allow_model_knowledge": allow_model_knowledge,
+                "external_material_required": (
+                    basis_plan.requires_external_material
+                ),
+            }
+        )
     draft, answer_meta = await run_knowledge_answer_agent(
         db,
         run.workspace_id,
         decision.standalone_query,
         scope,
         answer_entries,
-        purpose=PURPOSE_SYNTHESIS,
-        synthesis_context=synthesis_context,
+        **answer_kwargs,
     )
     await record_model_invocation(
         db,
@@ -738,9 +851,14 @@ async def _synthesize_investigation_answer(
         db,
         run.id,
         draft,
+        allow_unreferenced=allow_model_knowledge,
         verifiable_gaps=ledger.gaps,
     )
-    factual_without_refs = not draft.insufficient and ref_stats.valid_count == 0
+    strict_missing = (
+        not allow_model_knowledge
+        and not draft.insufficient
+        and ref_stats.valid_count == 0
+    )
     if ref_stats.discarded_count > 0:
         await record_reference_validation(
             db,
@@ -748,14 +866,14 @@ async def _synthesize_investigation_answer(
             stats=ref_stats,
             note="调查综合部分引用被丢弃",
         )
-    elif factual_without_refs:
+    elif strict_missing:
         await record_reference_validation(
             db,
             run.id,
             stats=ref_stats,
             note="调查综合事实性回答没有有效引用",
         )
-    if ref_stats.discarded_count > 0 or factual_without_refs:
+    if ref_stats.discarded_count > 0 or strict_missing:
         await db.commit()
     if answer_meta.is_fallback:
         answer = KnowledgeAnswerOut(
@@ -765,7 +883,11 @@ async def _synthesize_investigation_answer(
         )
     run_status = (
         RUN_PARTIAL
-        if (answer_meta.is_fallback or factual_without_refs or ref_stats.discarded_count)
+        if (
+            answer_meta.is_fallback
+            or strict_missing
+            or ref_stats.discarded_count
+        )
         else RUN_COMPLETED
     )
     cited_items = _cited_items_from_answer(answer, entries_by_id, run.id)
@@ -773,7 +895,19 @@ async def _synthesize_investigation_answer(
     ledger.coverage = list(answer.coverage)
     ledger.gaps = list(answer.gaps)
     ledger.conflicts = [conflict.summary for conflict in answer.conflicts]
-    return answer, run_status, cited_items
+    return (
+        answer,
+        run_status,
+        cited_items,
+        build_answer_basis(
+            answer=answer,
+            user_statement_ids=user_statement_ids,
+            model_knowledge_used=(
+                allow_model_knowledge and not answer_meta.is_fallback
+            ),
+            external_material_required=basis_plan.requires_external_material,
+        ),
+    )
 
 
 async def _read_seed_evidence(
@@ -875,6 +1009,8 @@ async def execute_investigation(
     working_set: WorkingSetValidation,
     ctx: RunToolContext,
     seed_entries: list[Entry],
+    basis_plan: BasisPlan,
+    statement_context: list[dict],
 ) -> None:
     """执行有界调查：最多 max_rounds 轮，应用层控制查询/Entry/Evidence 预算。"""
     settings = get_settings()
@@ -1063,7 +1199,7 @@ async def execute_investigation(
     await db.commit()
 
     # 最终综合（终态事务由外层 execute_run/process_one_run 提交）
-    answer, run_status, cited_items = await _synthesize_investigation_answer(
+    answer, run_status, cited_items, answer_basis = await _synthesize_investigation_answer(
         db,
         run=run,
         ctx=ctx,
@@ -1072,6 +1208,8 @@ async def execute_investigation(
         ledger=ledger,
         scope=scope,
         working_set=working_set,
+        basis_plan=basis_plan,
+        statement_context=statement_context,
     )
     if answer.status == "insufficient":
         investigation.status = INVESTIGATION_STATUS_INSUFFICIENT
@@ -1109,4 +1247,5 @@ async def execute_investigation(
         answer=answer,
         status=run_status,
         fallback_summary=summary,
+        answer_basis=answer_basis,
     )

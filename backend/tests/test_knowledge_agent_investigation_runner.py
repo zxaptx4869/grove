@@ -7,6 +7,7 @@ from sqlalchemy import select
 
 from app.agents.investigation import InvestigationControllerDraft
 from app.agents.knowledge_agent import (
+    KnowledgeAnswerPointDraft,
     KnowledgeConflictDraft,
     KnowledgeEvidenceSummaryDraft,
 )
@@ -22,7 +23,9 @@ from app.models import (
     KnowledgeWorkingSetItem,
 )
 from app.models.knowledge_agent import (
+    ANSWER_MODE_AUTO,
     ANSWER_MODE_INVESTIGATE,
+    ANSWER_MODE_QUICK,
     INVESTIGATION_ACTION_ANSWER,
     INVESTIGATION_ACTION_INSUFFICIENT,
     INVESTIGATION_ACTION_SEARCH,
@@ -1644,3 +1647,351 @@ async def test_investigation_reads_seed_evidence_into_ledger() -> None:
             )
         ).scalars().all()
         assert any(row.entry_id == seed_entry.id for row in persisted)
+
+
+def _basis_plan_meta(strategy: str):
+    """构造 basis 计划替身元数据。"""
+    return StageMeta(
+        purpose="basis_route",
+        provider="llm",
+        model="fake-basis",
+        is_fallback=False,
+        error=None,
+        duration_ms=1,
+    )
+
+
+def _patch_basis(monkeypatch, strategy: str):
+    """把 runner 的依据规划替换为指定策略。"""
+    async def _plan(
+        db,
+        *,
+        workspace_id,
+        request_basis_mode,
+        objective,
+        scope_label,
+        topic_summary,
+        context_decision,
+        current_message,
+        allowed_statements,
+        feature_enabled,
+    ):
+        from app.services.knowledge_agent.basis import (
+            BasisPlan,
+            basis_strategy_needs_grove,
+        )
+
+        return BasisPlan(
+            strategy=strategy,
+            needs_grove=basis_strategy_needs_grove(strategy),
+            requires_external_material=strategy == "external_needed",
+            candidate_statement_ids=[],
+            degraded=False,
+            meta=_basis_plan_meta(strategy),
+        )
+
+    monkeypatch.setattr(
+        "app.services.knowledge_agent.runner.resolve_basis_plan",
+        _plan,
+    )
+
+
+def _open_synthesis_agent():
+    """综合回答替身：接受开放参数并返回无引用要点。"""
+    async def _fake(
+        db,
+        workspace_id,
+        query,
+        scope_label,
+        entries,
+        *,
+        purpose=None,
+        synthesis_context=None,
+        **kwargs,
+    ):
+        return (
+            KnowledgeAnswerDraft(
+                lead="一般开放分析。",
+                points=[
+                    KnowledgeAnswerPointDraft(
+                        text="先给一般框架，再核对个人/项目情况。",
+                        evidence_handles=[],
+                    )
+                ],
+                core_question_answered=True,
+                coverage_complete=True,
+            ),
+            StageMeta(
+                purpose="synthesis",
+                provider="llm",
+                model="fake-synthesis",
+                is_fallback=False,
+                error=None,
+                duration_ms=1,
+            ),
+        )
+
+    return _fake
+
+
+@pytest.mark.asyncio
+async def test_investigate_knowledge_only_no_evidence_is_insufficient(
+    monkeypatch,
+) -> None:
+    """investigate + knowledge_only 无证据：真实调查结束且回答严格不足。"""
+    async with async_session_factory() as db:
+        user = await create_user(db, "调查仅知识")
+        workspace = await create_workspace(db, user)
+        await create_project(db, workspace, "空调查项目")
+        _conversation, run = await _investigation_run(
+            db,
+            user,
+            workspace,
+            message="闭水试验与放水时机怎么规定？",
+        )
+        await db.commit()
+
+        controller, _calls = _controller_sequence(
+            [
+                InvestigationControllerDraft(
+                    action=INVESTIGATION_ACTION_SEARCH,
+                    queries=["不存在的主题"],
+                ),
+                InvestigationControllerDraft(
+                    action=INVESTIGATION_ACTION_INSUFFICIENT,
+                    gaps=["范围外主题"],
+                ),
+            ]
+        )
+        monkeypatch.setattr(
+            "app.services.knowledge_agent.investigation_runner.run_investigation_controller",
+            controller,
+        )
+        monkeypatch.setattr(
+            "app.services.knowledge_agent.investigation_runner.search_confirmed_knowledge",
+            _scripted_search({"不存在的主题": []}),
+        )
+
+        async def _forbidden_synthesis(*args, **kwargs):  # pragma: no cover
+            raise AssertionError("knowledge_only 无证据不得调用综合回答模型")
+
+        monkeypatch.setattr(
+            "app.services.knowledge_agent.investigation_runner.run_knowledge_answer_agent",
+            _forbidden_synthesis,
+        )
+        await execute_run(db, run)
+        await db.commit()
+
+        investigation, _rounds, queries = await _load_investigation(db, run.id)
+        assert investigation is not None
+        assert investigation.stop_reason in {
+            STOP_REASON_INSUFFICIENT,
+            STOP_REASON_NO_PROGRESS,
+        }
+        assert run.status == RUN_PARTIAL
+        answer = json.loads(run.answer_json)
+        assert answer["status"] == "insufficient"
+        assert "没有当前 Run 可核验 Evidence" in answer["insufficient_note"]
+        basis = json.loads(run.answer_basis_json)
+        assert basis["model_knowledge"]["used"] is False
+        assert basis["grove"]["used"] is False
+        assert len(queries) >= 1
+
+
+@pytest.mark.asyncio
+async def test_explicit_investigate_forces_real_grove_even_model_first(
+    monkeypatch,
+) -> None:
+    """显式 investigate 不被自动 model_first 降级：真实创建并执行 Grove 调查。"""
+    async with async_session_factory() as db:
+        user = await create_user(db, "显式调查覆盖")
+        workspace = await create_workspace(db, user)
+        project = await create_project(db, workspace, "调查项目")
+        node = await create_child_node(db, project, "施工")
+        source, attachment = await create_source_attachment(
+            db,
+            workspace,
+            project,
+            text_content="闭水试验通常持续 24 小时。",
+        )
+        entry = await create_entry_with_evidence(
+            db,
+            project,
+            node,
+            source,
+            attachment,
+            quote="闭水试验通常持续 24 小时",
+        )
+        _conversation, run = await _investigation_run(db, user, workspace)
+        run.request_basis_mode = "auto"
+        await db.commit()
+        _patch_basis(monkeypatch, "model_first")
+
+        controller, _calls = _controller_sequence(
+            [
+                InvestigationControllerDraft(
+                    action=INVESTIGATION_ACTION_SEARCH,
+                    queries=["闭水试验持续多久"],
+                ),
+                InvestigationControllerDraft(
+                    action=INVESTIGATION_ACTION_ANSWER,
+                ),
+            ]
+        )
+        monkeypatch.setattr(
+            "app.services.knowledge_agent.investigation_runner.run_investigation_controller",
+            controller,
+        )
+        monkeypatch.setattr(
+            "app.services.knowledge_agent.investigation_runner.search_confirmed_knowledge",
+            _scripted_search({"闭水试验持续多久": [_search_result(entry)]}),
+        )
+
+        async def _cited_synthesis(
+            db,
+            workspace_id,
+            query,
+            scope_label,
+            entries,
+            *,
+            purpose=None,
+            synthesis_context=None,
+            **kwargs,
+        ):
+            handle = entries[0]["evidences"][0]["handle"]
+            return (
+                KnowledgeAnswerDraft(
+                    lead="基于调查证据的回答。",
+                    points=[
+                        KnowledgeAnswerPointDraft(
+                            text="闭水试验通常持续 24 小时。",
+                            evidence_handles=[handle],
+                        )
+                    ],
+                    core_question_answered=True,
+                    coverage_complete=True,
+                ),
+                StageMeta(
+                    purpose="synthesis",
+                    provider="llm",
+                    model="fake-synthesis",
+                    is_fallback=False,
+                    error=None,
+                    duration_ms=1,
+                ),
+            )
+
+        monkeypatch.setattr(
+            "app.services.knowledge_agent.investigation_runner.run_knowledge_answer_agent",
+            _cited_synthesis,
+        )
+        await execute_run(db, run)
+        await db.commit()
+
+        assert run.actual_answer_mode == ANSWER_MODE_INVESTIGATE
+        investigation, _rounds, queries = await _load_investigation(db, run.id)
+        assert investigation is not None
+        assert investigation.total_queries_executed >= 1
+        assert len(queries) >= 1
+        assert run.status == RUN_COMPLETED
+        basis = json.loads(run.answer_basis_json)
+        assert basis["grove"]["used"] is True
+        assert basis["grove"]["citation_count"] >= 1
+
+
+@pytest.mark.asyncio
+async def test_investigate_open_no_grove_returns_general_answer_with_real_stop(
+    monkeypatch,
+) -> None:
+    """investigate 后无 Grove 证据但允许模型知识：真实停止原因 + 一般回答。"""
+    async with async_session_factory() as db:
+        user = await create_user(db, "调查一般回答")
+        workspace = await create_workspace(db, user)
+        await create_project(db, workspace, "空项目")
+        _conversation, run = await _investigation_run(
+            db,
+            user,
+            workspace,
+            message="调查一下闭水试验的通用做法",
+        )
+        run.request_basis_mode = "auto"
+        await db.commit()
+        _patch_basis(monkeypatch, "hybrid")
+
+        controller, _calls = _controller_sequence(
+            [
+                InvestigationControllerDraft(
+                    action=INVESTIGATION_ACTION_SEARCH,
+                    queries=["闭水试验通用做法"],
+                ),
+                InvestigationControllerDraft(
+                    action=INVESTIGATION_ACTION_ANSWER,
+                ),
+            ]
+        )
+        monkeypatch.setattr(
+            "app.services.knowledge_agent.investigation_runner.run_investigation_controller",
+            controller,
+        )
+        monkeypatch.setattr(
+            "app.services.knowledge_agent.investigation_runner.search_confirmed_knowledge",
+            _scripted_search({"闭水试验通用做法": []}),
+        )
+        monkeypatch.setattr(
+            "app.services.knowledge_agent.investigation_runner.run_knowledge_answer_agent",
+            _open_synthesis_agent(),
+        )
+        await execute_run(db, run)
+        await db.commit()
+
+        investigation, _rounds, _queries = await _load_investigation(db, run.id)
+        assert investigation.stop_reason in {
+            STOP_REASON_CONTROLLER_COMPLETE,
+            STOP_REASON_NO_PROGRESS,
+            STOP_REASON_INSUFFICIENT,
+        }
+        summary = json.loads(run.investigation_summary)
+        assert summary["stop_reason"] == investigation.stop_reason
+        assert run.status == RUN_COMPLETED
+        answer = json.loads(run.answer_json)
+        assert answer["status"] == "completed"
+        assert answer["citations"] == []
+        basis = json.loads(run.answer_basis_json)
+        assert basis["model_knowledge"]["used"] is True
+        assert basis["grove"]["used"] is False
+
+
+@pytest.mark.asyncio
+async def test_auto_model_first_does_not_fake_investigation(monkeypatch) -> None:
+    """自动 model_first 且未显式 investigate：确定性 quick，不创建调查。"""
+    async with async_session_factory() as db:
+        user = await create_user(db, "不伪造调查")
+        workspace = await create_workspace(db, user)
+        _conversation, run = await _conversation_and_run(
+            db,
+            user,
+            workspace,
+            message="解释通用概念",
+        )
+        run.request_answer_mode = ANSWER_MODE_AUTO
+        run.request_basis_mode = "auto"
+        await db.commit()
+        _patch_basis(monkeypatch, "model_first")
+        monkeypatch.setattr(
+            "app.services.knowledge_agent.runner.run_knowledge_answer_agent",
+            _open_synthesis_agent(),
+        )
+        await execute_run(db, run)
+        await db.commit()
+
+        assert run.actual_answer_mode == ANSWER_MODE_QUICK
+        assert run.investigation_summary is None
+        investigation = (
+            await db.execute(
+                select(KnowledgeInvestigation).where(
+                    KnowledgeInvestigation.run_id == run.id
+                )
+            )
+        ).scalar_one_or_none()
+        assert investigation is None
+        assert run.status == RUN_COMPLETED
