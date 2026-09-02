@@ -254,6 +254,29 @@ def _dynamic_answer_agent():
     return _fake
 
 
+def _offline_open_answer_agent():
+    """离线兜底回答替身：接受开放参数，返回不可用元数据。"""
+
+    async def _fake(db, workspace_id, query, scope_label, entries, **kwargs):
+        return (
+            KnowledgeAnswerDraft(
+                answer="当前没有可用的文本模型，无法生成回答。",
+                insufficient=True,
+                insufficient_note="文本模型不可用",
+            ),
+            StageMeta(
+                purpose="answer",
+                provider="offline",
+                model=None,
+                is_fallback=True,
+                error="未配置文本模型密钥",
+                duration_ms=1,
+            ),
+        )
+
+    return _fake
+
+
 @pytest.mark.asyncio
 async def test_runner_normal_completion_with_verified_citation(monkeypatch) -> None:
     """正常回答：原子提交结构化回答、引用与活动槽释放，各阶段可观测。"""
@@ -1719,6 +1742,10 @@ async def test_basis_auto_planner_success_recorded(monkeypatch) -> None:
         "app.services.knowledge_agent.runner.resolve_basis_plan",
         _plan,
     )
+    monkeypatch.setattr(
+        "app.services.knowledge_agent.runner.run_knowledge_answer_agent",
+        _offline_open_answer_agent(),
+    )
     async with async_session_factory() as db:
         user = await create_user(db, "依据自动")
         workspace = await create_workspace(db, user)
@@ -1871,6 +1898,10 @@ async def test_basis_unknown_statement_ids_dropped_with_anomaly(monkeypatch) -> 
     monkeypatch.setattr(
         "app.services.knowledge_agent.runner.resolve_basis_plan",
         _plan,
+    )
+    monkeypatch.setattr(
+        "app.services.knowledge_agent.runner.run_knowledge_answer_agent",
+        _offline_open_answer_agent(),
     )
     async with async_session_factory() as db:
         user = await create_user(db, "依据句柄")
