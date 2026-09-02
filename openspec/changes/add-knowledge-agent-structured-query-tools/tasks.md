@@ -22,7 +22,7 @@
 
 ## 4. Run 编排、恢复与终态一致性
 
-- [ ] 4.1 将一次结构化计划与确定性工具执行接入现有 entries Runner：旧开关关闭时沿用既有固定查找，开启时按“计划 → 固化 → 工具 → v2 快照 → 终态”执行，不改变 answer、quick 或 investigate 分支。验收：`cd backend && .venv/bin/pytest -q tests/test_knowledge_agent_runner.py tests/test_knowledge_agent_structured_entry_search.py -k entries`
+- [x] 4.1 将一次结构化计划与确定性工具执行接入现有 entries Runner：旧开关关闭时沿用既有固定查找，开启时按“计划 → 固化 → 工具 → v2 快照 → 终态”执行，不改变 answer、quick 或 investigate 分支。验收：`cd backend && .venv/bin/pytest -q tests/test_knowledge_agent_runner.py tests/test_knowledge_agent_structured_entry_search.py -k entries`
 - [ ] 4.2 为每个工具调用生成同 Run、工具版本和规范化参数绑定的稳定指纹；恢复时复用已提交调用结果、只重放未完成只读步骤，并在对象状态变化时返回真实快照/异常边界。验收：`cd backend && .venv/bin/pytest -q tests/test_knowledge_agent_worker.py -k 'structured_query or tool_call'`
 - [ ] 4.3 在规划前后、每个工具前后和终态前检查取消，确保迟到计划/工具结果不提交；v2 快照、助手兼容消息、Run 终态和活动槽必须原子提交，部分失败不得留下相互矛盾的聚合与列表。验收：`cd backend && .venv/bin/pytest -q tests/test_knowledge_agent_worker.py tests/test_knowledge_agent_result_protocol.py -k 'cancel or structured_query'`
 - [ ] 4.4 扩展 Run、消息页、结果分页与可观测 API，返回规范化计划摘要、v1/v2 结果、分输出完整性和真实 fallback；历史分页只读取同一快照，不重新规划或查询。验收：`cd backend && .venv/bin/pytest -q tests/test_knowledge_agent_api.py tests/test_knowledge_agent_conversations.py tests/test_knowledge_agent_structured_entry_search.py`

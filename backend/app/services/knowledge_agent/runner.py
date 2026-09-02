@@ -554,6 +554,16 @@ async def execute_run(db: AsyncSession, run: KnowledgeAgentRun) -> None:
             execute_structured_entry_search,
         )
 
+        if settings.knowledge_agent_structured_query_enabled:
+            from app.services.knowledge_agent.structured_entry_search import (
+                execute_structured_query_entry_search,
+            )
+
+            completed = await execute_structured_query_entry_search(
+                db, run, decision, ctx
+            )
+            if completed:
+                return
         await execute_structured_entry_search(db, run, decision, ctx)
         return
 
