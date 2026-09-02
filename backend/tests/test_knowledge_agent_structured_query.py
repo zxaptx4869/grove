@@ -6,6 +6,7 @@ from types import SimpleNamespace
 import pytest
 from sqlalchemy import select
 
+from app.agents.semantic import SemanticRankingDraft, SemanticRankResult
 from app.agents.structured_query import StructuredQueryPlanDraft
 from app.core.config import Settings
 from app.db.session import async_session_factory
@@ -391,3 +392,96 @@ async def test_query_entries_limit_marks_only_list_as_limited() -> None:
     assert result.completeness == "limited"
     assert result.payload["returned_count"] == 2
     assert "total" not in result.payload
+
+
+@pytest.mark.asyncio
+async def test_semantic_query_combines_structured_filters_and_stays_limited(
+    monkeypatch,
+) -> None:
+    """语义召回只看结构化合法子集，top-k 即使未满也不宣称全集。"""
+    seen_titles: list[str] = []
+
+    async def _hybrid(db, workspace_id, entries, query, limit):
+        del db, workspace_id, query, limit
+        seen_titles.extend(entry.title for entry in entries)
+        return list(entries), {}, None
+
+    async def _rerank(db, workspace_id, query, entries, strict=False):
+        del db, workspace_id, query
+        assert strict is True
+        return (
+            SemanticRankingDraft(
+                results=[
+                    SemanticRankResult(entry_id=entry.id, reason="匹配")
+                    for entry in reversed(entries)
+                ]
+            ),
+            "test",
+            "test-model",
+            False,
+            None,
+        )
+
+    monkeypatch.setattr(
+        "app.services.knowledge_agent.structured_query_tools.hybrid_recall_by_query_with_meta",
+        _hybrid,
+    )
+    monkeypatch.setattr(
+        "app.services.knowledge_agent.structured_query_tools.run_semantic_agent",
+        _rerank,
+    )
+    async with async_session_factory() as db:
+        user = await create_user(db, "语义组合")
+        workspace = await create_workspace(db, user)
+        project = await create_project(db, workspace)
+        node = await create_child_node(db, project, "记录")
+        source, attachment = await create_source_attachment(db, workspace, project)
+        allowed = []
+        for index in range(2):
+            allowed.append(
+                await create_entry_with_evidence(
+                    db,
+                    project,
+                    node,
+                    source,
+                    attachment,
+                    title=f"血压经验{index}",
+                    info_nature="experience",
+                )
+            )
+        await create_entry_with_evidence(
+            db,
+            project,
+            node,
+            source,
+            attachment,
+            title="血压事实",
+            info_nature="fact",
+        )
+        ctx = RunToolContext(
+            run_id=1,
+            workspace_id=workspace.id,
+            owner_user_id=user.id,
+            scope_type="project",
+            project_id=project.id,
+            project_name=project.name,
+        )
+        params = QueryEntriesParams.model_validate(
+            {
+                "entry_set": {
+                    "semantic_query": "血压",
+                    "info_natures": ["experience"],
+                },
+                "limit": 10,
+                "sort": {"field": "relevance", "direction": "desc"},
+            }
+        )
+
+        result = await query_entries_handler(db, ctx, params)
+
+    assert seen_titles == [entry.title for entry in allowed]
+    assert [item["entry_id"] for item in result.payload["items"]] == [
+        entry.id for entry in reversed(allowed)
+    ]
+    assert result.status == "limited"
+    assert result.completeness == "limited"
