@@ -382,7 +382,9 @@ async def build_validated_answer(
         status = "insufficient"
         citations = []
         conflicts = []
-    elif allow_unreferenced and not valid_points and not (draft.answer or "").strip():
+    elif allow_unreferenced and not valid_points and not (
+        (draft.answer or "") or (getattr(draft, "lead", None) or "")
+    ).strip():
         # 开放模式同样不允许空内容完成
         status = "insufficient"
         citations = []

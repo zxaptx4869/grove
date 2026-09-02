@@ -10,7 +10,12 @@ from app.agents.basis import (
     BASIS_ROUTE_PROMPT_VERSION,
     run_basis_planner,
 )
-from app.models import KnowledgeAgentRun, KnowledgeContextVersion, KnowledgeMessage
+from app.models import (
+    KnowledgeAgentRun,
+    KnowledgeContextVersion,
+    KnowledgeConversation,
+    KnowledgeMessage,
+)
 from app.models.knowledge_agent import (
     BASIS_MODE_AUTO,
     BASIS_MODE_KNOWLEDGE_ONLY,
@@ -392,6 +397,14 @@ async def load_allowed_user_statements(
     """
     limit = max(1, limit)
     if current_message_id is None:
+        return []
+    conversation = await db.get(KnowledgeConversation, conversation_id)
+    if (
+        conversation is None
+        or conversation.workspace_id != workspace_id
+        or conversation.owner_user_id != owner_user_id
+    ):
+        # 跨 Workspace/其他用户：不暴露任何消息内容
         return []
     current = await db.get(KnowledgeMessage, current_message_id)
     if current is None or current.conversation_id != conversation_id:

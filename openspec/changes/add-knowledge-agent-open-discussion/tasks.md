@@ -38,8 +38,8 @@
 
 ## 7. 代表性评估与自动验证
 
-- [ ] 7.1 建立开放讨论评估夹具，覆盖模型优先、知识优先、混合依据、仅我的知识、当前陈述冲突、时效/高风险、外部材料缺口和同义表达。验收：`cd backend && .venv/bin/pytest -q tests/test_knowledge_agent_open_discussion.py`
-- [ ] 7.2 增加安全硬门禁测试，保证伪造 Citation、突破 knowledge_only、跨 Workspace/项目读取、静默降级和伪装实时外部结果均为零。验收：`cd backend && .venv/bin/pytest -q tests/test_knowledge_agent_open_discussion.py -k guardrail`
+- [x] 7.1 建立开放讨论评估夹具，覆盖模型优先、知识优先、混合依据、仅我的知识、当前陈述冲突、时效/高风险、外部材料缺口和同义表达。验收：`cd backend && .venv/bin/pytest -q tests/test_knowledge_agent_open_discussion.py`
+- [x] 7.2 增加安全硬门禁测试，保证伪造 Citation、突破 knowledge_only、跨 Workspace/项目读取、静默降级和伪装实时外部结果均为零。验收：`cd backend && .venv/bin/pytest -q tests/test_knowledge_agent_open_discussion.py -k guardrail`
 - [ ] 7.3 完成后端全量测试与静态检查，并在迁移代码完成后再次应用最新迁移。验收：`cd backend && .venv/bin/alembic upgrade head && .venv/bin/pytest -q && .venv/bin/ruff check app tests alembic`
 - [ ] 7.4 完成原生端全量单测、类型检查与 lint。验收：`cd mobile && npm test -- --runInBand && npm run typecheck && npm run lint`
 
