@@ -12,6 +12,7 @@ from app.agents.knowledge_agent import (
     KnowledgeAnswerPointDraft,
     KnowledgeCitationDraft,
 )
+from app.agents.structured_query import StructuredQueryPlanDraft
 from app.db.session import async_session_factory
 from app.models import (
     KnowledgeAgentModelInvocation,
@@ -53,6 +54,9 @@ from app.services.knowledge_agent.runs import (
     read_run_cancel_state,
     submit_message,
     update_run_step,
+)
+from app.services.knowledge_agent.structured_query import (
+    plan_and_persist_structured_query,
 )
 from app.services.knowledge_agent.tools import (
     RunToolContext,
@@ -2318,3 +2322,72 @@ async def test_basis_model_first_answer_fallback_fails_run(monkeypatch) -> None:
         assert summary["has_fallback"] is True
         basis = json.loads(run.answer_basis_json)
         assert basis["model_knowledge"]["used"] is False
+@pytest.mark.asyncio
+async def test_structured_query_plan_reused_for_idempotent_message(
+    monkeypatch,
+) -> None:
+    """同 client_message_id 重试复用首次 Run 与计划，不再次调用规划模型。"""
+    calls = 0
+
+    async def _planner(db, workspace_id, **kwargs):
+        nonlocal calls
+        del db, workspace_id, kwargs
+        calls += 1
+        return (
+            StructuredQueryPlanDraft.model_validate(
+                {
+                    "entry_set": {"main_types": ["knowledge"]},
+                    "outputs": [{"kind": "count"}],
+                }
+            ),
+            StageMeta(
+                purpose="structured_query_plan",
+                provider="test",
+                model="test-model",
+                is_fallback=False,
+                error=None,
+                duration_ms=1,
+            ),
+        )
+
+    monkeypatch.setattr(
+        "app.services.knowledge_agent.structured_query.run_structured_query_planner",
+        _planner,
+    )
+    async with async_session_factory() as db:
+        user = await create_user(db, "计划幂等")
+        workspace = await create_workspace(db, user)
+        conversation = KnowledgeConversation(
+            workspace_id=workspace.id,
+            owner_user_id=user.id,
+            scope_type=SCOPE_WORKSPACE,
+            title="计划幂等",
+        )
+        db.add(conversation)
+        await db.flush()
+        payload = KnowledgeRunSubmitRequest(
+            client_message_id=f"structured-plan-{run_id_counter()}",
+            message="知识有多少条",
+            result_mode="entries",
+        )
+        _message, run = await submit_message(db, conversation, payload)
+        first = await plan_and_persist_structured_query(
+            db,
+            run,
+            objective="知识有多少条",
+            scope_label="全部知识",
+        )
+        raw = run.structured_query_plan_json
+
+        _retry_message, retry_run = await submit_message(db, conversation, payload)
+        second = await plan_and_persist_structured_query(
+            db,
+            retry_run,
+            objective="这段不同文本不得改变计划",
+            scope_label="全部知识",
+        )
+
+        assert retry_run.id == run.id
+        assert calls == 1
+        assert second == first
+        assert retry_run.structured_query_plan_json == raw
