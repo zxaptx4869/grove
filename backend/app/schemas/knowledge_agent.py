@@ -5,7 +5,7 @@
 """
 
 from datetime import datetime
-from typing import Literal
+from typing import Annotated, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -347,6 +347,73 @@ class KnowledgeOutputCompletenessOut(BaseModel):
     group_count: dict[StructuredQueryGroupField, ResultCompleteness] = {}
 
 
+class KnowledgeStructuredUpdatedAtOut(BaseModel):
+    """计划摘要中的 UTC 闭开更新时间区间。"""
+
+    model_config = ConfigDict(populate_by_name=True)
+
+    from_: datetime | None = Field(default=None, alias="from")
+    to: datetime | None = None
+
+
+class KnowledgeStructuredEntrySetPlanOut(BaseModel):
+    """不含 Run 授权范围与对象 ID 的规范化集合条件。"""
+
+    schema_version: Literal["v1"] = "v1"
+    semantic_query: str | None = None
+    main_types: list[Literal["knowledge", "method", "parameter", "reminder"]] = []
+    info_natures: list[
+        Literal[
+            "fact",
+            "experience",
+            "advice",
+            "speculation",
+            "other",
+            "unspecified",
+        ]
+    ] = []
+    updated_at: KnowledgeStructuredUpdatedAtOut | None = None
+
+
+class KnowledgeStructuredPlanSortOut(BaseModel):
+    """计划摘要中的白名单排序；稳定 tie-breaker 由结果协议表达。"""
+
+    field: StructuredQuerySortField
+    direction: StructuredQuerySortDirection
+
+
+class KnowledgeStructuredEntriesOutputOut(BaseModel):
+    kind: Literal["entries"] = "entries"
+    limit: int = Field(ge=1)
+    sort: KnowledgeStructuredPlanSortOut
+
+
+class KnowledgeStructuredCountOutputOut(BaseModel):
+    kind: Literal["count"] = "count"
+
+
+class KnowledgeStructuredGroupCountOutputOut(BaseModel):
+    kind: Literal["group_count"] = "group_count"
+    group_by: StructuredQueryGroupField
+
+
+KnowledgeStructuredOutputOut = Annotated[
+    KnowledgeStructuredEntriesOutputOut
+    | KnowledgeStructuredCountOutputOut
+    | KnowledgeStructuredGroupCountOutputOut,
+    Field(discriminator="kind"),
+]
+
+
+class KnowledgeStructuredQueryPlanOut(BaseModel):
+    """服务端规范化计划摘要；不包含模型原始输出、reason 或 prompt。"""
+
+    schema_version: Literal["v1"] = "v1"
+    prompt_version: Literal["v1"] = "v1"
+    entry_set: KnowledgeStructuredEntrySetPlanOut
+    outputs: list[KnowledgeStructuredOutputOut]
+
+
 class KnowledgeEntryResultSnapshotOut(BaseModel):
     """Run 上持久化的有界 Entry 结果快照（首屏随 Run/消息页返回）。"""
 
@@ -460,6 +527,7 @@ class KnowledgeRunOut(BaseModel):
     context_degraded: bool = False
     fallback_summary: FallbackSummaryOut | None = None
     investigation_summary: InvestigationSummaryOut | None = None
+    structured_query_plan: KnowledgeStructuredQueryPlanOut | None = None
     answer: KnowledgeAnswerOut | None = None
     entry_result: KnowledgeEntryResultSnapshotOut | None = None
     created_at: datetime

@@ -5,6 +5,7 @@ import logging
 from datetime import UTC, datetime
 
 from fastapi import HTTPException, status
+from pydantic import ValidationError
 from sqlalchemy import select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -56,6 +57,7 @@ from app.schemas.knowledge_agent import (
     KnowledgeEntryResultSnapshotOut,
     KnowledgeRunOut,
     KnowledgeRunSubmitRequest,
+    KnowledgeStructuredQueryPlanOut,
 )
 from app.services.knowledge_agent.conversations import (
     DEFAULT_CONVERSATION_TITLE,
@@ -409,6 +411,19 @@ def _parse_entry_result(raw: str | None) -> KnowledgeEntryResultSnapshotOut | No
     return KnowledgeEntryResultSnapshotOut.model_validate(data)
 
 
+def _parse_structured_query_plan(
+    raw: str | None,
+) -> KnowledgeStructuredQueryPlanOut | None:
+    """仅返回严格规范化的 v1 计划摘要；旧 Run 与损坏快照返回 None。"""
+    if not raw:
+        return None
+    try:
+        return KnowledgeStructuredQueryPlanOut.model_validate_json(raw)
+    except (ValidationError, TypeError, ValueError):
+        logger.warning("Run 结构化查询计划快照无法解析，已从公开响应省略")
+        return None
+
+
 def _parse_investigation_summary(
     raw: str | None,
 ) -> InvestigationSummaryOut | None:
@@ -467,6 +482,9 @@ def run_out(run: KnowledgeAgentRun) -> KnowledgeRunOut:
         fallback_summary=_parse_fallback_summary(run.fallback_summary),
         investigation_summary=_parse_investigation_summary(
             run.investigation_summary
+        ),
+        structured_query_plan=_parse_structured_query_plan(
+            run.structured_query_plan_json
         ),
         answer=_parse_answer(run.answer_json),
         entry_result=_parse_entry_result(run.entry_result_json),

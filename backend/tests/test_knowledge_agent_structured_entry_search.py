@@ -9,8 +9,10 @@ from app.agents.structured_query import StructuredQueryPlanDraft
 from app.core.config import get_settings
 from app.db.session import async_session_factory
 from app.schemas.knowledge_agent import KnowledgeEntryResultSnapshotOut
+from app.services.knowledge_agent.entry_search import paginate_entry_results
 from app.services.knowledge_agent.observability import StageMeta
 from app.services.knowledge_agent.runner import execute_run
+from app.services.knowledge_agent.runs import run_out
 from tests.test_knowledge_agent_entry_search import (
     _decision,
     _run_for_search,
@@ -135,6 +137,7 @@ async def test_entries_runner_uses_one_plan_and_v2_when_enabled(monkeypatch) -> 
 
         await execute_run(db, run)
         await db.commit()
+        await db.refresh(run)
 
         snapshot = json.loads(run.entry_result_json or "{}")
         assert snapshot["schema_version"] == "v2"
@@ -147,6 +150,31 @@ async def test_entries_runner_uses_one_plan_and_v2_when_enabled(monkeypatch) -> 
         assert snapshot["output_completeness"]["count"] == "complete"
         assert snapshot["output_completeness"]["entries"] == "limited"
         assert run.structured_query_plan_json is not None
+        public_run = run_out(run)
+        assert public_run.structured_query_plan is not None
+        assert public_run.structured_query_plan.schema_version == "v1"
+        assert public_run.structured_query_plan.prompt_version == "v1"
+        assert [
+            output.kind for output in public_run.structured_query_plan.outputs
+        ] == ["count", "entries"]
+        public_plan = public_run.structured_query_plan.model_dump(by_alias=True)
+        assert "reason" not in public_plan
+        assert "workspace_id" not in json.dumps(public_plan)
+        page = await paginate_entry_results(
+            db,
+            run,
+            cursor=None,
+            limit=1,
+            default_page_size=20,
+            max_page_size=100,
+        )
+        assert page.schema_version == "v2"
+        assert page.returned_count == 1
+        assert page.total_in_snapshot == 2
+        assert page.count is not None and page.count.value == 3
+        assert page.set_summary is not None
+        assert page.output_completeness is not None
+        assert page.output_completeness.count == "complete"
 
 
 @pytest.mark.asyncio
@@ -187,6 +215,7 @@ async def test_entries_runner_falls_back_to_v1_when_plan_fails(monkeypatch) -> N
 
         await execute_run(db, run)
         await db.commit()
+        await db.refresh(run)
 
         snapshot = json.loads(run.entry_result_json or "{}")
         fallback = json.loads(run.fallback_summary or "{}")
@@ -197,3 +226,4 @@ async def test_entries_runner_falls_back_to_v1_when_plan_fails(monkeypatch) -> N
             stage["purpose"] == "structured_query_plan"
             for stage in fallback["stages"]
         )
+        assert run_out(run).structured_query_plan is None
