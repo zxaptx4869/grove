@@ -163,6 +163,20 @@ class Settings(BaseSettings):
     knowledge_agent_result_mode_router_timeout_seconds: float = Field(
         default=20.0, description="结果形态路由模型调用超时（秒）"
     )
+    # 开放讨论特性开关：关闭时完全沿用当前 Grove-only 执行图与响应
+    knowledge_agent_open_discussion_enabled: bool = Field(
+        default=False, description="知识 Agent 开放讨论/依据规划是否启用"
+    )
+    knowledge_agent_basis_route_timeout_seconds: float = Field(
+        default=20.0, description="依据规划模型调用超时（秒）"
+    )
+    # 回答阶段有界用户陈述预算：数量与单条长度上限
+    knowledge_agent_statement_limit: int = Field(
+        default=6, description="回答阶段最多采用当前话题近期用户陈述条数"
+    )
+    knowledge_agent_statement_message_chars: int = Field(
+        default=800, description="回答阶段单条用户陈述最大字符数"
+    )
 
     # 知识 Agent Worker 租约（秒）：processing 超过该阈值可恢复重试
     knowledge_agent_lease_seconds: int = Field(

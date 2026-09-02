@@ -147,6 +147,33 @@ RESULT_MODE_ANSWER = "answer"
 RESULT_MODE_ENTRIES = "entries"
 RESULT_MODES = (RESULT_MODE_AUTO, RESULT_MODE_ANSWER, RESULT_MODE_ENTRIES)
 
+# ---- 请求依据模式（公开契约：仅 auto / knowledge_only） ----
+BASIS_MODE_AUTO = "auto"
+BASIS_MODE_KNOWLEDGE_ONLY = "knowledge_only"
+BASIS_MODES = (BASIS_MODE_AUTO, BASIS_MODE_KNOWLEDGE_ONLY)
+
+# ---- 内部规划策略（服务端保存，不向普通用户界面暴露） ----
+BASIS_STRATEGY_KNOWLEDGE_ONLY = "knowledge_only"
+BASIS_STRATEGY_KNOWLEDGE_FIRST = "knowledge_first"
+BASIS_STRATEGY_MODEL_FIRST = "model_first"
+BASIS_STRATEGY_HYBRID = "hybrid"
+BASIS_STRATEGY_EXTERNAL_NEEDED = "external_needed"
+BASIS_STRATEGIES = (
+    BASIS_STRATEGY_KNOWLEDGE_ONLY,
+    BASIS_STRATEGY_KNOWLEDGE_FIRST,
+    BASIS_STRATEGY_MODEL_FIRST,
+    BASIS_STRATEGY_HYBRID,
+    BASIS_STRATEGY_EXTERNAL_NEEDED,
+)
+
+# ---- 外部材料状态（AnswerBasis v1） ----
+EXTERNAL_MATERIAL_NOT_USED = "not_used"
+EXTERNAL_MATERIAL_REQUIRED_UNAVAILABLE = "required_unavailable"
+EXTERNAL_MATERIAL_STATUSES = (
+    EXTERNAL_MATERIAL_NOT_USED,
+    EXTERNAL_MATERIAL_REQUIRED_UNAVAILABLE,
+)
+
 # ---- 结构化 Entry 结果完整性 ----
 RESULT_COMPLETENESS_COMPLETE = "complete"
 RESULT_COMPLETENESS_LIMITED = "limited"
@@ -201,6 +228,9 @@ STEP_RESULT_MODE_ROUTE = "result_mode_route"
 STEP_ENTRY_SEARCH = "entry_search"
 STEP_ENTRY_ASSEMBLE = "entry_assemble"
 
+# ---- Run 步骤（开放讨论依据规划分支） ----
+STEP_BASIS_ROUTE = "basis_route"
+
 # ---- Run 步骤（候选草稿操作分支） ----
 STEP_DRAFT_VERIFY_EVIDENCE = "draft_verify_evidence"
 STEP_DRAFT_GENERATE = "draft_generate"
@@ -222,6 +252,9 @@ PURPOSE_INVESTIGATION_CONTROLLER = "investigation_controller"
 PURPOSE_SYNTHESIS = "synthesis"
 PURPOSE_DRAFT_CANDIDATE = "draft_candidate"
 PURPOSE_ENTRY_REVISION = "entry_revision"
+
+# ---- 模型调用用途（开放讨论依据规划） ----
+PURPOSE_BASIS_ROUTE = "basis_route"
 
 # ---- 调查状态 ----
 INVESTIGATION_STATUS_ACTIVE = "active"
@@ -421,6 +454,10 @@ class KnowledgeAgentRun(Base):
     # ---- 结果形态契约：请求形态与路由后的实际形态分开保存 ----
     request_result_mode: Mapped[str | None] = mapped_column(String(8), nullable=True)
     actual_result_mode: Mapped[str | None] = mapped_column(String(8), nullable=True)
+    # ---- 依据契约：请求模式、规划策略与实际形成依据（AnswerBasis v1 JSON） ----
+    request_basis_mode: Mapped[str | None] = mapped_column(String(16), nullable=True)
+    planned_basis_strategy: Mapped[str | None] = mapped_column(String(16), nullable=True)
+    answer_basis_json: Mapped[str | None] = mapped_column(Text, nullable=True)
     # JSON：实际用于判断的历史消息 ID（不保存原始 prompt）
     history_message_ids_json: Mapped[str | None] = mapped_column(Text, nullable=True)
     # 输入工作集在领取时固化；恢复执行不漂移到后来状态
