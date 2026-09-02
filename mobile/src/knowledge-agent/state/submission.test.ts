@@ -15,9 +15,11 @@ test("草稿首次发送生成稳定幂等键并保留对话 id", () => {
     contextMode: "auto",
     answerMode: "auto",
     resultMode: "entries",
+    basisMode: "auto",
     random: fixedId,
   });
   expect(pending.clientMessageId).toBe("fixed-client-id");
+  expect(pending.basisMode).toBe("auto");
   expect(pending.phase).toBe("creating_conversation");
   expect(pending.conversationId).toBeNull();
 
@@ -35,11 +37,13 @@ test("确定提交成功前可重复重试，成功后清空 pending 不可重�
       contextMode: "continue",
       answerMode: "investigate",
       resultMode: "answer",
+      basisMode: "knowledge_only",
       random: fixedId,
     }),
     7,
   );
   expect(canRetrySubmission(pending)).toBe(true);
+  expect(pending.basisMode).toBe("knowledge_only");
   const confirmed = markConfirmed(pending);
   expect(confirmed.phase).toBe("confirmed");
   expect(canRetrySubmission(confirmed)).toBe(false);
@@ -52,6 +56,7 @@ test("终态 failed 的重新提问生成新 client_message_id", () => {
       contextMode: "auto",
       answerMode: "auto",
       resultMode: "auto",
+      basisMode: "auto",
       random: fixedId,
     }),
     3,
@@ -69,11 +74,13 @@ test("模式纠正网络重试保留来源 Run", () => {
     contextMode: "continue",
     answerMode: "auto",
     resultMode: "entries",
+    basisMode: "knowledge_only",
     sourceRunId: 17,
     random: fixedId,
   });
   const retried = retrySubmissionWithNewId(pending, () => "new-client-id");
   expect(retried.sourceRunId).toBe(17);
+  expect(retried.basisMode).toBe("knowledge_only");
 });
 
 test("409 冲突标记后不创建第二个本地任务", () => {
@@ -84,6 +91,7 @@ test("409 冲突标记后不创建第二个本地任务", () => {
         contextMode: "auto",
         answerMode: "auto",
         resultMode: "auto",
+        basisMode: "auto",
         random: fixedId,
       }),
       9,

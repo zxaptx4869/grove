@@ -11,6 +11,7 @@ import { hasModeOverrides } from "@/src/knowledge-agent/state/modes";
 import type { ModeSelection } from "@/src/knowledge-agent/state/modes";
 import type {
   AnswerMode,
+  BasisMode,
   ContextMode,
   ResultMode,
 } from "@/src/knowledge-agent/types";
@@ -34,6 +35,11 @@ const RESULT_LABELS: Record<ResultMode, string> = {
   entries: "知识列表",
 };
 
+const BASIS_LABELS: Record<BasisMode, string> = {
+  auto: "",
+  knowledge_only: "仅使用我的知识库",
+};
+
 export function Composer({
   value,
   onChangeText,
@@ -43,6 +49,7 @@ export function Composer({
   onRemoveContextOverride,
   onRemoveAnswerOverride,
   onRemoveResultOverride,
+  onRemoveBasisOverride,
   submitting,
   disabled,
 }: {
@@ -54,6 +61,7 @@ export function Composer({
   onRemoveContextOverride: () => void;
   onRemoveAnswerOverride: () => void;
   onRemoveResultOverride: () => void;
+  onRemoveBasisOverride: () => void;
   submitting: boolean;
   disabled: boolean;
 }) {
@@ -62,6 +70,7 @@ export function Composer({
   const contextLabel = CONTEXT_LABELS[modes.contextMode];
   const answerLabel = ANSWER_LABELS[modes.answerMode];
   const resultLabel = RESULT_LABELS[modes.resultMode];
+  const basisLabel = BASIS_LABELS[modes.basisMode];
   return (
     <View style={styles.wrap}>
       {hasModeOverrides(modes) && (
@@ -74,6 +83,9 @@ export function Composer({
           )}
           {resultLabel !== "" && (
             <ModeChip label={resultLabel} onRemove={onRemoveResultOverride} />
+          )}
+          {basisLabel !== "" && (
+            <ModeChip label={basisLabel} onRemove={onRemoveBasisOverride} />
           )}
         </View>
       )}

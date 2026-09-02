@@ -348,6 +348,7 @@ test("composer 空文本禁用发送，模式覆盖显示可移除 chip", async 
       onRemoveContextOverride={onRemove}
       onRemoveAnswerOverride={onRemove}
       onRemoveResultOverride={onRemove}
+      onRemoveBasisOverride={onRemove}
       submitting={false}
       disabled={false}
     />,
@@ -360,19 +361,27 @@ test("composer 空文本禁用发送，模式覆盖显示可移除 chip", async 
       value="问题"
       onChangeText={jest.fn()}
       onSend={onSend}
-      modes={{ contextMode: "continue", answerMode: "investigate", resultMode: "entries" }}
+      modes={{
+        contextMode: "continue",
+        answerMode: "investigate",
+        resultMode: "entries",
+        basisMode: "knowledge_only",
+      }}
       onOpenModes={jest.fn()}
       onRemoveContextOverride={onRemove}
       onRemoveAnswerOverride={onRemove}
       onRemoveResultOverride={onRemove}
+      onRemoveBasisOverride={onRemove}
       submitting={false}
       disabled={false}
     />,
   );
   expect(view.getByText("继续当前主题")).toBeOnTheScreen();
   expect(view.getByText("深度查找")).toBeOnTheScreen();
+  expect(view.getByText("仅使用我的知识库")).toBeOnTheScreen();
   await fireEvent.press(view.getByLabelText("移除继续当前主题设置"));
   expect(onRemove).toHaveBeenCalled();
+  await fireEvent.press(view.getByLabelText("移除仅使用我的知识库设置"));
   await fireEvent.press(view.getByLabelText("发送"));
   expect(onSend).toHaveBeenCalledWith();
 });

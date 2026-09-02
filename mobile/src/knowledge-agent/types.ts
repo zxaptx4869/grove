@@ -43,7 +43,9 @@ export type ContextDecision = "continue" | "new_topic" | "clarify";
 export type AnswerMode = "auto" | "quick" | "investigate";
 export type ResultMode = "auto" | "answer" | "entries";
 export type ActualResultMode = "answer" | "entries";
+export type BasisMode = "auto" | "knowledge_only";
 export type ResultCompleteness = "complete" | "limited" | "unknown";
+export type ExternalMaterialStatus = "not_used" | "required_unavailable";
 
 export type InvestigationStopReason =
   | "controller_complete"
@@ -93,6 +95,9 @@ export interface KnowledgeMessage extends KnowledgeScope {
   topicLabel: string | null;
   requestAnswerMode: AnswerMode | null;
   actualAnswerMode: AnswerMode | null;
+  /** 旧服务端响应可能缺失依据字段：按 null 兼容，不伪造依据。 */
+  requestBasisMode?: BasisMode | null;
+  answerBasis?: KnowledgeAnswerBasis | null;
   /** 旧服务端响应可能缺失结果形态字段：按 null 兼容（answer 语义）。 */
   requestResultMode?: ResultMode | null;
   actualResultMode?: ActualResultMode | null;
@@ -151,6 +156,33 @@ export interface KnowledgeAnswer {
   points?: KnowledgeAnswerPoint[];
   citations: KnowledgeRunCitation[];
   conflicts: KnowledgeConflict[];
+}
+
+/** 服务端校验后的实际回答依据（AnswerBasis v1），展示层只读使用。 */
+export interface KnowledgeAnswerBasisGrove {
+  used: boolean;
+  citationCount: number;
+  entryCount: number;
+}
+
+export interface KnowledgeAnswerBasisUserStatements {
+  messageIds: number[];
+}
+
+export interface KnowledgeAnswerBasisModelKnowledge {
+  used: boolean;
+}
+
+export interface KnowledgeAnswerBasisExternalMaterial {
+  status: ExternalMaterialStatus;
+}
+
+export interface KnowledgeAnswerBasis {
+  schemaVersion: "v1";
+  grove: KnowledgeAnswerBasisGrove;
+  userStatements: KnowledgeAnswerBasisUserStatements;
+  modelKnowledge: KnowledgeAnswerBasisModelKnowledge;
+  externalMaterial: KnowledgeAnswerBasisExternalMaterial;
 }
 
 /** 结构化 Entry 查找结果项：正式知识对象快照，不是 Citation。 */
@@ -245,6 +277,9 @@ export interface KnowledgeRun extends KnowledgeScope {
   topicLabel: string | null;
   requestAnswerMode: AnswerMode | null;
   actualAnswerMode: AnswerMode | null;
+  /** 旧服务端响应可能缺失依据字段：按 null 兼容。 */
+  requestBasisMode?: BasisMode | null;
+  answerBasis?: KnowledgeAnswerBasis | null;
   /** 旧服务端响应可能缺失结果形态与结构化结果：按 answer 语义兜底。 */
   requestResultMode?: ResultMode | null;
   actualResultMode?: ActualResultMode | null;
@@ -470,6 +505,8 @@ export interface KnowledgeRunSubmitRequest {
   contextMode: ContextMode;
   answerMode: AnswerMode;
   resultMode: ResultMode;
+  /** 新客户端显式提交依据模式；缺省由服务端按 knowledge_only 兼容。 */
+  basisMode: BasisMode;
   /** 模式纠正时由服务端恢复原问题、范围和输入工作集。 */
   sourceRunId?: number;
 }

@@ -3,6 +3,7 @@ import { Pressable, StyleSheet, Text, View } from "react-native";
 import { Sheet } from "@/src/knowledge-agent/components/ui";
 import type {
   AnswerMode,
+  BasisMode,
   ContextMode,
   ResultMode,
 } from "@/src/knowledge-agent/types";
@@ -25,6 +26,11 @@ const RESULT_OPTIONS: { value: ResultMode; title: string; detail: string }[] = [
   { value: "auto", title: "自动", detail: "由 Agent 判断综合回答或列出知识" },
   { value: "answer", title: "综合回答", detail: "返回带引用的综合结论" },
   { value: "entries", title: "知识列表", detail: "列出匹配的正式知识条目" },
+];
+
+const BASIS_OPTIONS: { value: BasisMode; title: string; detail: string }[] = [
+  { value: "auto", title: "自动选择", detail: "由 Agent 判断是否使用你的知识库与通用能力" },
+  { value: "knowledge_only", title: "仅使用我的知识库", detail: "只基于你的知识库回答，不补充通用知识" },
 ];
 
 export function ModeSheet({
@@ -68,6 +74,16 @@ export function ModeSheet({
           detail={option.detail}
           selected={modes.resultMode === option.value}
           onPress={() => onChange({ ...modes, resultMode: option.value })}
+        />
+      ))}
+      <Text style={[styles.groupLabel, styles.groupLabelSecond]}>回答依据</Text>
+      {BASIS_OPTIONS.map((option) => (
+        <ModeOption
+          key={option.value}
+          title={option.title}
+          detail={option.detail}
+          selected={modes.basisMode === option.value}
+          onPress={() => onChange({ ...modes, basisMode: option.value })}
         />
       ))}
       <Text style={styles.footnote}>

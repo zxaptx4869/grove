@@ -319,12 +319,14 @@ describe("useConversationController", () => {
       contextMode: "continue",
       answerMode: "investigate",
       resultMode: "auto",
+      basisMode: "auto",
     });
     expect(rendered.result.current.pending).toBeNull();
     expect(rendered.result.current.modes).toEqual({
       contextMode: "auto",
       answerMode: "auto",
       resultMode: "auto",
+      basisMode: "auto",
     });
     await rendered.unmount();
   });
@@ -401,6 +403,7 @@ describe("useConversationController", () => {
       contextMode: "auto",
       answerMode: "auto",
       resultMode: "auto",
+      basisMode: "auto",
     });
     expect(rendered.result.current.isDraft).toBe(false);
     await rendered.unmount();
@@ -1100,6 +1103,7 @@ describe("useConversationController", () => {
       contextMode: "auto",
       answerMode: "auto",
       resultMode: "entries",
+      basisMode: "auto",
     });
     expect(rendered.result.current.modes.resultMode).toBe("auto");
     await rendered.unmount();
@@ -1405,6 +1409,7 @@ describe("useConversationController", () => {
       contextMode: "continue",
       answerMode: "auto",
       resultMode: "entries",
+      basisMode: "auto",
       sourceRunId: 5,
     });
     // 新 Run 进入线程，原 Run 未被修改
@@ -1502,6 +1507,53 @@ describe("useConversationController", () => {
         message: "鞋柜防臭知识",
       }),
     );
+    await rendered.unmount();
+  });
+
+  test("仅使用我的知识库覆盖：成功发送后重置，结果未知重试保留 basis 与幂等键", async () => {
+    api.listConversations.mockResolvedValue([]);
+    api.createConversation.mockResolvedValue(conversation(60));
+    api.getConversation.mockResolvedValue(conversation(60));
+    api.listMessages.mockResolvedValue({
+      items: [],
+      nextCursor: null,
+      runs: [],
+      candidateDrafts: [],
+    });
+    api.submitMessage
+      .mockRejectedValueOnce(new TypeError("Network request failed"))
+      .mockResolvedValueOnce({
+        userMessage: message(61, "user", 8, "只查我的预算记录"),
+        run: run(8, "waiting"),
+      });
+
+    const rendered = await renderController();
+    await waitFor(() => expect(rendered.result.current.initialLoading).toBe(false));
+    await act(async () => {
+      rendered.result.current.setBasisMode("knowledge_only");
+    });
+    expect(rendered.result.current.modes.basisMode).toBe("knowledge_only");
+
+    await act(async () => {
+      await rendered.result.current.submit("只查我的预算记录");
+    });
+    expect(rendered.result.current.pending?.basisMode).toBe("knowledge_only");
+    expect(rendered.result.current.pending?.clientMessageId).toBe(
+      "test-client-id",
+    );
+
+    await act(async () => {
+      await rendered.result.current.retrySubmit();
+    });
+    expect(api.submitMessage).toHaveBeenCalledTimes(2);
+    const firstCall = api.submitMessage.mock.calls[0];
+    const retryCall = api.submitMessage.mock.calls[1];
+    expect(retryCall[1]).toBe(60);
+    expect(retryCall[2].basisMode).toBe("knowledge_only");
+    expect(firstCall[2].basisMode).toBe("knowledge_only");
+    expect(retryCall[2].clientMessageId).toBe(firstCall[2].clientMessageId);
+    expect(rendered.result.current.pending).toBeNull();
+    expect(rendered.result.current.modes.basisMode).toBe("auto");
     await rendered.unmount();
   });
 });

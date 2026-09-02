@@ -26,8 +26,8 @@
 
 ## 5. 原生端协议与一次性模式
 
-- [ ] 5.1 扩展原生领域类型、snake_case 适配与 API 请求，兼容旧服务端缺少 basis 字段，并在提交结果未知时保留同一 basis mode 与 `client_message_id`。验收：`cd mobile && npm test -- --runInBand src/knowledge-agent/api.test.ts src/knowledge-agent/state/submission.test.ts`
-- [ ] 5.2 扩展一次性 ModeSelection 与 Mode Sheet，增加“依据：自动选择 / 仅使用我的知识库”，非默认选择显示可移除 Chip，成功提交后重置。验收：`cd mobile && npm test -- --runInBand src/knowledge-agent/state/modes.test.ts src/knowledge-agent/hooks/useConversationController.test.tsx`
+- [x] 5.1 扩展原生领域类型、snake_case 适配与 API 请求，兼容旧服务端缺少 basis 字段，并在提交结果未知时保留同一 basis mode 与 `client_message_id`。验收：`cd mobile && npm test -- --runInBand src/knowledge-agent/api.test.ts src/knowledge-agent/state/submission.test.ts`
+- [x] 5.2 扩展一次性 ModeSelection 与 Mode Sheet，增加“依据：自动选择 / 仅使用我的知识库”，非默认选择显示可移除 Chip，成功提交后重置。验收：`cd mobile && npm test -- --runInBand src/knowledge-agent/state/modes.test.ts src/knowledge-agent/hooks/useConversationController.test.tsx`
 
 ## 6. 原生回答依据展示
 

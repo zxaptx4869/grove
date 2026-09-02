@@ -614,6 +614,7 @@ export function ConversationScreen() {
             onRemoveContextOverride={() => controller.setContextMode("auto")}
             onRemoveAnswerOverride={() => controller.setAnswerMode("auto")}
             onRemoveResultOverride={() => controller.setResultMode("auto")}
+            onRemoveBasisOverride={() => controller.setBasisMode("auto")}
             submitting={submitting}
             disabled={
               controller.initialLoading ||

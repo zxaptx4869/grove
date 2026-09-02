@@ -16,6 +16,7 @@ import {
 import {
   DEFAULT_MODES,
   withAnswerMode,
+  withBasisMode,
   withContextMode,
   withResultMode,
   type ModeSelection,
@@ -30,6 +31,7 @@ import {
 } from "@/src/knowledge-agent/state/submission";
 import type {
   AnswerMode,
+  BasisMode,
   ContextMode,
   KnowledgeCandidateDraft,
   KnowledgeConversation,
@@ -120,6 +122,7 @@ export interface ConversationController {
   setAnswerMode: (mode: AnswerMode) => void;
   setResultMode: (mode: ResultMode) => void;
   setModes: (modes: ModeSelection) => void;
+  setBasisMode: (basisMode: BasisMode) => void;
   /** 结构化 Entry 结果分页：按 Run 归并、去重追加；失败保留已加载项。 */
   entryResultsForRun: (runId: number) => EntryResultsState | null;
   primeEntryResults: (runId: number) => void;
@@ -513,6 +516,7 @@ export function useConversationController(
           contextMode: current.contextMode,
           answerMode: current.answerMode,
           resultMode: current.resultMode,
+          basisMode: current.basisMode,
           ...(current.sourceRunId !== undefined
             ? { sourceRunId: current.sourceRunId }
             : {}),
@@ -589,6 +593,7 @@ export function useConversationController(
         contextMode: modesRef.current.contextMode,
         answerMode: modesRef.current.answerMode,
         resultMode: modesRef.current.resultMode,
+        basisMode: modesRef.current.basisMode,
       });
       setPending(submission);
       return performSubmission(submission);
@@ -613,6 +618,7 @@ export function useConversationController(
         contextMode: modesRef.current.contextMode,
         answerMode: modesRef.current.answerMode,
         resultMode: modesRef.current.resultMode,
+        basisMode: modesRef.current.basisMode,
       });
       setPending(submission);
       return performSubmission(submission);
@@ -641,6 +647,7 @@ export function useConversationController(
           "auto",
         answerMode: "auto",
         resultMode,
+        basisMode: sourceRun.requestBasisMode ?? "auto",
         sourceRunId: runId,
       });
       setPending(submission);
@@ -1391,6 +1398,9 @@ export function useConversationController(
   const setResultMode = useCallback((mode: ResultMode) => {
     setModesState((previous) => withResultMode(previous, mode));
   }, []);
+  const setBasisMode = useCallback((mode: BasisMode) => {
+    setModesState((previous) => withBasisMode(previous, mode));
+  }, []);
   const setModes = (next: ModeSelection) => {
     setModesState({ ...next });
   };
@@ -1546,6 +1556,7 @@ export function useConversationController(
     setContextMode,
     setAnswerMode,
     setResultMode,
+    setBasisMode,
     setModes,
     entryResultsForRun,
     primeEntryResults,

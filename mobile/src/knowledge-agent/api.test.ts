@@ -52,6 +52,7 @@ describe("知识 Agent API 序列化", () => {
       contextMode: "continue",
       answerMode: "investigate",
       resultMode: "entries",
+      basisMode: "auto",
     });
     const [url, init] = (globalThis.fetch as jest.Mock).mock.calls[0] as [
       string,
@@ -66,6 +67,7 @@ describe("知识 Agent API 序列化", () => {
       context_mode: "continue",
       answer_mode: "investigate",
       result_mode: "entries",
+      basis_mode: "auto",
     });
   });
 
@@ -77,6 +79,7 @@ describe("知识 Agent API 序列化", () => {
       contextMode: "auto",
       answerMode: "auto",
       resultMode: "answer",
+      basisMode: "auto",
       sourceRunId: 17,
     });
     const [, init] = (globalThis.fetch as jest.Mock).mock.calls[0] as [
@@ -89,6 +92,7 @@ describe("知识 Agent API 序列化", () => {
       context_mode: "auto",
       answer_mode: "auto",
       result_mode: "answer",
+      basis_mode: "auto",
       source_run_id: 17,
     });
   });
@@ -373,6 +377,7 @@ describe("知识 Agent API 序列化", () => {
         contextMode: "auto",
         answerMode: "auto",
         resultMode: "auto",
+        basisMode: "knowledge_only",
       }),
     ).rejects.toMatchObject({ kind: "conflict", status: 409 });
 

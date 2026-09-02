@@ -71,6 +71,7 @@ function serializeSubmit(
     context_mode: payload.contextMode,
     answer_mode: payload.answerMode,
     result_mode: payload.resultMode,
+    basis_mode: payload.basisMode,
   };
   if (payload.sourceRunId !== undefined) {
     body.source_run_id = payload.sourceRunId;

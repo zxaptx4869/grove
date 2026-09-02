@@ -4,6 +4,7 @@ import * as Crypto from "expo-crypto";
 
 import type {
   AnswerMode,
+  BasisMode,
   ContextMode,
   ResultMode,
 } from "@/src/knowledge-agent/types";
@@ -20,6 +21,7 @@ export interface PendingSubmission {
   contextMode: ContextMode;
   answerMode: AnswerMode;
   resultMode: ResultMode;
+  basisMode: BasisMode;
   /** 模式纠正的来源 Run；普通问题不设置。 */
   sourceRunId?: number;
   /** 创建成功但提交结果未知时保留；网络重试不得再建对话或换幂等键。 */
@@ -41,6 +43,7 @@ export function createPendingSubmission(input: {
   contextMode: ContextMode;
   answerMode: AnswerMode;
   resultMode: ResultMode;
+  basisMode: BasisMode;
   sourceRunId?: number;
   random?: () => string;
 }): PendingSubmission {
@@ -50,6 +53,7 @@ export function createPendingSubmission(input: {
     contextMode: input.contextMode,
     answerMode: input.answerMode,
     resultMode: input.resultMode,
+    basisMode: input.basisMode,
     sourceRunId: input.sourceRunId,
     conversationId: null,
     phase: "creating_conversation",
@@ -88,6 +92,7 @@ export function retrySubmissionWithNewId(
     contextMode: pending.contextMode,
     answerMode: pending.answerMode,
     resultMode: pending.resultMode,
+    basisMode: pending.basisMode,
     sourceRunId: pending.sourceRunId,
     random,
   });
