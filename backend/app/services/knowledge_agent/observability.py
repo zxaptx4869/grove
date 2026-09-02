@@ -33,6 +33,7 @@ class StageMeta:
     is_fallback: bool
     error: str | None
     duration_ms: int
+    usage: dict | None = None
 
 
 async def next_tool_sequence(db: AsyncSession, run_id: int) -> int:
@@ -103,7 +104,11 @@ async def record_model_invocation(
             is_fallback=meta.is_fallback,
             error=meta.error,
             duration_ms=meta.duration_ms,
-            usage_json=json.dumps(usage, ensure_ascii=False) if usage else None,
+            usage_json=(
+                json.dumps(usage or meta.usage, ensure_ascii=False)
+                if usage or meta.usage
+                else None
+            ),
             investigation_id=investigation_id,
             round_number=round_number,
             query_sequence=query_sequence,

@@ -17,6 +17,11 @@ from app.agents.knowledge_agent import (
     OPEN_ANSWER_PROMPT_SUFFIX,
     KnowledgeAnswerPointDraft,
 )
+from app.agents.structured_query import (
+    STRUCTURED_QUERY_PLAN_PROMPT_VERSION,
+    StructuredQueryPlanDraft,
+    run_structured_query_planner,
+)
 from app.db.session import async_session_factory
 from app.models import (
     KnowledgeAgentEvidence,
@@ -40,6 +45,7 @@ from app.models.knowledge_agent import (
     CONTEXT_STATUS_ACTIVE,
     CONTEXT_STATUS_CLOSED,
     PURPOSE_BASIS_ROUTE,
+    PURPOSE_STRUCTURED_QUERY_PLAN,
     RUN_ACTIVE_STATUSES,
     RUN_COMPLETED,
     RUN_FAILED,
@@ -63,6 +69,38 @@ from app.services.knowledge_agent.basis import (
     validate_statement_ids,
 )
 from app.services.knowledge_agent.runs import run_out
+
+
+def test_structured_query_plan_rejects_unknown_scope_fields() -> None:
+    """模型候选协议不接受 Workspace/项目或任意未知字段。"""
+    with pytest.raises(ValidationError):
+        StructuredQueryPlanDraft.model_validate(
+            {
+                "schema_version": "v1",
+                "entry_set": {"schema_version": "v1", "project_id": 123},
+                "outputs": [{"kind": "count"}],
+            }
+        )
+
+
+@pytest.mark.asyncio
+async def test_structured_query_planner_reports_offline_fallback() -> None:
+    """未配置模型时规划失败可观测，且不生成伪造的确定性计划。"""
+    async with async_session_factory() as db:
+        _user, workspace = await _user_and_workspace(db, "结构化规划")
+        plan, meta = await run_structured_query_planner(
+            db,
+            workspace.id,
+            objective="最近半年有多少条经验",
+            scope_label="全部知识",
+        )
+
+    assert plan is None
+    assert meta.purpose == PURPOSE_STRUCTURED_QUERY_PLAN
+    assert meta.is_fallback is True
+    assert meta.provider == "offline"
+    assert meta.error
+    assert STRUCTURED_QUERY_PLAN_PROMPT_VERSION == "v1"
 
 
 async def _user_and_workspace(db, prefix: str = "模型") -> tuple[User, Workspace]:
