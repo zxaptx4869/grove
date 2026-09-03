@@ -32,6 +32,18 @@ from app.models.knowledge_agent import (
 )
 from app.schemas.knowledge_agent import KnowledgeRunSubmitRequest
 from app.services.knowledge_agent.basis import BasisPlan
+from app.services.knowledge_agent.composite_answer import (
+    normalize_composite_answer_plan,
+)
+from app.services.knowledge_agent.composite_answer_execution import (
+    composite_request_fingerprint,
+    execute_composite_answer_plan,
+)
+from app.services.knowledge_agent.composite_answer_types import (
+    CompositeAnswerExecutionSnapshot,
+    CompositeExecutionInputSnapshot,
+    CompositeToolFact,
+)
 from app.services.knowledge_agent.follow_up import ContextDecisionResult
 from app.services.knowledge_agent.observability import StageMeta
 from app.services.knowledge_agent.read_tools import ReadToolBudget, dispatch_read_tool
@@ -64,6 +76,143 @@ from tests.test_knowledge_agent_runner import (
 
 async def _never_cancel() -> None:
     return None
+
+
+@pytest.mark.asyncio
+async def test_composite_recovery_reuses_completed_fingerprint_and_runs_missing(
+    monkeypatch,
+) -> None:
+    """租约恢复后复用已提交请求，只重放缺失的只读结构化请求。"""
+    from app.services.knowledge_agent.structured_query_execution import (
+        StructuredQueryExecutionResult,
+    )
+
+    plan = normalize_composite_answer_plan(
+        {
+            "schema_version": "v1",
+            "requirements": [
+                {
+                    "id": "total",
+                    "order": 0,
+                    "summary": "统计总数",
+                    "kind": "aggregate",
+                    "basis_policy": "grove_only",
+                },
+                {
+                    "id": "nature",
+                    "order": 1,
+                    "summary": "按性质分组",
+                    "kind": "aggregate",
+                    "basis_policy": "grove_only",
+                },
+            ],
+            "statement_message_ids": [],
+            "retrieval_requests": [],
+            "structured_requests": [
+                {
+                    "id": "first",
+                    "entry_set": {},
+                    "outputs": [{"kind": "count"}],
+                    "requirement_ids": ["total"],
+                },
+                {
+                    "id": "second",
+                    "entry_set": {},
+                    "outputs": [
+                        {"kind": "group_count", "group_by": "info_nature"}
+                    ],
+                    "requirement_ids": ["nature"],
+                },
+            ],
+            "reason": "两份独立结构化输入",
+        }
+    )
+    executed: list[str] = []
+
+    async def _structured(db, ctx, query_plan, *, cancel_check):
+        await cancel_check()
+        executed.append(query_plan.outputs[0].kind)
+        return StructuredQueryExecutionResult(
+            status="completed",
+            set_completeness="complete",
+            entries=None,
+            count=None,
+            group_counts=[
+                {
+                    "group_by": "info_nature",
+                    "buckets": [{"key": "fact", "count": 2}],
+                    "truncated": False,
+                    "status": "completed",
+                    "completeness": "complete",
+                }
+            ],
+            output_completeness={
+                "entries": None,
+                "count": None,
+                "group_count": {"info_nature": "complete"},
+            },
+            warnings=[],
+        )
+
+    monkeypatch.setattr(
+        "app.services.knowledge_agent.composite_answer_execution.execute_structured_query_plan",
+        _structured,
+    )
+    async with async_session_factory() as db:
+        user = await create_user(db, "复合恢复")
+        workspace = await create_workspace(db, user)
+        _conversation, run = await _conversation_and_run(db, user, workspace, "统计知识")
+        first = plan.structured_requests[0]
+        fingerprint = composite_request_fingerprint(
+            run.id,
+            plan,
+            request_id=first.id,
+            kind="structured",
+            params=first.query_plan.model_dump(mode="json", by_alias=True),
+        )
+        fact = CompositeToolFact(
+            handle="res_" + "1" * 24,
+            request_id="s1",
+            requirement_ids=["r1"],
+            kind="count",
+            text="符合条件的知识条目共 2 条。",
+            completeness="complete",
+            summary={"value": 2},
+        )
+        run.composite_answer_execution_json = CompositeAnswerExecutionSnapshot(
+            inputs=[
+                CompositeExecutionInputSnapshot(
+                    request_id="s1",
+                    kind="structured",
+                    requirement_ids=["r1"],
+                    fingerprint=fingerprint,
+                    status="completed",
+                    completeness="complete",
+                    result_handles=[fact.handle],
+                )
+            ],
+            tool_facts=[fact],
+        ).model_dump_json()
+        await db.commit()
+        ctx = RunToolContext(
+            run_id=run.id,
+            workspace_id=run.workspace_id,
+            owner_user_id=run.owner_user_id,
+            scope_type=run.scope_type,
+            project_id=run.project_id,
+            project_name=run.project_name,
+        )
+        result = await execute_composite_answer_plan(
+            db,
+            run,
+            ctx,
+            plan,
+            cancel_check=_never_cancel,
+        )
+
+    assert executed == ["group_count"]
+    assert [item.request_id for item in result.snapshot.inputs] == ["s1", "s2"]
+    assert [fact.request_id for fact in result.snapshot.tool_facts] == ["s1", "s2"]
 
 
 @pytest.mark.asyncio

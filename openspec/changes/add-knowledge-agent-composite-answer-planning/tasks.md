@@ -44,10 +44,10 @@
 
 ## 6. 评估、安全与恢复测试
 
-- [ ] 6.1 建立复合回答评估夹具，覆盖单一通用问题、概念 + Grove、概念 + 精确统计、多项共享请求、比较/建议、自然语言 knowledge-only、外部材料和首项漏答；不得按单条问法增加关键词补丁。验收：`cd backend && .venv/bin/pytest -q tests/test_knowledge_agent_composite_answer_eval.py`
-- [ ] 6.2 增加安全硬门禁：跨 Workspace/项目为零、Candidate/Draft/Extraction 不进入输入、范围/对象 id/SQL/未知工具/写操作被拒绝、模型知识不生成伪 Citation、查询不推进事实工作集。验收：`cd backend && .venv/bin/pytest -q tests/test_knowledge_agent_composite_answer_eval.py -k guardrail`
-- [ ] 6.3 覆盖计划/执行/覆盖 JSON 大小上限、重复提交、租约恢复、工具部分失败、回答模型失败、取消与迟到结果，确认 provider/model/fallback 全链路可观测。验收：`cd backend && .venv/bin/pytest -q tests/test_knowledge_agent_worker.py tests/test_knowledge_agent_composite_answer.py -k 'recovery or fallback or cancel or observability'`
-- [ ] 6.4 完成后端全量测试、Ruff 与迁移往返，并提交测试修正。验收：`cd backend && .venv/bin/alembic upgrade head && .venv/bin/alembic downgrade -1 && .venv/bin/alembic upgrade head && .venv/bin/pytest -q && .venv/bin/ruff check .`
+- [x] 6.1 建立复合回答评估夹具，覆盖单一通用问题、概念 + Grove、概念 + 精确统计、多项共享请求、比较/建议、自然语言 knowledge-only、外部材料和首项漏答；不得按单条问法增加关键词补丁。验收：`cd backend && .venv/bin/pytest -q tests/test_knowledge_agent_composite_answer_eval.py`
+- [x] 6.2 增加安全硬门禁：跨 Workspace/项目为零、Candidate/Draft/Extraction 不进入输入、范围/对象 id/SQL/未知工具/写操作被拒绝、模型知识不生成伪 Citation、查询不推进事实工作集。验收：`cd backend && .venv/bin/pytest -q tests/test_knowledge_agent_composite_answer_eval.py -k guardrail`
+- [x] 6.3 覆盖计划/执行/覆盖 JSON 大小上限、重复提交、租约恢复、工具部分失败、回答模型失败、取消与迟到结果，确认 provider/model/fallback 全链路可观测。验收：`cd backend && .venv/bin/pytest -q tests/test_knowledge_agent_worker.py tests/test_knowledge_agent_composite_answer.py -k 'recovery or fallback or cancel or observability'`
+- [x] 6.4 完成后端全量测试、Ruff 与迁移往返，并提交测试修正。验收：`cd backend && .venv/bin/alembic upgrade head && .venv/bin/alembic downgrade -1 && .venv/bin/alembic upgrade head && .venv/bin/pytest -q && .venv/bin/ruff check .`
 
 ## 7. 自动验收、用户走查与收尾
 
