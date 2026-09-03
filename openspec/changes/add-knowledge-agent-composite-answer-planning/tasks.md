@@ -51,9 +51,9 @@
 
 ## 7. 自动验收、用户走查与收尾
 
-- [ ] 7.1 启动后端后先用 curl 验证 Conversation、提交、Run 查询和消息历史端点返回预期 401/200 而非 404；记录一般解释 + Grove、解释 + 精确统计、limited 统计、knowledge-only、计划非法、fallback、取消和恢复响应。验收：将命令与脱敏响应摘要写入 `docs/验收记录/add-knowledge-agent-composite-answer-planning-curl.md`
-- [ ] 7.2 运行原生端全量自动化测试、typecheck 与 lint；AI 默认不启动或操作模拟器/真机。验收：`cd mobile && npm test -- --runInBand && npm run typecheck && npm run lint`
+- [x] 7.1 启动后端后先用 curl 验证 Conversation、提交、Run 查询和消息历史端点返回预期 401/200 而非 404；记录一般解释 + Grove、解释 + 精确统计、limited 统计、knowledge-only、计划非法、fallback、取消和恢复响应。验收：将命令与脱敏响应摘要写入 `docs/验收记录/add-knowledge-agent-composite-answer-planning-curl.md`
+- [x] 7.2 运行原生端全量自动化测试、typecheck 与 lint；AI 默认不启动或操作模拟器/真机。验收：`cd mobile && npm test -- --runInBand && npm run typecheck && npm run lint`
 - [ ] 7.3 向用户提供模拟器/真机走查清单，至少覆盖“甲醛是什么 + 来源 + 环保等级”、通用问题、纯知识库、解释 + 统计、partial、fallback 和历史恢复；由用户执行并反馈结果后记录，不由 AI 默认代验。验收：用户反馈与结果摘要写入对应验收记录
-- [ ] 7.4 更新 Knowledge Agent 产品形态与迭代记录，只把本 change 实际完成的第一阶段移入已完成；共享执行图和有界覆盖补查继续标明为后续。验收：`openspec validate --all --strict`
-- [ ] 7.5 完成后端全量 pytest、Ruff、原生端全量测试/typecheck/lint、`git diff --check` 与 OpenSpec 全量严格校验，按阶段完成本地提交。验收：`cd backend && .venv/bin/pytest -q && .venv/bin/ruff check . && cd ../mobile && npm test -- --runInBand && npm run typecheck && npm run lint && cd .. && git diff --check && openspec validate --all --strict`
-- [ ] 7.6 检查遗留问题和后续优化项；先逐条向用户说明背景、原因和影响，只有用户确认后才登记到 `docs/discussions/Grove后续优化清单.md`。验收：`git status --short`
+- [x] 7.4 更新 Knowledge Agent 产品形态与迭代记录，只把本 change 实际完成的第一阶段移入已完成；共享执行图和有界覆盖补查继续标明为后续。验收：`openspec validate --all --strict`
+- [x] 7.5 完成后端全量 pytest、Ruff、原生端全量测试/typecheck/lint、`git diff --check` 与 OpenSpec 全量严格校验，按阶段完成本地提交。验收：`cd backend && .venv/bin/pytest -q && .venv/bin/ruff check . && cd ../mobile && npm test -- --runInBand && npm run typecheck && npm run lint && cd .. && git diff --check && openspec validate --all --strict`
+- [x] 7.6 检查遗留问题和后续优化项；先逐条向用户说明背景、原因和影响，只有用户确认后才登记到 `docs/discussions/Grove后续优化清单.md`。验收：`git status --short`

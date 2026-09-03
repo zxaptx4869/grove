@@ -265,21 +265,31 @@ P0-A 与 P0-B 都完成后才视为 MVP 验证版本；其中 P0-A 的 OCR 真�
 
 ### Knowledge Agent 复合回答后续顺序
 
-阶段 B1 `add-knowledge-agent-structured-query-tools` 已完成 Entry 结果分支的一次结构化计划与服务端确定性执行。后续不创建一个同时重写所有回答路径的巨大 change，而按以下依赖顺序推进：
+阶段 B1 `add-knowledge-agent-structured-query-tools` 已完成 Entry 结果分支的一次结构化计划与服务端确定性执行。复合回答继续按纵向 change 推进，不用一个 change 同时重写所有回答路径。
 
-1. `add-knowledge-agent-composite-answer-planning`
-   - 把普通 auto/quick 综合回答从单一依据二选一改为有界回答义务列表；
-   - 允许同一回答组合当前用户陈述、Grove 检索、B1 结构化工具和被允许的模型通用知识；
-   - 增加逐项覆盖状态与结构化综合，先解决混合问题漏答；
-   - 保留 Entry 列表、深度调查、旧客户端和现有写入协议。
-2. `optimize-knowledge-agent-shared-execution-graph`
+第一阶段 `add-knowledge-agent-composite-answer-planning` 已完成实现与自动验证，待用户原生端走查后归档：
+
+- 把普通 auto/quick 综合回答从单一依据二选一改为有界回答义务列表；
+- 允许同一回答组合当前用户陈述、Grove 检索、B1 结构化工具和被允许的模型通用知识；
+- 增加逐项覆盖状态与结构化综合，解决混合问题的整项漏答；
+- 保留 Entry 列表、深度调查、旧客户端和现有写入协议。
+
+后续仍按以下顺序独立实施：
+
+1. `optimize-knowledge-agent-shared-execution-graph`
    - 将回答义务映射为可共享的数据集和输出节点；
    - 增加依赖排序、重复查询消除、结果复用与安全并行；
    - 保持服务端可信范围、预算、完整性和可观测边界。
-3. `add-knowledge-agent-bounded-coverage-repair`
+2. `add-knowledge-agent-bounded-coverage-repair`
    - 基于逐项覆盖结果只补查真实缺口；
    - 复用已完成节点并限制补查轮次、调用数和总预算；
    - 在无新增知识、重复查询、取消或预算耗尽时确定性停止。
+
+第一阶段已完成范围不包括：
+
+- 跨请求共享执行图、依赖拓扑调度、自动查询合并或并行执行；
+- 基于覆盖缺口进行第二轮补查；
+- 外部搜索、quick/investigate 全面迁移、知识写入或多 Agent 自主协商。
 
 外部搜索、quick/investigate 全面迁移、知识写入和多 Agent 自主协商继续作为独立后续决策，不提前并入上述 change。
 
