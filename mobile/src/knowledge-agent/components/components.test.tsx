@@ -976,6 +976,69 @@ test("结构化要点渲染分组标题、连续编号与底部来源条", async
   await view.unmount();
 });
 
+test("复合回答保持现有要点与依据展示，不暴露内部任务拆解", async () => {
+  const view = await render(
+    <AnswerCard
+      run={run(
+        18,
+        "partial",
+        {
+          answer: "甲醛是一种化合物。",
+          status: "partial",
+          insufficientNote: null,
+          points: [
+            {
+              section: "定义",
+              text: "甲醛是一种挥发性有机化合物。",
+              citations: [],
+              requirementIds: ["r1"],
+            },
+          ],
+          citations: [],
+          conflicts: [],
+        },
+        {
+          compositeAnswerPlan: {
+            schemaVersion: "v1",
+            requirements: [
+              {
+                id: "r1",
+                order: 0,
+                summary: "内部义务：解释甲醛是什么",
+                kind: "explain",
+                basisPolicy: "model_allowed",
+              },
+            ],
+            inputKinds: [],
+          },
+          compositeAnswerCoverage: {
+            schemaVersion: "v1",
+            requirements: [
+              {
+                requirementId: "r1",
+                summary: "内部义务：解释甲醛是什么",
+                status: "answered",
+                basisKinds: ["model_knowledge"],
+                note: null,
+              },
+            ],
+          },
+        },
+      )}
+      scopeLabel="全部知识"
+      onCitationPress={jest.fn()}
+      onRetry={jest.fn()}
+      onOrganize={jest.fn()}
+    />,
+    { wrapper },
+  );
+  expect(view.getByText(/甲醛是一种挥发性有机化合物/)).toBeOnTheScreen();
+  expect(view.getAllByText("部分结果").length).toBeGreaterThan(0);
+  expect(view.queryByText("内部义务：解释甲醛是什么")).toBeNull();
+  expect(view.queryByText("r1")).toBeNull();
+  await view.unmount();
+});
+
 test("无结构化要点时回退纯文本与底部来源条", async () => {
   const view = await render(
     <AnswerCard

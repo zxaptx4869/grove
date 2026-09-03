@@ -30,6 +30,9 @@ from app.schemas.knowledge_agent import (
     KnowledgeMessageOut,
     KnowledgeScopeChangeRequest,
 )
+from app.services.knowledge_agent.composite_answer_projection import (
+    composite_answer_out,
+)
 from app.services.knowledge_agent.working_set import (
     active_context_summaries,
     close_active_context_version,
@@ -313,6 +316,10 @@ def message_out(
     run: KnowledgeAgentRun | None = None,
 ) -> KnowledgeMessageOut:
     """组装消息响应。"""
+    composite_plan, composite_coverage = composite_answer_out(
+        run.composite_answer_plan_json if run else None,
+        run.composite_answer_coverage_json if run else None,
+    )
     return KnowledgeMessageOut(
         id=message.id,
         conversation_id=message.conversation_id,
@@ -334,6 +341,8 @@ def message_out(
         actual_result_mode=run.actual_result_mode if run else None,
         request_basis_mode=run.request_basis_mode if run else None,
         answer_basis=answer_basis_out(run.answer_basis_json) if run else None,
+        composite_answer_plan=composite_plan,
+        composite_answer_coverage=composite_coverage,
         current_round=run.current_round if run else 0,
         input_context_version_id=run.input_context_version_id if run else None,
         output_context_version_id=run.output_context_version_id if run else None,

@@ -28,6 +28,9 @@ from app.services.knowledge_agent.composite_answer_execution import (
     restore_composite_execution,
     structured_result_tool_facts,
 )
+from app.services.knowledge_agent.composite_answer_projection import (
+    composite_answer_out,
+)
 from app.services.knowledge_agent.composite_answer_response import (
     _derive_coverage,
     _validated_draft_bindings,
@@ -147,6 +150,45 @@ def test_composite_execution_and_coverage_snapshots_reject_unknown_fields() -> N
         }
     )
     assert coverage.requirements[0].status == "answered"
+
+
+def test_composite_public_projection_omits_queries_handles_and_internal_prompt() -> None:
+    """API 摘要只保留义务、状态和依据类型，不泄漏内部数据。"""
+    plan = normalize_composite_answer_plan(_candidate_plan())
+    execution = CompositeAnswerCoverageSnapshot(
+        requirements=[
+            {
+                "requirement_id": "r1",
+                "status": "partial",
+                "evidence_handles": ["ev_" + "1" * 32],
+                "result_handles": ["res_" + "2" * 24],
+                "user_message_ids": [12],
+                "model_knowledge_used": True,
+                "note": "部分覆盖",
+            },
+            {
+                "requirement_id": "r2",
+                "status": "answered",
+            },
+        ]
+    )
+    public_plan, public_coverage = composite_answer_out(
+        plan.model_dump_json(), execution.model_dump_json()
+    )
+    assert public_plan is not None and public_coverage is not None
+    payload = public_plan.model_dump(mode="json")
+    assert payload["input_kinds"] == ["retrieval"]
+    assert "retrieval_requests" not in payload
+    assert "prompt_version" not in payload
+    coverage_payload = public_coverage.model_dump(mode="json")
+    assert coverage_payload["requirements"][0]["basis_kinds"] == [
+        "grove_evidence",
+        "structured_result",
+        "user_statement",
+        "model_knowledge",
+    ]
+    assert "evidence_handles" not in coverage_payload["requirements"][0]
+    assert "result_handles" not in coverage_payload["requirements"][0]
 
 
 def test_public_composite_fields_are_optional_and_legacy_points_remain_valid() -> None:

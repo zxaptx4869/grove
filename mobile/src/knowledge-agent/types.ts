@@ -62,6 +62,29 @@ export type StructuredQueryGroupField =
 /** snake_case 对象键经 API 适配后使用 camelCase。 */
 export type StructuredQueryGroupKey = "mainType" | "infoNature" | "updatedMonth";
 export type ExternalMaterialStatus = "not_used" | "required_unavailable";
+export type CompositeRequirementKind =
+  | "explain"
+  | "retrieve"
+  | "aggregate"
+  | "compare"
+  | "recommend"
+  | "other";
+export type CompositeBasisPolicy =
+  | "grove_only"
+  | "grove_required"
+  | "model_allowed"
+  | "external_required";
+export type CompositeCoverageStatus =
+  | "answered"
+  | "partial"
+  | "insufficient"
+  | "failed";
+export type CompositeBasisKind =
+  | "grove_evidence"
+  | "structured_result"
+  | "user_statement"
+  | "model_knowledge"
+  | "external_gap";
 
 export type InvestigationStopReason =
   | "controller_complete"
@@ -114,6 +137,8 @@ export interface KnowledgeMessage extends KnowledgeScope {
   /** 旧服务端响应可能缺失依据字段：按 null 兼容，不伪造依据。 */
   requestBasisMode?: BasisMode | null;
   answerBasis?: KnowledgeAnswerBasis | null;
+  compositeAnswerPlan?: KnowledgeCompositeAnswerPlan | null;
+  compositeAnswerCoverage?: KnowledgeCompositeAnswerCoverage | null;
   /** 旧服务端响应可能缺失结果形态字段：按 null 兼容（answer 语义）。 */
   requestResultMode?: ResultMode | null;
   actualResultMode?: ActualResultMode | null;
@@ -162,6 +187,8 @@ export interface KnowledgeAnswerPoint {
   text: string;
   /** 该要点采用的逐条引用（服务端重验后的当前可核验 Evidence）。 */
   citations: KnowledgeRunCitation[];
+  /** 复合回答的可选义务绑定；旧 point 缺省按空处理。 */
+  requirementIds?: string[];
 }
 
 export interface KnowledgeAnswer {
@@ -172,6 +199,33 @@ export interface KnowledgeAnswer {
   points?: KnowledgeAnswerPoint[];
   citations: KnowledgeRunCitation[];
   conflicts: KnowledgeConflict[];
+}
+
+export interface KnowledgeCompositeRequirementSummary {
+  id: string;
+  order: number;
+  summary: string;
+  kind: CompositeRequirementKind;
+  basisPolicy: CompositeBasisPolicy;
+}
+
+export interface KnowledgeCompositeAnswerPlan {
+  schemaVersion: "v1";
+  requirements: KnowledgeCompositeRequirementSummary[];
+  inputKinds: ("retrieval" | "structured")[];
+}
+
+export interface KnowledgeCompositeRequirementCoverage {
+  requirementId: string;
+  summary: string;
+  status: CompositeCoverageStatus;
+  basisKinds: CompositeBasisKind[];
+  note: string | null;
+}
+
+export interface KnowledgeCompositeAnswerCoverage {
+  schemaVersion: "v1";
+  requirements: KnowledgeCompositeRequirementCoverage[];
 }
 
 /** 服务端校验后的实际回答依据（AnswerBasis v1），展示层只读使用。 */
@@ -393,6 +447,8 @@ export interface KnowledgeRun extends KnowledgeScope {
   /** 旧服务端响应可能缺失依据字段：按 null 兼容。 */
   requestBasisMode?: BasisMode | null;
   answerBasis?: KnowledgeAnswerBasis | null;
+  compositeAnswerPlan?: KnowledgeCompositeAnswerPlan | null;
+  compositeAnswerCoverage?: KnowledgeCompositeAnswerCoverage | null;
   /** 旧服务端响应可能缺失结果形态与结构化结果：按 answer 语义兜底。 */
   requestResultMode?: ResultMode | null;
   actualResultMode?: ActualResultMode | null;

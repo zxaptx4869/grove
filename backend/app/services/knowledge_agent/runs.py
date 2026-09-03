@@ -59,6 +59,9 @@ from app.schemas.knowledge_agent import (
     KnowledgeRunSubmitRequest,
     KnowledgeStructuredQueryPlanOut,
 )
+from app.services.knowledge_agent.composite_answer_projection import (
+    composite_answer_out,
+)
 from app.services.knowledge_agent.conversations import (
     DEFAULT_CONVERSATION_TITLE,
     active_run_for_conversation,
@@ -448,6 +451,10 @@ def run_out(run: KnowledgeAgentRun) -> KnowledgeRunOut:
             context_degraded = bool(meta.get("is_fallback")) or bool(meta.get("error"))
         except (json.JSONDecodeError, TypeError):
             context_degraded = False
+    composite_plan, composite_coverage = composite_answer_out(
+        run.composite_answer_plan_json,
+        run.composite_answer_coverage_json,
+    )
     return KnowledgeRunOut(
         id=run.id,
         conversation_id=run.conversation_id,
@@ -486,6 +493,8 @@ def run_out(run: KnowledgeAgentRun) -> KnowledgeRunOut:
         structured_query_plan=_parse_structured_query_plan(
             run.structured_query_plan_json
         ),
+        composite_answer_plan=composite_plan,
+        composite_answer_coverage=composite_coverage,
         answer=_parse_answer(run.answer_json),
         entry_result=_parse_entry_result(run.entry_result_json),
         created_at=run.created_at,

@@ -37,10 +37,10 @@
 
 ## 5. API、历史恢复与原生端兼容
 
-- [ ] 5.1 在 Run 与消息页投影有界计划摘要和逐项覆盖，不返回原始模型计划、完整 prompt/Entry/Source、隐藏推理或授权参数；历史分页和范围切换只读生成时快照。验收：`cd backend && .venv/bin/pytest -q tests/test_knowledge_agent_api.py tests/test_knowledge_agent_conversations.py -k composite`
-- [ ] 5.2 扩展原生端类型与 snake_case 适配以容忍可选 `requirement_ids`、计划摘要和逐项覆盖；旧 Run、旧 points 和旧服务端缺字段继续可读。验收：`cd mobile && npm test -- --runInBand src/knowledge-agent/api.test.ts src/knowledge-agent/adapters/answer.test.ts`
-- [ ] 5.3 保持现有回答卡、依据概览、Citation、partial/insufficient/fallback 与 gaps 展示，不暴露内部任务拆解或隐藏思维过程；无需新增顶层结果形态或设置项。验收：`cd mobile && npm test -- --runInBand src/knowledge-agent/components/components.test.tsx -t '复合回答|部分回答|依据'`
-- [ ] 5.4 完成 API 与原生兼容的本地提交。验收：`cd backend && .venv/bin/ruff check app tests && cd ../mobile && npm run typecheck && npm run lint && git diff --check`
+- [x] 5.1 在 Run 与消息页投影有界计划摘要和逐项覆盖，不返回原始模型计划、完整 prompt/Entry/Source、隐藏推理或授权参数；历史分页和范围切换只读生成时快照。验收：`cd backend && .venv/bin/pytest -q tests/test_knowledge_agent_api.py tests/test_knowledge_agent_conversations.py -k composite`
+- [x] 5.2 扩展原生端类型与 snake_case 适配以容忍可选 `requirement_ids`、计划摘要和逐项覆盖；旧 Run、旧 points 和旧服务端缺字段继续可读。验收：`cd mobile && npm test -- --runInBand src/knowledge-agent/api.test.ts src/knowledge-agent/adapters/answer.test.ts`
+- [x] 5.3 保持现有回答卡、依据概览、Citation、partial/insufficient/fallback 与 gaps 展示，不暴露内部任务拆解或隐藏思维过程；无需新增顶层结果形态或设置项。验收：`cd mobile && npm test -- --runInBand src/knowledge-agent/components/components.test.tsx -t '复合回答|部分回答|依据'`
+- [x] 5.4 完成 API 与原生兼容的本地提交。验收：`cd backend && .venv/bin/ruff check app tests && cd ../mobile && npm run typecheck && npm run lint && git diff --check`
 
 ## 6. 评估、安全与恢复测试
 

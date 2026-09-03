@@ -1,5 +1,6 @@
 """知识 Agent API 测试：认证、隔离、409、幂等、轮询恢复、取消与 Evidence 引用。"""
 
+import json
 import uuid
 
 import httpx
@@ -741,3 +742,81 @@ async def test_api_clarification_run(client: httpx.AsyncClient, monkeypatch) -> 
         item for item in messages["items"] if item["role"] == "assistant"
     )
     assert assistant["content"] == "你指的是哪个方案的验收标准？"
+
+
+@pytest.mark.asyncio
+async def test_api_projects_bounded_composite_summary_to_run_and_messages(
+    client: httpx.AsyncClient,
+) -> None:
+    """Run 与历史消息使用同一脱敏复合快照，不返回查询或内部句柄。"""
+    await _register(client)
+    conversation = await _conversation(client)
+    submitted = await client.post(
+        f"/api/knowledge-agent/conversations/{conversation['id']}/messages",
+        json={
+            "client_message_id": "composite-projection",
+            "message": "解释甲醛并结合我的知识说明来源",
+        },
+    )
+    assert submitted.status_code == 201
+    run_id = submitted.json()["run"]["id"]
+    plan = {
+        "schema_version": "v1",
+        "prompt_version": "v1",
+        "requirements": [
+            {
+                "id": "r1",
+                "order": 0,
+                "summary": "解释甲醛是什么",
+                "kind": "explain",
+                "basis_policy": "model_allowed",
+            }
+        ],
+        "statement_message_ids": [],
+        "retrieval_requests": [
+            {"id": "q1", "query": "私密检索词", "requirement_ids": ["r1"]}
+        ],
+        "structured_requests": [],
+    }
+    coverage = {
+        "schema_version": "v1",
+        "requirements": [
+            {
+                "requirement_id": "r1",
+                "status": "answered",
+                "evidence_handles": ["ev_" + "1" * 32],
+                "result_handles": [],
+                "user_message_ids": [],
+                "model_knowledge_used": True,
+                "note": None,
+            }
+        ],
+    }
+    async with async_session_factory() as db:
+        run = await db.get(KnowledgeAgentRun, run_id)
+        assert run is not None
+        run.composite_answer_plan_json = json.dumps(plan, ensure_ascii=False)
+        run.composite_answer_coverage_json = json.dumps(coverage, ensure_ascii=False)
+        await db.commit()
+
+    run_payload = (await client.get(f"/api/knowledge-agent/runs/{run_id}")).json()
+    public_plan = run_payload["composite_answer_plan"]
+    public_coverage = run_payload["composite_answer_coverage"]
+    assert public_plan["input_kinds"] == ["retrieval"]
+    assert "retrieval_requests" not in public_plan
+    assert "prompt_version" not in public_plan
+    assert public_coverage["requirements"][0]["basis_kinds"] == [
+        "grove_evidence",
+        "model_knowledge",
+    ]
+    assert "evidence_handles" not in public_coverage["requirements"][0]
+    assert "私密检索词" not in json.dumps(run_payload, ensure_ascii=False)
+
+    page = (
+        await client.get(
+            f"/api/knowledge-agent/conversations/{conversation['id']}/messages"
+        )
+    ).json()
+    user_message = next(item for item in page["items"] if item["role"] == "user")
+    assert user_message["composite_answer_plan"] == public_plan
+    assert user_message["composite_answer_coverage"] == public_coverage

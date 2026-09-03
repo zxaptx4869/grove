@@ -237,6 +237,64 @@ describe("知识 Agent API 序列化", () => {
     });
   });
 
+  test("复合回答可选字段递归适配且保留旧响应兼容", async () => {
+    mockFetch({
+      id: 18,
+      composite_answer_plan: {
+        schema_version: "v1",
+        requirements: [
+          {
+            id: "r1",
+            order: 0,
+            summary: "解释甲醛是什么",
+            kind: "explain",
+            basis_policy: "model_allowed",
+          },
+        ],
+        input_kinds: ["retrieval", "structured"],
+      },
+      composite_answer_coverage: {
+        schema_version: "v1",
+        requirements: [
+          {
+            requirement_id: "r1",
+            summary: "解释甲醛是什么",
+            status: "answered",
+            basis_kinds: ["model_knowledge"],
+            note: null,
+          },
+        ],
+      },
+      answer: {
+        answer: "甲醛是一种化合物。",
+        status: "completed",
+        points: [
+          {
+            section: "定义",
+            text: "甲醛是一种化合物。",
+            citations: [],
+            requirement_ids: ["r1"],
+          },
+        ],
+        citations: [],
+        conflicts: [],
+      },
+    });
+    const run = await api.knowledgeAgentApi.getRun("token-composite", 18);
+    expect(run.compositeAnswerPlan?.requirements[0].basisPolicy).toBe(
+      "model_allowed",
+    );
+    expect(run.compositeAnswerCoverage?.requirements[0].basisKinds).toEqual([
+      "model_knowledge",
+    ]);
+    expect(run.answer?.points?.[0].requirementIds).toEqual(["r1"]);
+
+    mockFetch({ id: 19, answer: null });
+    const legacy = await api.knowledgeAgentApi.getRun("token-legacy", 19);
+    expect(legacy.compositeAnswerPlan).toBeUndefined();
+    expect(legacy.compositeAnswerCoverage).toBeUndefined();
+  });
+
   test("提交修订动作序列化 source/target/instruction 并携带 client_message_id", async () => {
     mockFetch({ user_message: {}, run: {}, draft: {} }, 201);
     await api.knowledgeAgentApi.submitEntryRevision("token-r", 9, {
