@@ -204,7 +204,7 @@ async def run_composite_answer_planner(
                 duration_ms=duration,
             ),
         )
-    usage = asdict(result.usage())
+    usage = asdict(result.usage)
     if result.output is None:
         return (
             None,

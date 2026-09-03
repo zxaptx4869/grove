@@ -115,6 +115,49 @@ async def test_structured_query_planner_reports_offline_fallback() -> None:
     assert STRUCTURED_QUERY_PLAN_PROMPT_VERSION == "v1"
 
 
+@pytest.mark.asyncio
+async def test_structured_query_planner_reads_usage_property(monkeypatch) -> None:
+    """真实 PydanticAI 结果以属性暴露 usage，规划成功时应正常记录。"""
+    from dataclasses import dataclass
+
+    class _Model:
+        model_name = "fake-structured-model"
+
+    @dataclass
+    class _Usage:
+        requests: int = 1
+
+    class _Result:
+        output = StructuredQueryPlanDraft.model_validate(
+            {"outputs": [{"kind": "count"}]}
+        )
+        usage = _Usage()
+
+    class _Agent:
+        def __init__(self, model, **kwargs):
+            pass
+
+        async def run(self, context: str):
+            return _Result()
+
+    async def _model(db, workspace_id):
+        return _Model()
+
+    monkeypatch.setattr("app.agents.structured_query.get_text_model", _model)
+    monkeypatch.setattr("app.agents.structured_query.Agent", _Agent)
+
+    plan, meta = await run_structured_query_planner(
+        object(),
+        1,
+        objective="统计知识数量",
+        scope_label="全部知识",
+    )
+
+    assert plan is not None and plan.outputs[0].kind == "count"
+    assert meta.is_fallback is False
+    assert meta.usage == {"requests": 1}
+
+
 async def _user_and_workspace(db, prefix: str = "模型") -> tuple[User, Workspace]:
     """创建独立用户与 Workspace，避免测试间数据干扰。"""
     username = f"{prefix}_{uuid.uuid4().hex[:10]}"
@@ -569,9 +612,7 @@ async def test_composite_answer_planner_preserves_raw_request_and_constraints(
                 ],
             }
         )
-        @staticmethod
-        def usage():
-            return _Usage()
+        usage = _Usage()
 
     class _Agent:
         def __init__(self, model, **kwargs):
@@ -601,6 +642,7 @@ async def test_composite_answer_planner_preserves_raw_request_and_constraints(
 
     assert draft is not None and len(draft.requirements) == 2
     assert meta.is_fallback is False
+    assert meta.usage == {"requests": 1}
     assert "用户原始消息：结合我的知识库" in str(captured["context"])
     assert "独立检索问题：甲醛是什么以及来源" in str(captured["context"])
     assert "不要按标点机械拆分" in COMPOSITE_ANSWER_PLAN_SYSTEM_PROMPT
