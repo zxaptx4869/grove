@@ -1,6 +1,7 @@
 # 知识 Agent 结构化查询工具 API curl 验收记录
 
-来源 change：`add-knowledge-agent-structured-query-tools`（任务 7.1）  
+来源 change：`add-knowledge-agent-structured-query-tools`（任务 7.1）
+
 验证日期：2026-09-03
 
 ## 环境与边界

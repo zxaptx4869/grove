@@ -1,6 +1,7 @@
 # 知识 Agent 结构化查询工具原生端三视口走查记录
 
-来源 change：`add-knowledge-agent-structured-query-tools`（任务 7.2）  
+来源 change：`add-knowledge-agent-structured-query-tools`（任务 7.2）
+
 走查日期：2026-09-03
 
 > 状态：本 change 的 React Native 界面三视口、真实 API、历史恢复与交互走查已完成。

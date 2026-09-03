@@ -48,4 +48,4 @@
 - [x] 7.1 启动后端后用 curl 验证 Conversation、消息提交、Run 查询、v1/v2 结果分页与可观测接口返回预期 401/200 而非 404，并记录精确统计、语义有限统计、组合结果、非法计划、fallback、取消与恢复响应。验收：将命令和响应摘要写入 `docs/验收记录/add-knowledge-agent-structured-query-tools-curl.md`
 - [x] 7.2 在 360×800、390×844、412×915 走查纯列表、精确统计 + 列表、limited 语义统计、长分组、空结果、partial、历史恢复、分页与 Entry 当前状态变化；记录截图、控制台结果和剩余差异。验收：在对应验收记录中列出三视口结果与截图路径
 - [x] 7.3 更新 Knowledge Agent 产品形态与迭代记录，只把本 change 实际完成的 B1 能力移入已完成；B2 的多轮工具规划和固定 Workflow 迁移继续明确为后续，不提前覆盖主规格。验收：`openspec validate --all --strict`
-- [ ] 7.4 检查本 change 的遗留问题与后续优化项；逐条向用户说明背景、原因和影响，用户同意后再登记到 `docs/discussions/Grove后续优化清单.md`。验收：`git status --short`
+- [x] 7.4 检查本 change 的遗留问题与后续优化项；逐条向用户说明背景、原因和影响，用户同意后再登记到 `docs/discussions/Grove后续优化清单.md`。验收：`git status --short`
