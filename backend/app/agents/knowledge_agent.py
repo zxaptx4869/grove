@@ -3,7 +3,7 @@
 import logging
 from time import perf_counter
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from pydantic_ai import Agent
 from pydantic_ai.models.test import TestModel
 
@@ -64,8 +64,8 @@ class KnowledgeAnswerPointDraft(BaseModel):
     text: str = ""
     evidence_handles: list[str] = []
     # 复合回答内部绑定；普通 quick/investigate 保持空列表
-    requirement_ids: list[str] = []
-    result_handles: list[str] = []
+    requirement_ids: list[str] = Field(default_factory=list, max_length=8)
+    result_handles: list[str] = Field(default_factory=list, max_length=16)
 
 
 class KnowledgeAnswerDraft(BaseModel):

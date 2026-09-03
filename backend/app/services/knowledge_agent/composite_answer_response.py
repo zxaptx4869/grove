@@ -26,6 +26,7 @@ from app.services.knowledge_agent.evidence import (
 from app.services.knowledge_agent.observability import record_model_invocation
 
 _NUMBER_IN_TEXT = re.compile(r"\d")
+_INTERNAL_HANDLE_IN_TEXT = re.compile(r"\b(?:res_[0-9a-f]{24}|r[1-9][0-9]*)\b")
 
 
 @dataclass(frozen=True)
@@ -63,7 +64,7 @@ def _binding_maps(
     """返回义务允许的 Evidence/result 句柄与拥有精确数字事实的义务。"""
     evidence: dict[str, set[str]] = {item.id: set() for item in plan.requirements}
     results: dict[str, set[str]] = {item.id: set() for item in plan.requirements}
-    exact_numeric: set[str] = set()
+    numeric_fact_requirements: set[str] = set()
     for item in execution.inputs:
         for requirement_id in item.requirement_ids:
             evidence.setdefault(requirement_id, set()).update(item.evidence_handles)
@@ -71,9 +72,9 @@ def _binding_maps(
     for fact in execution.tool_facts:
         for requirement_id in fact.requirement_ids:
             results.setdefault(requirement_id, set()).add(fact.handle)
-            if fact.completeness == "complete" and fact.kind in {"count", "group_count"}:
-                exact_numeric.add(requirement_id)
-    return evidence, results, exact_numeric
+            if fact.kind in {"count", "group_count"}:
+                numeric_fact_requirements.add(requirement_id)
+    return evidence, results, numeric_fact_requirements
 
 
 def _validated_draft_bindings(
@@ -83,8 +84,8 @@ def _validated_draft_bindings(
 ) -> tuple[KnowledgeAnswerDraft, list[str], int]:
     """拒绝未知/无关句柄与不满足逐义务依据策略的模型 point。"""
     requirement_by_id = {item.id: item for item in plan.requirements}
-    evidence_by_requirement, results_by_requirement, exact_numeric = _binding_maps(
-        plan, execution
+    evidence_by_requirement, results_by_requirement, numeric_fact_requirements = (
+        _binding_maps(plan, execution)
     )
     valid_points = []
     invalid_count = 0
@@ -108,21 +109,34 @@ def _validated_draft_bindings(
         ).issubset(allowed_results):
             invalid_count += 1
             continue
-        if any(
-            requirement_by_id[item].basis_policy == "grove_only"
+        grove_only_ids = [
+            item
             for item in requirement_ids
-        ) and not (evidence_handles or result_handles):
+            if requirement_by_id[item].basis_policy == "grove_only"
+        ]
+        if any(
+            not (
+                set(evidence_handles).intersection(evidence_by_requirement[item])
+                or set(result_handles).intersection(results_by_requirement[item])
+            )
+            for item in grove_only_ids
+        ):
             invalid_count += 1
             continue
-        if any(item in exact_numeric for item in requirement_ids) and _NUMBER_IN_TEXT.search(
-            point.text or ""
-        ):
-            # 精确数字只由确定性 tool fact 展示，避免模型改写或制造冲突。
+        if any(
+            item in numeric_fact_requirements for item in requirement_ids
+        ) and _NUMBER_IN_TEXT.search(point.text or ""):
+            # 数字结果只由确定性 tool fact 展示，避免模型改写或制造冲突。
+            invalid_count += 1
+            continue
+        clean_text = _INTERNAL_HANDLE_IN_TEXT.sub("", point.text or "").strip()
+        if not clean_text:
             invalid_count += 1
             continue
         valid_points.append(
             point.model_copy(
                 update={
+                    "text": clean_text,
                     "requirement_ids": requirement_ids,
                     "evidence_handles": evidence_handles,
                     "result_handles": result_handles,

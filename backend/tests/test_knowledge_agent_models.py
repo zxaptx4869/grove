@@ -25,7 +25,9 @@ from app.agents.composite_answer import (
 )
 from app.agents.knowledge_agent import (
     OPEN_ANSWER_PROMPT_SUFFIX,
+    KnowledgeAnswerDraft,
     KnowledgeAnswerPointDraft,
+    run_knowledge_answer_agent,
 )
 from app.agents.structured_query import (
     STRUCTURED_QUERY_PLAN_PROMPT_VERSION,
@@ -567,7 +569,6 @@ async def test_composite_answer_planner_preserves_raw_request_and_constraints(
                 ],
             }
         )
-
         @staticmethod
         def usage():
             return _Usage()
@@ -620,6 +621,79 @@ async def test_composite_answer_planner_preserves_raw_request_and_constraints(
                 "workspace_id": 999,
             }
         )
+
+
+@pytest.mark.asyncio
+async def test_composite_answer_model_receives_requirements_facts_and_both_queries(
+    monkeypatch,
+) -> None:
+    """最终综合同时看到原始消息、检索改写、义务、Evidence 与工具事实。"""
+    captured: dict[str, str] = {}
+
+    class _Model:
+        model_name = "fake-answer-model"
+
+    class _Result:
+        output = KnowledgeAnswerDraft(
+            points=[
+                KnowledgeAnswerPointDraft(
+                    text="甲醛是一种化合物。",
+                    requirement_ids=["r1"],
+                )
+            ]
+        )
+
+    class _Agent:
+        def __init__(self, model, **kwargs):
+            captured["system_prompt"] = kwargs["system_prompt"]
+
+        async def run(self, context: str):
+            captured["context"] = context
+            return _Result()
+
+    async def _model(db, workspace_id):
+        return _Model()
+
+    monkeypatch.setattr("app.agents.knowledge_agent.get_text_model", _model)
+    monkeypatch.setattr("app.agents.knowledge_agent.Agent", _Agent)
+
+    draft, meta = await run_knowledge_answer_agent(
+        object(),
+        1,
+        "甲醛是什么，结合我的知识说明来源？",
+        "全部知识",
+        [],
+        allow_model_knowledge=True,
+        composite_context={
+            "current_message": "甲醛是什么，结合我的知识说明来源？",
+            "standalone_query": "甲醛定义与来源",
+            "requirements": [
+                {
+                    "id": "r1",
+                    "order": 0,
+                    "basis_policy": "model_allowed",
+                    "summary": "解释甲醛是什么",
+                }
+            ],
+            "evidence_requirements": {"ev_" + "1" * 32: ["r1"]},
+            "tool_facts": [
+                {
+                    "handle": "res_" + "2" * 24,
+                    "requirement_ids": ["r1"],
+                    "text": "符合条件的知识条目共 3 条。",
+                }
+            ],
+            "execution_gaps": [],
+            "retry_note": None,
+        },
+    )
+
+    assert draft.points[0].requirement_ids == ["r1"]
+    assert meta.is_fallback is False
+    assert "用户原始消息：甲醛是什么" in captured["context"]
+    assert "检索改写（只用于理解指代）：甲醛定义与来源" in captured["context"]
+    assert "ev_" in captured["context"] and "res_" in captured["context"]
+    assert "lead 必须留空" in captured["system_prompt"]
 
 
 def test_basis_plan_explicit_and_natural_language_restriction(monkeypatch) -> None:

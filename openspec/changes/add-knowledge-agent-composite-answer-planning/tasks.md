@@ -27,13 +27,13 @@
 
 ## 4. 工具事实、逐项覆盖与最终综合
 
-- [ ] 4.1 从结构化输出生成服务端 `CompositeToolFact` 与稳定 result handle；complete 纯结构化结果使用精确措辞，semantic/top-k/截断/异常使用 limited/unknown 固定边界。验收：`cd backend && .venv/bin/pytest -q tests/test_knowledge_agent_composite_answer.py -k tool_fact`
-- [ ] 4.2 扩展回答模型上下文与 point 草稿，传入原始消息、规范化义务、合法用户陈述、关联 Evidence、tool facts 和执行缺口；point 绑定 requirement/result handles，正文不得泄漏句柄。验收：`cd backend && .venv/bin/pytest -q tests/test_knowledge_agent_models.py tests/test_knowledge_agent_evidence.py -k 'composite or requirement'`
-- [ ] 4.3 实现逐 point 关联校验和最多一次相同输入的输出重试：拒绝未知/无关 requirement、Evidence/result handle，`grove_only` 无依据内容不得通过，external requirement 不得伪装完成。验收：`cd backend && .venv/bin/pytest -q tests/test_knowledge_agent_composite_answer.py -k 'coverage or retry or invalid_binding'`
-- [ ] 4.4 将 tool fact 作为不可改写的确定性 point 按义务顺序插入，拒绝与精确数值或完整性边界冲突的模型文字，并继续由服务端稳定拼接 answer。验收：`cd backend && .venv/bin/pytest -q tests/test_knowledge_agent_composite_answer.py tests/test_knowledge_agent_evidence.py -k 'tool_fact or answer_text'`
-- [ ] 4.5 从合法 points、Evidence、tool facts、用户消息和模型知识权限派生每项 `answered/partial/insufficient/failed`、现有 coverage/gaps、整体 answer status 与实际 basis；零散 Citation 不得掩盖漏答。验收：`cd backend && .venv/bin/pytest -q tests/test_knowledge_agent_composite_answer.py -k 'status or basis or omitted'`
-- [ ] 4.6 原子提交 answer、实际依据、复合覆盖、Run 终态和活动槽；部分工具失败保留合法内容，不触发第二轮工具规划或整条旧 quick 重跑。验收：`cd backend && .venv/bin/pytest -q tests/test_knowledge_agent_runner.py tests/test_knowledge_agent_worker.py -k 'composite and (atomic or partial)'`
-- [ ] 4.7 完成综合回答与覆盖校验的本地提交。验收：`cd backend && .venv/bin/ruff check app tests && git diff --check`
+- [x] 4.1 从结构化输出生成服务端 `CompositeToolFact` 与稳定 result handle；complete 纯结构化结果使用精确措辞，semantic/top-k/截断/异常使用 limited/unknown 固定边界。验收：`cd backend && .venv/bin/pytest -q tests/test_knowledge_agent_composite_answer.py -k tool_fact`
+- [x] 4.2 扩展回答模型上下文与 point 草稿，传入原始消息、规范化义务、合法用户陈述、关联 Evidence、tool facts 和执行缺口；point 绑定 requirement/result handles，正文不得泄漏句柄。验收：`cd backend && .venv/bin/pytest -q tests/test_knowledge_agent_models.py tests/test_knowledge_agent_evidence.py -k 'composite or requirement'`
+- [x] 4.3 实现逐 point 关联校验和最多一次相同输入的输出重试：拒绝未知/无关 requirement、Evidence/result handle，`grove_only` 无依据内容不得通过，external requirement 不得伪装完成。验收：`cd backend && .venv/bin/pytest -q tests/test_knowledge_agent_composite_answer.py -k 'coverage or retry or invalid_binding'`
+- [x] 4.4 将 tool fact 作为不可改写的确定性 point 按义务顺序插入，拒绝与精确数值或完整性边界冲突的模型文字，并继续由服务端稳定拼接 answer。验收：`cd backend && .venv/bin/pytest -q tests/test_knowledge_agent_composite_answer.py tests/test_knowledge_agent_evidence.py -k 'tool_fact or answer_text'`
+- [x] 4.5 从合法 points、Evidence、tool facts、用户消息和模型知识权限派生每项 `answered/partial/insufficient/failed`、现有 coverage/gaps、整体 answer status 与实际 basis；零散 Citation 不得掩盖漏答。验收：`cd backend && .venv/bin/pytest -q tests/test_knowledge_agent_composite_answer.py -k 'status or basis or omitted'`
+- [x] 4.6 原子提交 answer、实际依据、复合覆盖、Run 终态和活动槽；部分工具失败保留合法内容，不触发第二轮工具规划或整条旧 quick 重跑。验收：`cd backend && .venv/bin/pytest -q tests/test_knowledge_agent_runner.py tests/test_knowledge_agent_worker.py -k 'composite and (atomic or partial)'`
+- [x] 4.7 完成综合回答与覆盖校验的本地提交。验收：`cd backend && .venv/bin/ruff check app tests && git diff --check`
 
 ## 5. API、历史恢复与原生端兼容
 

@@ -504,8 +504,8 @@ async def execute_composite_answer_plan(
             and restored.status in {"completed", "empty", "limited"}
         ):
             continue
-        await _time_guard()
         try:
+            await _time_guard()
             item = await _execute_retrieval(
                 db,
                 run,
@@ -550,8 +550,8 @@ async def execute_composite_answer_plan(
             and restored.status in {"completed", "empty", "limited"}
         ):
             continue
-        await _time_guard()
         try:
+            await _time_guard()
             item, facts = await _execute_structured(
                 db,
                 run,
@@ -581,5 +581,5 @@ async def execute_composite_answer_plan(
         snapshot = await _persist_checkpoint(db, run, snapshot, settings=active_settings)
         existing[item.request_id] = item
 
-    await _time_guard()
+    await cancel_check()
     return CompositeExecutionArtifacts(snapshot=snapshot)

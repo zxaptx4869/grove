@@ -14,7 +14,7 @@ from app.schemas.knowledge_agent import (
     KnowledgeCompositeAnswerCoverageOut,
     KnowledgeCompositeAnswerPlanSummaryOut,
 )
-from app.services.knowledge_agent.basis import UserStatementCandidate
+from app.services.knowledge_agent.basis import UserStatementCandidate, build_answer_basis
 from app.services.knowledge_agent.composite_answer import (
     CompositeAnswerPlanError,
     composite_plan_summary,
@@ -793,6 +793,57 @@ async def test_composite_cancel_before_request_does_not_commit_late_checkpoint(
     assert db.commits == 0
 
 
+@pytest.mark.asyncio
+async def test_composite_total_timeout_becomes_partial_checkpoint(monkeypatch) -> None:
+    """总耗时预算用尽时保留 partial 检查点，不把整条 Run 抛成失败。"""
+    plan = normalize_composite_answer_plan(_candidate_plan())
+    moments = iter([0.0, 2.0, 2.0])
+    monkeypatch.setattr(
+        "app.services.knowledge_agent.composite_answer_execution.monotonic",
+        lambda: next(moments, 2.0),
+    )
+
+    async def _forbidden(*args, **kwargs):  # pragma: no cover
+        raise AssertionError("超时后不应启动检索")
+
+    monkeypatch.setattr(
+        "app.services.knowledge_agent.composite_answer_execution.search_confirmed_knowledge",
+        _forbidden,
+    )
+
+    class _Db:
+        commits = 0
+
+        async def commit(self):
+            self.commits += 1
+
+    async def _not_cancelled():
+        return None
+
+    run = SimpleNamespace(id=74, composite_answer_execution_json=None)
+    ctx = RunToolContext(
+        run_id=74,
+        workspace_id=1,
+        owner_user_id=1,
+        scope_type="workspace",
+        project_id=None,
+        project_name=None,
+    )
+    result = await execute_composite_answer_plan(
+        _Db(),
+        run,
+        ctx,
+        plan,
+        cancel_check=_not_cancelled,
+        settings=Settings(
+            knowledge_agent_composite_answer_execution_timeout_seconds=1.0
+        ),
+    )
+    assert result.snapshot.inputs[0].status == "partial"
+    assert "耗时预算" in (result.snapshot.inputs[0].error or "")
+    assert run.composite_answer_execution_json is not None
+
+
 def test_composite_request_fingerprint_binds_run_plan_and_normalized_params() -> None:
     """指纹对 Run、计划版本和参数变化敏感，对键顺序稳定。"""
     plan = _multiple_input_plan()
@@ -877,6 +928,157 @@ def test_composite_binding_rejects_grove_only_point_without_bound_basis() -> Non
     assert clean.points == []
     assert missing == ["r1", "r2"]
     assert invalid_count == 1
+
+
+def test_composite_binding_cannot_borrow_evidence_from_another_requirement() -> None:
+    """一个多义务 point 不能用 r1 证据冒充 r2 的 grove-only 依据。"""
+    candidate = _candidate_plan()
+    candidate["retrieval_requests"] = [
+        {
+            "id": "qa",
+            "query": "甲醛定义",
+            "requirement_ids": ["definition"],
+        },
+        {
+            "id": "qb",
+            "query": "甲醛来源",
+            "requirement_ids": ["sources"],
+        },
+    ]
+    plan = normalize_composite_answer_plan(candidate, knowledge_only=True)
+    execution = CompositeAnswerExecutionSnapshot(
+        inputs=[
+            CompositeExecutionInputSnapshot(
+                request_id="q1",
+                kind="retrieval",
+                requirement_ids=["r1"],
+                fingerprint="a" * 64,
+                status="completed",
+                completeness="limited",
+                evidence_handles=["ev_" + "1" * 32],
+            ),
+            CompositeExecutionInputSnapshot(
+                request_id="q2",
+                kind="retrieval",
+                requirement_ids=["r2"],
+                fingerprint="b" * 64,
+                status="empty",
+                completeness="limited",
+            ),
+        ]
+    )
+    draft = KnowledgeAnswerDraft(
+        points=[
+            KnowledgeAnswerPointDraft(
+                text="同时回答两项。",
+                requirement_ids=["r1", "r2"],
+                evidence_handles=["ev_" + "1" * 32],
+            )
+        ]
+    )
+    clean, missing, invalid_count = _validated_draft_bindings(
+        draft, plan, execution
+    )
+    assert clean.points == []
+    assert missing == ["r1", "r2"]
+    assert invalid_count == 1
+
+
+def test_composite_binding_removes_internal_handles_from_text() -> None:
+    """义务与结果句柄只用于内部绑定，不得泄漏到回答正文。"""
+    plan = normalize_composite_answer_plan(
+        {
+            "schema_version": "v1",
+            "requirements": [
+                {
+                    "id": "a",
+                    "order": 0,
+                    "summary": "解释概念",
+                    "kind": "explain",
+                    "basis_policy": "model_allowed",
+                }
+            ],
+            "statement_message_ids": [],
+            "retrieval_requests": [],
+            "structured_requests": [],
+            "reason": "概念解释",
+        }
+    )
+    draft = KnowledgeAnswerDraft(
+        points=[
+            KnowledgeAnswerPointDraft(
+                text="r1 的结论见 res_111111111111111111111111。",
+                requirement_ids=["r1"],
+            )
+        ]
+    )
+    clean, missing, invalid_count = _validated_draft_bindings(
+        draft, plan, CompositeAnswerExecutionSnapshot()
+    )
+    assert missing == []
+    assert invalid_count == 0
+    assert clean.points[0].text == "的结论见 。"
+
+
+def test_composite_binding_rejects_model_numeric_rewrite_of_tool_fact() -> None:
+    """绑定统计义务的模型文字不得另行重写数字结果。"""
+    plan = _multiple_input_plan()
+    fact = CompositeToolFact(
+        handle="res_" + "3" * 24,
+        request_id="s1",
+        requirement_ids=["r3"],
+        kind="count",
+        text="符合条件的知识条目共 8 条。",
+        completeness="complete",
+        summary={"value": 8},
+    )
+    execution = CompositeAnswerExecutionSnapshot(
+        inputs=[
+            CompositeExecutionInputSnapshot(
+                request_id="s1",
+                kind="structured",
+                requirement_ids=["r3"],
+                fingerprint="c" * 64,
+                status="completed",
+                completeness="complete",
+                result_handles=[fact.handle],
+            )
+        ],
+        tool_facts=[fact],
+    )
+    draft = KnowledgeAnswerDraft(
+        points=[
+            KnowledgeAnswerPointDraft(
+                text="统计结果是 9 条。",
+                requirement_ids=["r3"],
+                result_handles=[fact.handle],
+            )
+        ]
+    )
+    clean, missing, invalid_count = _validated_draft_bindings(
+        draft, plan, execution
+    )
+    assert clean.points == []
+    # 义务仍由服务端 fact 覆盖，不会因丢弃冲突 point 而遗漏。
+    assert missing == ["r1", "r2"]
+    assert invalid_count == 1
+
+
+def test_composite_answer_basis_counts_structured_fact_as_grove_usage() -> None:
+    """结构化事实没有 Citation，但实际依据仍必须标记 Grove 已使用。"""
+    answer = KnowledgeAnswerOut(
+        answer="符合条件的知识条目共 8 条。",
+        status="completed",
+    )
+    basis = build_answer_basis(
+        answer=answer,
+        user_statement_ids=[],
+        model_knowledge_used=False,
+        external_material_required=False,
+        grove_result_used=True,
+    )
+    assert basis.grove.used is True
+    assert basis.grove.citation_count == 0
 
 
 def test_composite_coverage_marks_limited_aggregate_partial() -> None:
