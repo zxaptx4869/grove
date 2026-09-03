@@ -100,7 +100,9 @@ Citation 与 Source 表达内容从哪里来，不代表 Grove 判断来源可�
 
 ## 4. 已经完成的能力
 
-以下已完成状态以 2026-09-02 已归档 OpenSpec change 为准。
+以下状态以 2026-09-03 为准：已归档 change 继续以主规格为准；当前
+`add-knowledge-agent-structured-query-tools` 已完成本地实现与自动验证，仍待用户验收，
+尚未归档，以下单独标注其阶段状态。
 
 ### 4.1 原生移动基础
 
@@ -215,6 +217,27 @@ Citation 与 Source 表达内容从哪里来，不代表 Grove 判断来源可�
 该能力已随 change 归档同步主规格；生产环境只有在真实模型完成态与原生设备补验
 通过后，才可按部署计划开启特性开关。
 
+### 4.10 一次结构化计划与确定性查询（B1，本地完成待验收）
+
+`add-knowledge-agent-structured-query-tools` 已完成本地实现、自动验证与阶段性手动走查，
+尚未归档或推送：
+
+- 只在 `actual_result_mode=entries` 且特性开关开启时生成一次受限结构化计划；
+- Workspace/项目范围只取自 Run 固化上下文，模型和客户端不能提供范围或对象 id；
+- 服务端严格校验 `EntrySetSpec`，按固定顺序组合 `query_entries`、
+  `aggregate_entries` 与既有语义召回，不执行未知工具或任意查询；
+- 支持正式 Entry 的类型、信息性质、UTC 更新时间筛选，稳定排序、精确 count、按类型、
+  信息性质与 UTC 月份分组，以及“统计 + 分组 + 有界列表”；
+- 聚合直接查询共享集合，不从截断列表反推；语义 top-k、预算截断与不完整执行只标记
+  limited/unknown，只有完整纯结构化集合返回精确计数；
+- 计划、工具调用、v2 结果与 fallback 可恢复、可取消、可观测；v1 历史结果和既有
+  answer/entries 协议继续兼容；
+- 原生 App 在既有知识列表形态内展示范围、完整性、统计/分组、排序和当前 Entry，
+  不新增 Citation、批量选择或写入动作。
+
+B1 没有实现多轮自主工具循环，没有迁移 quick/investigate，没有移除现有固定检索
+Workflow，也没有进入 `prepare_operation` 或新增任何知识写入能力。
+
 ## 5. 当前查询能力及下一步缺口
 
 ### 5.1 已支持：问答式查找
@@ -240,18 +263,24 @@ Agent 会在当前 Workspace 或项目范围搜索正式 Entry，读取相关内
   → 用户打开当前 Entry 或缩小范围继续查找
 ```
 
-当前列表和问答仍建立在固定检索 Workflow 上：它们可以可靠返回有限相关结果，但缺少精确统计、结构化筛选、排序、分组以及“统计后再列对象”等通用组合能力。这也是下一阶段受限工具型 Agent 需要解决的主要查询缺口。
+结构化查询开关关闭时，列表继续建立在既有固定检索 Workflow 上。开关开启时，entries
+分支可以先生成一次受限计划，再由服务端确定性执行结构化筛选、稳定排序、精确统计、
+分组以及“统计后再列对象”等组合。语义相关性与任何有界集合仍明确标记 limited/unknown。
+
+当前 B1 只扩展 entries 分支。quick 与 investigate 仍使用现有固定检索/调查 Workflow，
+不会自主观察工具结果后继续规划；这属于 B2，而不是本 change 的未完成实现。
 
 ## 6. 新阶段功能路线
 
 以下只是便于延续讨论的轻量记录，顺序和拆分都可能变化，不应直接作为开发任务。
 
-### 6.1 通用只读工具型查询
+### 6.1 B2：多轮只读工具规划与 Workflow 渐进迁移
 
-- 建设受限 `EntrySetSpec`、结构化查询和聚合统计工具；
-- 让快速回答与深度调查复用同一工具集，只使用不同预算；
-- 支持计数、筛选、排序、分组和与对象列表组合的问题；
-- 建立代表性场景评估集，停止按单条问法增加路由规则。
+- 让 Agent 在白名单内观察工具结果后继续规划或停止，形成有界多轮只读工具循环；
+- 让 quick 与 investigate 渐进复用同一工具集，并为不同模式固化轮次和预算；
+- 保持 B1 的 `EntrySetSpec`、服务端范围注入、严格校验、精确/limited 语义与恢复审计；
+- 逐条迁移并验证既有固定 Workflow，在替代能力完成前不移除旧路径；
+- 扩展内容问答和深度调查代表性评估，不按单条问法增加路由规则。
 
 ### 6.2 显式整理讨论与通用 Operation Plan
 
@@ -289,10 +318,9 @@ Agent 会在当前 Workspace 或项目范围搜索正式 Entry，读取相关内
 
 后续只在进入对应 change 时回答：
 
-1. 开放讨论已由 `add-knowledge-agent-open-discussion` 实施；下一条纵向路径是
-   只读工具型查询（`EntrySetSpec`、结构化聚合与统计）还是通用 Operation
-   Plan（整理讨论与一次确认），进入对应 change 时再定。
-2. 快速模式的调用预算和 `EntrySetSpec` 第一阶段字段边界是什么？
+1. B1 已由 `add-knowledge-agent-structured-query-tools` 完成本地实现；用户验收后，
+   下一条纵向路径选择 B2 多轮只读工具规划，还是通用 Operation Plan？
+2. B2 中 quick/investigate 的轮次、工具调用预算和固定 Workflow 迁移顺序是什么？
 3. 对话 Source 与现有 Evidence、EntryVersion 怎样复用数据结构？
 4. 旧 `draft_candidate` 与客户端怎样渐进迁移而不破坏历史？
 5. 多 Entry 操作的第一条黄金路径应选合并重复、处理冲突还是移动？
@@ -324,3 +352,4 @@ Agent 会在当前 Workspace 或项目范围搜索正式 Entry，读取相关内
 - [Candidate Draft change](../../openspec/changes/archive/2026-08-30-add-knowledge-agent-candidate-drafting/proposal.md)
 - [单 Entry 修订 change](../../openspec/changes/archive/2026-08-31-add-knowledge-agent-entry-revision/proposal.md)
 - [结构化 Entry 查找 change](../../openspec/changes/archive/2026-09-01-add-knowledge-agent-structured-entry-search/proposal.md)
+- [结构化查询工具 change（待验收）](../../openspec/changes/add-knowledge-agent-structured-query-tools/proposal.md)
