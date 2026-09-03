@@ -63,6 +63,9 @@ class KnowledgeAnswerPointDraft(BaseModel):
     section: str | None = None
     text: str = ""
     evidence_handles: list[str] = []
+    # 复合回答内部绑定；普通 quick/investigate 保持空列表
+    requirement_ids: list[str] = []
+    result_handles: list[str] = []
 
 
 class KnowledgeAnswerDraft(BaseModel):
@@ -168,6 +171,44 @@ def _format_context(
     return "\n".join(parts)
 
 
+def _format_composite_context(
+    *,
+    current_message: str,
+    standalone_query: str,
+    requirements: list[dict],
+    evidence_requirements: dict[str, list[str]],
+    tool_facts: list[dict],
+    execution_gaps: list[str],
+    retry_note: str | None,
+) -> str:
+    """组装复合回答义务与句柄约束，不包含授权参数或隐藏推理。"""
+    parts = [
+        f"用户原始消息：{current_message}",
+        f"检索改写（只用于理解指代）：{standalone_query}",
+        "回答义务（必须按 order 覆盖）：",
+    ]
+    for item in requirements:
+        parts.append(
+            f"- {item['id']} / order={item['order']} / {item['basis_policy']}: "
+            f"{item['summary']}"
+        )
+    parts.append("Evidence 句柄允许的义务绑定：")
+    for handle, requirement_ids in evidence_requirements.items():
+        parts.append(f"- {handle}: {', '.join(requirement_ids)}")
+    parts.append("服务端结构化事实（数值与完整性不得改写）：")
+    for fact in tool_facts:
+        parts.append(
+            f"- {fact['handle']} -> {', '.join(fact['requirement_ids'])}: "
+            f"{fact['text']}"
+        )
+    if execution_gaps:
+        parts.append("执行缺口：")
+        parts.extend(f"- {item}" for item in execution_gaps)
+    if retry_note:
+        parts.append(f"上一份输出校验失败：{retry_note}")
+    return "\n".join(parts)
+
+
 def _offline_answer() -> KnowledgeAnswerDraft:
     """离线确定性兜底：明确提示模型不可用，不编造内容。"""
     return KnowledgeAnswerDraft(
@@ -189,6 +230,7 @@ async def run_knowledge_answer_agent(
     user_statements: list[dict] | None = None,
     allow_model_knowledge: bool = False,
     external_material_required: bool = False,
+    composite_context: dict | None = None,
 ) -> tuple[KnowledgeAnswerDraft, StageMeta]:
     """运行回答 Agent，返回 (草稿, 阶段元数据)。
 
@@ -233,6 +275,21 @@ async def run_knowledge_answer_agent(
             + "要求：正文不要复述停止原因、预算或范围；只能直接回答可支持的内容。"
             "coverage/gaps 用结构化字段表达终态覆盖与未解决缺口；"
             "只能引用上方给出的当前 Run Evidence 句柄。"
+        )
+    if composite_context:
+        context = context + "\n" + _format_composite_context(**composite_context)
+        system_prompt = (
+            system_prompt
+            + "\n"
+            + "本轮使用复合回答协议：每个 point 必须填写至少一个已给出的 "
+            "requirement_ids；Evidence 句柄只能绑定到明示允许的义务；"
+            "result_handles 只能使用已给出的服务端结果句柄。"
+            "grove_only 要点必须有 Evidence 或 result handle；grove_required 必须说明 Grove "
+            "内容，可另补充一般解释；model_allowed 可使用通用知识；"
+            "external_required 只能提供一般框架并明确缺口。"
+            "服务端会自行插入结构化事实；不要重复、改写或另造其中的"
+            "数字与完整性结论。复合回答的 lead 必须留空，所有正文都放入"
+            "可绑定的 points。不得在正文泄漏 requirement/result/Evidence 句柄。"
         )
     agent = Agent(
         text_model,

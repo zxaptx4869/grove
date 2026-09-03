@@ -6,8 +6,10 @@ import pytest
 from pydantic import ValidationError
 
 from app.agents.composite_answer import CompositeAnswerPlanDraft
+from app.agents.knowledge_agent import KnowledgeAnswerDraft, KnowledgeAnswerPointDraft
 from app.core.config import Settings
 from app.schemas.knowledge_agent import (
+    KnowledgeAnswerOut,
     KnowledgeAnswerPointOut,
     KnowledgeCompositeAnswerCoverageOut,
     KnowledgeCompositeAnswerPlanSummaryOut,
@@ -20,9 +22,34 @@ from app.services.knowledge_agent.composite_answer import (
     plan_and_persist_composite_answer,
     restore_composite_answer_plan,
 )
+from app.services.knowledge_agent.composite_answer_execution import (
+    composite_request_fingerprint,
+    execute_composite_answer_plan,
+    restore_composite_execution,
+    structured_result_tool_facts,
+)
+from app.services.knowledge_agent.composite_answer_response import (
+    _derive_coverage,
+    _validated_draft_bindings,
+    build_composite_answer,
+)
 from app.services.knowledge_agent.composite_answer_types import (
     CompositeAnswerCoverageSnapshot,
     CompositeAnswerExecutionSnapshot,
+    CompositeExecutionInputSnapshot,
+    CompositeToolFact,
+)
+from app.services.knowledge_agent.structured_query_execution import (
+    StructuredQueryExecutionResult,
+)
+from app.services.knowledge_agent.tools import (
+    EvidenceReadItem,
+    EvidenceReadOutput,
+    ReadEntriesOutput,
+    ReadEntryItem,
+    RunToolContext,
+    SearchResultItem,
+    SearchToolOutput,
 )
 
 
@@ -456,3 +483,564 @@ async def test_invalid_composite_candidate_records_explicit_fallback(monkeypatch
     assert run.composite_answer_plan_json is None
     assert recorded[0].is_fallback is True
     assert "要求 Grove" in (recorded[0].error or "")
+
+
+def _multiple_input_plan():
+    candidate = _candidate_plan()
+    candidate["requirements"].append(
+        {
+            "id": "count",
+            "order": 2,
+            "summary": "统计知识数量",
+            "kind": "aggregate",
+            "basis_policy": "grove_only",
+        }
+    )
+    candidate["retrieval_requests"].append(
+        {
+            "id": "search_definition",
+            "query": "甲醛 定义",
+            "requirement_ids": ["definition"],
+        }
+    )
+    candidate["structured_requests"] = [
+        {
+            "id": "count_knowledge",
+            "entry_set": {"main_types": ["knowledge"]},
+            "outputs": [{"kind": "count"}],
+            "requirement_ids": ["count"],
+        }
+    ]
+    return normalize_composite_answer_plan(candidate)
+
+
+@pytest.mark.asyncio
+async def test_composite_execution_runs_inputs_in_order_and_reuses_checkpoints(
+    monkeypatch,
+) -> None:
+    """多份输入严格串行；已提交指纹在恢复时不重放。"""
+    plan = _multiple_input_plan()
+    events: list[str] = []
+
+    async def _search(db, ctx, query, **kwargs):
+        events.append(f"search:{query}")
+        entry_id = 1 if "来源" in query else 2
+        ctx.discovered_entry_ids.add(entry_id)
+        return SearchToolOutput(
+            items=[
+                SearchResultItem(
+                    entry_id=entry_id,
+                    title=f"知识{entry_id}",
+                    project_name="项目",
+                    node_path="根",
+                    summary="摘要",
+                    source_count=1,
+                )
+            ]
+        )
+
+    async def _read(db, ctx, entry_ids):
+        events.append(f"read:{entry_ids[0]}")
+        return ReadEntriesOutput(
+            items=[
+                ReadEntryItem(
+                    entry_id=entry_ids[0],
+                    title="知识",
+                    content="内容",
+                    project_name="项目",
+                    node_path="根",
+                    sources=[{"source_id": entry_ids[0]}],
+                )
+            ]
+        )
+
+    async def _evidence(db, ctx, entry_id, source_ids):
+        events.append(f"evidence:{entry_id}")
+        return EvidenceReadOutput(
+            items=[
+                EvidenceReadItem(
+                    entry_id=entry_id,
+                    source_id=source_ids[0],
+                    evidence_handle=f"ev_{entry_id:032x}",
+                    quote="原文",
+                    citable=True,
+                    status="completed",
+                )
+            ]
+        )
+
+    async def _structured(db, ctx, query_plan, *, cancel_check):
+        await cancel_check()
+        events.append("structured")
+        return StructuredQueryExecutionResult(
+            status="completed",
+            set_completeness="complete",
+            entries=None,
+            count={"value": 2, "status": "completed", "completeness": "complete"},
+            group_counts=[],
+            output_completeness={"entries": None, "count": "complete", "group_count": {}},
+            warnings=[],
+        )
+
+    async def _record(*args, **kwargs):
+        return None
+
+    class _Db:
+        commits = 0
+
+        async def commit(self):
+            self.commits += 1
+
+    monkeypatch.setattr(
+        "app.services.knowledge_agent.composite_answer_execution.search_confirmed_knowledge",
+        _search,
+    )
+    monkeypatch.setattr(
+        "app.services.knowledge_agent.composite_answer_execution.read_entries", _read
+    )
+    monkeypatch.setattr(
+        "app.services.knowledge_agent.composite_answer_execution.read_source_evidence",
+        _evidence,
+    )
+    monkeypatch.setattr(
+        "app.services.knowledge_agent.composite_answer_execution.execute_structured_query_plan",
+        _structured,
+    )
+    monkeypatch.setattr(
+        "app.services.knowledge_agent.composite_answer_execution.record_tool_result", _record
+    )
+    db = _Db()
+    run = SimpleNamespace(id=71, composite_answer_execution_json=None)
+    ctx = RunToolContext(
+        run_id=71,
+        workspace_id=1,
+        owner_user_id=1,
+        scope_type="workspace",
+        project_id=None,
+        project_name=None,
+    )
+
+    async def _not_cancelled():
+        return None
+
+    first = await execute_composite_answer_plan(
+        db, run, ctx, plan, cancel_check=_not_cancelled
+    )
+    before_restore = list(events)
+    second = await execute_composite_answer_plan(
+        db, run, ctx, plan, cancel_check=_not_cancelled
+    )
+
+    assert events == [
+        "search:甲醛 来源",
+        "read:1",
+        "evidence:1",
+        "search:甲醛 定义",
+        "read:2",
+        "evidence:2",
+        "structured",
+    ]
+    assert events == before_restore
+    assert [item.request_id for item in first.snapshot.inputs] == ["q1", "q2", "s1"]
+    assert second.snapshot == first.snapshot
+    assert restore_composite_execution(run.composite_answer_execution_json) == first.snapshot
+    assert db.commits == 3
+
+
+@pytest.mark.asyncio
+async def test_composite_retrieval_respects_total_object_and_evidence_budget(
+    monkeypatch,
+) -> None:
+    """总对象/Evidence 预算用尽后，后续请求记录 limited 而不扩容。"""
+    plan = _multiple_input_plan().model_copy(update={"structured_requests": []})
+    search_calls = 0
+
+    async def _search(db, ctx, query, **kwargs):
+        nonlocal search_calls
+        search_calls += 1
+        ctx.discovered_entry_ids.add(1)
+        return SearchToolOutput(
+            items=[
+                SearchResultItem(
+                    entry_id=1,
+                    title="知识",
+                    project_name="项目",
+                    node_path="",
+                    summary="",
+                    source_count=1,
+                )
+            ]
+        )
+
+    async def _read(db, ctx, entry_ids):
+        return ReadEntriesOutput(
+            items=[
+                ReadEntryItem(
+                    entry_id=1,
+                    title="知识",
+                    content="内容",
+                    project_name="项目",
+                    node_path="",
+                    sources=[{"source_id": 1}],
+                )
+            ]
+        )
+
+    async def _evidence(db, ctx, entry_id, source_ids):
+        return EvidenceReadOutput(
+            items=[
+                EvidenceReadItem(
+                    entry_id=1,
+                    source_id=1,
+                    evidence_handle="ev_" + "1" * 32,
+                    quote="原文",
+                    citable=True,
+                    status="completed",
+                )
+            ]
+        )
+
+    async def _record(*args, **kwargs):
+        return None
+
+    class _Db:
+        async def commit(self):
+            return None
+
+    monkeypatch.setattr(
+        "app.services.knowledge_agent.composite_answer_execution.search_confirmed_knowledge",
+        _search,
+    )
+    monkeypatch.setattr(
+        "app.services.knowledge_agent.composite_answer_execution.read_entries", _read
+    )
+    monkeypatch.setattr(
+        "app.services.knowledge_agent.composite_answer_execution.read_source_evidence",
+        _evidence,
+    )
+    monkeypatch.setattr(
+        "app.services.knowledge_agent.composite_answer_execution.record_tool_result", _record
+    )
+    settings = Settings(
+        knowledge_agent_composite_answer_max_entries=1,
+        knowledge_agent_composite_answer_max_evidence=1,
+    )
+    run = SimpleNamespace(id=72, composite_answer_execution_json=None)
+    ctx = RunToolContext(
+        run_id=72,
+        workspace_id=1,
+        owner_user_id=1,
+        scope_type="workspace",
+        project_id=None,
+        project_name=None,
+    )
+
+    async def _not_cancelled():
+        return None
+
+    result = await execute_composite_answer_plan(
+        _Db(), run, ctx, plan, cancel_check=_not_cancelled, settings=settings
+    )
+
+    assert search_calls == 1
+    assert result.snapshot.inputs[0].evidence_handles == ["ev_" + "1" * 32]
+    assert result.snapshot.inputs[1].status == "limited"
+    assert "预算" in (result.snapshot.inputs[1].error or "")
+
+
+@pytest.mark.asyncio
+async def test_composite_cancel_before_request_does_not_commit_late_checkpoint(
+    monkeypatch,
+) -> None:
+    """请求边界取消直接中断，不执行工具也不提交迟到快照。"""
+    plan = normalize_composite_answer_plan(_candidate_plan())
+
+    async def _forbidden(*args, **kwargs):  # pragma: no cover
+        raise AssertionError("取消后不应执行检索")
+
+    class RunCancelled(Exception):
+        pass
+
+    async def _cancelled():
+        raise RunCancelled()
+
+    class _Db:
+        commits = 0
+
+        async def commit(self):
+            self.commits += 1
+
+    monkeypatch.setattr(
+        "app.services.knowledge_agent.composite_answer_execution.search_confirmed_knowledge",
+        _forbidden,
+    )
+    run = SimpleNamespace(id=73, composite_answer_execution_json=None)
+    ctx = RunToolContext(
+        run_id=73,
+        workspace_id=1,
+        owner_user_id=1,
+        scope_type="workspace",
+        project_id=None,
+        project_name=None,
+    )
+    db = _Db()
+
+    with pytest.raises(RunCancelled):
+        await execute_composite_answer_plan(
+            db, run, ctx, plan, cancel_check=_cancelled
+        )
+    assert run.composite_answer_execution_json is None
+    assert db.commits == 0
+
+
+def test_composite_request_fingerprint_binds_run_plan_and_normalized_params() -> None:
+    """指纹对 Run、计划版本和参数变化敏感，对键顺序稳定。"""
+    plan = _multiple_input_plan()
+    first = composite_request_fingerprint(
+        1, plan, request_id="q1", kind="retrieval", params={"a": 1, "b": 2}
+    )
+    reordered = composite_request_fingerprint(
+        1, plan, request_id="q1", kind="retrieval", params={"b": 2, "a": 1}
+    )
+    other_run = composite_request_fingerprint(
+        2, plan, request_id="q1", kind="retrieval", params={"a": 1, "b": 2}
+    )
+    assert first == reordered
+    assert first != other_run
+    assert len(first) == 64
+
+
+def test_structured_tool_fact_never_presents_limited_count_as_exact_total() -> None:
+    """limited 统计只能使用有限结果措辞，complete 才能表达精确全集。"""
+    request = _multiple_input_plan().structured_requests[0]
+    complete = StructuredQueryExecutionResult(
+        status="completed",
+        set_completeness="complete",
+        entries=None,
+        count={"value": 8, "status": "completed", "completeness": "complete"},
+        group_counts=[],
+        output_completeness={"entries": None, "count": "complete", "group_count": {}},
+        warnings=[],
+    )
+    limited = StructuredQueryExecutionResult(
+        status="partial",
+        set_completeness="limited",
+        entries=None,
+        count={"value": 8, "status": "limited", "completeness": "limited"},
+        group_counts=[],
+        output_completeness={"entries": None, "count": "limited", "group_count": {}},
+        warnings=[],
+    )
+    exact_fact = structured_result_tool_facts(
+        request, complete, fingerprint="a" * 64
+    )[0]
+    limited_fact = structured_result_tool_facts(
+        request, limited, fingerprint="b" * 64
+    )[0]
+    assert exact_fact.text == "符合条件的知识条目共 8 条。"
+    assert "不代表完整总数" in limited_fact.text
+
+
+def test_composite_binding_rejects_grove_only_point_without_bound_basis() -> None:
+    """grove_only 义务的无句柄模型文字不得通过校验。"""
+    candidate = _candidate_plan()
+    candidate["retrieval_requests"][0]["requirement_ids"] = [
+        "definition",
+        "sources",
+    ]
+    plan = normalize_composite_answer_plan(candidate, knowledge_only=True)
+    execution = CompositeAnswerExecutionSnapshot(
+        inputs=[
+            CompositeExecutionInputSnapshot(
+                request_id="q1",
+                kind="retrieval",
+                requirement_ids=["r1", "r2"],
+                fingerprint="a" * 64,
+                status="empty",
+                completeness="limited",
+            )
+        ]
+    )
+    draft = KnowledgeAnswerDraft(
+        points=[
+            KnowledgeAnswerPointDraft(
+                text="模型自行生成的甲醛解释。",
+                requirement_ids=["r2"],
+            )
+        ]
+    )
+
+    clean, missing, invalid_count = _validated_draft_bindings(
+        draft, plan, execution
+    )
+
+    assert clean.points == []
+    assert missing == ["r1", "r2"]
+    assert invalid_count == 1
+
+
+def test_composite_coverage_marks_limited_aggregate_partial() -> None:
+    """有 tool fact 不等于精确完成；limited 统计必须导出 partial。"""
+    plan = _multiple_input_plan()
+    fact = CompositeToolFact(
+        handle="res_" + "1" * 24,
+        request_id="s1",
+        requirement_ids=["r3"],
+        kind="count",
+        text="本次匹配中可确认 8 条；不代表完整总数。",
+        completeness="limited",
+        summary={"value": 8},
+    )
+    execution = CompositeAnswerExecutionSnapshot(
+        inputs=[
+            CompositeExecutionInputSnapshot(
+                request_id="s1",
+                kind="structured",
+                requirement_ids=["r3"],
+                fingerprint="b" * 64,
+                status="limited",
+                completeness="limited",
+                result_handles=[fact.handle],
+            )
+        ],
+        tool_facts=[fact],
+    )
+    answer = KnowledgeAnswerOut(
+        answer=fact.text,
+        status="partial",
+        points=[
+            KnowledgeAnswerPointOut(
+                text=fact.text,
+                requirement_ids=["r3"],
+            )
+        ],
+    )
+    coverage = _derive_coverage(
+        plan, execution, answer, answer_fallback=False
+    )
+    row = next(item for item in coverage.requirements if item.requirement_id == "r3")
+    assert row.status == "partial"
+    assert "部分结果" in (row.note or "")
+
+
+@pytest.mark.asyncio
+async def test_composite_answer_retries_once_for_omitted_requirement(monkeypatch) -> None:
+    """首次遗漏义务时只重试相同输入的回答，不重跑工具。"""
+    plan = normalize_composite_answer_plan(
+        {
+            "schema_version": "v1",
+            "requirements": [
+                {
+                    "id": "a",
+                    "order": 0,
+                    "summary": "解释甲醛是什么",
+                    "kind": "explain",
+                    "basis_policy": "model_allowed",
+                },
+                {
+                    "id": "b",
+                    "order": 1,
+                    "summary": "说明一般健康影响",
+                    "kind": "explain",
+                    "basis_policy": "model_allowed",
+                },
+            ],
+            "statement_message_ids": [],
+            "retrieval_requests": [],
+            "structured_requests": [],
+            "reason": "两项通用解释",
+        }
+    )
+    calls: list[dict] = []
+
+    async def _entries(*args, **kwargs):
+        return [], {}
+
+    async def _agent(*args, **kwargs):
+        from app.services.knowledge_agent.observability import StageMeta
+
+        calls.append(kwargs["composite_context"])
+        points = [
+            KnowledgeAnswerPointDraft(text="甲醛是一种化合物。", requirement_ids=["r1"])
+        ]
+        if len(calls) == 2:
+            points.append(
+                KnowledgeAnswerPointDraft(
+                    text="较高暴露可引起刺激。", requirement_ids=["r2"]
+                )
+            )
+        return (
+            KnowledgeAnswerDraft(lead="简要说明。", points=points),
+            StageMeta(
+                purpose="answer",
+                provider="llm",
+                model="fake",
+                is_fallback=False,
+                error=None,
+                duration_ms=1,
+            ),
+        )
+
+    async def _validated(db, run_id, draft, **kwargs):
+        return (
+            KnowledgeAnswerOut(
+                answer="",
+                status="completed",
+                points=[
+                    KnowledgeAnswerPointOut(
+                        text=point.text,
+                        requirement_ids=point.requirement_ids,
+                    )
+                    for point in draft.points
+                ],
+            ),
+            SimpleNamespace(),
+        )
+
+    async def _record(*args, **kwargs):
+        return None
+
+    class _Db:
+        async def commit(self):
+            return None
+
+    monkeypatch.setattr(
+        "app.services.knowledge_agent.composite_answer_response._answer_entries", _entries
+    )
+    monkeypatch.setattr(
+        "app.services.knowledge_agent.composite_answer_response.run_knowledge_answer_agent",
+        _agent,
+    )
+    monkeypatch.setattr(
+        "app.services.knowledge_agent.composite_answer_response.build_validated_answer",
+        _validated,
+    )
+    monkeypatch.setattr(
+        "app.services.knowledge_agent.composite_answer_response.record_model_invocation",
+        _record,
+    )
+
+    async def _not_cancelled():
+        return None
+
+    result = await build_composite_answer(
+        _Db(),
+        SimpleNamespace(id=81, workspace_id=1),
+        plan,
+        CompositeAnswerExecutionSnapshot(),
+        current_message="甲醛是什么，对健康有什么影响？",
+        standalone_query="甲醛定义与健康影响",
+        scope_label="全部知识",
+        statement_context=[],
+        cancel_check=_not_cancelled,
+    )
+
+    assert len(calls) == 2
+    assert calls[0]["current_message"].startswith("甲醛是什么")
+    assert calls[0]["standalone_query"] == "甲醛定义与健康影响"
+    assert calls[1]["retry_note"] is not None
+    assert [item.status for item in result.coverage.requirements] == [
+        "answered",
+        "answered",
+    ]
+    assert result.answer.status == "completed"

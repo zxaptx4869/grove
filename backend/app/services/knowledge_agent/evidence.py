@@ -427,6 +427,9 @@ async def build_validated_answer(
                     for handle in dict.fromkeys(point.evidence_handles)
                     if handle in resolved
                 ],
+                requirement_ids=list(
+                    dict.fromkeys(getattr(point, "requirement_ids", []) or [])
+                ),
             )
             for point in valid_points
         ],

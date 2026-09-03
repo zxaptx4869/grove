@@ -227,10 +227,12 @@ def build_answer_basis(
     user_statement_ids: list[int],
     model_knowledge_used: bool,
     external_material_required: bool,
+    grove_result_used: bool = False,
 ) -> KnowledgeAnswerBasisOut:
     """服务端装配 AnswerBasis v1：数量只从最终校验后 Citation 派生。
 
     - Grove 数量来自最终回答 Citation（全部句柄失效时为 0）；
+      复合回答的确定性结构化事实可单独表明 Grove 已使用；
     - 用户消息 ID 只使用服务端允许集合与规划器选择的交集；
     - 模型通用知识由执行分支与提示权限保守标记，不依赖模型自由自报；
     - 外部材料状态只能由服务端写为 not_used 或 required_unavailable。
@@ -247,7 +249,7 @@ def build_answer_basis(
     return KnowledgeAnswerBasisOut(
         schema_version="v1",
         grove=KnowledgeAnswerBasisGroveOut(
-            used=citation_count > 0,
+            used=citation_count > 0 or grove_result_used,
             citation_count=citation_count,
             entry_count=entry_count,
         ),

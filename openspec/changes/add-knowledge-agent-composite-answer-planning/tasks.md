@@ -17,13 +17,13 @@
 
 ## 3. 固定一次受控执行
 
-- [ ] 3.1 调整 answer Run 顺序为“上下文 → 结果形态 → 回答模式 → quick 复合计划”，使混合解释/知识/统计自动路由为 answer；显式 entries 继续走 B1，investigate 继续走既有调查图。验收：`cd backend && .venv/bin/pytest -q tests/test_knowledge_agent_runner.py tests/test_knowledge_agent_structured_entry_search.py -k 'composite or mixed_result_mode or investigate'`
-- [ ] 3.2 为每份 `retrieval_request` 复用 `search_confirmed_knowledge → read_entries → read_evidence`，保存 request/requirement/Evidence 关联、真实状态与完整性；范围只从 Run 注入。验收：`cd backend && .venv/bin/pytest -q tests/test_knowledge_agent_composite_answer.py -k retrieval`
-- [ ] 3.3 为复合计划中的 `structured_request` 复用 B1 EntrySetSpec 规范化、dispatcher、`query_entries` 与 `aggregate_entries`，不再次调用 structured query planner，不从截断列表反推聚合。验收：`cd backend && .venv/bin/pytest -q tests/test_knowledge_agent_composite_answer.py tests/test_knowledge_agent_structured_query.py -k 'composite or aggregate'`
-- [ ] 3.4 按规范化顺序串行执行多份输入请求并实施调用数、对象、Evidence、桶、耗时和 JSON 字节总预算；本 change 不加入跨请求合并、DAG 或并行。验收：`cd backend && .venv/bin/pytest -q tests/test_knowledge_agent_composite_answer.py -k 'order or multiple or total_budget'`
-- [ ] 3.5 为输入请求生成同 Run、计划版本和规范化参数绑定的稳定指纹；每个请求后提交有界检查点，恢复复用已完成结果，只重放未完成只读步骤。验收：`cd backend && .venv/bin/pytest -q tests/test_knowledge_agent_worker.py -k 'composite and (recovery or fingerprint)'`
-- [ ] 3.6 在规划、各输入请求和终态边界检查取消；迟到结果不得提交，查询执行不得创建或修改 Entry、Source、Candidate、Draft、目录或事实工作集。验收：`cd backend && .venv/bin/pytest -q tests/test_knowledge_agent_worker.py tests/test_knowledge_agent_composite_answer.py -k 'composite and (cancel or readonly)'`
-- [ ] 3.7 完成固定执行图的本地提交。验收：`cd backend && .venv/bin/ruff check app tests && git diff --check`
+- [x] 3.1 调整 answer Run 顺序为“上下文 → 结果形态 → 回答模式 → quick 复合计划”，使混合解释/知识/统计自动路由为 answer；显式 entries 继续走 B1，investigate 继续走既有调查图。验收：`cd backend && .venv/bin/pytest -q tests/test_knowledge_agent_runner.py tests/test_knowledge_agent_structured_entry_search.py -k 'composite or mixed_result_mode or investigate'`
+- [x] 3.2 为每份 `retrieval_request` 复用 `search_confirmed_knowledge → read_entries → read_evidence`，保存 request/requirement/Evidence 关联、真实状态与完整性；范围只从 Run 注入。验收：`cd backend && .venv/bin/pytest -q tests/test_knowledge_agent_composite_answer.py -k retrieval`
+- [x] 3.3 为复合计划中的 `structured_request` 复用 B1 EntrySetSpec 规范化、dispatcher、`query_entries` 与 `aggregate_entries`，不再次调用 structured query planner，不从截断列表反推聚合。验收：`cd backend && .venv/bin/pytest -q tests/test_knowledge_agent_composite_answer.py tests/test_knowledge_agent_structured_query.py -k 'composite or aggregate'`
+- [x] 3.4 按规范化顺序串行执行多份输入请求并实施调用数、对象、Evidence、桶、耗时和 JSON 字节总预算；本 change 不加入跨请求合并、DAG 或并行。验收：`cd backend && .venv/bin/pytest -q tests/test_knowledge_agent_composite_answer.py -k 'order or multiple or total_budget'`
+- [x] 3.5 为输入请求生成同 Run、计划版本和规范化参数绑定的稳定指纹；每个请求后提交有界检查点，恢复复用已完成结果，只重放未完成只读步骤。验收：`cd backend && .venv/bin/pytest -q tests/test_knowledge_agent_worker.py -k 'composite and (recovery or fingerprint)'`
+- [x] 3.6 在规划、各输入请求和终态边界检查取消；迟到结果不得提交，查询执行不得创建或修改 Entry、Source、Candidate、Draft、目录或事实工作集。验收：`cd backend && .venv/bin/pytest -q tests/test_knowledge_agent_worker.py tests/test_knowledge_agent_composite_answer.py -k 'composite and (cancel or readonly)'`
+- [x] 3.7 完成固定执行图的本地提交。验收：`cd backend && .venv/bin/ruff check app tests && git diff --check`
 
 ## 4. 工具事实、逐项覆盖与最终综合
 

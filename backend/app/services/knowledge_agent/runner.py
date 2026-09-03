@@ -36,6 +36,9 @@ from app.models.knowledge_agent import (
     RUN_PARTIAL,
     RUN_PROCESSING,
     STEP_BASIS_ROUTE,
+    STEP_COMPOSITE_ANSWER_COVERAGE,
+    STEP_COMPOSITE_ANSWER_EXECUTE,
+    STEP_COMPOSITE_ANSWER_PLAN,
     STEP_CONTEXT_DECISION,
     STEP_FINALIZE,
     STEP_INVESTIGATION_ROUTE,
@@ -54,6 +57,12 @@ from app.services.knowledge_agent.basis import (
     load_allowed_user_statements,
     resolve_basis_plan,
     restore_basis_plan,
+)
+from app.services.knowledge_agent.composite_answer import (
+    plan_and_persist_composite_answer,
+)
+from app.services.knowledge_agent.composite_answer_response import (
+    build_composite_answer,
 )
 from app.services.knowledge_agent.conversations import scope_label
 from app.services.knowledge_agent.evidence import build_validated_answer
@@ -227,8 +236,10 @@ def _cited_items_from_answer(
             {
                 "entry_id": entry_id,
                 "entry_title": citation.entry_title,
-                "project_name": info.project_name if info is not None else None,
-                "node_path": info.node_path if info is not None else None,
+                "project_name": (
+                    info.project_name if info is not None else citation.project_name
+                ),
+                "node_path": info.node_path if info is not None else citation.node_path,
                 "source_run_id": source_run_id,
             }
         )
@@ -567,27 +578,141 @@ async def execute_run(db: AsyncSession, run: KnowledgeAgentRun) -> None:
         await execute_structured_entry_search(db, run, decision, ctx)
         return
 
+    allowed_statements = None
+    # 复合特性开启时，quick/investigate 先于依据规划解析；
+    # 开关关闭则完全沿用下方旧顺序与快捷分支。
+    if getattr(settings, "knowledge_agent_composite_answer_enabled", False):
+        await _check_cancelled(run.id)
+        await update_run_step(run.id, STEP_INVESTIGATION_ROUTE)
+        if run.actual_answer_mode is None:
+            resolution = await resolve_answer_mode(
+                db,
+                workspace_id=run.workspace_id,
+                request_mode=run.request_answer_mode or ANSWER_MODE_AUTO,
+                objective=decision.standalone_query or query,
+                topic_summary=decision.topic_label,
+            )
+            run.actual_answer_mode = resolution.mode
+            if resolution.meta is not None:
+                await record_model_invocation(
+                    db,
+                    run_id=run.id,
+                    meta=resolution.meta,
+                    prompt_version=ANSWER_MODE_ROUTE_PROMPT_VERSION,
+                )
+            await db.commit()
+
+        if run.actual_answer_mode == ANSWER_MODE_QUICK:
+            allowed_statements = await load_allowed_user_statements(
+                db,
+                workspace_id=run.workspace_id,
+                owner_user_id=run.owner_user_id,
+                conversation_id=run.conversation_id,
+                scope_type=run.scope_type,
+                project_id=run.project_id,
+                context_decision=decision.decision,
+                current_message_id=run.user_message_id,
+                exclude_run_id=run.id,
+                input_context_version_id=run.input_context_version_id,
+                limit=settings.knowledge_agent_statement_limit,
+                message_chars=settings.knowledge_agent_statement_message_chars,
+            )
+            await _check_cancelled(run.id)
+            await update_run_step(run.id, STEP_COMPOSITE_ANSWER_PLAN)
+            composite_plan = await plan_and_persist_composite_answer(
+                db,
+                run,
+                current_message=query,
+                standalone_query=decision.standalone_query or query,
+                scope_label=scope,
+                context_decision=decision.decision,
+                topic_summary=decision.topic_label,
+                allowed_statements=allowed_statements,
+                cancel_check=lambda: _check_cancelled(run.id),
+            )
+            if composite_plan is not None:
+                from app.services.knowledge_agent.composite_answer_execution import (
+                    execute_composite_answer_plan,
+                )
+
+                await _check_cancelled(run.id)
+                await update_run_step(run.id, STEP_COMPOSITE_ANSWER_EXECUTE)
+                artifacts = await execute_composite_answer_plan(
+                    db,
+                    run,
+                    ctx,
+                    composite_plan,
+                    cancel_check=lambda: _check_cancelled(run.id),
+                )
+                statement_context = [
+                    {"message_id": item.message_id, "content": item.content}
+                    for item in allowed_statements
+                ]
+                await _check_cancelled(run.id)
+                await update_run_step(run.id, STEP_COMPOSITE_ANSWER_COVERAGE)
+                composite_result = await build_composite_answer(
+                    db,
+                    run,
+                    composite_plan,
+                    artifacts.snapshot,
+                    current_message=query,
+                    standalone_query=decision.standalone_query or query,
+                    scope_label=scope,
+                    statement_context=statement_context,
+                    cancel_check=lambda: _check_cancelled(run.id),
+                )
+                await _check_cancelled(run.id)
+                run.composite_answer_coverage_json = (
+                    composite_result.coverage.model_dump_json()
+                )
+                await update_run_step(run.id, STEP_FINALIZE)
+                cited_items = _cited_items_from_answer(
+                    composite_result.answer,
+                    {},
+                    run.id,
+                )
+                await _build_output_version(
+                    db,
+                    run,
+                    decision,
+                    input_version=input_version,
+                    parent_seeds=working_set.items,
+                    cited_items=cited_items,
+                    working_set_limit=settings.knowledge_agent_working_set_limit,
+                )
+                summary = await run_fallback_summary(db, run.id)
+                await finalize_run(
+                    db,
+                    run,
+                    answer=composite_result.answer,
+                    status=composite_result.run_status,
+                    fallback_summary=summary,
+                    answer_basis=composite_result.answer_basis,
+                )
+                return
+
     # 依据契约：普通回答在结果形态路由后、回答模式解析前执行依据规划；
     # 显式 knowledge_only、旧客户端缺省与特性关闭由服务端直接固化 Grove-only，
     # 不产生规划模型调用；entries 结果不执行依据规划（上方已提前返回）。
     await _check_cancelled(run.id)
     await update_run_step(run.id, STEP_BASIS_ROUTE)
-    allowed_statements = await load_allowed_user_statements(
-        db,
-        workspace_id=run.workspace_id,
-        owner_user_id=run.owner_user_id,
-        conversation_id=run.conversation_id,
-        scope_type=run.scope_type,
-        project_id=run.project_id,
-        context_decision=decision.decision,
-        current_message_id=run.user_message_id,
-        exclude_run_id=run.id,
-        input_context_version_id=run.input_context_version_id,
-        limit=getattr(settings, "knowledge_agent_statement_limit", 6),
-        message_chars=getattr(
-            settings, "knowledge_agent_statement_message_chars", 800
-        ),
-    )
+    if allowed_statements is None:
+        allowed_statements = await load_allowed_user_statements(
+            db,
+            workspace_id=run.workspace_id,
+            owner_user_id=run.owner_user_id,
+            conversation_id=run.conversation_id,
+            scope_type=run.scope_type,
+            project_id=run.project_id,
+            context_decision=decision.decision,
+            current_message_id=run.user_message_id,
+            exclude_run_id=run.id,
+            input_context_version_id=run.input_context_version_id,
+            limit=getattr(settings, "knowledge_agent_statement_limit", 6),
+            message_chars=getattr(
+                settings, "knowledge_agent_statement_message_chars", 800
+            ),
+        )
     if run.planned_basis_strategy is None:
         plan = await resolve_basis_plan(
             db,

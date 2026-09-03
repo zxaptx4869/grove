@@ -13,6 +13,7 @@ from app.agents.knowledge_agent import (
     KnowledgeCitationDraft,
 )
 from app.agents.structured_query import StructuredQueryPlanDraft
+from app.core.config import Settings
 from app.db.session import async_session_factory
 from app.models import (
     KnowledgeAgentModelInvocation,
@@ -45,8 +46,18 @@ from app.models.knowledge_agent import (
     TOOL_ERROR,
     TOOL_PARTIAL,
 )
-from app.schemas.knowledge_agent import KnowledgeRunSubmitRequest
-from app.services.knowledge_agent.basis import BasisPlan
+from app.schemas.knowledge_agent import KnowledgeAnswerOut, KnowledgeRunSubmitRequest
+from app.services.knowledge_agent.basis import BasisPlan, build_answer_basis
+from app.services.knowledge_agent.composite_answer import (
+    normalize_composite_answer_plan,
+)
+from app.services.knowledge_agent.composite_answer_response import (
+    CompositeAnswerResult,
+)
+from app.services.knowledge_agent.composite_answer_types import (
+    CompositeAnswerCoverageSnapshot,
+    CompositeAnswerExecutionSnapshot,
+)
 from app.services.knowledge_agent.follow_up import ContextDecisionResult
 from app.services.knowledge_agent.observability import StageMeta, run_fallback_summary
 from app.services.knowledge_agent.runner import RunCancelled, execute_run
@@ -2044,6 +2055,121 @@ async def test_model_first_quick_skips_grove_and_completes(monkeypatch) -> None:
         # 正常跳过 Grove 不是 fallback：降级摘要不含伪工具错误
         summary = json.loads(run.fallback_summary)
         assert summary["has_fallback"] is False
+
+
+@pytest.mark.asyncio
+async def test_composite_quick_routes_before_plan_and_skips_legacy_basis(monkeypatch) -> None:
+    """特性开启后 quick 按回答模式→计划→执行→综合，不再整题二选一。"""
+    events: list[str] = []
+    settings = Settings(knowledge_agent_composite_answer_enabled=True)
+    monkeypatch.setattr("app.services.knowledge_agent.runner.get_settings", lambda: settings)
+
+    async def _answer_mode(*args, **kwargs):
+        from app.services.knowledge_agent.investigation import AnswerModeResolution
+
+        events.append("answer_mode")
+        return AnswerModeResolution(mode="quick")
+
+    plan = normalize_composite_answer_plan(
+        {
+            "schema_version": "v1",
+            "requirements": [
+                {
+                    "id": "definition",
+                    "order": 0,
+                    "summary": "解释甲醛是什么",
+                    "kind": "explain",
+                    "basis_policy": "model_allowed",
+                }
+            ],
+            "statement_message_ids": [],
+            "retrieval_requests": [],
+            "structured_requests": [],
+            "reason": "通用解释",
+        }
+    )
+
+    async def _plan(*args, **kwargs):
+        events.append("plan")
+        return plan
+
+    async def _execute(*args, **kwargs):
+        events.append("execute")
+        return SimpleNamespace(snapshot=CompositeAnswerExecutionSnapshot())
+
+    async def _build(*args, **kwargs):
+        events.append("synthesize")
+        answer = KnowledgeAnswerOut(
+            answer="甲醛是一种挥发性有机化合物。",
+            status="completed",
+            points=[
+                {
+                    "section": "定义",
+                    "text": "甲醛是一种挥发性有机化合物。",
+                    "requirement_ids": ["r1"],
+                }
+            ],
+        )
+        return CompositeAnswerResult(
+            answer=answer,
+            coverage=CompositeAnswerCoverageSnapshot(
+                requirements=[
+                    {
+                        "requirement_id": "r1",
+                        "status": "answered",
+                        "model_knowledge_used": True,
+                    }
+                ]
+            ),
+            answer_basis=build_answer_basis(
+                answer=answer,
+                user_statement_ids=[],
+                model_knowledge_used=True,
+                external_material_required=False,
+            ),
+            run_status=RUN_COMPLETED,
+            answer_fallback=False,
+        )
+
+    async def _forbidden_basis(*args, **kwargs):  # pragma: no cover
+        raise AssertionError("复合 quick 不应再执行旧 basis 规划")
+
+    monkeypatch.setattr(
+        "app.services.knowledge_agent.runner.resolve_answer_mode", _answer_mode
+    )
+    monkeypatch.setattr(
+        "app.services.knowledge_agent.runner.plan_and_persist_composite_answer", _plan
+    )
+    monkeypatch.setattr(
+        "app.services.knowledge_agent.composite_answer_execution.execute_composite_answer_plan",
+        _execute,
+    )
+    monkeypatch.setattr(
+        "app.services.knowledge_agent.runner.build_composite_answer", _build
+    )
+    monkeypatch.setattr(
+        "app.services.knowledge_agent.runner.resolve_basis_plan", _forbidden_basis
+    )
+
+    async with async_session_factory() as db:
+        user = await create_user(db, "复合顺序")
+        workspace = await create_workspace(db, user)
+        _conversation, run = await _conversation_and_run(
+            db,
+            user,
+            workspace,
+            message="甲醛是什么？",
+        )
+        run.status = RUN_PROCESSING
+        await db.commit()
+
+        await execute_run(db, run)
+        await db.commit()
+
+        assert events == ["answer_mode", "plan", "execute", "synthesize"]
+        assert run.status == RUN_COMPLETED
+        assert run.composite_answer_coverage_json is not None
+        assert json.loads(run.answer_json)["points"][0]["requirement_ids"] == ["r1"]
 
 
 @pytest.mark.asyncio
