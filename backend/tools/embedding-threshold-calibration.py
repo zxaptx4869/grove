@@ -111,11 +111,17 @@ async def main() -> None:
         dup_scores = scores["duplicate"]
         new_scores = scores["new"]
         if dup_scores:
-            print(f"建议 T_high ≥ {max(DEFAULT_HIGH, median(dup_scores)):.3f}（取 duplicate 中位数与默认值较大者）")
+            print(
+                f"建议 T_high ≥ {max(DEFAULT_HIGH, median(dup_scores)):.3f}"
+                "（取 duplicate 中位数与默认值较大者）"
+            )
         else:
             print(f"缺少 duplicate 样本，T_high 暂保持 {DEFAULT_HIGH}")
         if new_scores:
-            print(f"建议 T_low ≤ {min(DEFAULT_LOW, median(new_scores)):.3f}（取 new 中位数与默认值较小者）")
+            print(
+                f"建议 T_low ≤ {min(DEFAULT_LOW, median(new_scores)):.3f}"
+                "（取 new 中位数与默认值较小者）"
+            )
         else:
             print(f"缺少 new 样本，T_low 暂保持 {DEFAULT_LOW}")
 
