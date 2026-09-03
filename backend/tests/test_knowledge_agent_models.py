@@ -5,6 +5,7 @@ import sqlite3
 import subprocess
 import sys
 import uuid
+from decimal import Decimal
 from pathlib import Path
 
 import pytest
@@ -80,7 +81,15 @@ from app.services.knowledge_agent.basis import (
     restore_basis_plan,
     validate_statement_ids,
 )
+from app.services.knowledge_agent.observability import serialize_model_usage
 from app.services.knowledge_agent.runs import run_out
+
+
+def test_model_usage_serialization_accepts_decimal_cost() -> None:
+    """真实 Provider 的 Decimal 计费字段不会让可观测记录中断 Run。"""
+    assert serialize_model_usage(
+        {"requests": 1, "cost": Decimal("0.001230")}
+    ) == '{"requests": 1, "cost": "0.001230"}'
 
 
 def test_structured_query_plan_rejects_unknown_scope_fields() -> None:

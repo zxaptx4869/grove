@@ -4,6 +4,7 @@ import json
 import logging
 from dataclasses import dataclass
 
+from pydantic_core import to_jsonable_python
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -44,6 +45,13 @@ class StageMeta:
     error: str | None
     duration_ms: int
     usage: dict | None = None
+
+
+def serialize_model_usage(usage: dict | None) -> str | None:
+    """将模型 usage 转为 JSON；Decimal 等计费字段保留精确字符串。"""
+    if not usage:
+        return None
+    return json.dumps(to_jsonable_python(usage), ensure_ascii=False)
 
 
 async def next_tool_sequence(db: AsyncSession, run_id: int) -> int:
@@ -104,6 +112,7 @@ async def record_model_invocation(
     query_sequence: int | None = None,
 ) -> None:
     """持久化一次 embedding / 重排 / 回答模型调用。"""
+    resolved_usage = usage if usage is not None else meta.usage
     db.add(
         KnowledgeAgentModelInvocation(
             run_id=run_id,
@@ -114,11 +123,7 @@ async def record_model_invocation(
             is_fallback=meta.is_fallback,
             error=meta.error,
             duration_ms=meta.duration_ms,
-            usage_json=(
-                json.dumps(usage or meta.usage, ensure_ascii=False)
-                if usage or meta.usage
-                else None
-            ),
+            usage_json=serialize_model_usage(resolved_usage),
             investigation_id=investigation_id,
             round_number=round_number,
             query_sequence=query_sequence,
