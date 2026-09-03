@@ -67,3 +67,61 @@ def test_structured_query_plan_migration_mysql8_uses_nullable_text() -> None:
 
     assert "structured_query_plan_json text" in normalized
     assert "structured_query_plan_json text not null" not in normalized
+
+
+def test_composite_answer_migration_upgrade_downgrade_upgrade(tmp_path: Path) -> None:
+    """SQLite 全新库往返迁移，三个复合快照列均为可空 TEXT。"""
+    db_path = tmp_path / "composite-answer-roundtrip.db"
+    env = os.environ.copy()
+    env["DATABASE_URL"] = f"sqlite+aiosqlite:///{db_path}"
+    backend = Path(__file__).resolve().parents[1]
+    column_names = {
+        "composite_answer_plan_json",
+        "composite_answer_execution_json",
+        "composite_answer_coverage_json",
+    }
+
+    def _alembic(*args: str) -> None:
+        result = subprocess.run(
+            [sys.executable, "-m", "alembic", *args],
+            cwd=backend,
+            env=env,
+            capture_output=True,
+            text=True,
+        )
+        assert result.returncode == 0, result.stdout + result.stderr
+
+    def _columns() -> dict[str, tuple]:
+        with sqlite3.connect(db_path) as connection:
+            return {
+                row[1]: row
+                for row in connection.execute("PRAGMA table_info(knowledge_agent_runs)")
+                if row[1] in column_names
+            }
+
+    _alembic("upgrade", "head")
+    first = _columns()
+    assert set(first) == column_names
+    assert all(row[2].upper() == "TEXT" and row[3] == 0 for row in first.values())
+
+    _alembic("downgrade", "e9f0a1b2c3d4")
+    assert _columns() == {}
+
+    _alembic("upgrade", "head")
+    restored = _columns()
+    assert set(restored) == column_names
+    assert all(row[2].upper() == "TEXT" and row[3] == 0 for row in restored.values())
+
+
+def test_composite_answer_migration_mysql8_uses_nullable_text() -> None:
+    """MySQL 8 ORM DDL 使用普通可空 TEXT，不依赖 SQLite 专属类型。"""
+    ddl = str(CreateTable(KnowledgeAgentRun.__table__).compile(dialect=mysql.dialect()))
+    normalized = " ".join(ddl.lower().split())
+
+    for column in (
+        "composite_answer_plan_json",
+        "composite_answer_execution_json",
+        "composite_answer_coverage_json",
+    ):
+        assert f"{column} text" in normalized
+        assert f"{column} text not null" not in normalized

@@ -1,10 +1,10 @@
 ## 1. 领域骨架、配置与迁移
 
-- [ ] 1.1 增加 `CompositeAnswerPlan v1`、回答义务、检索/结构化输入请求、执行检查点、`CompositeToolFact` 与逐项覆盖领域类型；所有模型可控字段使用闭合枚举、长度与数量限制。验收：`cd backend && .venv/bin/ruff check app/agents app/models/knowledge_agent.py app/schemas/knowledge_agent.py`
-- [ ] 1.2 增加复合回答特性开关及义务数、检索数、结构化请求数、计划/结果字节、对象/Evidence、执行耗时预算，并在 `.env.example` 提供占位配置；默认关闭且不改变旧路径。验收：`cd backend && .venv/bin/pytest -q tests/test_config.py -k composite_answer && .venv/bin/ruff check app/core/config.py tests/test_config.py`
-- [ ] 1.3 以追加 Alembic 迁移为 Knowledge Agent Run 增加可空 `composite_answer_plan_json`、`composite_answer_execution_json`、`composite_answer_coverage_json`，不回填或猜测旧 Run；迁移兼容 SQLite/MySQL 8。验收：`cd backend && .venv/bin/alembic upgrade head && .venv/bin/alembic downgrade -1 && .venv/bin/alembic upgrade head && .venv/bin/pytest -q tests/test_migrations.py -k composite_answer`
-- [ ] 1.4 扩展 Run、消息页和 answer point 输出 schema：只追加可选计划摘要、逐项覆盖、`requirement_ids`，保持旧 `answer`/`points`/`citations`/basis、entries v1/v2 和缺字段历史可读。验收：`cd backend && .venv/bin/pytest -q tests/test_knowledge_agent_api.py tests/test_knowledge_agent_conversations.py -k 'composite or legacy'`
-- [ ] 1.5 完成领域骨架、配置和迁移的本地提交。验收：`git diff --check && git status --short`
+- [x] 1.1 增加 `CompositeAnswerPlan v1`、回答义务、检索/结构化输入请求、执行检查点、`CompositeToolFact` 与逐项覆盖领域类型；所有模型可控字段使用闭合枚举、长度与数量限制。验收：`cd backend && .venv/bin/ruff check app/agents app/models/knowledge_agent.py app/schemas/knowledge_agent.py`
+- [x] 1.2 增加复合回答特性开关及义务数、检索数、结构化请求数、计划/结果字节、对象/Evidence、执行耗时预算，并在 `.env.example` 提供占位配置；默认关闭且不改变旧路径。验收：`cd backend && .venv/bin/pytest -q tests/test_config.py -k composite_answer && .venv/bin/ruff check app/core/config.py tests/test_config.py`
+- [x] 1.3 以追加 Alembic 迁移为 Knowledge Agent Run 增加可空 `composite_answer_plan_json`、`composite_answer_execution_json`、`composite_answer_coverage_json`，不回填或猜测旧 Run；迁移兼容 SQLite/MySQL 8。验收：`cd backend && .venv/bin/alembic upgrade head && .venv/bin/alembic downgrade -1 && .venv/bin/alembic upgrade head && .venv/bin/pytest -q tests/test_migrations.py -k composite_answer`
+- [x] 1.4 扩展 Run、消息页和 answer point 输出 schema：只追加可选计划摘要、逐项覆盖、`requirement_ids`，保持旧 `answer`/`points`/`citations`/basis、entries v1/v2 和缺字段历史可读。验收：`cd backend && .venv/bin/pytest -q tests/test_knowledge_agent_api.py tests/test_knowledge_agent_conversations.py -k 'composite or legacy'`
+- [x] 1.5 完成领域骨架、配置和迁移的本地提交。验收：`git diff --check && git status --short`
 
 ## 2. 复合规划模型与服务端规范化
 

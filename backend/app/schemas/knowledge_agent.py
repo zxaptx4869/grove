@@ -75,6 +75,22 @@ StructuredQueryToolStatus = Literal[
 StructuredQuerySortField = Literal["relevance", "updated_at", "created_at"]
 StructuredQuerySortDirection = Literal["asc", "desc"]
 StructuredQueryGroupField = Literal["main_type", "info_nature", "updated_month"]
+CompositeRequirementKind = Literal[
+    "explain",
+    "retrieve",
+    "aggregate",
+    "compare",
+    "recommend",
+    "other",
+]
+CompositeBasisPolicy = Literal[
+    "grove_only",
+    "grove_required",
+    "model_allowed",
+    "external_required",
+]
+CompositeCoverageStatus = Literal["answered", "partial", "insufficient", "failed"]
+CompositeInputKind = Literal["retrieval", "structured"]
 InvestigationStopReason = Literal[
     "controller_complete",
     "insufficient",
@@ -146,6 +162,8 @@ class KnowledgeMessageOut(BaseModel):
     actual_result_mode: ActualResultMode | None = None
     request_basis_mode: BasisMode | None = None
     answer_basis: "KnowledgeAnswerBasisOut | None" = None
+    composite_answer_plan: "KnowledgeCompositeAnswerPlanSummaryOut | None" = None
+    composite_answer_coverage: "KnowledgeCompositeAnswerCoverageOut | None" = None
     current_round: int = 0
     input_context_version_id: int | None = None
     output_context_version_id: int | None = None
@@ -205,6 +223,8 @@ class KnowledgeAnswerPointOut(BaseModel):
     section: str | None = None
     text: str
     citations: list[KnowledgeRunCitationOut] = []
+    # 复合回答可选绑定；旧回答保持空列表
+    requirement_ids: list[str] = []
 
 
 class KnowledgeAnswerOut(BaseModel):
@@ -414,6 +434,49 @@ class KnowledgeStructuredQueryPlanOut(BaseModel):
     outputs: list[KnowledgeStructuredOutputOut]
 
 
+class KnowledgeCompositeRequirementSummaryOut(BaseModel):
+    """可展示的回答义务摘要；不包含 prompt 或内部工具参数。"""
+
+    id: str
+    order: int = Field(ge=0)
+    summary: str
+    kind: CompositeRequirementKind
+    basis_policy: CompositeBasisPolicy
+
+
+class KnowledgeCompositeAnswerPlanSummaryOut(BaseModel):
+    """复合回答计划的有界 API 摘要。"""
+
+    schema_version: Literal["v1"] = "v1"
+    requirements: list[KnowledgeCompositeRequirementSummaryOut] = []
+    input_kinds: list[CompositeInputKind] = []
+
+
+class KnowledgeCompositeRequirementCoverageOut(BaseModel):
+    """一个回答义务的服务端终态覆盖摘要。"""
+
+    requirement_id: str
+    summary: str
+    status: CompositeCoverageStatus
+    basis_kinds: list[
+        Literal[
+            "grove_evidence",
+            "structured_result",
+            "user_statement",
+            "model_knowledge",
+            "external_gap",
+        ]
+    ] = []
+    note: str | None = None
+
+
+class KnowledgeCompositeAnswerCoverageOut(BaseModel):
+    """复合回答逐项覆盖快照；不暴露内部句柄。"""
+
+    schema_version: Literal["v1"] = "v1"
+    requirements: list[KnowledgeCompositeRequirementCoverageOut] = []
+
+
 class KnowledgeEntryResultSnapshotOut(BaseModel):
     """Run 上持久化的有界 Entry 结果快照（首屏随 Run/消息页返回）。"""
 
@@ -528,6 +591,8 @@ class KnowledgeRunOut(BaseModel):
     fallback_summary: FallbackSummaryOut | None = None
     investigation_summary: InvestigationSummaryOut | None = None
     structured_query_plan: KnowledgeStructuredQueryPlanOut | None = None
+    composite_answer_plan: KnowledgeCompositeAnswerPlanSummaryOut | None = None
+    composite_answer_coverage: KnowledgeCompositeAnswerCoverageOut | None = None
     answer: KnowledgeAnswerOut | None = None
     entry_result: KnowledgeEntryResultSnapshotOut | None = None
     created_at: datetime

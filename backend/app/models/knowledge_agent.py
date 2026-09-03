@@ -222,6 +222,52 @@ STRUCTURED_QUERY_SORT_DIRECTIONS = (
     STRUCTURED_QUERY_SORT_DESC,
 )
 
+# ---- 复合回答计划、输入与覆盖 ----
+COMPOSITE_ANSWER_PLAN_VERSION = "v1"
+COMPOSITE_ANSWER_EXECUTION_VERSION = "v1"
+COMPOSITE_ANSWER_COVERAGE_VERSION = "v1"
+
+COMPOSITE_REQUIREMENT_EXPLAIN = "explain"
+COMPOSITE_REQUIREMENT_RETRIEVE = "retrieve"
+COMPOSITE_REQUIREMENT_AGGREGATE = "aggregate"
+COMPOSITE_REQUIREMENT_COMPARE = "compare"
+COMPOSITE_REQUIREMENT_RECOMMEND = "recommend"
+COMPOSITE_REQUIREMENT_OTHER = "other"
+COMPOSITE_REQUIREMENT_KINDS = (
+    COMPOSITE_REQUIREMENT_EXPLAIN,
+    COMPOSITE_REQUIREMENT_RETRIEVE,
+    COMPOSITE_REQUIREMENT_AGGREGATE,
+    COMPOSITE_REQUIREMENT_COMPARE,
+    COMPOSITE_REQUIREMENT_RECOMMEND,
+    COMPOSITE_REQUIREMENT_OTHER,
+)
+
+COMPOSITE_BASIS_GROVE_ONLY = "grove_only"
+COMPOSITE_BASIS_GROVE_REQUIRED = "grove_required"
+COMPOSITE_BASIS_MODEL_ALLOWED = "model_allowed"
+COMPOSITE_BASIS_EXTERNAL_REQUIRED = "external_required"
+COMPOSITE_BASIS_POLICIES = (
+    COMPOSITE_BASIS_GROVE_ONLY,
+    COMPOSITE_BASIS_GROVE_REQUIRED,
+    COMPOSITE_BASIS_MODEL_ALLOWED,
+    COMPOSITE_BASIS_EXTERNAL_REQUIRED,
+)
+
+COMPOSITE_INPUT_RETRIEVAL = "retrieval"
+COMPOSITE_INPUT_STRUCTURED = "structured"
+COMPOSITE_INPUT_KINDS = (COMPOSITE_INPUT_RETRIEVAL, COMPOSITE_INPUT_STRUCTURED)
+
+COMPOSITE_COVERAGE_ANSWERED = "answered"
+COMPOSITE_COVERAGE_PARTIAL = "partial"
+COMPOSITE_COVERAGE_INSUFFICIENT = "insufficient"
+COMPOSITE_COVERAGE_FAILED = "failed"
+COMPOSITE_COVERAGE_STATUSES = (
+    COMPOSITE_COVERAGE_ANSWERED,
+    COMPOSITE_COVERAGE_PARTIAL,
+    COMPOSITE_COVERAGE_INSUFFICIENT,
+    COMPOSITE_COVERAGE_FAILED,
+)
+
 CONTEXT_DECISION_CONTINUE = "continue"
 CONTEXT_DECISION_NEW_TOPIC = "new_topic"
 CONTEXT_DECISION_CLARIFY = "clarify"
@@ -271,6 +317,11 @@ STEP_STRUCTURED_QUERY_EXECUTE = "structured_query_execute"
 # ---- Run 步骤（开放讨论依据规划分支） ----
 STEP_BASIS_ROUTE = "basis_route"
 
+# ---- Run 步骤（quick 复合回答分支） ----
+STEP_COMPOSITE_ANSWER_PLAN = "composite_answer_plan"
+STEP_COMPOSITE_ANSWER_EXECUTE = "composite_answer_execute"
+STEP_COMPOSITE_ANSWER_COVERAGE = "composite_answer_coverage"
+
 # ---- Run 步骤（候选草稿操作分支） ----
 STEP_DRAFT_VERIFY_EVIDENCE = "draft_verify_evidence"
 STEP_DRAFT_GENERATE = "draft_generate"
@@ -296,6 +347,7 @@ PURPOSE_STRUCTURED_QUERY_PLAN = "structured_query_plan"
 
 # ---- 模型调用用途（开放讨论依据规划） ----
 PURPOSE_BASIS_ROUTE = "basis_route"
+PURPOSE_COMPOSITE_ANSWER_PLAN = "composite_answer_plan"
 
 # ---- 调查状态 ----
 INVESTIGATION_STATUS_ACTIVE = "active"
@@ -545,6 +597,10 @@ class KnowledgeAgentRun(Base):
     entry_result_json: Mapped[str | None] = mapped_column(Text, nullable=True)
     # StructuredQueryPlan v1：只保存服务端校验、规范化后的计划；旧 Run 保持为空
     structured_query_plan_json: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # CompositeAnswerPlan/Execution/Coverage v1：均为有界 JSON，旧 Run 保持为空
+    composite_answer_plan_json: Mapped[str | None] = mapped_column(Text, nullable=True)
+    composite_answer_execution_json: Mapped[str | None] = mapped_column(Text, nullable=True)
+    composite_answer_coverage_json: Mapped[str | None] = mapped_column(Text, nullable=True)
     error: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False

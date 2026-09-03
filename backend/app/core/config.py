@@ -211,6 +211,40 @@ class Settings(BaseSettings):
     knowledge_agent_statement_message_chars: int = Field(
         default=800, description="回答阶段单条用户陈述最大字符数"
     )
+    # quick 复合回答：默认关闭；模型只提出候选，服务端限制计划与执行预算
+    knowledge_agent_composite_answer_enabled: bool = Field(
+        default=False, description="知识 Agent quick 复合回答计划是否启用"
+    )
+    knowledge_agent_composite_answer_planner_timeout_seconds: float = Field(
+        default=20.0, ge=1.0, le=120.0, description="复合回答规划模型超时（秒）"
+    )
+    knowledge_agent_composite_answer_max_requirements: int = Field(
+        default=8, ge=1, le=20, description="单次复合回答最多回答义务数"
+    )
+    knowledge_agent_composite_answer_max_retrieval_requests: int = Field(
+        default=3, ge=0, le=8, description="单次复合回答最多 Grove 检索请求数"
+    )
+    knowledge_agent_composite_answer_max_structured_requests: int = Field(
+        default=2, ge=0, le=5, description="单次复合回答最多结构化请求数"
+    )
+    knowledge_agent_composite_answer_plan_bytes_limit: int = Field(
+        default=24000, ge=1000, le=60000, description="规范化复合计划 JSON 最大字节数"
+    )
+    knowledge_agent_composite_answer_execution_bytes_limit: int = Field(
+        default=60000,
+        ge=1000,
+        le=64000,
+        description="复合回答执行检查点 JSON 最大字节数",
+    )
+    knowledge_agent_composite_answer_max_entries: int = Field(
+        default=30, ge=1, le=100, description="复合回答最多读取的不同 Entry 数"
+    )
+    knowledge_agent_composite_answer_max_evidence: int = Field(
+        default=30, ge=1, le=100, description="复合回答最多使用的 Evidence 数"
+    )
+    knowledge_agent_composite_answer_execution_timeout_seconds: float = Field(
+        default=30.0, ge=1.0, le=180.0, description="复合回答一次受控执行总超时（秒）"
+    )
 
     # 知识 Agent Worker 租约（秒）：processing 超过该阈值可恢复重试
     knowledge_agent_lease_seconds: int = Field(
