@@ -1791,7 +1791,7 @@ async def test_basis_auto_planner_success_recorded(monkeypatch) -> None:
         assert invocation.provider == "llm"
         assert invocation.model == "fake-basis"
         assert invocation.is_fallback is False
-        assert invocation.prompt_version == "v1"
+        assert invocation.prompt_version == "v2"
 
 
 @pytest.mark.asyncio

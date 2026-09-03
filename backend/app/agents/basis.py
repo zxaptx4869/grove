@@ -22,7 +22,7 @@ from app.services.knowledge_agent.observability import StageMeta
 
 logger = logging.getLogger(__name__)
 
-BASIS_ROUTE_PROMPT_VERSION = "v1"
+BASIS_ROUTE_PROMPT_VERSION = "v2"
 
 
 class BasisRouteDraft(BaseModel):
@@ -47,6 +47,9 @@ class BasisRouteDraft(BaseModel):
 BASIS_ROUTE_SYSTEM_PROMPT = (
     "你是 Grove 知识 Agent 的依据规划器，只负责为一条独立问题选择受约束的内部"
     "依据策略，不回答知识内容，也不决定检索/调查的执行细节。"
+    "\n"
+    "应用会同时提供用户原始消息与消除上下文指代后的独立问题；用户原始消息中的"
+    "依据要求和限制必须优先，独立问题只用于理解需要回答的知识目标。"
     "\n"
     "内部策略含义："
     "\n"
@@ -112,6 +115,7 @@ async def run_basis_planner(
     workspace_id: int,
     *,
     objective: str,
+    current_message: str,
     scope_label: str,
     topic_summary: str | None,
     context_decision: str,
@@ -141,6 +145,7 @@ async def run_basis_planner(
 
     context = "\n".join(
         [
+            f"用户原始消息：{current_message}",
             f"独立问题：{objective}",
             f"可信范围：{scope_label}",
             f"主题摘要：{topic_summary or '（无）'}",

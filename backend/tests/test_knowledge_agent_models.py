@@ -12,7 +12,12 @@ from pydantic import ValidationError
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 
-from app.agents.basis import BASIS_ROUTE_PROMPT_VERSION, BasisRouteDraft
+from app.agents.basis import (
+    BASIS_ROUTE_PROMPT_VERSION,
+    BASIS_ROUTE_SYSTEM_PROMPT,
+    BasisRouteDraft,
+    run_basis_planner,
+)
 from app.agents.knowledge_agent import (
     OPEN_ANSWER_PROMPT_SUFFIX,
     KnowledgeAnswerPointDraft,
@@ -442,7 +447,7 @@ def test_basis_contract_constants_and_request_defaults() -> None:
     assert BASIS_STRATEGY_MODEL_FIRST in BASIS_STRATEGIES
     assert STEP_BASIS_ROUTE == "basis_route"
     assert PURPOSE_BASIS_ROUTE == "basis_route"
-    assert BASIS_ROUTE_PROMPT_VERSION == "v1"
+    assert BASIS_ROUTE_PROMPT_VERSION == "v2"
 
     # 新客户端显式提交 auto；旧客户端缺省 None（服务层按 knowledge_only 兼容）
     assert (
@@ -467,6 +472,50 @@ def test_basis_contract_constants_and_request_defaults() -> None:
     draft = BasisRouteDraft()
     assert draft.strategy == BASIS_STRATEGY_KNOWLEDGE_ONLY
     assert draft.user_message_ids == []
+
+
+@pytest.mark.asyncio
+async def test_basis_planner_preserves_original_message(monkeypatch) -> None:
+    """依据规划同时看到原始消息与独立问题，避免改写丢失依据要求。"""
+    captured: dict[str, str] = {}
+
+    class _Model:
+        model_name = "fake-basis-model"
+
+    class _Agent:
+        def __init__(self, model, **kwargs):
+            pass
+
+        async def run(self, context: str):
+            captured["context"] = context
+            return type(
+                "Result",
+                (),
+                {"output": BasisRouteDraft(strategy="knowledge_first")},
+            )()
+
+    async def _model(db, workspace_id):
+        return _Model()
+
+    monkeypatch.setattr("app.agents.basis.get_text_model", _model)
+    monkeypatch.setattr("app.agents.basis.Agent", _Agent)
+
+    draft, meta = await run_basis_planner(
+        object(),
+        1,
+        objective="甲醛是什么，以及甲醛的来源和环保等级",
+        current_message="结合我的知识库，先解释甲醛是什么，再说明来源和环保等级",
+        scope_label="全部知识",
+        topic_summary="甲醛",
+        context_decision="continue",
+        user_statements=[],
+    )
+
+    assert draft is not None and draft.strategy == "knowledge_first"
+    assert meta.is_fallback is False
+    assert "用户原始消息：结合我的知识库" in captured["context"]
+    assert "独立问题：甲醛是什么" in captured["context"]
+    assert "用户原始消息中的依据要求和限制必须优先" in BASIS_ROUTE_SYSTEM_PROMPT
 
 
 def test_basis_plan_explicit_and_natural_language_restriction(monkeypatch) -> None:

@@ -313,6 +313,7 @@ async def resolve_basis_plan(
             db,
             workspace_id,
             objective=objective,
+            current_message=current_message,
             scope_label=scope_label,
             topic_summary=topic_summary,
             context_decision=context_decision,
