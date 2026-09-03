@@ -8,12 +8,12 @@
 
 ## 2. 复合规划模型与服务端规范化
 
-- [ ] 2.1 实现版本化 composite planner 提示与 Pydantic 输出，同时传入原始消息、`standalone_query`、范围标签、上下文决策及允许的用户消息句柄；提示要求按回答义务归并而非按句子生成工具调用。验收：`cd backend && .venv/bin/pytest -q tests/test_knowledge_agent_models.py -k composite_answer_plan`
-- [ ] 2.2 实现计划规范化与硬校验：稳定重编号 requirement/request、校验关联、闭合类型/依据策略/EntrySetSpec/输出及总预算，拒绝范围/对象 id、SQL、未知工具、写操作、空消费者和非法引用。验收：`cd backend && .venv/bin/pytest -q tests/test_knowledge_agent_composite_answer.py -k 'normalize or validation or budget'`
-- [ ] 2.3 让结构化 `basis_mode=knowledge_only` 和原始消息中的等价明确限制确定性收紧全部回答义务；“结合我的知识库”允许一般解释使用模型知识但要求相关个人义务实际读取 Grove。验收：`cd backend && .venv/bin/pytest -q tests/test_knowledge_agent_composite_answer.py -k 'basis or original_message'`
-- [ ] 2.4 在任何工具执行前持久化服务端规范化计划，并记录独立 purpose、prompt version、provider、model、fallback、error、duration 与 usage；同 `client_message_id` 和 Worker 恢复不得再次规划。验收：`cd backend && .venv/bin/pytest -q tests/test_knowledge_agent_runner.py tests/test_knowledge_agent_worker.py -k composite_plan`
-- [ ] 2.5 规划失败、非法或未配置时显式记录 composite fallback 并进入既有安全 basis/quick 路径；开关关闭时完全保持旧执行。验收：`cd backend && .venv/bin/pytest -q tests/test_knowledge_agent_composite_answer.py -k 'fallback or feature_flag'`
-- [ ] 2.6 完成复合规划与校验的本地提交。验收：`cd backend && .venv/bin/ruff check app tests && git diff --check`
+- [x] 2.1 实现版本化 composite planner 提示与 Pydantic 输出，同时传入原始消息、`standalone_query`、范围标签、上下文决策及允许的用户消息句柄；提示要求按回答义务归并而非按句子生成工具调用。验收：`cd backend && .venv/bin/pytest -q tests/test_knowledge_agent_models.py -k composite_answer_plan`
+- [x] 2.2 实现计划规范化与硬校验：稳定重编号 requirement/request、校验关联、闭合类型/依据策略/EntrySetSpec/输出及总预算，拒绝范围/对象 id、SQL、未知工具、写操作、空消费者和非法引用。验收：`cd backend && .venv/bin/pytest -q tests/test_knowledge_agent_composite_answer.py -k 'normalize or validation or budget'`
+- [x] 2.3 让结构化 `basis_mode=knowledge_only` 和原始消息中的等价明确限制确定性收紧全部回答义务；“结合我的知识库”允许一般解释使用模型知识但要求相关个人义务实际读取 Grove。验收：`cd backend && .venv/bin/pytest -q tests/test_knowledge_agent_composite_answer.py -k 'basis or original_message'`
+- [x] 2.4 在任何工具执行前持久化服务端规范化计划，并记录独立 purpose、prompt version、provider、model、fallback、error、duration 与 usage；同 `client_message_id` 和 Worker 恢复不得再次规划。验收：`cd backend && .venv/bin/pytest -q tests/test_knowledge_agent_runner.py tests/test_knowledge_agent_worker.py -k composite_plan`
+- [x] 2.5 规划失败、非法或未配置时显式记录 composite fallback 并进入既有安全 basis/quick 路径；开关关闭时完全保持旧执行。验收：`cd backend && .venv/bin/pytest -q tests/test_knowledge_agent_composite_answer.py -k 'fallback or feature_flag'`
+- [x] 2.6 完成复合规划与校验的本地提交。验收：`cd backend && .venv/bin/ruff check app tests && git diff --check`
 
 ## 3. 固定一次受控执行
 

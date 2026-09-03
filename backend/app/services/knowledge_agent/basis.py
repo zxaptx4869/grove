@@ -132,6 +132,11 @@ def _contains_knowledge_only_restriction(*texts: str) -> bool:
     )
 
 
+def contains_knowledge_only_restriction(*texts: str) -> bool:
+    """公开复用明确 knowledge-only 自然语言门禁，避免不同规划器规则漂移。"""
+    return _contains_knowledge_only_restriction(*texts)
+
+
 def _server_knowledge_only_plan() -> BasisPlan:
     """显式 knowledge_only / 特性关闭时的确定性计划（不产生模型调用）。"""
     return BasisPlan(

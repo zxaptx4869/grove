@@ -18,6 +18,11 @@ from app.agents.basis import (
     BasisRouteDraft,
     run_basis_planner,
 )
+from app.agents.composite_answer import (
+    COMPOSITE_ANSWER_PLAN_SYSTEM_PROMPT,
+    CompositeAnswerPlanDraft,
+    run_composite_answer_planner,
+)
 from app.agents.knowledge_agent import (
     OPEN_ANSWER_PROMPT_SUFFIX,
     KnowledgeAnswerPointDraft,
@@ -516,6 +521,105 @@ async def test_basis_planner_preserves_original_message(monkeypatch) -> None:
     assert "用户原始消息：结合我的知识库" in captured["context"]
     assert "独立问题：甲醛是什么" in captured["context"]
     assert "用户原始消息中的依据要求和限制必须优先" in BASIS_ROUTE_SYSTEM_PROMPT
+
+
+@pytest.mark.asyncio
+async def test_composite_answer_planner_preserves_raw_request_and_constraints(
+    monkeypatch,
+) -> None:
+    """复合规划同时看到原始请求和检索改写，且不允许输出授权范围。"""
+    from dataclasses import dataclass
+
+    captured: dict[str, object] = {}
+
+    class _Model:
+        model_name = "fake-composite-model"
+
+    @dataclass
+    class _Usage:
+        requests: int = 1
+
+    class _Result:
+        output = CompositeAnswerPlanDraft.model_validate(
+            {
+                "requirements": [
+                    {
+                        "id": "definition",
+                        "order": 0,
+                        "summary": "解释甲醛是什么",
+                        "kind": "explain",
+                        "basis_policy": "model_allowed",
+                    },
+                    {
+                        "id": "sources",
+                        "order": 1,
+                        "summary": "说明个人知识中的来源",
+                        "kind": "retrieve",
+                        "basis_policy": "grove_required",
+                    },
+                ],
+                "retrieval_requests": [
+                    {
+                        "id": "search",
+                        "query": "甲醛来源",
+                        "requirement_ids": ["sources"],
+                    }
+                ],
+            }
+        )
+
+        @staticmethod
+        def usage():
+            return _Usage()
+
+    class _Agent:
+        def __init__(self, model, **kwargs):
+            captured["system_prompt"] = kwargs["system_prompt"]
+
+        async def run(self, context: str):
+            captured["context"] = context
+            return _Result()
+
+    async def _model(db, workspace_id):
+        return _Model()
+
+    monkeypatch.setattr("app.agents.composite_answer.get_text_model", _model)
+    monkeypatch.setattr("app.agents.composite_answer.Agent", _Agent)
+
+    draft, meta = await run_composite_answer_planner(
+        object(),
+        1,
+        current_message="结合我的知识库，先解释甲醛是什么，再说明来源",
+        standalone_query="甲醛是什么以及来源",
+        scope_label="全部知识",
+        context_decision="new_topic",
+        topic_summary="甲醛",
+        user_statements=[],
+        knowledge_only=False,
+    )
+
+    assert draft is not None and len(draft.requirements) == 2
+    assert meta.is_fallback is False
+    assert "用户原始消息：结合我的知识库" in str(captured["context"])
+    assert "独立检索问题：甲醛是什么以及来源" in str(captured["context"])
+    assert "不要按标点机械拆分" in COMPOSITE_ANSWER_PLAN_SYSTEM_PROMPT
+    assert "Workspace" in str(captured["system_prompt"])
+
+    with pytest.raises(ValidationError):
+        CompositeAnswerPlanDraft.model_validate(
+            {
+                "requirements": [
+                    {
+                        "id": "r1",
+                        "order": 0,
+                        "summary": "越权",
+                        "kind": "retrieve",
+                        "basis_policy": "grove_only",
+                    }
+                ],
+                "workspace_id": 999,
+            }
+        )
 
 
 def test_basis_plan_explicit_and_natural_language_restriction(monkeypatch) -> None:
