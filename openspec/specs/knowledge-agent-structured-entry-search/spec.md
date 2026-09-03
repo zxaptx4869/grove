@@ -4,7 +4,7 @@
 TBD - created by archiving change add-knowledge-agent-structured-entry-search. Update Purpose after archive.
 ## Requirements
 ### Requirement: 每条普通消息明确请求与实际结果形态
-系统 MUST 为普通 answer Run 接受 `auto`、`answer`、`entries` 三种 `result_mode`，默认 `auto`；系统 MUST 分开持久化请求形态与实际形态。`auto` MUST 在上下文决策得到独立问题后，由结构化结果形态路由判断返回综合回答或 Entry 结果；显式 `answer`/`entries` MUST 跳过自动路由且不得被模型改写。
+系统 MUST 为普通 answer Run 接受 `auto`、`answer`、`entries` 三种 `result_mode`，默认 `auto`；系统 MUST 分开持久化请求形态与实际形态。`auto` MUST 在上下文决策得到独立问题后，由结构化结果形态路由判断返回综合回答或 Entry 结果；查找对象、结构化筛选、计数、排序、分组或这些需求的组合可以路由为 `entries`。显式 `answer`/`entries` MUST 跳过自动结果形态路由且不得被模型改写，但 `entries` 内部仍可执行受限结构化查询规划。
 
 #### Scenario: 自动判断为查找对象
 - **WHEN** 用户询问“帮我找出个人健康项目里和血压有关的知识”且未覆盖结果形态
@@ -21,6 +21,10 @@ TBD - created by archiving change add-knowledge-agent-structured-entry-search. U
 #### Scenario: 结果形态路由失败
 - **WHEN** `auto` 路由未配置、超时、调用失败或输出非法结构
 - **THEN** 系统显式记录 provider/model/fallback/error，安全回退 `answer`，不得静默伪装为成功路由或凭关键词执行隐藏写操作
+
+#### Scenario: 自动判断为结构化统计
+- **WHEN** 用户询问“最近半年有多少条个人经验，按月分组并列出最近五条”且未覆盖结果形态
+- **THEN** 系统可以将实际结果形态设为 `entries`，再由受限结构化查询计划表达统计、分组和列表，不让结果形态路由直接生成数字
 
 ### Requirement: 结构化查找只返回可信范围内的正式 Entry
 结构化 Entry 查找 MUST 只使用 Run 固化的 owner、Workspace 和可选项目范围，并复用服务端受控正式知识召回；模型或客户端 MUST NOT 指定授权范围、目录节点范围或任意 Entry id。结果 MUST 排除 Candidate、Draft、Extraction、已删除对象和范围外 Entry。
@@ -42,7 +46,7 @@ TBD - created by archiving change add-knowledge-agent-structured-entry-search. U
 - **THEN** Entry 结果集只包含正式 Entry，不把 AI 候选标成知识对象
 
 ### Requirement: Entry 结果集是持久化对象快照而不是回答引用
-系统 MUST 为 `entries` 结果持久化结构化结果集；每项 MUST 至少包含 Entry id、标题、长度受限正文摘要、项目、目录路径、知识类型、更新时间、来源数量、可选匹配线索和结果生成时快照。结果项 MUST 标识为正式知识对象，但结果排序或匹配说明本身 MUST NOT 被标为正式知识、Citation 或 Source Evidence。
+系统 MUST 为 `entries` 结果持久化版本化结构化结果集；v2 结果 MUST 保存规范化集合摘要、排序、各输出完整性、受限 count/group_count 块和可选 Entry 项。每个 Entry 项 MUST 至少包含 Entry id、标题、长度受限正文摘要、项目、目录路径、知识类型、更新时间、来源数量、可选匹配线索和结果生成时快照。统计、分组、排序或匹配说明 MUST 标识为本 Run 的查询结果，不得被标为正式知识、Citation 或 Source Evidence。
 
 #### Scenario: 成功返回多条 Entry
 - **WHEN** 受控搜索找到多条合法正式知识
@@ -60,8 +64,16 @@ TBD - created by archiving change add-knowledge-agent-structured-entry-search. U
 - **WHEN** 用户重开历史 Run，而某个 Entry 已更新、移动或删除
 - **THEN** 历史列表保留生成时快照；打开对象时重新校验当前 owner/Workspace/范围并显示当前内容、已变化或当前不可用，不把旧快照冒充当前 Entry
 
+#### Scenario: 统计与列表保存在同一结果快照
+- **WHEN** 同一计划请求精确计数、按类型分组和最近若干 Entry
+- **THEN** v2 快照保存共享集合摘要、各聚合块、稳定 Entry 项和分别派生的完整性，历史恢复不重新运行查询
+
+#### Scenario: 旧客户端读取 v2 结果
+- **WHEN** 不识别 v2 聚合字段的旧客户端读取包含 Entry 项的结果
+- **THEN** API 保留既有必需字段和助手兼容摘要，使旧客户端仍能展示有界 Entry 列表而不把未知统计编入正文
+
 ### Requirement: 结果数量与完整性必须诚实且有界
-系统 MUST 对单次结构化查找的候选数、持久化结果数、单页数和摘要长度设置服务端上限，并返回 `complete`、`limited` 或 `unknown` 的完整性状态、已找到数量、当前页数量与 `has_more`。只有搜索后端能够证明在本次查询语义和范围内没有更多匹配时才能返回 `complete`；达到预算、top-k 或候选上限 MUST 返回 `limited`，部分工具异常无法判断时 MUST 返回 `unknown`。
+系统 MUST 对结构化计划输出数、工具调用数、候选数、持久化 Entry 数、单页数、聚合桶数、执行时间和 JSON 大小设置服务端上限，并为共享集合及每个 count、group_count、entries 输出返回 `complete`、`limited` 或 `unknown`。只有不含语义召回且数据库能证明授权集合已完整执行时，精确计数或分组才能标记 `complete`；达到 top-k、候选、列表或桶预算 MUST 标记受影响输出为 `limited`，部分工具异常无法判断时 MUST 标记 `unknown`。
 
 #### Scenario: 已持久化结果还有下一页
 - **WHEN** 当前页未展示完本 Run 已持久化的结果项
@@ -78,6 +90,14 @@ TBD - created by archiving change add-knowledge-agent-structured-entry-search. U
 #### Scenario: 空结果正常完成
 - **WHEN** 搜索在当前范围正常完成且没有合法 Entry
 - **THEN** Run 返回空结果集及当前完整性状态，说明没有找到匹配知识，不生成虚假回答或引用
+
+#### Scenario: 结构化计数可以证明完整
+- **WHEN** count 只使用受控类型和时间条件、授权范围查询正常完成且未触发执行预算
+- **THEN** count 完整性为 complete，并与有界 Entry 展示数量分开返回
+
+#### Scenario: 语义相关集合不能宣称精确总数
+- **WHEN** count 或 group_count 的共享集合包含 semantic_query
+- **THEN** 对应聚合标记 limited 或 unknown，只表达本次有界匹配集合，不显示为范围内全部相关知识
 
 ### Requirement: 结构化结果分页、恢复与重试保持同一 Run 语义
 系统 MUST 通过 owner + Workspace + Conversation + Run 校验读取结构化结果页；游标 MUST 不透明、绑定原 Run 与稳定偏移并拒绝篡改。消息历史和 Run 查询 MUST 返回实际结果形态与首屏结果摘要，使原生 App 重启、向前分页或前后台切换后恢复同一结果，而不是重新提交查询。
