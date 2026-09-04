@@ -98,15 +98,14 @@ def _validated_draft_bindings(
         ):
             invalid_count += 1
             continue
-        allowed_evidence = set().union(
-            *(evidence_by_requirement[item] for item in requirement_ids)
-        )
-        allowed_results = set().union(
-            *(results_by_requirement[item] for item in requirement_ids)
-        )
-        if not set(evidence_handles).issubset(allowed_evidence) or not set(
-            result_handles
-        ).issubset(allowed_results):
+        # 多义务 point 的每个句柄必须对每个绑定义务都合法；不能用其他义务的
+        # Evidence/result 并集冒充当前义务的依据。真正共享的输入会在计划中同时
+        # 关联这些义务，因此仍能通过逐义务校验。
+        if any(
+            not set(evidence_handles).issubset(evidence_by_requirement[item])
+            or not set(result_handles).issubset(results_by_requirement[item])
+            for item in requirement_ids
+        ):
             invalid_count += 1
             continue
         grove_only_ids = [

@@ -13,6 +13,7 @@ from app.schemas.knowledge_agent import (
     KnowledgeAnswerPointOut,
     KnowledgeCompositeAnswerCoverageOut,
     KnowledgeCompositeAnswerPlanSummaryOut,
+    KnowledgeRunCitationOut,
 )
 from app.services.knowledge_agent.basis import UserStatementCandidate, build_answer_basis
 from app.services.knowledge_agent.composite_answer import (
@@ -982,7 +983,7 @@ def test_composite_binding_rejects_grove_only_point_without_bound_basis() -> Non
 
 
 def test_composite_binding_cannot_borrow_evidence_from_another_requirement() -> None:
-    """一个多义务 point 不能用 r1 证据冒充 r2 的 grove-only 依据。"""
+    """一个多义务 point 不能用 r1 证据冒充 r2 的 grove-required 依据。"""
     candidate = _candidate_plan()
     candidate["retrieval_requests"] = [
         {
@@ -996,7 +997,7 @@ def test_composite_binding_cannot_borrow_evidence_from_another_requirement() -> 
             "requirement_ids": ["sources"],
         },
     ]
-    plan = normalize_composite_answer_plan(candidate, knowledge_only=True)
+    plan = normalize_composite_answer_plan(candidate)
     execution = CompositeAnswerExecutionSnapshot(
         inputs=[
             CompositeExecutionInputSnapshot(
@@ -1033,6 +1034,80 @@ def test_composite_binding_cannot_borrow_evidence_from_another_requirement() -> 
     assert clean.points == []
     assert missing == ["r1", "r2"]
     assert invalid_count == 1
+
+
+def test_composite_coverage_does_not_borrow_evidence_across_requirements() -> None:
+    """其他义务的 Citation 不得把无 Grove 依据的义务标记为 answered。"""
+    candidate = _candidate_plan()
+    candidate["retrieval_requests"] = [
+        {
+            "id": "qa",
+            "query": "甲醛定义",
+            "requirement_ids": ["definition"],
+        },
+        {
+            "id": "qb",
+            "query": "甲醛来源",
+            "requirement_ids": ["sources"],
+        },
+    ]
+    plan = normalize_composite_answer_plan(candidate)
+    evidence_handle = "ev_" + "1" * 32
+    execution = CompositeAnswerExecutionSnapshot(
+        inputs=[
+            CompositeExecutionInputSnapshot(
+                request_id="q1",
+                kind="retrieval",
+                requirement_ids=["r1"],
+                fingerprint="a" * 64,
+                status="completed",
+                completeness="limited",
+                evidence_handles=[evidence_handle],
+            ),
+            CompositeExecutionInputSnapshot(
+                request_id="q2",
+                kind="retrieval",
+                requirement_ids=["r2"],
+                fingerprint="b" * 64,
+                status="empty",
+                completeness="limited",
+            ),
+        ]
+    )
+    citation = KnowledgeRunCitationOut(
+        evidence_id=1,
+        evidence_handle=evidence_handle,
+        entry_id=1,
+        entry_title="甲醛定义",
+        source_id=1,
+        source_title="测试来源",
+        quote="甲醛定义证据",
+    )
+    answer = KnowledgeAnswerOut(
+        answer="分别回答两项。",
+        status="partial",
+        points=[
+            KnowledgeAnswerPointOut(
+                text="回答第一项。",
+                requirement_ids=["r1"],
+                citations=[citation],
+            ),
+            KnowledgeAnswerPointOut(
+                text="模型补充第二项。",
+                requirement_ids=["r2"],
+            )
+        ],
+    )
+    coverage = _derive_coverage(
+        plan,
+        execution,
+        answer,
+        answer_fallback=False,
+    )
+
+    assert coverage.requirements[0].status == "answered"
+    assert coverage.requirements[1].status == "partial"
+    assert coverage.requirements[1].evidence_handles == []
 
 
 def test_composite_binding_removes_internal_handles_from_text() -> None:
