@@ -10,7 +10,7 @@ from datetime import UTC, datetime
 from time import perf_counter
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 from pydantic_ai import Agent
 from pydantic_ai.models.test import TestModel
 
@@ -89,6 +89,33 @@ class CompositeAnswerPlanDraft(StrictCompositeDraft):
     )
     reason: str = Field(default="", max_length=300)
 
+    @model_validator(mode="after")
+    def validate_grove_requirements_have_read_inputs(self):
+        """让模型在结构化输出阶段修正未绑定输入的 Grove 义务。"""
+        requirement_ids = {requirement.id for requirement in self.requirements}
+        referenced_requirement_ids = {
+            requirement_id
+            for request in [*self.retrieval_requests, *self.structured_requests]
+            for requirement_id in request.requirement_ids
+        }
+        unknown_requirement_ids = sorted(
+            referenced_requirement_ids - requirement_ids
+        )
+        if unknown_requirement_ids:
+            raise ValueError(
+                f"输入请求引用未知回答义务：{unknown_requirement_ids}"
+            )
+        input_requirement_ids = referenced_requirement_ids
+        for requirement in self.requirements:
+            if (
+                requirement.basis_policy in {"grove_only", "grove_required"}
+                and requirement.id not in input_requirement_ids
+            ):
+                raise ValueError(
+                    f"回答义务 {requirement.id} 要求 Grove，但没有关联只读输入"
+                )
+        return self
+
 
 COMPOSITE_ANSWER_PLAN_SYSTEM_PROMPT = (
     "你是 Grove 知识 Agent 的 quick 复合回答规划器。你只拆解一条原始请求中的回答义务"
@@ -101,7 +128,10 @@ COMPOSITE_ANSWER_PLAN_SYSTEM_PROMPT = (
     "回答义务 kind 只允许 explain/retrieve/aggregate/compare/recommend/other。逐项依据："
     "grove_only 只能用 Grove，grove_required 必须包含 Grove 但可用通用知识补充，"
     "model_allowed 可使用模型通用知识，external_required 表示依赖当前外部材料且本阶段"
-    "无法真实检索。若输入声明‘仅使用知识库’，所有义务都必须 grove_only。"
+    "无法真实检索。用户说‘结合我的知识库’时，只将与个人知识有关的义务标为"
+    "grove_required；通用概念解释可以标为 model_allowed。每个 grove_only 或 grove_required"
+    "义务都必须被至少一个 retrieval_request 或 structured_request 的 requirement_ids"
+    "引用。若输入声明‘仅使用知识库’，所有义务都必须 grove_only。"
     "\n"
     "Grove 普通知识读取用 retrieval_requests；统计、分组、排序或有界对象列表使用"
     "structured_requests。EntrySetSpec 只允许 semantic_query、main_types、info_natures、"

@@ -110,6 +110,15 @@ def test_composite_answer_draft_uses_closed_bounded_schema() -> None:
         CompositeAnswerPlanDraft.model_validate(invalid)
 
 
+def test_composite_answer_draft_rejects_unbound_grove_requirement() -> None:
+    """Grove 义务在模型输出阶段即触发可重试的 schema 校验。"""
+    invalid = _candidate_plan()
+    invalid["retrieval_requests"][0]["requirement_ids"] = ["definition"]
+
+    with pytest.raises(ValidationError, match="要求 Grove，但没有关联只读输入"):
+        CompositeAnswerPlanDraft.model_validate(invalid)
+
+
 def test_composite_execution_and_coverage_snapshots_reject_unknown_fields() -> None:
     """恢复快照同样使用闭合 schema，历史 JSON 不能扩大解释。"""
     execution = CompositeAnswerExecutionSnapshot.model_validate(

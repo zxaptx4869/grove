@@ -655,6 +655,8 @@ async def test_composite_answer_planner_preserves_raw_request_and_constraints(
     assert "用户原始消息：结合我的知识库" in str(captured["context"])
     assert "独立检索问题：甲醛是什么以及来源" in str(captured["context"])
     assert "不要按标点机械拆分" in COMPOSITE_ANSWER_PLAN_SYSTEM_PROMPT
+    assert "通用概念解释可以标为 model_allowed" in COMPOSITE_ANSWER_PLAN_SYSTEM_PROMPT
+    assert "都必须被至少一个 retrieval_request" in COMPOSITE_ANSWER_PLAN_SYSTEM_PROMPT
     assert "Workspace" in str(captured["system_prompt"])
 
     with pytest.raises(ValidationError):
