@@ -2,7 +2,7 @@
 
 import hashlib
 import json
-from dataclasses import dataclass, replace
+from dataclasses import dataclass
 from time import monotonic, perf_counter
 
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -572,10 +572,13 @@ async def execute_composite_answer_plan(
         )
         reusable = retrieval_reuse.get(reuse_key) if deduplicate_equivalent_requests else None
         if reusable is not None:
-            item = replace(
-                reusable,
-                request_id=request.id,
-                requirement_ids=request.requirement_ids,
+            item = reusable.model_copy(
+                update={
+                    "request_id": request.id,
+                    "requirement_ids": request.requirement_ids,
+                    # 快照恢复按当前请求身份验证，不能保留被复用源请求的指纹。
+                    "fingerprint": fingerprint,
+                }
             )
             snapshot.inputs.append(item)
             snapshot.elapsed_ms = _elapsed_ms()
@@ -645,10 +648,13 @@ async def execute_composite_answer_plan(
         reusable = structured_reuse.get(reuse_key) if deduplicate_equivalent_requests else None
         if reusable is not None:
             source_item, source_facts = reusable
-            item = replace(
-                source_item,
-                request_id=request.id,
-                requirement_ids=request.requirement_ids,
+            item = source_item.model_copy(
+                update={
+                    "request_id": request.id,
+                    "requirement_ids": request.requirement_ids,
+                    # 结果句柄可以共享，但持久化输入必须绑定当前请求身份。
+                    "fingerprint": fingerprint,
+                }
             )
             shared_requirements = sorted(
                 {
@@ -659,7 +665,9 @@ async def execute_composite_answer_plan(
                 key=lambda value: int(value[1:]),
             )
             snapshot.tool_facts = [
-                replace(fact, requirement_ids=shared_requirements) if fact in source_facts else fact
+                fact.model_copy(update={"requirement_ids": shared_requirements})
+                if fact in source_facts
+                else fact
                 for fact in snapshot.tool_facts
             ]
             snapshot.inputs.append(item)

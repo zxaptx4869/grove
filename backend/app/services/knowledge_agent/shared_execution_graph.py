@@ -10,6 +10,7 @@ import asyncio
 import hashlib
 import json
 from collections import defaultdict, deque
+from time import monotonic
 from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator
@@ -182,7 +183,7 @@ def dump_shared_execution_state(
     active = settings or get_settings()
     raw = state.model_dump_json(by_alias=True, exclude_none=True)
     limit = min(
-        active.knowledge_agent_shared_execution_state_bytes_limit,
+        active.knowledge_agent_shared_execution_graph_state_bytes_limit,
         (budget or SharedExecutionBudget()).max_state_bytes,
     )
     if len(raw.encode("utf-8")) > limit:
@@ -222,7 +223,7 @@ def restore_shared_execution_state(
     if raw is None:
         return None
     active = settings or get_settings()
-    if len(raw.encode("utf-8")) > active.knowledge_agent_shared_execution_state_bytes_limit:
+    if len(raw.encode("utf-8")) > active.knowledge_agent_shared_execution_graph_state_bytes_limit:
         raise ValueError("共享执行状态超过 JSON 字节预算")
     try:
         state = SharedExecutionState.model_validate_json(raw)
@@ -443,11 +444,16 @@ def compile_shared_execution_graph(
                 }
                 kind = "entry_list"
             elif output.kind == "count":
-                params = {"source": base.id, "operation": "count"}
+                params = {
+                    "source": base.id,
+                    "entry_set": entry_set,
+                    "operation": "count",
+                }
                 kind = "aggregate_count"
             else:
                 params = {
                     "source": base.id,
+                    "entry_set": entry_set,
                     "operation": "group_count",
                     "group_by": output.group_by,
                 }
@@ -680,7 +686,7 @@ def materialize_composite_execution(
     outcome_by_id = {outcome.node_id: outcome for outcome in state.outcomes}
     planned = {item.id: item for item in [*plan.retrieval_requests, *plan.structured_requests]}
     inputs: list[CompositeExecutionInputSnapshot] = []
-    facts: list[CompositeToolFact] = []
+    facts_by_node: dict[str, CompositeToolFact] = {}
     for request_id, node_ids in graph.original_request_map.items():
         request = planned.get(request_id)
         if request is None:
@@ -697,6 +703,8 @@ def materialize_composite_execution(
         for outcome in outcomes:
             if outcome.status in {"failed", "cancelled"}:
                 status = "error" if outcome.status == "failed" else "cancelled"
+            elif outcome.status == "empty" and status == "completed":
+                status = "empty"
             elif outcome.status in {"partial", "limited"} and status == "completed":
                 status = outcome.status
             if outcome.completeness != "complete":
@@ -711,7 +719,10 @@ def materialize_composite_execution(
             if outcome.result_handle:
                 result_handles.append(outcome.result_handle)
             node = node_by_id[outcome.node_id]
-            if node.kind.startswith("aggregate_") or node.kind == "entry_list":
+            if (
+                (node.kind.startswith("aggregate_") or node.kind == "entry_list")
+                and node.id not in facts_by_node
+            ):
                 slot = (
                     "count"
                     if node.kind == "aggregate_count"
@@ -719,18 +730,24 @@ def materialize_composite_execution(
                     if node.kind == "aggregate_group_count"
                     else "entries"
                 )
-                text = str(payload.get("text") or payload.get("summary") or f"{slot} 结果")
-                facts.append(
-                    CompositeToolFact(
-                        handle=outcome.result_handle
-                        or stable_result_handle(outcome.fingerprint, slot),
-                        request_id=request_id,
-                        requirement_ids=node.consumer_requirement_ids or request.requirement_ids,
-                        kind=slot,
-                        text=text[:2000],
-                        completeness=outcome.completeness,
-                        summary={key: value for key, value in payload.items() if key != "text"},
-                    )
+                if slot == "count":
+                    text = f"共 {int(payload.get('value', 0))} 条"
+                elif slot == "group_count":
+                    group_by = payload.get("group_by", "字段")
+                    bucket_count = len(payload.get("buckets", []))
+                    text = f"按 {group_by} 分组，共 {bucket_count} 组"
+                else:
+                    text = f"返回 {len(payload.get('entry_ids', []))} 条 Entry"
+                fact_request_id = node.consumer_request_ids[0]
+                facts_by_node[node.id] = CompositeToolFact(
+                    handle=outcome.result_handle
+                    or stable_result_handle(outcome.fingerprint, slot),
+                    request_id=fact_request_id,
+                    requirement_ids=node.consumer_requirement_ids,
+                    kind=slot,
+                    text=text[:2000],
+                    completeness=outcome.completeness,
+                    summary={key: value for key, value in payload.items() if key != "text"},
                 )
         if (
             status == "completed"
@@ -753,6 +770,7 @@ def materialize_composite_execution(
             )
         )
     inputs.sort(key=lambda item: (0 if item.kind == "retrieval" else 1, item.request_id))
+    facts = list(facts_by_node.values())
     facts.sort(key=lambda item: (item.request_id, item.kind, item.handle))
     return CompositeAnswerExecutionSnapshot(inputs=inputs, tool_facts=facts)
 
@@ -763,15 +781,42 @@ async def run_graph_scheduler(
     state: SharedExecutionState | None = None,
     execute_node,
     cancel_check=None,
+    checkpoint=None,
 ) -> SharedExecutionState:
     """执行确定性拓扑波次；白名单节点可受限并行，协调器按 node id 接纳结果。"""
     current = state or SharedExecutionState(plan_digest=graph.plan_digest)
     validate_shared_execution_state(graph, current)
     outcomes = {item.node_id: item for item in current.outcomes}
+
+    def remaining_budget() -> dict[str, int]:
+        """仅从已提交节点终态扣减全局预算，绝不按波次重置。"""
+        return {
+            "tool_calls": max(0, graph.frozen_budget.max_tool_calls - sum(
+                item.tool_calls for item in outcomes.values()
+            )),
+            "entries": max(0, graph.frozen_budget.max_entries - sum(
+                item.entry_count for item in outcomes.values()
+            )),
+            "evidence": max(0, graph.frozen_budget.max_evidence - sum(
+                item.evidence_count for item in outcomes.values()
+            )),
+            "buckets": max(0, graph.frozen_budget.max_buckets - sum(
+                item.bucket_count for item in outcomes.values()
+            )),
+        }
+
     for wave in ready_waves(graph, current):
         if cancel_check is not None:
             await cancel_check()
-        quotas = allocate_wave_quota(wave, budget=graph.frozen_budget)
+        remaining = remaining_budget()
+        quotas = allocate_wave_quota(
+            wave,
+            budget=graph.frozen_budget,
+            remaining_tool_calls=remaining["tool_calls"],
+            remaining_entries=remaining["entries"],
+            remaining_evidence=remaining["evidence"],
+            remaining_buckets=remaining["buckets"],
+        )
         parallel = [node for node in wave if node.parallel_eligible]
         serial = [node for node in wave if not node.parallel_eligible]
 
@@ -808,6 +853,8 @@ async def run_graph_scheduler(
             except asyncio.CancelledError:
                 raise
             except Exception as exc:  # noqa: BLE001
+                if exc.__class__.__name__ == "RunCancelled":
+                    raise
                 return node.id, NodeOutcome(
                     node_id=node.id,
                     fingerprint=node.fingerprint,
@@ -834,9 +881,11 @@ async def run_graph_scheduler(
             if cancel_check is not None:
                 await cancel_check()
             outcomes[node_id] = outcome
-        current = SharedExecutionState(
-            plan_digest=graph.plan_digest, outcomes=list(outcomes.values())
-        )
+            current = SharedExecutionState(
+                plan_digest=graph.plan_digest, outcomes=list(outcomes.values())
+            )
+            if checkpoint is not None:
+                await checkpoint(current)
     return current
 
 
@@ -864,40 +913,112 @@ async def execute_graph_node(
     node: GraphNode,
     dependencies: dict[str, NodeOutcome],
     *,
+    quota: dict[str, int] | None = None,
     cancel_check,
-) -> dict[str, Any]:
+) -> NodeOutcome:
     """默认只读节点适配器，范围始终来自 RunToolContext。"""
     from app.services.knowledge_agent.tools import (
         read_entries,
+        read_source_evidence,
         search_confirmed_knowledge,
     )
+
+    started_at = monotonic()
+    allowance = quota or {
+        "tool_calls": 1,
+        "entries": 30,
+        "evidence": 30,
+        "buckets": 24,
+    }
+
+    def outcome(
+        *,
+        status: str,
+        completeness: str,
+        result: dict[str, Any] | None = None,
+        error: str | None = None,
+        tool_calls: int = 0,
+        entry_count: int = 0,
+        evidence_count: int = 0,
+        bucket_count: int = 0,
+    ) -> NodeOutcome:
+        return NodeOutcome(
+            node_id=node.id,
+            fingerprint=node.fingerprint,
+            status=status,
+            completeness=completeness,
+            result=result,
+            result_handle=stable_result_handle(node.fingerprint, node.kind),
+            error=error,
+            duration_ms=int((monotonic() - started_at) * 1000),
+            tool_calls=min(tool_calls, allowance["tool_calls"]),
+            entry_count=min(entry_count, allowance["entries"]),
+            evidence_count=min(evidence_count, allowance["evidence"]),
+            bucket_count=min(bucket_count, allowance["buckets"]),
+            upstream_fingerprints=[item.fingerprint for item in dependencies.values()],
+            reused=len(node.consumer_request_ids) > 1,
+        )
 
     await cancel_check()
     params = node.normalized_params
     if node.kind == "semantic_entry_set":
+        if allowance["tool_calls"] <= 0:
+            return outcome(status="limited", completeness="limited", result={})
         output = await search_confirmed_knowledge(
             db,
             ctx,
             str(params["query"]),
             recall_limit=min(
-                int(params.get("max_entries", 30)),
-                int(node.normalized_params.get("max_entries", 30)),
+                int(params.get("max_entries", 30)), allowance["entries"],
             ),
-            context_limit=int(params.get("max_entries", 30)),
+            context_limit=min(int(params.get("max_entries", 30)), allowance["entries"]),
         )
-        return {"entry_ids": [item.entry_id for item in output.items], "completeness": "limited"}
+        entry_ids = [item.entry_id for item in output.items]
+        return outcome(
+            status="empty" if not entry_ids else "limited",
+            completeness="limited",
+            result={"entry_ids": entry_ids},
+            tool_calls=1,
+            # 候选集不作为内容读取额度扣减，避免同一 Entry 被重复计数。
+        )
     if node.kind == "structured_entry_set":
-        return {"entry_set": params.get("entry_set", {})}
+        return outcome(
+            status="completed",
+            completeness="complete",
+            result={"entry_set": params.get("entry_set", {})},
+        )
     if node.kind in {"entry_content", "entry_list"}:
         source = dependencies.get(str(params.get("source")))
         source_payload = source.result or {} if source else {}
         entry_ids = list(source_payload.get("entry_ids", []))
         if node.kind == "entry_content":
+            if allowance["entries"] <= 0:
+                return outcome(status="limited", completeness="limited", result={})
+            entry_ids = entry_ids[: allowance["entries"]]
             output = await read_entries(db, ctx, entry_ids)
-            return {
-                "entry_ids": [item.entry_id for item in output.items],
-                "evidence_handles": [],
+            read_ids = [item.entry_id for item in output.items]
+            entry_sources = {
+                str(item.entry_id): [
+                    source_id
+                    for source in item.sources
+                    if isinstance(source_id := source.get("source_id"), int)
+                ]
+                for item in output.items
             }
+            status = "empty" if not read_ids else "completed"
+            completeness = "limited" if (
+                len(read_ids) < len(entry_ids)
+                or output.denied_entry_ids
+                or output.unavailable_entry_ids
+            ) else "complete"
+            if completeness == "limited" and status == "completed":
+                status = "limited"
+            return outcome(
+                status=status,
+                completeness=completeness,
+                result={"entry_ids": read_ids, "entry_sources": entry_sources},
+                entry_count=len(read_ids),
+            )
         if "entry_set" in source_payload:
             from app.services.knowledge_agent.read_tools import ReadToolBudget, dispatch_read_tool
             from app.services.knowledge_agent.structured_query import (
@@ -920,7 +1041,7 @@ async def execute_graph_node(
                 tool_version=STRUCTURED_QUERY_TOOL_VERSION,
                 params={
                     "entry_set": entry_set.model_dump(mode="json", by_alias=True),
-                    "limit": int(params.get("limit", 30)),
+                    "limit": min(int(params.get("limit", 30)), allowance["entries"]),
                     "sort": sort.model_dump(mode="json"),
                 },
                 budget=ReadToolBudget(max_calls=1, timeout_seconds=30, max_result_bytes=16000),
@@ -928,19 +1049,89 @@ async def execute_graph_node(
                 registry=STRUCTURED_QUERY_TOOL_REGISTRY,
             )
             items = list(dispatched.payload.get("items", []))
-            return {
+            status = "empty" if not items else dispatched.status
+            return outcome(
+                status=(
+                    "empty"
+                    if status == "empty"
+                    else "limited"
+                    if status == "limited"
+                    else "completed"
+                    if status == "completed"
+                    else "failed"
+                    if status in {"error", "denied"}
+                    else "partial"
+                ),
+                completeness=dispatched.completeness,
+                result={
                 "entry_ids": [
                     item.get("entry_id") for item in items if item.get("entry_id") is not None
                 ],
                 "items": items,
                 "has_more": bool(dispatched.payload.get("has_more")),
-                "completeness": dispatched.completeness,
-            }
-        return {"entry_ids": entry_ids[: int(params.get("limit", len(entry_ids)))]}
+            },
+                tool_calls=1,
+                entry_count=len(items),
+            )
+        limit = min(int(params.get("limit", len(entry_ids))), allowance["entries"])
+        limited_ids = entry_ids[:limit]
+        return outcome(
+            status="empty" if not limited_ids else "completed",
+            completeness="complete",
+            result={"entry_ids": limited_ids},
+            entry_count=len(limited_ids),
+        )
     if node.kind == "entry_evidence":
         source = dependencies.get(str(params.get("source")))
-        entry_ids = list((source.result or {}).get("entry_ids", [])) if source else []
-        return {"entry_ids": entry_ids, "evidence_handles": []}
+        source_payload = source.result or {} if source else {}
+        entry_ids = list(source_payload.get("entry_ids", []))
+        entry_sources = source_payload.get("entry_sources", {})
+        if allowance["evidence"] <= 0:
+            return outcome(
+                status="limited",
+                completeness="limited",
+                result={"entry_ids": entry_ids, "evidence_handles": []},
+            )
+        evidence_handles: list[str] = []
+        remaining_evidence = allowance["evidence"]
+        unavailable = False
+        for entry_id in entry_ids:
+            if remaining_evidence <= 0:
+                break
+            source_ids = entry_sources.get(str(entry_id), [])
+            if not source_ids:
+                unavailable = True
+                continue
+            evidence = await read_source_evidence(
+                db,
+                ctx,
+                entry_id=int(entry_id),
+                source_ids=[int(value) for value in source_ids][:remaining_evidence],
+            )
+            for item in evidence.items:
+                if item.citable and item.evidence_handle:
+                    evidence_handles.append(item.evidence_handle)
+                elif not item.citable:
+                    unavailable = True
+            remaining_evidence = allowance["evidence"] - len(evidence_handles)
+        evidence_handles = list(dict.fromkeys(evidence_handles))
+        completeness = "limited" if unavailable or len(evidence_handles) < sum(
+            len(values) for values in entry_sources.values()
+        ) else "complete"
+        status = (
+            "empty"
+            if not evidence_handles
+            else "limited"
+            if completeness == "limited"
+            else "completed"
+        )
+        return outcome(
+            status=status,
+            completeness=completeness,
+            result={"entry_ids": entry_ids, "evidence_handles": evidence_handles},
+            tool_calls=1 if entry_sources else 0,
+            evidence_count=len(evidence_handles),
+        )
     if node.kind in {"aggregate_count", "aggregate_group_count"}:
         from app.services.knowledge_agent.read_tools import ReadToolBudget, dispatch_read_tool
         from app.services.knowledge_agent.structured_query import NormalizedEntrySetSpec
@@ -949,7 +1140,11 @@ async def execute_graph_node(
             STRUCTURED_QUERY_TOOL_VERSION,
         )
 
-        entry_set = NormalizedEntrySetSpec.model_validate(params["entry_set"])
+        source = dependencies.get(str(params.get("source")))
+        source_payload = source.result or {} if source else {}
+        entry_set = NormalizedEntrySetSpec.model_validate(
+            source_payload.get("entry_set", params["entry_set"])
+        )
         operation = "count" if node.kind == "aggregate_count" else "group_count"
         request = {
             "entry_set": entry_set.model_dump(mode="json", by_alias=True),
@@ -971,11 +1166,23 @@ async def execute_graph_node(
             cancel_check=cancel_check,
             registry=STRUCTURED_QUERY_TOOL_REGISTRY,
         )
-        return {
-            **dispatched.payload,
-            "completeness": dispatched.completeness,
-            "status": dispatched.status,
-        }
+        payload = dict(dispatched.payload)
+        buckets = payload.get("buckets", [])
+        status = {
+            "completed": "completed",
+            "empty": "empty",
+            "limited": "limited",
+            "cancelled": "cancelled",
+            "error": "failed",
+            "denied": "failed",
+        }.get(dispatched.status, "partial")
+        return outcome(
+            status=status,
+            completeness=dispatched.completeness,
+            result=payload,
+            tool_calls=1,
+            bucket_count=len(buckets) if isinstance(buckets, list) else 0,
+        )
     raise ValueError(f"未知共享图节点：{node.kind}")
 
 
@@ -988,15 +1195,11 @@ async def execute_shared_execution_graph_plan(
     cancel_check,
     settings: Settings | None = None,
 ) -> Any:
-    """共享图执行入口。
-
-    图快照先于任何工具调用写入 Run；当前兼容执行器负责生成既有 v1
-    结果，再由协调器把结果绑定到图节点 state。这样旧综合器无需感知内部图，
-    且后续可逐步替换节点适配器而不改变公开协议。
-    """
+    """共享图执行入口：图、节点终态和兼容快照均由协调器持久化。"""
     from app.services.knowledge_agent.composite_answer_execution import (
-        execute_composite_answer_plan,
+        CompositeExecutionArtifacts,
     )
+    from app.services.knowledge_agent.tools import RunToolContext
 
     active = settings or get_settings()
     scope = run_scope_fingerprint(
@@ -1018,59 +1221,93 @@ async def execute_shared_execution_graph_plan(
         await db.commit()
     elif graph.plan_digest != plan_digest(plan):
         raise ValueError("共享执行图 plan digest 不匹配")
+    if graph.run_scope_fingerprint != scope:
+        raise ValueError("共享执行图 Run 范围不匹配")
     state = restore_shared_execution_state(
         getattr(run, "shared_execution_state_json", None),
         settings=active,
         budget=graph.frozen_budget,
     ) or SharedExecutionState(plan_digest=graph.plan_digest)
     await cancel_check()
-    artifacts = await execute_composite_answer_plan(
-        db,
-        run,
-        ctx,
-        plan,
-        cancel_check=cancel_check,
-        deduplicate_equivalent_requests=True,
-    )
-    # 将兼容快照按 request 映射为节点终态；每个节点只写一份 result handle。
-    outcomes: list[NodeOutcome] = []
-    input_by_request = {item.request_id: item for item in artifacts.snapshot.inputs}
-    for node in graph.nodes:
-        request_id = node.consumer_request_ids[0] if node.consumer_request_ids else None
-        item = input_by_request.get(request_id) if request_id else None
-        status = "completed" if item is None else item.status
-        if status in {"denied", "error"}:
-            status = "failed"
-        payload: dict[str, Any] = {}
-        if item is not None:
-            payload = {
-                "entry_ids": item.entry_ids,
-                "evidence_handles": item.evidence_handles,
-                "result_handles": item.result_handles,
-            }
-        outcomes.append(
-            NodeOutcome(
-                node_id=node.id,
-                fingerprint=node.fingerprint,
-                status=status,
-                completeness=item.completeness if item is not None else "complete",
-                result_handle=stable_result_handle(node.fingerprint, node.kind),
-                result=payload,
-                error=item.error if item is not None else None,
-                reused=len(node.consumer_request_ids) > 1,
-            )
+
+    async def checkpoint(next_state: SharedExecutionState) -> None:
+        """仅在协调器接受终态且再次确认未取消后写入检查点。"""
+        await cancel_check()
+        run.shared_execution_state_json = dump_shared_execution_state(
+            next_state,
+            settings=active,
+            budget=graph.frozen_budget,
         )
-    state = SharedExecutionState(
-        plan_digest=graph.plan_digest,
-        outcomes=outcomes,
+        await db.commit()
+
+    def isolated_context() -> RunToolContext:
+        """并行白名单只取得不可共享的工具上下文副本。"""
+        return RunToolContext(
+            run_id=ctx.run_id,
+            workspace_id=ctx.workspace_id,
+            owner_user_id=ctx.owner_user_id,
+            scope_type=ctx.scope_type,
+            project_id=ctx.project_id,
+            project_name=ctx.project_name,
+            discovered_entry_ids=set(ctx.discovered_entry_ids),
+            structured_query_entry_ids=(
+                set(ctx.structured_query_entry_ids)
+                if ctx.structured_query_entry_ids is not None
+                else None
+            ),
+            structured_query_entry_order=(
+                list(ctx.structured_query_entry_order)
+                if ctx.structured_query_entry_order is not None
+                else None
+            ),
+        )
+
+    async def run_node(
+        node: GraphNode,
+        dependencies: dict[str, NodeOutcome],
+        quota: dict[str, int],
+    ) -> NodeOutcome:
+        await cancel_check()
+        # Evidence、Run 和检查点维持在协调器会话；只有白名单结构化只读节点
+        # 使用独立会话和上下文，避免并发共享 ORM session 或发现集合。
+        if node.parallel_eligible:
+            from app.db.session import async_session_factory
+
+            async with async_session_factory() as node_db:
+                result = await execute_graph_node(
+                    node_db,
+                    isolated_context(),
+                    node,
+                    dependencies,
+                    quota=quota,
+                    cancel_check=cancel_check,
+                )
+                await cancel_check()
+                await node_db.commit()
+                return result
+        return await execute_graph_node(
+            db,
+            ctx,
+            node,
+            dependencies,
+            quota=quota,
+            cancel_check=cancel_check,
+        )
+
+    state = await run_graph_scheduler(
+        graph,
+        state=state,
+        execute_node=run_node,
+        cancel_check=cancel_check,
+        checkpoint=checkpoint,
     )
-    run.shared_execution_state_json = dump_shared_execution_state(
-        state,
-        settings=active,
-        budget=graph.frozen_budget,
+    snapshot = materialize_composite_execution(plan, graph, state)
+    run.composite_answer_execution_json = snapshot.model_dump_json(
+        by_alias=True,
+        exclude_none=True,
     )
     await db.commit()
-    return artifacts
+    return CompositeExecutionArtifacts(snapshot=snapshot)
 
 
 __all__ = [

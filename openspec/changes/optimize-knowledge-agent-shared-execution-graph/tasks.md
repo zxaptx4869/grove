@@ -22,17 +22,17 @@
 - [x] 3.3 生成与节点 fingerprint 和输出槽绑定的稳定 result handle；同一共享节点只产生一份工具事实，requirement 关联由合法消费者映射派生。验收：`cd backend && .venv/bin/pytest -q tests/test_knowledge_agent_shared_execution_graph.py -k 'result_handle or tool_fact or consumer'`
 - [x] 3.4 实现 graph state 到现有 `CompositeAnswerExecutionSnapshot` 的确定性物化器，按原始 request 聚合 Entry/Evidence/result handles、状态、完整性和错误；兼容综合器无需识别内部图。验收：`cd backend && .venv/bin/pytest -q tests/test_knowledge_agent_shared_execution_graph.py tests/test_knowledge_agent_composite_answer.py -k 'materialize or compatibility or coverage'`
 - [ ] 3.5 比较同一固化计划的串行与共享图输出，确认 Evidence、精确/limited 语义、tool fact、逐项覆盖、answer basis 和最终状态等价，重复底层调用数减少。验收：`cd backend && .venv/bin/pytest -q tests/test_knowledge_agent_shared_execution_graph_eval.py -k equivalence`
-- [ ] 3.6 完成节点执行与兼容物化的本地提交。验收：`cd backend && .venv/bin/ruff check app tests && git diff --check`
+- [x] 3.6 完成节点执行与兼容物化的本地提交。验收：`cd backend && .venv/bin/ruff check app tests && git diff --check`
 
 ## 4. 确定性调度、安全并行与恢复
 
 - [x] 4.1 实现 Kahn 拓扑 ready 波次、稳定 node id 准入和依赖状态传播；上游失败只阻止后继，其他独立分支继续。验收：`cd backend && .venv/bin/pytest -q tests/test_knowledge_agent_shared_execution_graph.py -k 'topological or ready or upstream_failure'`
 - [x] 4.2 在每个波次启动前按稳定顺序预分配工具、Entry、Evidence、桶和耗时额度；同波次完成先后不得改变谁获得预算。验收：`cd backend && .venv/bin/pytest -q tests/test_knowledge_agent_shared_execution_graph.py -k 'quota or deterministic_budget'`
-- [ ] 4.3 为并行白名单节点使用独立 `AsyncSession` 与不可变 Run 工具上下文，限制并发度；Evidence、Run、审计、检查点和最终物化继续由协调器串行写入。验收：`cd backend && .venv/bin/pytest -q tests/test_knowledge_agent_shared_execution_graph.py -k 'parallel or isolated_session or coordinator'`
-- [ ] 4.4 每个节点终态后保存按 node id 稳定排序的有界检查点；`completed/empty/limited/partial/failed` 恢复均复用，只重放没有已提交结果的节点。验收：`cd backend && .venv/bin/pytest -q tests/test_knowledge_agent_worker.py tests/test_knowledge_agent_shared_execution_graph.py -k 'graph and (checkpoint or recovery or terminal)'`
-- [ ] 4.5 在节点启动、结果接纳、检查点与终态前检查取消；取消停止新节点，独立会话迟到结果不得写入 state、Evidence、成功审计或正常回答。验收：`cd backend && .venv/bin/pytest -q tests/test_knowledge_agent_worker.py tests/test_knowledge_agent_shared_execution_graph.py -k 'graph and cancel'`
-- [ ] 4.6 确保持久化图 Run 在开关关闭或配置变化后仍按冻结图恢复；非法图/state 显式失败，已有节点结果后的运行错误不得整体回退串行重跑。验收：`cd backend && .venv/bin/pytest -q tests/test_knowledge_agent_worker.py tests/test_knowledge_agent_shared_execution_graph.py -k 'graph and (flag_change or corrupt or no_replay)'`
-- [ ] 4.7 完成调度、并行与恢复的本地提交。验收：`cd backend && .venv/bin/ruff check app tests && git diff --check`
+- [x] 4.3 为并行白名单节点使用独立 `AsyncSession` 与不可变 Run 工具上下文，限制并发度；Evidence、Run、审计、检查点和最终物化继续由协调器串行写入。验收：`cd backend && .venv/bin/pytest -q tests/test_knowledge_agent_shared_execution_graph.py -k 'parallel or isolated_session or coordinator'`
+- [x] 4.4 每个节点终态后保存按 node id 稳定排序的有界检查点；`completed/empty/limited/partial/failed` 恢复均复用，只重放没有已提交结果的节点。验收：`cd backend && .venv/bin/pytest -q tests/test_knowledge_agent_worker.py tests/test_knowledge_agent_shared_execution_graph.py -k 'graph and (checkpoint or recovery or terminal)'`
+- [x] 4.5 在节点启动、结果接纳、检查点与终态前检查取消；取消停止新节点，独立会话迟到结果不得写入 state、Evidence、成功审计或正常回答。验收：`cd backend && .venv/bin/pytest -q tests/test_knowledge_agent_worker.py tests/test_knowledge_agent_shared_execution_graph.py -k 'graph and cancel'`
+- [x] 4.6 确保持久化图 Run 在开关关闭或配置变化后仍按冻结图恢复；非法图/state 显式失败，已有节点结果后的运行错误不得整体回退串行重跑。验收：`cd backend && .venv/bin/pytest -q tests/test_knowledge_agent_worker.py tests/test_knowledge_agent_shared_execution_graph.py -k 'graph and (flag_change or corrupt or no_replay)'`
+- [x] 4.7 完成调度、并行与恢复的本地提交。验收：`cd backend && .venv/bin/ruff check app tests && git diff --check`
 
 ## 5. Runner 接入、可观测与安全门禁
 
