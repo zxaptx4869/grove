@@ -15,6 +15,11 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_valida
 
 from app.core.config import Settings, get_settings
 from app.services.knowledge_agent.composite_answer import NormalizedCompositeAnswerPlan
+from app.services.knowledge_agent.composite_answer_types import (
+    CompositeAnswerExecutionSnapshot,
+    CompositeExecutionInputSnapshot,
+    CompositeToolFact,
+)
 
 SHARED_EXECUTION_GRAPH_VERSION = "v1"
 NODE_KINDS = (
@@ -77,6 +82,14 @@ class GraphNode(GraphModel):
     normalized_params: dict[str, Any] = Field(default_factory=dict)
     parallel_eligible: bool = False
 
+    @field_validator("normalized_params")
+    @classmethod
+    def _bounded_params(cls, value: dict[str, Any]) -> dict[str, Any]:
+        raw = json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+        if len(raw.encode("utf-8")) > 12000:
+            raise ValueError("图节点参数超过长度上限")
+        return value
+
     @field_validator("dependencies", "consumer_request_ids", "consumer_requirement_ids")
     @classmethod
     def _bounded_items(cls, values: list[str]) -> list[str]:
@@ -102,6 +115,16 @@ class NodeOutcome(GraphModel):
     bucket_count: int = Field(default=0, ge=0, le=500)
     upstream_fingerprints: list[str] = Field(default_factory=list, max_length=4)
     reused: bool = False
+
+    @field_validator("result")
+    @classmethod
+    def _bounded_result(cls, value: dict[str, Any] | None) -> dict[str, Any] | None:
+        if value is None:
+            return None
+        raw = json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+        if len(raw.encode("utf-8")) > 16000:
+            raise ValueError("节点结果超过长度上限")
+        return value
 
 
 class SharedExecutionGraph(GraphModel):
@@ -244,6 +267,44 @@ def _fingerprint(
         separators=(",", ":"),
     )
     return key, hashlib.sha256(key.encode("utf-8")).hexdigest()
+
+
+def canonical_node_key(
+    *,
+    kind: str,
+    normalized_params: dict[str, Any],
+    dependencies: list[str] | None = None,
+    scope_fingerprint: str,
+    budget: SharedExecutionBudget,
+) -> str:
+    """公开 canonical key 计算入口；不包含 request/requirement 身份。"""
+    key, _ = _fingerprint(
+        kind,
+        normalized_params,
+        dependencies or [],
+        scope_fingerprint,
+        budget,
+    )
+    return key
+
+
+def node_fingerprint(
+    *,
+    kind: str,
+    normalized_params: dict[str, Any],
+    dependencies: list[str] | None = None,
+    scope_fingerprint: str,
+    budget: SharedExecutionBudget,
+) -> str:
+    """公开稳定 fingerprint 计算入口。"""
+    _, fingerprint = _fingerprint(
+        kind,
+        normalized_params,
+        dependencies or [],
+        scope_fingerprint,
+        budget,
+    )
+    return fingerprint
 
 
 def _append_or_merge(
@@ -505,6 +566,262 @@ def persist_shared_execution_graph(
     return graph
 
 
+def ready_waves(
+    graph: SharedExecutionGraph,
+    state: SharedExecutionState | None = None,
+) -> list[list[GraphNode]]:
+    """按 Kahn 算法生成稳定 ready 波次；终态节点不会再次入队。"""
+    outcomes = {item.node_id: item for item in (state.outcomes if state else [])}
+    terminal = set(outcomes)
+    by_id = {node.id: node for node in graph.nodes}
+    remaining = set(by_id) - terminal
+    waves: list[list[GraphNode]] = []
+    while remaining:
+        ready = [
+            by_id[node_id]
+            for node_id in remaining
+            if all(dep in terminal for dep in by_id[node_id].dependencies)
+        ]
+        if not ready:
+            raise ValueError("共享执行图存在未满足依赖或循环")
+        ready.sort(key=lambda node: int(node.id[1:]))
+        waves.append(ready)
+        for node in ready:
+            remaining.remove(node.id)
+            terminal.add(node.id)
+    return waves
+
+
+def allocate_wave_quota(
+    nodes: list[GraphNode],
+    *,
+    budget: SharedExecutionBudget,
+    remaining_tool_calls: int | None = None,
+    remaining_entries: int | None = None,
+    remaining_evidence: int | None = None,
+    remaining_buckets: int | None = None,
+) -> dict[str, dict[str, int]]:
+    """按稳定 node id 预分配额度，避免并发完成先后影响结果。"""
+    quotas = {
+        "tool_calls": max(
+            0, budget.max_tool_calls if remaining_tool_calls is None else remaining_tool_calls
+        ),
+        "entries": max(0, budget.max_entries if remaining_entries is None else remaining_entries),
+        "evidence": max(
+            0, budget.max_evidence if remaining_evidence is None else remaining_evidence
+        ),
+        "buckets": max(0, budget.max_buckets if remaining_buckets is None else remaining_buckets),
+    }
+    allocation: dict[str, dict[str, int]] = {}
+    for node in sorted(nodes, key=lambda item: int(item.id[1:])):
+        wants = {
+            "tool_calls": 1,
+            "entries": budget.max_entries
+            if node.kind
+            in {"semantic_entry_set", "structured_entry_set", "entry_list", "entry_content"}
+            else 0,
+            "evidence": budget.max_evidence if node.kind == "entry_evidence" else 0,
+            "buckets": budget.max_buckets if node.kind == "aggregate_group_count" else 0,
+        }
+        granted = {key: min(value, quotas[key]) for key, value in wants.items()}
+        if node.kind == "entry_evidence" and granted["evidence"] == 0:
+            granted["tool_calls"] = 0
+        allocation[node.id] = granted
+        for key, value in granted.items():
+            quotas[key] -= value
+    return allocation
+
+
+def stable_result_handle(fingerprint: str, output_slot: str = "result") -> str:
+    """绑定节点 fingerprint 与输出槽的稳定句柄。"""
+    if len(fingerprint) != 64:
+        raise ValueError("节点 fingerprint 非法")
+    digest = hashlib.sha256(f"{fingerprint}:{output_slot}".encode()).hexdigest()[:32]
+    return f"res_{digest}"
+
+
+def materialize_composite_execution(
+    plan: NormalizedCompositeAnswerPlan,
+    graph: SharedExecutionGraph,
+    state: SharedExecutionState,
+) -> CompositeAnswerExecutionSnapshot:
+    """把图 state 确定性投影回既有 v1 execution snapshot。"""
+    if graph.plan_digest != state.plan_digest or graph.plan_digest != plan_digest(plan):
+        raise ValueError("共享执行图与计划摘要不匹配")
+    node_by_id = {node.id: node for node in graph.nodes}
+    outcome_by_id = {outcome.node_id: outcome for outcome in state.outcomes}
+    planned = {item.id: item for item in [*plan.retrieval_requests, *plan.structured_requests]}
+    inputs: list[CompositeExecutionInputSnapshot] = []
+    facts: list[CompositeToolFact] = []
+    for request_id, node_ids in graph.original_request_map.items():
+        request = planned.get(request_id)
+        if request is None:
+            raise ValueError("图映射引用未知请求")
+        outcomes = [outcome_by_id[node_id] for node_id in node_ids if node_id in outcome_by_id]
+        if not outcomes:
+            continue
+        status = "completed"
+        completeness = "complete"
+        errors: list[str] = []
+        entry_ids: list[int] = []
+        evidence_handles: list[str] = []
+        result_handles: list[str] = []
+        for outcome in outcomes:
+            if outcome.status in {"failed", "cancelled"}:
+                status = "error" if outcome.status == "failed" else "cancelled"
+            elif outcome.status in {"partial", "limited"} and status == "completed":
+                status = outcome.status
+            if outcome.completeness != "complete":
+                completeness = outcome.completeness
+            if outcome.error:
+                errors.append(outcome.error)
+            payload = outcome.result or {}
+            entry_ids.extend(
+                int(value) for value in payload.get("entry_ids", []) if isinstance(value, int)
+            )
+            evidence_handles.extend(str(value) for value in payload.get("evidence_handles", []))
+            if outcome.result_handle:
+                result_handles.append(outcome.result_handle)
+            node = node_by_id[outcome.node_id]
+            if node.kind.startswith("aggregate_") or node.kind == "entry_list":
+                slot = (
+                    "count"
+                    if node.kind == "aggregate_count"
+                    else "group_count"
+                    if node.kind == "aggregate_group_count"
+                    else "entries"
+                )
+                text = str(payload.get("text") or payload.get("summary") or f"{slot} 结果")
+                facts.append(
+                    CompositeToolFact(
+                        handle=outcome.result_handle
+                        or stable_result_handle(outcome.fingerprint, slot),
+                        request_id=request_id,
+                        requirement_ids=node.consumer_requirement_ids or request.requirement_ids,
+                        kind=slot,
+                        text=text[:2000],
+                        completeness=outcome.completeness,
+                        summary={key: value for key, value in payload.items() if key != "text"},
+                    )
+                )
+        if (
+            status == "completed"
+            and not entry_ids
+            and any(node_by_id[item.node_id].kind == "semantic_entry_set" for item in outcomes)
+        ):
+            status = "empty"
+        inputs.append(
+            CompositeExecutionInputSnapshot(
+                request_id=request_id,
+                kind="retrieval" if request_id.startswith("q") else "structured",
+                requirement_ids=request.requirement_ids,
+                fingerprint=outcomes[-1].fingerprint,
+                status=status,
+                completeness=completeness,
+                entry_ids=list(dict.fromkeys(entry_ids)),
+                evidence_handles=list(dict.fromkeys(evidence_handles)),
+                result_handles=list(dict.fromkeys(result_handles)),
+                error="；".join(dict.fromkeys(errors))[:500] if errors else None,
+            )
+        )
+    inputs.sort(key=lambda item: (0 if item.kind == "retrieval" else 1, item.request_id))
+    facts.sort(key=lambda item: (item.request_id, item.kind, item.handle))
+    return CompositeAnswerExecutionSnapshot(inputs=inputs, tool_facts=facts)
+
+
+async def execute_shared_execution_graph_plan(
+    db: Any,
+    run: Any,
+    ctx: Any,
+    plan: NormalizedCompositeAnswerPlan,
+    *,
+    cancel_check,
+    settings: Settings | None = None,
+) -> Any:
+    """共享图执行入口。
+
+    图快照先于任何工具调用写入 Run；当前兼容执行器负责生成既有 v1
+    结果，再由协调器把结果绑定到图节点 state。这样旧综合器无需感知内部图，
+    且后续可逐步替换节点适配器而不改变公开协议。
+    """
+    from app.services.knowledge_agent.composite_answer_execution import (
+        execute_composite_answer_plan,
+    )
+
+    active = settings or get_settings()
+    scope = run_scope_fingerprint(
+        owner_user_id=run.owner_user_id,
+        workspace_id=run.workspace_id,
+        project_id=run.project_id,
+        scope_type=run.scope_type,
+    )
+    graph = restore_shared_execution_graph(
+        getattr(run, "shared_execution_graph_json", None), settings=active
+    )
+    if graph is None:
+        graph = compile_shared_execution_graph(
+            plan,
+            scope_fingerprint=scope,
+            settings=active,
+        )
+        persist_shared_execution_graph(run, graph, settings=active)
+        await db.commit()
+    elif graph.plan_digest != plan_digest(plan):
+        raise ValueError("共享执行图 plan digest 不匹配")
+    state = restore_shared_execution_state(
+        getattr(run, "shared_execution_state_json", None),
+        settings=active,
+        budget=graph.frozen_budget,
+    ) or SharedExecutionState(plan_digest=graph.plan_digest)
+    await cancel_check()
+    artifacts = await execute_composite_answer_plan(
+        db,
+        run,
+        ctx,
+        plan,
+        cancel_check=cancel_check,
+    )
+    # 将兼容快照按 request 映射为节点终态；每个节点只写一份 result handle。
+    outcomes: list[NodeOutcome] = []
+    input_by_request = {item.request_id: item for item in artifacts.snapshot.inputs}
+    for node in graph.nodes:
+        request_id = node.consumer_request_ids[0] if node.consumer_request_ids else None
+        item = input_by_request.get(request_id) if request_id else None
+        status = "completed" if item is None else item.status
+        if status in {"denied", "error"}:
+            status = "failed"
+        payload: dict[str, Any] = {}
+        if item is not None:
+            payload = {
+                "entry_ids": item.entry_ids,
+                "evidence_handles": item.evidence_handles,
+                "result_handles": item.result_handles,
+            }
+        outcomes.append(
+            NodeOutcome(
+                node_id=node.id,
+                fingerprint=node.fingerprint,
+                status=status,
+                completeness=item.completeness if item is not None else "complete",
+                result_handle=stable_result_handle(node.fingerprint, node.kind),
+                result=payload,
+                error=item.error if item is not None else None,
+                reused=len(node.consumer_request_ids) > 1,
+            )
+        )
+    state = SharedExecutionState(
+        plan_digest=graph.plan_digest,
+        outcomes=outcomes,
+    )
+    run.shared_execution_state_json = dump_shared_execution_state(
+        state,
+        settings=active,
+        budget=graph.frozen_budget,
+    )
+    await db.commit()
+    return artifacts
+
+
 __all__ = [
     "GraphNode",
     "NodeOutcome",
@@ -520,6 +837,13 @@ __all__ = [
     "restore_shared_execution_graph",
     "restore_shared_execution_state",
     "persist_shared_execution_graph",
+    "canonical_node_key",
+    "node_fingerprint",
+    "ready_waves",
+    "allocate_wave_quota",
+    "stable_result_handle",
+    "materialize_composite_execution",
+    "execute_shared_execution_graph_plan",
     "plan_digest",
     "run_scope_fingerprint",
     "NODE_KINDS",

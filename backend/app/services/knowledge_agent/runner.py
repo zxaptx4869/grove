@@ -236,9 +236,7 @@ def _cited_items_from_answer(
             {
                 "entry_id": entry_id,
                 "entry_title": citation.entry_title,
-                "project_name": (
-                    info.project_name if info is not None else citation.project_name
-                ),
+                "project_name": (info.project_name if info is not None else citation.project_name),
                 "node_path": info.node_path if info is not None else citation.node_path,
                 "source_run_id": source_run_id,
             }
@@ -273,9 +271,7 @@ async def _finalize_validated_answer(
         allow_unreferenced=allow_model_knowledge,
     )
     strict_missing = (
-        not allow_model_knowledge
-        and not draft.insufficient
-        and ref_stats.valid_count == 0
+        not allow_model_knowledge and not draft.insufficient and ref_stats.valid_count == 0
     )
     if ref_stats.discarded_count > 0:
         await record_reference_validation(
@@ -305,8 +301,7 @@ async def _finalize_validated_answer(
         answer = answer.model_copy(
             update={
                 "status": "partial",
-                "gaps": answer.gaps
-                + ["未在当前知识库中找到可直接支撑的个人/项目依据"],
+                "gaps": answer.gaps + ["未在当前知识库中找到可直接支撑的个人/项目依据"],
             }
         )
     if answer_meta.is_fallback:
@@ -319,12 +314,7 @@ async def _finalize_validated_answer(
         # 开放分支没有工具结果可展示且回答模型不可用：Run 进入失败终态，
         # 不得用静态模板伪装成正常 AI 回答。
         run_status = RUN_FAILED
-    elif (
-        answer_meta.is_fallback
-        or strict_missing
-        or ref_stats.discarded_count
-        or open_grove_gap
-    ):
+    elif answer_meta.is_fallback or strict_missing or ref_stats.discarded_count or open_grove_gap:
         run_status = RUN_PARTIAL
     else:
         run_status = RUN_COMPLETED
@@ -332,9 +322,7 @@ async def _finalize_validated_answer(
     answer_basis = build_answer_basis(
         answer=answer,
         user_statement_ids=user_statement_ids or [],
-        model_knowledge_used=(
-            allow_model_knowledge and not answer_meta.is_fallback
-        ),
+        model_knowledge_used=(allow_model_knowledge and not answer_meta.is_fallback),
         external_material_required=external_material_required,
     )
 
@@ -485,9 +473,7 @@ async def execute_run(db: AsyncSession, run: KnowledgeAgentRun) -> None:
     await update_run_step(run.id, STEP_CONTEXT_DECISION)
     input_version: KnowledgeContextVersion | None = None
     if run.input_context_version_id is not None:
-        input_version = await db.get(
-            KnowledgeContextVersion, run.input_context_version_id
-        )
+        input_version = await db.get(KnowledgeContextVersion, run.input_context_version_id)
     active_topic_label = input_version.topic_label if input_version is not None else None
     working_set = await load_validated_working_set(
         db,
@@ -570,9 +556,7 @@ async def execute_run(db: AsyncSession, run: KnowledgeAgentRun) -> None:
                 execute_structured_query_entry_search,
             )
 
-            completed = await execute_structured_query_entry_search(
-                db, run, decision, ctx
-            )
+            completed = await execute_structured_query_entry_search(db, run, decision, ctx)
             if completed:
                 return
         await execute_structured_entry_search(db, run, decision, ctx)
@@ -631,13 +615,22 @@ async def execute_run(db: AsyncSession, run: KnowledgeAgentRun) -> None:
                 cancel_check=lambda: _check_cancelled(run.id),
             )
             if composite_plan is not None:
-                from app.services.knowledge_agent.composite_answer_execution import (
-                    execute_composite_answer_plan,
-                )
+                if getattr(settings, "knowledge_agent_shared_execution_graph_enabled", False):
+                    from app.services.knowledge_agent.shared_execution_graph import (
+                        execute_shared_execution_graph_plan,
+                    )
+
+                    execute_plan = execute_shared_execution_graph_plan
+                else:
+                    from app.services.knowledge_agent.composite_answer_execution import (
+                        execute_composite_answer_plan,
+                    )
+
+                    execute_plan = execute_composite_answer_plan
 
                 await _check_cancelled(run.id)
                 await update_run_step(run.id, STEP_COMPOSITE_ANSWER_EXECUTE)
-                artifacts = await execute_composite_answer_plan(
+                artifacts = await execute_plan(
                     db,
                     run,
                     ctx,
@@ -662,9 +655,7 @@ async def execute_run(db: AsyncSession, run: KnowledgeAgentRun) -> None:
                     cancel_check=lambda: _check_cancelled(run.id),
                 )
                 await _check_cancelled(run.id)
-                run.composite_answer_coverage_json = (
-                    composite_result.coverage.model_dump_json()
-                )
+                run.composite_answer_coverage_json = composite_result.coverage.model_dump_json()
                 await update_run_step(run.id, STEP_FINALIZE)
                 cited_items = _cited_items_from_answer(
                     composite_result.answer,
@@ -709,9 +700,7 @@ async def execute_run(db: AsyncSession, run: KnowledgeAgentRun) -> None:
             exclude_run_id=run.id,
             input_context_version_id=run.input_context_version_id,
             limit=getattr(settings, "knowledge_agent_statement_limit", 6),
-            message_chars=getattr(
-                settings, "knowledge_agent_statement_message_chars", 800
-            ),
+            message_chars=getattr(settings, "knowledge_agent_statement_message_chars", 800),
         )
     if run.planned_basis_strategy is None:
         plan = await resolve_basis_plan(
@@ -724,9 +713,7 @@ async def execute_run(db: AsyncSession, run: KnowledgeAgentRun) -> None:
             context_decision=decision.decision,
             current_message=query,
             allowed_statements=allowed_statements,
-            feature_enabled=getattr(
-                settings, "knowledge_agent_open_discussion_enabled", False
-            ),
+            feature_enabled=getattr(settings, "knowledge_agent_open_discussion_enabled", False),
         )
         run.planned_basis_strategy = plan.strategy
         run.planned_basis_json = dump_basis_plan(plan)
@@ -770,13 +757,17 @@ async def execute_run(db: AsyncSession, run: KnowledgeAgentRun) -> None:
         for seed in working_set.items:
             ctx.discovered_entry_ids.add(seed.entry_id)
         rows = (
-            await db.execute(
-                select(Entry)
-                .join(Project, Entry.project_id == Project.id)
-                .options(selectinload(Entry.project))
-                .where(Entry.id.in_(seed_ids))
+            (
+                await db.execute(
+                    select(Entry)
+                    .join(Project, Entry.project_id == Project.id)
+                    .options(selectinload(Entry.project))
+                    .where(Entry.id.in_(seed_ids))
+                )
             )
-        ).scalars().all()
+            .scalars()
+            .all()
+        )
         seed_entries = list(rows)
 
     # 回答模式：显式覆盖或 auto 路由；investigate 进入有界调查分支
@@ -1038,10 +1029,7 @@ async def execute_run(db: AsyncSession, run: KnowledgeAgentRun) -> None:
             input_version=input_version,
             working_set=working_set,
             settings=settings,
-            text=(
-                "检索到相关正式知识，但其来源原文无法读取或核验，"
-                "无法给出带引用的确定结论。"
-            ),
+            text=("检索到相关正式知识，但其来源原文无法读取或核验，无法给出带引用的确定结论。"),
             note="没有可核验的 Source 证据",
             run_status=RUN_PARTIAL,
             external_material_required=plan.requires_external_material,
@@ -1112,9 +1100,7 @@ async def execute_run(db: AsyncSession, run: KnowledgeAgentRun) -> None:
         answer_meta=answer_meta,
         allow_model_knowledge=allow_model_knowledge,
         entries_by_id=entries_by_id,
-        user_statement_ids=[
-            item["message_id"] for item in statement_context
-        ],
+        user_statement_ids=[item["message_id"] for item in statement_context],
         external_material_required=plan.requires_external_material,
         grove_expected=plan.needs_grove,
     )

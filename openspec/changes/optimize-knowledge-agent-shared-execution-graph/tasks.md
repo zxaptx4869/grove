@@ -8,12 +8,12 @@
 
 ## 2. 服务端图编译、精确去重与校验
 
-- [ ] 2.1 实现从已规范化 `CompositeAnswerPlan v1` 到领域节点的纯函数编译：retrieval 形成 semantic set → content → Evidence，structured request 形成 entry-set 与 count/group/list 输出；保存 original request/requirement 消费者映射。验收：`cd backend && .venv/bin/pytest -q tests/test_knowledge_agent_shared_execution_graph.py -k 'compile or retrieval or structured or consumer'`
-- [ ] 2.2 实现绑定节点/工具版本、规范化参数、上游、Run 范围指纹、完整性合同和冻结预算的 canonical key/fingerprint；requirement/request id 不进入等价业务参数。验收：`cd backend && .venv/bin/pytest -q tests/test_knowledge_agent_shared_execution_graph.py -k 'canonical or fingerprint'`
-- [ ] 2.3 合并完全等价的数据集和输出节点，并保留全部合法消费者；相似文本、不同过滤/排序/预算/范围和不能证明合同一致的跨路径语义集合保持独立。验收：`cd backend && .venv/bin/pytest -q tests/test_knowledge_agent_shared_execution_graph.py -k 'deduplicate or equivalent or distinct'`
-- [ ] 2.4 实现图硬校验：唯一性、闭合节点参数、依赖存在与方向、无自依赖/无环、消费者合法、节点数/深度/入度/工具总调用/对象/Evidence/桶/字节预算；拒绝任何模型或客户端图控制字段。验收：`cd backend && .venv/bin/pytest -q tests/test_knowledge_agent_shared_execution_graph.py -k 'validation or cycle or dependency or budget or unauthorized'`
-- [ ] 2.5 在任何节点前持久化首次合法图与冻结预算；图编译/校验/首次持久化失败记录独立 server fallback，且仅在没有节点结果时允许进入现有串行执行器。验收：`cd backend && .venv/bin/pytest -q tests/test_knowledge_agent_runner.py tests/test_knowledge_agent_shared_execution_graph.py -k 'graph and (persist or fallback or before_execution)'`
-- [ ] 2.6 完成图编译与校验的本地提交。验收：`cd backend && .venv/bin/ruff check app tests && git diff --check`
+- [x] 2.1 实现从已规范化 `CompositeAnswerPlan v1` 到领域节点的纯函数编译：retrieval 形成 semantic set → content → Evidence，structured request 形成 entry-set 与 count/group/list 输出；保存 original request/requirement 消费者映射。验收：`cd backend && .venv/bin/pytest -q tests/test_knowledge_agent_shared_execution_graph.py -k 'compile or retrieval or structured or consumer'`
+- [x] 2.2 实现绑定节点/工具版本、规范化参数、上游、Run 范围指纹、完整性合同和冻结预算的 canonical key/fingerprint；requirement/request id 不进入等价业务参数。验收：`cd backend && .venv/bin/pytest -q tests/test_knowledge_agent_shared_execution_graph.py -k 'canonical or fingerprint'`
+- [x] 2.3 合并完全等价的数据集和输出节点，并保留全部合法消费者；相似文本、不同过滤/排序/预算/范围和不能证明合同一致的跨路径语义集合保持独立。验收：`cd backend && .venv/bin/pytest -q tests/test_knowledge_agent_shared_execution_graph.py -k 'deduplicate or equivalent or distinct'`
+- [x] 2.4 实现图硬校验：唯一性、闭合节点参数、依赖存在与方向、无自依赖/无环、消费者合法、节点数/深度/入度/工具总调用/对象/Evidence/桶/字节预算；拒绝任何模型或客户端图控制字段。验收：`cd backend && .venv/bin/pytest -q tests/test_knowledge_agent_shared_execution_graph.py -k 'validation or cycle or dependency or budget or unauthorized'`
+- [x] 2.5 在任何节点前持久化首次合法图与冻结预算；图编译/校验/首次持久化失败记录独立 server fallback，且仅在没有节点结果时允许进入现有串行执行器。验收：`cd backend && .venv/bin/pytest -q tests/test_knowledge_agent_runner.py tests/test_knowledge_agent_shared_execution_graph.py -k 'graph and (persist or fallback or before_execution)'`
+- [x] 2.6 完成图编译与校验的本地提交。验收：`cd backend && .venv/bin/ruff check app tests && git diff --check`
 
 ## 3. 节点执行、兼容物化与完整性
 
