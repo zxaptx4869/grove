@@ -2,7 +2,6 @@
 
 ## Purpose
 为 quick 综合回答提供一次受控的复合规划、确定性只读执行、逐项覆盖校验与可恢复快照，同时保持旧协议、范围隔离和人在环上的产品边界。
-
 ## Requirements
 ### Requirement: 复合计划从原始请求形成有界回答义务
 系统 MUST 在复合回答能力开启且 `actual_result_mode=answer`、`actual_answer_mode=quick` 时，基于用户原始消息、独立检索问题、Run 固化范围和允许的当前话题用户消息生成版本化回答义务列表；每项义务 MUST 有稳定标识、自然顺序、受限类型与逐项依据策略。系统 MUST NOT 把整条消息压缩成唯一意图或唯一依据，`standalone_query` MUST NOT 替代原始消息中的问题、顺序或限制。
@@ -43,23 +42,31 @@
 - **THEN** 服务端将整份候选判为非法、记录原因并进入显式兼容降级，不静默删掉核心请求后继续
 
 ### Requirement: quick 复合回答使用固定的一次受控执行图
-系统 MUST 在规范化计划固化后，按固定顺序执行有界 Grove 检索与 Evidence 读取、结构化请求、服务端工具事实生成和一次最终综合；每个输入请求 MUST 记录关联回答义务、真实状态、完整性、耗时与有界结果。第一阶段 MUST NOT 允许模型在观察结果后新增请求、改变计划、调用未注册工具或形成自主循环。
+系统 MUST 在规范化计划固化后执行有界 Grove 检索与 Evidence 读取、结构化请求、服务端工具事实生成和一次最终综合；共享执行图能力关闭时按既有 retrieval → structured 固定顺序逐份执行，能力开启时由服务端把同一计划编译为受限共享只读图并按合法依赖执行。每个原始输入请求和实际图节点 MUST 保留关联回答义务、真实状态、完整性、耗时与有界结果。系统 MUST NOT 允许模型在观察结果后新增请求、改变首次计划、控制图或形成自主循环。
 
 #### Scenario: 通用解释与 Grove 检索组合执行
 - **WHEN** 计划包含一个 `model_allowed` 概念义务和一个关联 Grove 检索的 `grove_required` 义务
-- **THEN** 系统执行一次计划内 Grove 读取，并让最终综合在允许边界内同时使用模型一般解释和当前 Run 有效 Evidence
+- **THEN** 系统执行计划内 Grove 读取，并让最终综合在允许边界内同时使用模型一般解释和当前 Run 有效 Evidence；共享图只优化等价输入，不改变逐项依据策略
 
 #### Scenario: 综合回答调用结构化统计
 - **WHEN** answer 计划包含经校验的纯结构化 count 和 group_count 请求
 - **THEN** 系统通过受控 dispatcher 直接查询 Run 范围内共享集合并把结果作为回答输入，不改为 entries 结果快照或从截断 Entry 列表反推
 
 #### Scenario: 多个请求按固定阶段顺序执行
-- **WHEN** 计划包含多个检索请求和结构化请求
-- **THEN** 系统按规范化计划稳定顺序串行执行并遵守总预算，本 change 不进行跨请求 DAG 调度、语义合并或安全并行
+- **WHEN** 计划包含多个检索请求和结构化请求且共享执行图能力关闭
+- **THEN** 系统按规范化计划稳定顺序串行执行并遵守总预算，不进行跨请求 DAG 调度、语义合并或安全并行
+
+#### Scenario: 多个请求共享数据集并按依赖执行
+- **WHEN** 计划包含多个检索或结构化请求且服务端能证明其中数据集或输出完全等价
+- **THEN** 开启共享图时系统合并等价节点、按确定性拓扑执行并复用结果；无法证明等价或开关关闭时继续按原计划稳定顺序执行
 
 #### Scenario: 已固化计划中的一个工具失败
-- **WHEN** 部分输入请求失败而其他请求已有合法结果
-- **THEN** 系统保留已提交结果、把受影响义务标记为 partial/failed 并继续一次最终综合，不回退重跑整条旧 quick 或伪装成全部成功
+- **WHEN** 部分输入或图节点失败而其他分支已有合法结果
+- **THEN** 系统保留已提交结果、把受影响义务标记为 partial/failed 并继续一次最终综合；已有节点结果后不得回退重跑整条旧 quick 或伪装成全部成功
+
+#### Scenario: 最终回答协议保持一致
+- **WHEN** 同一规范化计划分别由现有串行执行器和共享图执行且底层数据没有变化
+- **THEN** 两条路径遵守相同 Evidence、工具事实、完整性、逐项覆盖与 answer 协议，客户端无需识别内部图即可展示结果
 
 ### Requirement: 结构化工具数值形成服务端事实而非模型数字
 系统 MUST 从结构化工具的实际结果生成绑定 requirement id 的不可改写工具事实；事实文本、数值、桶、对象摘要、完整性和边界 MUST 由服务端派生。只有 B1 规则确认 complete 的纯结构化集合可以使用精确全集措辞，semantic query、top-k、预算截断、超时或部分失败 MUST 使用 limited/unknown 边界，模型 MUST NOT 把它们升级为精确结果。
@@ -96,23 +103,31 @@
 - **THEN** 系统最多保留允许的一般框架并将外部核验列为 partial/insufficient 缺口，不声称已联网或已核验
 
 ### Requirement: 复合回答计划、执行和覆盖可恢复且可观测
-系统 MUST 在工具执行前持久化规范化计划，在每个输入请求完成后保存有界执行检查点，并在终态原子提交 answer、实际依据、逐项覆盖、Run 状态与活动槽释放；同一 `client_message_id`、Worker 恢复和历史读取 MUST 复用首次计划与已提交结果。规划、检索、Evidence、结构化工具和最终综合 MUST 按实际发生情况记录 purpose、provider、model、fallback、error、duration、usage、工具状态和完整性。
+系统 MUST 在工具执行前持久化规范化计划；启用共享图时还 MUST 在节点执行前持久化与计划绑定的规范化图和冻结预算，并在每个节点终态后保存有界检查点，未启用时继续在每个输入请求完成后保存既有执行检查点。终态 MUST 原子提交 answer、实际依据、逐项覆盖、Run 状态与活动槽释放；同一 `client_message_id`、Worker 恢复和历史读取 MUST 复用首次计划及所有已提交请求/节点结果。规划、图编译、检索、Evidence、结构化工具、调度和最终综合 MUST 按实际发生情况记录 purpose、provider、model、fallback、error、duration、usage、复用状态、工具状态和完整性。
 
 #### Scenario: Worker 在一个输入请求后退出
-- **WHEN** Run 已固化计划并提交第一份检索结果后租约超时
+- **WHEN** 共享执行图能力关闭，Run 已固化计划并提交第一份检索结果后租约超时
 - **THEN** 恢复复用同一计划和已完成请求，只重放未完成的只读请求，不再次调用复合规划模型
+
+#### Scenario: Worker 在一个共享节点后退出
+- **WHEN** Run 已固化计划与共享图并提交第一项节点结果后租约超时
+- **THEN** 恢复复用同一计划、图、冻结预算与所有终态节点，只重放未提交节点，不再次调用复合规划模型或已完成工具
+
+#### Scenario: 图编译失败后旧执行成功
+- **WHEN** 图尚未执行即编译、校验或首次持久化失败，而既有复合串行执行路径成功
+- **THEN** Run 可以返回旧协议回答，但 fallback 摘要明确记录共享图失败，不伪装成共享执行正常完成
 
 #### Scenario: 规划失败后旧 quick 成功
 - **WHEN** 复合规划模型未配置、超时、失败或返回非法结构，而旧 basis/quick 兼容路径成功
 - **THEN** Run 可以返回旧协议回答，但 fallback 摘要明确记录 composite planning 失败，不伪装成复合回答正常完成
 
 #### Scenario: 处理期间取消
-- **WHEN** 用户在复合规划、任一工具或最终综合期间请求取消
-- **THEN** Worker 在下一安全边界停止并丢弃未提交的迟到结果，Run 进入 cancelled，不提交正常回答或推进事实工作集
+- **WHEN** 用户在复合规划、图节点、串行工具或最终综合期间请求取消
+- **THEN** Worker 在下一安全边界停止、停止启动新节点并丢弃未提交的迟到结果，Run 进入 cancelled，不提交正常回答或推进事实工作集
 
 #### Scenario: 历史恢复读取同一覆盖快照
 - **WHEN** 用户重新打开已完成复合回答的 Conversation
-- **THEN** API 返回生成时的计划摘要、逐项覆盖、answer、points、Citation 和实际依据，不重新规划、查询或按当前范围改写历史
+- **THEN** API 返回生成时的计划摘要、逐项覆盖、answer、points、Citation 和实际依据，不返回内部图，不重新规划、查询或按当前范围改写历史
 
 ### Requirement: 复合回答保持协议兼容且没有写入副作用
 复合回答 MUST 继续使用现有 `actual_result_mode=answer`、`answer`、`points`、`citations`、`coverage`、`gaps` 与 basis 协议，并只追加旧客户端可忽略的可选字段；旧 Run 缺少复合字段时 MUST 按原记录读取且不得反向猜测。规划、查询、统计、综合、恢复和取消 MUST NOT 创建或修改 Entry、Source、Candidate、Draft、目录或事实工作集。
