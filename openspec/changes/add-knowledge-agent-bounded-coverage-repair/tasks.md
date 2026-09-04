@@ -17,12 +17,12 @@
 
 ## 3. 串行/共享图补查、去重与恢复
 
-- [ ] 3.1 实现补查子计划转换和 `RepairRunStorageAdapter`，将执行、graph/state 读写限定到补查字段而不改写首次 plan/execution/graph/state。验收：`cd backend && .venv/bin/pytest -q tests/test_knowledge_agent_coverage_repair.py -k 'adapter or immutable_baseline'`
-- [ ] 3.2 接入串行补查：只执行新请求，每个请求终态持久化，恢复只重放未提交请求，Entry/Evidence/耗时/字节预算使用冻结值。验收：`cd backend && .venv/bin/pytest -q tests/test_knowledge_agent_coverage_repair.py -k 'serial and (execute or recovery or budget)'`
-- [ ] 3.3 接入共享补查图：最多八个新节点，使用独立图/state 和冻结预算，继承稳定拓扑、并行会话隔离、协调器顺序审计与迟到结果拒绝。验收：`cd backend && .venv/bin/pytest -q tests/test_knowledge_agent_coverage_repair.py tests/test_knowledge_agent_shared_execution_graph.py -k 'repair_graph'`
-- [ ] 3.4 固化补查 execution mode；开关/配置变化后仍恢复原串行或图路径，快照非法或指纹不匹配时显式失败，不重规划、改道或重放首次执行。验收：`cd backend && .venv/bin/pytest -q tests/test_knowledge_agent_coverage_repair.py tests/test_knowledge_agent_worker.py -k 'flag_change or frozen or corrupt or no_replay'`
+- [x] 3.1 实现补查子计划转换和 `RepairRunStorageAdapter`，将执行、graph/state 读写限定到补查字段而不改写首次 plan/execution/graph/state。验收：`cd backend && .venv/bin/pytest -q tests/test_knowledge_agent_coverage_repair.py -k 'adapter or immutable_baseline'`
+- [x] 3.2 接入串行补查：只执行新请求，每个请求终态持久化，恢复只重放未提交请求，Entry/Evidence/耗时/字节预算使用冻结值。验收：`cd backend && .venv/bin/pytest -q tests/test_knowledge_agent_coverage_repair.py -k 'serial and (execute or recovery or budget)'`
+- [x] 3.3 接入共享补查图：最多八个新节点，使用独立图/state 和冻结预算，继承稳定拓扑、并行会话隔离、协调器顺序审计与迟到结果拒绝。验收：`cd backend && .venv/bin/pytest -q tests/test_knowledge_agent_coverage_repair.py tests/test_knowledge_agent_shared_execution_graph.py -k 'repair_graph'`
+- [x] 3.4 固化补查 execution mode；开关/配置变化后仍恢复原串行或图路径，快照非法或指纹不匹配时显式失败，不重规划、改道或重放首次执行。验收：`cd backend && .venv/bin/pytest -q tests/test_knowledge_agent_coverage_repair.py tests/test_knowledge_agent_worker.py -k 'flag_change or frozen or corrupt or no_replay'`
 - [ ] 3.5 在新请求命中同 Run 已读来源时复用 Evidence 行/句柄，并以实际工具计数断言首次完成节点、重复请求和 Evidence 均未重放。验收：`cd backend && .venv/bin/pytest -q tests/test_knowledge_agent_coverage_repair_eval.py -k 'reuse or no_duplicate_call'`
-- [ ] 3.6 实现首次与补查 execution 稳定合并，拒绝 request/handle 冲突，保留首次输入序列化值并只追加新合法句柄。验收：`cd backend && .venv/bin/pytest -q tests/test_knowledge_agent_coverage_repair.py -k merge_execution`
+- [x] 3.6 实现首次与补查 execution 稳定合并，拒绝 request/handle 冲突，保留首次输入序列化值并只追加新合法句柄。验收：`cd backend && .venv/bin/pytest -q tests/test_knowledge_agent_coverage_repair.py -k merge_execution`
 - [ ] 3.7 完成补查执行与恢复的本地提交。验收：`cd backend && .venv/bin/ruff check app tests && cd .. && git diff --check`
 
 ## 4. Runner 编排、再综合与诚实失败

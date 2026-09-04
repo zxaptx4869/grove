@@ -62,6 +62,14 @@ class CompositeExecutionArtifacts:
     snapshot: CompositeAnswerExecutionSnapshot
 
 
+class _CompositeInputExecutionError(RuntimeError):
+    """保留失败前已实际发起的工具调用数，供总预算恢复。"""
+
+    def __init__(self, message: str, *, tool_calls: int) -> None:
+        super().__init__(message)
+        self.tool_calls = tool_calls
+
+
 def composite_request_fingerprint(
     run_id: int,
     plan: NormalizedCompositeAnswerPlan,
@@ -244,6 +252,7 @@ async def _execute_retrieval(
     *,
     remaining_entries: int,
     remaining_evidence: int,
+    remaining_tool_calls: int,
     cancel_check,
     settings: Settings,
 ) -> CompositeExecutionInputSnapshot:
@@ -260,7 +269,7 @@ async def _execute_retrieval(
         kind="retrieval",
         params=fingerprint_params,
     )
-    if remaining_entries <= 0 or remaining_evidence <= 0:
+    if remaining_entries <= 0 or remaining_evidence <= 0 or remaining_tool_calls < 2:
         return CompositeExecutionInputSnapshot(
             request_id=request.id,
             kind="retrieval",
@@ -268,7 +277,7 @@ async def _execute_retrieval(
             fingerprint=fingerprint,
             status="limited",
             completeness=RESULT_COMPLETENESS_LIMITED,
-            error="复合回答对象或 Evidence 总预算已耗尽",
+            error="复合回答工具、对象或 Evidence 总预算已耗尽",
         )
 
     await cancel_check()
@@ -292,7 +301,7 @@ async def _execute_retrieval(
             error=f"检索工具执行失败：{exc}",
             duration_ms=int((perf_counter() - started) * 1000),
         )
-        raise
+        raise _CompositeInputExecutionError(str(exc), tool_calls=1) from exc
     if search.embedding_meta:
         await record_model_invocation(
             db,
@@ -324,6 +333,7 @@ async def _execute_retrieval(
             fingerprint=fingerprint,
             status="empty",
             completeness=RESULT_COMPLETENESS_LIMITED,
+            tool_calls=1,
         )
 
     await cancel_check()
@@ -341,7 +351,7 @@ async def _execute_retrieval(
             error=f"Entry 读取工具执行失败：{exc}",
             duration_ms=int((perf_counter() - started) * 1000),
         )
-        raise
+        raise _CompositeInputExecutionError(str(exc), tool_calls=2) from exc
     await record_tool_result(
         db,
         run_id=run.id,
@@ -357,9 +367,14 @@ async def _execute_retrieval(
 
     evidence_handles: list[str] = []
     unavailable = len(entries.denied_entry_ids) + len(entries.unavailable_entry_ids)
+    evidence_call_limit = max(0, remaining_tool_calls - 2)
+    evidence_calls = 0
     for item in entries.items:
         await cancel_check()
-        if len(evidence_handles) >= remaining_evidence:
+        if (
+            len(evidence_handles) >= remaining_evidence
+            or evidence_calls >= evidence_call_limit
+        ):
             break
         source_ids = [source["source_id"] for source in item.sources]
         source_ids = source_ids[: remaining_evidence - len(evidence_handles)]
@@ -383,7 +398,10 @@ async def _execute_retrieval(
                 error=f"Evidence 读取工具执行失败：{exc}",
                 duration_ms=int((perf_counter() - started) * 1000),
             )
-            raise
+            raise _CompositeInputExecutionError(
+                str(exc), tool_calls=3 + evidence_calls
+            ) from exc
+        evidence_calls += 1
         citable = [row for row in evidence.items if row.citable and row.evidence_handle]
         unavailable += len(evidence.items) - len(citable)
         evidence_handles.extend(str(row.evidence_handle) for row in citable)
@@ -405,7 +423,11 @@ async def _execute_retrieval(
             duration_ms=int((perf_counter() - started) * 1000),
         )
 
-    truncated = len(entries.items) < len(entry_ids) or len(evidence_handles) >= remaining_evidence
+    truncated = (
+        len(entries.items) < len(entry_ids)
+        or len(evidence_handles) >= remaining_evidence
+        or evidence_calls >= evidence_call_limit
+    )
     status = "partial" if unavailable else ("limited" if truncated else "completed")
     completeness = RESULT_COMPLETENESS_UNKNOWN if unavailable else RESULT_COMPLETENESS_LIMITED
     return CompositeExecutionInputSnapshot(
@@ -417,6 +439,7 @@ async def _execute_retrieval(
         completeness=completeness,
         entry_ids=[item.entry_id for item in entries.items],
         evidence_handles=list(dict.fromkeys(evidence_handles)),
+        tool_calls=2 + evidence_calls,
         error="部分对象或来源不可用" if unavailable else None,
     )
 
@@ -429,6 +452,7 @@ async def _execute_structured(
     request: NormalizedCompositeStructuredRequest,
     *,
     cancel_check,
+    settings: Settings,
 ) -> tuple[CompositeExecutionInputSnapshot, list[CompositeToolFact]]:
     params = request.query_plan.model_dump(mode="json", by_alias=True)
     fingerprint = composite_request_fingerprint(
@@ -447,6 +471,7 @@ async def _execute_structured(
         ctx,
         request.query_plan,
         cancel_check=cancel_check,
+        settings=settings,
     )
     facts = structured_result_tool_facts(request, result, fingerprint=fingerprint)
     completeness_values = [fact.completeness for fact in facts]
@@ -478,6 +503,7 @@ async def _execute_structured(
             completeness=completeness,
             entry_ids=entry_ids,
             result_handles=[fact.handle for fact in facts],
+            tool_calls=len(request.query_plan.outputs),
             error="；".join(result.warnings)[:500] or None,
         ),
         facts,
@@ -493,6 +519,7 @@ async def execute_composite_answer_plan(
     cancel_check,
     settings: Settings | None = None,
     deduplicate_equivalent_requests: bool = False,
+    max_tool_calls: int | None = None,
 ) -> CompositeExecutionArtifacts:
     """按 retrieval → structured 固定顺序执行；恢复只重放未完成请求。"""
     active_settings = settings or get_settings()
@@ -527,6 +554,11 @@ async def execute_composite_answer_plan(
             active_settings.knowledge_agent_composite_answer_execution_timeout_seconds * 1000
         ):
             raise TimeoutError("复合回答执行总耗时预算已耗尽")
+
+    def _remaining_tool_calls() -> int:
+        if max_tool_calls is None:
+            return 100
+        return max(0, max_tool_calls - sum(item.tool_calls for item in snapshot.inputs))
 
     for request in plan.retrieval_requests:
         other_inputs = [item for item in snapshot.inputs if item.request_id != request.id]
@@ -600,6 +632,7 @@ async def execute_composite_answer_plan(
                 request,
                 remaining_entries=remaining_entries,
                 remaining_evidence=remaining_evidence,
+                remaining_tool_calls=_remaining_tool_calls(),
                 cancel_check=_time_guard,
                 settings=active_settings,
             )
@@ -613,6 +646,7 @@ async def execute_composite_answer_plan(
                 fingerprint=fingerprint,
                 status="partial",
                 completeness=RESULT_COMPLETENESS_UNKNOWN,
+                tool_calls=getattr(exc, "tool_calls", 0),
                 error=f"检索请求执行失败：{exc}"[:500],
             )
         snapshot.inputs = [old for old in snapshot.inputs if old.request_id != request.id]
@@ -682,6 +716,21 @@ async def execute_composite_answer_plan(
             continue
         try:
             await _time_guard()
+            remaining_tool_calls = _remaining_tool_calls()
+            if remaining_tool_calls < len(request.query_plan.outputs):
+                raise TimeoutError("复合回答工具调用总预算已耗尽")
+            structured_settings = active_settings.model_copy(
+                update={
+                    "knowledge_agent_structured_query_max_tool_calls": (
+                        remaining_tool_calls
+                    ),
+                    "knowledge_agent_structured_query_execution_timeout_seconds": max(
+                        0.001,
+                        active_settings.knowledge_agent_composite_answer_execution_timeout_seconds
+                        - (_elapsed_ms() / 1000),
+                    ),
+                }
+            )
             item, facts = await _execute_structured(
                 db,
                 run,
@@ -689,6 +738,7 @@ async def execute_composite_answer_plan(
                 plan,
                 request,
                 cancel_check=_time_guard,
+                settings=structured_settings,
             )
         except Exception as exc:  # noqa: BLE001
             if exc.__class__.__name__ == "RunCancelled":

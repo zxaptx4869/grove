@@ -33,6 +33,7 @@ from app.services.knowledge_agent.structured_query import (
 )
 
 COVERAGE_REPAIR_SCHEMA_VERSION = "v1"
+_COVERAGE_REPAIR_HARD_JSON_BYTES_LIMIT = 64_000
 
 CoverageRepairStage = Literal[
     "baseline_ready",
@@ -157,6 +158,190 @@ class CoverageRepairPlanError(ValueError):
 
 class CoverageRepairNoNovelRequest(CoverageRepairPlanError):
     """候选为空或全部与首次请求等价。"""
+
+
+class RepairRunStorageAdapter:
+    """复用现有执行器，但只读写 Run 的补查检查点列。"""
+
+    def __init__(self, run):
+        object.__setattr__(self, "_run", run)
+
+    def __getattr__(self, name: str):
+        return getattr(self._run, name)
+
+    @property
+    def composite_answer_execution_json(self):
+        return self._run.coverage_repair_execution_json
+
+    @composite_answer_execution_json.setter
+    def composite_answer_execution_json(self, value):
+        self._run.coverage_repair_execution_json = value
+
+    @property
+    def shared_execution_graph_json(self):
+        return self._run.coverage_repair_graph_json
+
+    @shared_execution_graph_json.setter
+    def shared_execution_graph_json(self, value):
+        self._run.coverage_repair_graph_json = value
+
+    @property
+    def shared_execution_state_json(self):
+        return self._run.coverage_repair_graph_state_json
+
+    @shared_execution_state_json.setter
+    def shared_execution_state_json(self, value):
+        self._run.coverage_repair_graph_state_json = value
+
+
+def coverage_repair_execution_plan(
+    original_plan: NormalizedCompositeAnswerPlan,
+    repair_plan: NormalizedCoverageRepairPlan,
+) -> NormalizedCompositeAnswerPlan:
+    """构造只含新请求的执行视图，不改写首次计划。"""
+    return NormalizedCompositeAnswerPlan(
+        requirements=original_plan.requirements,
+        statement_message_ids=original_plan.statement_message_ids,
+        retrieval_requests=repair_plan.retrieval_requests,
+        structured_requests=repair_plan.structured_requests,
+    )
+
+
+def _repair_execution_settings(
+    settings: Settings,
+    budget: CoverageRepairBudget,
+) -> Settings:
+    """将已冻结补查总预算映射到既有串行/共享图执行器。"""
+    return settings.model_copy(
+        update={
+            "knowledge_agent_composite_answer_execution_bytes_limit": budget.max_state_bytes,
+            "knowledge_agent_composite_answer_max_entries": budget.max_entries,
+            "knowledge_agent_composite_answer_max_evidence": budget.max_evidence,
+            "knowledge_agent_composite_answer_execution_timeout_seconds": (
+                budget.max_duration_ms / 1000
+            ),
+            "knowledge_agent_structured_query_max_tool_calls": budget.max_tool_calls,
+            "knowledge_agent_structured_query_execution_timeout_seconds": (
+                budget.max_duration_ms / 1000
+            ),
+            "knowledge_agent_structured_query_result_json_bytes_limit": min(
+                settings.knowledge_agent_structured_query_result_json_bytes_limit,
+                budget.max_state_bytes,
+            ),
+            "knowledge_agent_shared_execution_graph_max_nodes": budget.max_nodes,
+            "knowledge_agent_shared_execution_graph_max_tool_calls": budget.max_tool_calls,
+            "knowledge_agent_shared_execution_graph_max_entries": budget.max_entries,
+            "knowledge_agent_shared_execution_graph_max_evidence": budget.max_evidence,
+            "knowledge_agent_shared_execution_graph_max_buckets": budget.max_buckets,
+            "knowledge_agent_shared_execution_graph_bytes_limit": budget.max_graph_bytes,
+            "knowledge_agent_shared_execution_graph_state_bytes_limit": (
+                budget.max_state_bytes
+            ),
+            "knowledge_agent_shared_execution_graph_timeout_seconds": (
+                budget.max_duration_ms / 1000
+            ),
+        }
+    )
+
+
+async def execute_coverage_repair(
+    db,
+    run,
+    ctx,
+    original_plan: NormalizedCompositeAnswerPlan,
+    repair_plan: NormalizedCoverageRepairPlan,
+    snapshot: CoverageRepairSnapshot,
+    *,
+    cancel_check,
+    settings: Settings | None = None,
+) -> tuple[CompositeAnswerExecutionSnapshot, CoverageRepairSnapshot]:
+    """按基线固化模式只执行补查新请求并持久化检查点。"""
+    active = settings or get_settings()
+    bounded_settings = _repair_execution_settings(active, snapshot.frozen_budget)
+    adapter = RepairRunStorageAdapter(run)
+    execution_plan = coverage_repair_execution_plan(original_plan, repair_plan)
+    executing = snapshot.model_copy(update={"stage": "executing"}, deep=True)
+    run.coverage_repair_json = dump_coverage_repair_snapshot(
+        executing, settings=active
+    )
+    await db.commit()
+    await cancel_check()
+    if snapshot.execution_mode == "shared_graph":
+        from app.services.knowledge_agent.shared_execution_graph import (
+            execute_shared_execution_graph_plan,
+        )
+
+        artifacts = await execute_shared_execution_graph_plan(
+            db,
+            adapter,
+            ctx,
+            execution_plan,
+            cancel_check=cancel_check,
+            settings=bounded_settings,
+        )
+    else:
+        from app.services.knowledge_agent.composite_answer_execution import (
+            execute_composite_answer_plan,
+        )
+
+        artifacts = await execute_composite_answer_plan(
+            db,
+            adapter,
+            ctx,
+            execution_plan,
+            cancel_check=cancel_check,
+            settings=bounded_settings,
+            max_tool_calls=snapshot.frozen_budget.max_tool_calls,
+        )
+    await cancel_check()
+    completed = executing.model_copy(update={"stage": "execution_ready"}, deep=True)
+    run.coverage_repair_json = dump_coverage_repair_snapshot(completed, settings=active)
+    await db.commit()
+    return artifacts.snapshot, completed
+
+
+def merge_composite_execution(
+    original_plan: NormalizedCompositeAnswerPlan,
+    original: CompositeAnswerExecutionSnapshot,
+    repair_plan: NormalizedCoverageRepairPlan,
+    repair: CompositeAnswerExecutionSnapshot,
+) -> CompositeAnswerExecutionSnapshot:
+    """保留首次输入并仅追加补查合法句柄，冲突时拒绝。"""
+    original_ids = {
+        item.id for item in [*original_plan.retrieval_requests, *original_plan.structured_requests]
+    }
+    repair_ids = {
+        item.id for item in [*repair_plan.retrieval_requests, *repair_plan.structured_requests]
+    }
+    original_snapshot_ids = [item.request_id for item in original.inputs]
+    repair_snapshot_ids = [item.request_id for item in repair.inputs]
+    if (
+        len(original_snapshot_ids) != len(set(original_snapshot_ids))
+        or not set(original_snapshot_ids).issubset(original_ids)
+        or len(repair_snapshot_ids) != len(set(repair_snapshot_ids))
+        or not set(repair_snapshot_ids).issubset(repair_ids)
+        or set(original_snapshot_ids).intersection(repair_snapshot_ids)
+    ):
+        raise ValueError("首次与补查执行快照的 request id 不一致")
+    original_handles = {
+        fact.handle for fact in original.tool_facts
+    } | {handle for item in original.inputs for handle in item.result_handles}
+    repair_handles = {fact.handle for fact in repair.tool_facts} | {
+        handle for item in repair.inputs for handle in item.result_handles
+    }
+    if original_handles.intersection(repair_handles):
+        raise ValueError("首次与补查执行快照的 result handle 冲突")
+    return CompositeAnswerExecutionSnapshot(
+        elapsed_ms=min(600_000, original.elapsed_ms + repair.elapsed_ms),
+        inputs=[
+            *(item.model_copy(deep=True) for item in original.inputs),
+            *(item.model_copy(deep=True) for item in repair.inputs),
+        ],
+        tool_facts=[
+            *(item.model_copy(deep=True) for item in original.tool_facts),
+            *(item.model_copy(deep=True) for item in repair.tool_facts),
+        ],
+    )
 
 
 def derive_repair_eligibility(
@@ -378,8 +563,7 @@ def restore_coverage_repair_snapshot(
     """旧 Run 空字段返回 None，非法历史快照不猜测。"""
     if raw is None:
         return None
-    active = settings or get_settings()
-    if len(raw.encode("utf-8")) > active.knowledge_agent_coverage_repair_snapshot_bytes_limit:
+    if len(raw.encode("utf-8")) > _COVERAGE_REPAIR_HARD_JSON_BYTES_LIMIT:
         raise ValueError("覆盖补查控制快照超过 JSON 字节预算")
     try:
         snapshot = CoverageRepairSnapshot.model_validate_json(raw)
@@ -413,10 +597,7 @@ def restore_coverage_repair_plan(
 ) -> NormalizedCoverageRepairPlan | None:
     if raw is None:
         return None
-    active = settings or get_settings()
-    if len(raw.encode("utf-8")) > min(
-        active.knowledge_agent_coverage_repair_plan_bytes_limit, budget.max_plan_bytes
-    ):
+    if len(raw.encode("utf-8")) > budget.max_plan_bytes:
         raise ValueError("覆盖补查计划超过 JSON 字节预算")
     try:
         return NormalizedCoverageRepairPlan.model_validate_json(raw)

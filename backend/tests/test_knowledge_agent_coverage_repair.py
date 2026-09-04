@@ -11,6 +11,7 @@ from app.services.knowledge_agent.composite_answer_types import (
     CompositeAnswerExecutionSnapshot,
     CompositeExecutionInputSnapshot,
     CompositeRequirementCoverageSnapshot,
+    CompositeToolFact,
 )
 from app.services.knowledge_agent.coverage_repair import (
     CoverageRepairBaseline,
@@ -18,8 +19,12 @@ from app.services.knowledge_agent.coverage_repair import (
     CoverageRepairNoNovelRequest,
     CoverageRepairPlanError,
     CoverageRepairSnapshot,
+    RepairRunStorageAdapter,
+    coverage_repair_execution_plan,
     derive_repair_eligibility,
     dump_coverage_repair_snapshot,
+    execute_coverage_repair,
+    merge_composite_execution,
     normalize_coverage_repair_plan,
     plan_and_persist_coverage_repair,
     restore_coverage_repair_snapshot,
@@ -420,3 +425,201 @@ async def test_coverage_repair_planner_prompt_is_closed_and_bounded(monkeypatch)
     assert "可修复 requirement id：[\"r2\"]" in captured["context"]
     assert "Workspace" not in captured["context"]
     assert "不要输出 owner、Workspace" in COVERAGE_REPAIR_SYSTEM_PROMPT
+
+
+def _repair_plan():
+    return normalize_coverage_repair_plan(
+        {
+            "target_requirement_ids": ["r2"],
+            "retrieval_requests": [
+                {
+                    "id": "new",
+                    "query": "装修材料 释放源",
+                    "requirement_ids": ["r2"],
+                }
+            ],
+        },
+        original_plan=_original_plan(),
+        eligible_requirement_ids={"r2"},
+        scope_fingerprint="scope-a",
+        budget=CoverageRepairBudget(),
+    )
+
+
+def test_coverage_repair_adapter_and_plan_keep_initial_snapshots_immutable() -> None:
+    """补查执行器只能看到补查列，子计划只含接续请求。"""
+    run = SimpleNamespace(
+        composite_answer_execution_json="initial-execution",
+        shared_execution_graph_json="initial-graph",
+        shared_execution_state_json="initial-state",
+        coverage_repair_execution_json=None,
+        coverage_repair_graph_json=None,
+        coverage_repair_graph_state_json=None,
+    )
+    adapter = RepairRunStorageAdapter(run)
+    adapter.composite_answer_execution_json = "repair-execution"
+    adapter.shared_execution_graph_json = "repair-graph"
+    adapter.shared_execution_state_json = "repair-state"
+    execution_plan = coverage_repair_execution_plan(_original_plan(), _repair_plan())
+
+    assert run.composite_answer_execution_json == "initial-execution"
+    assert run.shared_execution_graph_json == "initial-graph"
+    assert run.shared_execution_state_json == "initial-state"
+    assert run.coverage_repair_execution_json == "repair-execution"
+    assert run.coverage_repair_graph_json == "repair-graph"
+    assert run.coverage_repair_graph_state_json == "repair-state"
+    assert [item.id for item in execution_plan.retrieval_requests] == ["q2"]
+    assert execution_plan.structured_requests == []
+    assert execution_plan.requirements == _original_plan().requirements
+
+
+@pytest.mark.parametrize("execution_mode", ["serial", "shared_graph"])
+@pytest.mark.asyncio
+async def test_coverage_repair_execute_uses_frozen_mode_and_budget(
+    monkeypatch, execution_mode
+) -> None:
+    """配置变化后仍按快照模式和冻结总预算执行到独立列。"""
+    from app.services.knowledge_agent.composite_answer_execution import (
+        CompositeExecutionArtifacts,
+    )
+
+    captured = {}
+
+    async def execute(db, adapter, ctx, plan, **kwargs):
+        captured["settings"] = kwargs["settings"]
+        captured["request_ids"] = [item.id for item in plan.retrieval_requests]
+        captured["max_tool_calls"] = kwargs.get("max_tool_calls")
+        adapter.composite_answer_execution_json = "repair-checkpoint"
+        return CompositeExecutionArtifacts(snapshot=CompositeAnswerExecutionSnapshot())
+
+    target = (
+        "app.services.knowledge_agent.shared_execution_graph."
+        "execute_shared_execution_graph_plan"
+        if execution_mode == "shared_graph"
+        else "app.services.knowledge_agent.composite_answer_execution."
+        "execute_composite_answer_plan"
+    )
+    monkeypatch.setattr(target, execute)
+
+    class Db:
+        commits = 0
+
+        async def commit(self):
+            self.commits += 1
+
+    run = SimpleNamespace(
+        id=8,
+        coverage_repair_json=None,
+        coverage_repair_execution_json=None,
+        coverage_repair_graph_json=None,
+        coverage_repair_graph_state_json=None,
+        composite_answer_execution_json="initial-execution",
+        shared_execution_graph_json="initial-graph",
+        shared_execution_state_json="initial-state",
+    )
+    budget = CoverageRepairBudget(
+        max_nodes=7,
+        max_tool_calls=5,
+        max_entries=9,
+        max_evidence=8,
+        max_duration_ms=12_000,
+    )
+    snapshot = CoverageRepairSnapshot(
+        stage="plan_ready",
+        execution_mode=execution_mode,
+        frozen_budget=budget,
+        eligible_requirement_ids=["r2"],
+        baseline=_baseline(),
+    )
+    changed_settings = Settings(
+        _env_file=None,
+        knowledge_agent_coverage_repair_max_nodes=1,
+        knowledge_agent_coverage_repair_max_tool_calls=1,
+        knowledge_agent_coverage_repair_max_entries=1,
+        knowledge_agent_coverage_repair_max_evidence=1,
+    )
+
+    _, completed = await execute_coverage_repair(
+        Db(),
+        run,
+        object(),
+        _original_plan(),
+        _repair_plan(),
+        snapshot,
+        cancel_check=_noop,
+        settings=changed_settings,
+    )
+
+    assert completed.stage == "execution_ready"
+    assert captured["request_ids"] == ["q2"]
+    assert captured["settings"].knowledge_agent_shared_execution_graph_max_nodes == 7
+    assert captured["settings"].knowledge_agent_composite_answer_max_entries == 9
+    assert captured["settings"].knowledge_agent_composite_answer_max_evidence == 8
+    if execution_mode == "serial":
+        assert captured["max_tool_calls"] == 5
+        assert run.coverage_repair_execution_json == "repair-checkpoint"
+    else:
+        assert captured["max_tool_calls"] is None
+    assert run.composite_answer_execution_json == "initial-execution"
+    assert run.shared_execution_graph_json == "initial-graph"
+    assert run.shared_execution_state_json == "initial-state"
+
+
+def test_merge_execution_only_appends_repair_results() -> None:
+    """合并完整保留首次序列化对象，只追加无冲突补查结果。"""
+    original = _eligibility_execution()
+    repair = CompositeAnswerExecutionSnapshot(
+        elapsed_ms=12,
+        inputs=[
+            CompositeExecutionInputSnapshot(
+                request_id="q2",
+                kind="retrieval",
+                requirement_ids=["r2"],
+                fingerprint="b" * 64,
+                status="completed",
+                completeness="limited",
+                entry_ids=[9],
+                evidence_handles=["ev_repair"],
+                tool_calls=3,
+            )
+        ],
+        tool_facts=[
+            CompositeToolFact(
+                handle="res_repair",
+                request_id="q2",
+                requirement_ids=["r2"],
+                kind="count",
+                text="可确认 1 条。",
+                completeness="limited",
+            )
+        ],
+    )
+    original_raw = original.model_dump_json()
+
+    merged = merge_composite_execution(
+        _original_plan(), original, _repair_plan(), repair
+    )
+
+    assert original.model_dump_json() == original_raw
+    assert [item.request_id for item in merged.inputs] == ["q1", "q2"]
+    assert merged.inputs[0] == original.inputs[0]
+    assert merged.inputs[1].evidence_handles == ["ev_repair"]
+
+
+def test_merge_execution_rejects_request_and_handle_conflicts() -> None:
+    """补查不能覆盖首次 request 或复用不可区分的结果句柄。"""
+    repair = CompositeAnswerExecutionSnapshot(
+        inputs=[
+            CompositeExecutionInputSnapshot(
+                request_id="q1",
+                kind="retrieval",
+                requirement_ids=["r2"],
+                fingerprint="b" * 64,
+                status="completed",
+            )
+        ]
+    )
+    with pytest.raises(ValueError, match="request id"):
+        merge_composite_execution(
+            _original_plan(), _eligibility_execution(), _repair_plan(), repair
+        )

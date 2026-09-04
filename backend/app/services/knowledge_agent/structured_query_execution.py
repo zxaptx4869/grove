@@ -6,7 +6,7 @@ from dataclasses import dataclass
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.config import get_settings
+from app.core.config import Settings, get_settings
 from app.models.knowledge_agent import (
     RESULT_COMPLETENESS_COMPLETE,
     RESULT_COMPLETENESS_LIMITED,
@@ -117,9 +117,10 @@ async def execute_structured_query_plan(
     plan: NormalizedStructuredQueryPlan,
     *,
     cancel_check: CancelCheck,
+    settings: Settings | None = None,
 ) -> StructuredQueryExecutionResult:
     """对同一集合按 count → group_count → entries 固定顺序确定性执行。"""
-    settings = get_settings()
+    settings = settings or get_settings()
     semantic = plan.entry_set.semantic_query is not None
     set_completeness = (
         RESULT_COMPLETENESS_LIMITED if semantic else RESULT_COMPLETENESS_COMPLETE

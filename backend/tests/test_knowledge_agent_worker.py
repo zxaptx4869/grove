@@ -131,7 +131,7 @@ async def test_composite_recovery_reuses_completed_fingerprint_and_runs_missing(
     )
     executed: list[str] = []
 
-    async def _structured(db, ctx, query_plan, *, cancel_check):
+    async def _structured(db, ctx, query_plan, *, cancel_check, settings=None):
         await cancel_check()
         executed.append(query_plan.outputs[0].kind)
         return StructuredQueryExecutionResult(

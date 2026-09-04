@@ -31,6 +31,7 @@ class CompositeExecutionInputSnapshot(StrictCompositeSnapshot):
     entry_ids: list[int] = Field(default_factory=list, max_length=100)
     evidence_handles: list[str] = Field(default_factory=list, max_length=100)
     result_handles: list[str] = Field(default_factory=list, max_length=16)
+    tool_calls: int = Field(default=0, ge=0, le=100)
     error: str | None = Field(default=None, max_length=500)
 
 

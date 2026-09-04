@@ -717,7 +717,7 @@ async def test_composite_execution_runs_inputs_in_order_and_reuses_checkpoints(
             ]
         )
 
-    async def _structured(db, ctx, query_plan, *, cancel_check):
+    async def _structured(db, ctx, query_plan, *, cancel_check, settings=None):
         await cancel_check()
         events.append("structured")
         return StructuredQueryExecutionResult(
