@@ -592,6 +592,16 @@ async def test_guardrail_workspace_project_scope_and_no_knowledge_writes() -> No
         project_run = await _create_run(db, user, workspace, project=first_project)
         workspace_run = await _create_run(db, user, workspace)
         await db.commit()
+        guarded_models = (
+            Candidate,
+            Extraction,
+            KnowledgeCandidateDraft,
+            KnowledgeWorkingSetItem,
+        )
+        write_counts_before = {
+            model.__name__: int((await db.execute(select(func.count(model.id)))).scalar_one())
+            for model in guarded_models
+        }
         project_result = await execute_shared_execution_graph_plan(
             db,
             project_run,
@@ -608,22 +618,12 @@ async def test_guardrail_workspace_project_scope_and_no_knowledge_writes() -> No
         )
         write_counts = {
             model.__name__: int((await db.execute(select(func.count(model.id)))).scalar_one())
-            for model in (
-                Candidate,
-                Extraction,
-                KnowledgeCandidateDraft,
-                KnowledgeWorkingSetItem,
-            )
+            for model in guarded_models
         }
 
     assert project_result.snapshot.tool_facts[0].summary == {"value": 1}
     assert workspace_result.snapshot.tool_facts[0].summary == {"value": 3}
-    assert write_counts == {
-        "Candidate": 0,
-        "Extraction": 0,
-        "KnowledgeCandidateDraft": 0,
-        "KnowledgeWorkingSetItem": 0,
-    }
+    assert write_counts == write_counts_before
 
 
 def test_distinct_similar_queries_are_not_merged() -> None:

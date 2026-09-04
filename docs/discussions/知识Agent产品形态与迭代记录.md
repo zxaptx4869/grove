@@ -100,9 +100,9 @@ Citation 与 Source 表达内容从哪里来，不代表 Grove 判断来源可�
 
 ## 4. 已经完成的能力
 
-以下状态以 2026-09-03 为准：已归档 change 继续以主规格为准；当前
-`add-knowledge-agent-structured-query-tools` 已完成本地实现与自动验证，仍待用户验收，
-尚未归档，以下单独标注其阶段状态。
+以下状态以 2026-09-04 为准：已归档 change 继续以主规格为准；当前
+`optimize-knowledge-agent-shared-execution-graph` 已完成本地实现与自动验证，仍待用户
+原生端兼容走查，尚未归档，以下单独标注其阶段状态。
 
 ### 4.1 原生移动基础
 
@@ -217,10 +217,9 @@ Citation 与 Source 表达内容从哪里来，不代表 Grove 判断来源可�
 该能力已随 change 归档同步主规格；生产环境只有在真实模型完成态与原生设备补验
 通过后，才可按部署计划开启特性开关。
 
-### 4.10 一次结构化计划与确定性查询（B1，本地完成待验收）
+### 4.10 一次结构化计划与确定性查询（B1，已归档）
 
-`add-knowledge-agent-structured-query-tools` 已完成本地实现、自动验证与阶段性手动走查，
-尚未归档或推送：
+`add-knowledge-agent-structured-query-tools` 已完成并于 2026-09-03 归档：
 
 - 只在 `actual_result_mode=entries` 且特性开关开启时生成一次受限结构化计划；
 - Workspace/项目范围只取自 Run 固化上下文，模型和客户端不能提供范围或对象 id；
@@ -237,6 +236,42 @@ Citation 与 Source 表达内容从哪里来，不代表 Grove 判断来源可�
 
 B1 没有实现多轮自主工具循环，没有迁移 quick/investigate，没有移除现有固定检索
 Workflow，也没有进入 `prepare_operation` 或新增任何知识写入能力。
+
+### 4.11 复合回答一次规划（已归档）
+
+`add-knowledge-agent-composite-answer-planning` 已完成并于 2026-09-04 归档：
+
+- quick answer 可以把同一问题固化为多个有序回答义务，并为每项明确允许的依据边界；
+- 一次计划可组合模型解释、Grove retrieval 和 B1 结构化 count/group/list 请求；
+- 服务端规范化并固定执行计划，逐项记录 answered/insufficient/partial 覆盖，不允许某项
+  已有内容掩盖另一项 Grove 依据缺口；
+- 综合回答继续只使用服务端核验后的 Evidence、结构化工具事实、合法用户陈述和允许的
+  模型通用知识；
+- Run 与消息页只投影有界计划摘要和依据类别，不公开内部查询、句柄或 prompt；
+- 旧 quick、entries、investigate、旧 Run 和原生端协议继续兼容。
+
+该阶段只执行首次固化计划，没有根据覆盖结果再次规划或补查。
+
+### 4.12 复合回答共享执行图（本地完成待原生端走查）
+
+`optimize-knowledge-agent-shared-execution-graph` 已完成本地实现、curl 与自动化验证，当前
+等待用户完成原生端兼容走查后归档：
+
+- 服务端把首次固化的复合计划确定性编译为版本化、闭合且有总预算的只读执行图；
+- 完全等价的数据集、内容读取和 Evidence 读取在同一 Run 内合并，并保留全部原始请求与
+  回答义务消费者；相似但不能证明等价的查询保持独立；
+- 节点按稳定拓扑波次执行，只有白名单只读输出使用独立数据库会话并发，Run、Evidence、
+  审计、检查点和最终物化仍由协调器串行接纳；
+- 节点终态按指纹和上游结果保存，恢复只执行未提交节点；预算、取消、失败和损坏 state
+  都显式处理，不允许执行中途整体回退串行重放；
+- 图结果确定性物化回既有复合执行快照，串行/图路径的 Citation、完整性、工具事实、逐项
+  覆盖、answer basis 和最终状态保持等价；
+- 重复 retrieval 评估中，语义检索、Entry 读取和 Evidence 核验均由两次实际调用降为一次；
+- 图、查询、节点 fingerprint 和内部结果不进入 Run、消息页或原生端公开协议；旧 Run 与
+  开关关闭路径继续兼容。
+
+本 change 没有生成第二份覆盖补查计划，没有扩展为 B2 多轮自主工具循环，也没有迁移
+investigate/entries 或进入 `prepare_operation` 与任何知识写入。
 
 ## 5. 当前查询能力及下一步缺口
 
@@ -267,14 +302,23 @@ Agent 会在当前 Workspace 或项目范围搜索正式 Entry，读取相关内
 分支可以先生成一次受限计划，再由服务端确定性执行结构化筛选、稳定排序、精确统计、
 分组以及“统计后再列对象”等组合。语义相关性与任何有界集合仍明确标记 limited/unknown。
 
-当前 B1 只扩展 entries 分支。quick 与 investigate 仍使用现有固定检索/调查 Workflow，
-不会自主观察工具结果后继续规划；这属于 B2，而不是本 change 的未完成实现。
+B1 仍只扩展 entries 分支；quick answer 已能执行一次固化复合计划，并可在特性开关下使用
+共享只读执行图消除完全等价的重复调用。它不会观察首次覆盖结果后生成补查计划；
+investigate 仍使用既有有界调查 Workflow。覆盖补查与 B2 多轮循环是后续阶段。
 
 ## 6. 新阶段功能路线
 
 以下只是便于延续讨论的轻量记录，顺序和拆分都可能变化，不应直接作为开发任务。
 
-### 6.1 B2：多轮只读工具规划与 Workflow 渐进迁移
+### 6.1 有界覆盖缺口补查
+
+- 在首次固化计划和共享执行图完成后，只针对真实 `insufficient/partial` 义务生成一次受限
+  补查计划；
+- 复用已提交 node/result handle，不改写首次结果，也不重新执行已经完成的等价节点；
+- 保持服务端范围注入、闭合工具、总预算、取消、恢复和逐项覆盖边界；
+- 先以代表性复合问题验证缺口确实减少，再决定是否进入更通用的 B2 循环。
+
+### 6.2 B2：多轮只读工具规划与 Workflow 渐进迁移
 
 - 让 Agent 在白名单内观察工具结果后继续规划或停止，形成有界多轮只读工具循环；
 - 让 quick 与 investigate 渐进复用同一工具集，并为不同模式固化轮次和预算；
@@ -282,7 +326,7 @@ Agent 会在当前 Workspace 或项目范围搜索正式 Entry，读取相关内
 - 逐条迁移并验证既有固定 Workflow，在替代能力完成前不移除旧路径；
 - 扩展内容问答和深度调查代表性评估，不按单条问法增加路由规则。
 
-### 6.2 显式整理讨论与通用 Operation Plan
+### 6.3 显式整理讨论与通用 Operation Plan
 
 - 支持整理决定、经验、方法或整段讨论；
 - 自动选择必要对话片段，并允许自然语言调整；
@@ -290,7 +334,7 @@ Agent 会在当前 Workspace 或项目范围搜索正式 Entry，读取相关内
 - 生成新增、补充、修订或分别保留的明确方案；
 - 目标、项目或影响范围不明确时才使用结构化澄清。
 
-### 6.3 统一 Operation Review 与一次确认闭环
+### 6.4 统一 Operation Review 与一次确认闭环
 
 - 在对话摘要卡、Bottom Sheet 或全屏中审阅对象、内容、差异、形成来源和影响；
 - 用户完整确认后直接创建或修改正式 Entry；
@@ -298,13 +342,13 @@ Agent 会在当前 Workspace 或项目范围搜索正式 Entry，读取相关内
 - 迁移并最终废弃固定回答动作“整理成知识”与专用 `draft_candidate` 流程；
 - 保留旧 Candidate、历史消息和客户端兼容。
 
-### 6.4 主动沉淀建议
+### 6.5 主动沉淀建议
 
 - 对稳定的个人决定、经验和可复用结论提供轻量建议；
 - 建议本身不创建 Draft，也不阻断对话；
 - 先记录展示、接受、忽略、拒绝和编辑日志，再用真实数据人工调节阈值。
 
-### 6.5 更后面的扩展
+### 6.6 更后面的扩展
 
 - 持久对象选择集与多 Entry 操作；
 - 重复合并、冲突保留、移动和回收站；
@@ -318,8 +362,7 @@ Agent 会在当前 Workspace 或项目范围搜索正式 Entry，读取相关内
 
 后续只在进入对应 change 时回答：
 
-1. B1 已由 `add-knowledge-agent-structured-query-tools` 完成本地实现；用户验收后，
-   下一条纵向路径选择 B2 多轮只读工具规划，还是通用 Operation Plan？
+1. 有界覆盖补查最多允许几次补查、多少新增节点，以及哪些缺口值得再次调用工具？
 2. B2 中 quick/investigate 的轮次、工具调用预算和固定 Workflow 迁移顺序是什么？
 3. 对话 Source 与现有 Evidence、EntryVersion 怎样复用数据结构？
 4. 旧 `draft_candidate` 与客户端怎样渐进迁移而不破坏历史？
@@ -352,4 +395,6 @@ Agent 会在当前 Workspace 或项目范围搜索正式 Entry，读取相关内
 - [Candidate Draft change](../../openspec/changes/archive/2026-08-30-add-knowledge-agent-candidate-drafting/proposal.md)
 - [单 Entry 修订 change](../../openspec/changes/archive/2026-08-31-add-knowledge-agent-entry-revision/proposal.md)
 - [结构化 Entry 查找 change](../../openspec/changes/archive/2026-09-01-add-knowledge-agent-structured-entry-search/proposal.md)
-- [结构化查询工具 change（待验收）](../../openspec/changes/add-knowledge-agent-structured-query-tools/proposal.md)
+- [结构化查询工具 change](../../openspec/changes/archive/2026-09-03-add-knowledge-agent-structured-query-tools/proposal.md)
+- [复合回答一次规划 change](../../openspec/changes/archive/2026-09-04-add-knowledge-agent-composite-answer-planning/proposal.md)
+- [共享执行图 change](../../openspec/changes/optimize-knowledge-agent-shared-execution-graph/proposal.md)
