@@ -2270,6 +2270,7 @@ async def test_runner_restores_persisted_graph_when_switch_is_disabled(
                 compile_shared_execution_graph(
                     plan,
                     scope_fingerprint=run_scope_fingerprint(
+                        run_id=run.id,
                         owner_user_id=user.id,
                         workspace_id=workspace.id,
                         project_id=None,

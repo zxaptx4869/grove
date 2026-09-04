@@ -301,10 +301,16 @@ def plan_digest(plan: NormalizedCompositeAnswerPlan) -> str:
 
 
 def run_scope_fingerprint(
-    *, owner_user_id: int, workspace_id: int, project_id: int | None, scope_type: str
+    *,
+    run_id: int,
+    owner_user_id: int,
+    workspace_id: int,
+    project_id: int | None,
+    scope_type: str,
 ) -> str:
     raw = json.dumps(
         {
+            "run_id": run_id,
             "owner_user_id": owner_user_id,
             "workspace_id": workspace_id,
             "project_id": project_id,
@@ -674,13 +680,38 @@ def validate_shared_execution_state(
     if state.plan_digest != graph.plan_digest:
         raise ValueError("共享执行状态 plan digest 不匹配")
     by_id = {node.id: node for node in graph.nodes}
+    outcome_by_id = {outcome.node_id: outcome for outcome in state.outcomes}
     seen: set[str] = set()
     for outcome in state.outcomes:
         if outcome.node_id in seen or outcome.node_id not in by_id:
             raise ValueError("共享执行状态节点引用非法")
         if outcome.fingerprint != by_id[outcome.node_id].fingerprint:
             raise ValueError("共享执行状态 node fingerprint 不匹配")
+        node = by_id[outcome.node_id]
+        if any(dependency not in outcome_by_id for dependency in node.dependencies):
+            raise ValueError("共享执行状态缺少已提交上游节点")
+        expected_upstream = [
+            outcome_by_id[dependency].fingerprint for dependency in node.dependencies
+        ]
+        if outcome.upstream_fingerprints != expected_upstream:
+            raise ValueError("共享执行状态上游 fingerprint 不匹配")
         seen.add(outcome.node_id)
+    totals = {
+        "tool_calls": sum(item.tool_calls for item in state.outcomes),
+        "entries": sum(item.entry_count for item in state.outcomes),
+        "evidence": sum(item.evidence_count for item in state.outcomes),
+        "buckets": sum(item.bucket_count for item in state.outcomes),
+        "duration_ms": sum(item.duration_ms for item in state.outcomes),
+    }
+    limits = {
+        "tool_calls": graph.frozen_budget.max_tool_calls,
+        "entries": graph.frozen_budget.max_entries,
+        "evidence": graph.frozen_budget.max_evidence,
+        "buckets": graph.frozen_budget.max_buckets,
+        "duration_ms": graph.frozen_budget.max_duration_ms,
+    }
+    if any(totals[key] > limits[key] for key in totals):
+        raise ValueError("共享执行状态超过冻结总预算")
 
 
 def allocate_wave_quota(
@@ -775,12 +806,19 @@ def materialize_composite_execution(
         evidence_handles: list[str] = []
         result_handles: list[str] = []
         for outcome in outcomes:
+            node = node_by_id[outcome.node_id]
             if outcome.status in {"failed", "cancelled"}:
                 status = "error" if outcome.status == "failed" else "cancelled"
             elif outcome.status == "empty" and status == "completed":
                 status = "empty"
             elif outcome.status in {"partial", "limited"} and status == "completed":
-                status = outcome.status
+                # retrieval 的语义候选天然 limited；只由后续读取/Evidence 决定请求是否受损。
+                if not (
+                    request_id.startswith("q")
+                    and node.kind == "semantic_entry_set"
+                    and outcome.status == "limited"
+                ):
+                    status = outcome.status
             if outcome.completeness != "complete":
                 completeness = outcome.completeness
             if outcome.error:
@@ -792,10 +830,10 @@ def materialize_composite_execution(
             evidence_handles.extend(str(value) for value in payload.get("evidence_handles", []))
             if outcome.result_handle:
                 result_handles.append(outcome.result_handle)
-            node = node_by_id[outcome.node_id]
             if (
                 (node.kind.startswith("aggregate_") or node.kind == "entry_list")
                 and node.id not in facts_by_node
+                and outcome.status not in {"failed", "cancelled"}
             ):
                 slot = (
                     "count"
@@ -805,13 +843,55 @@ def materialize_composite_execution(
                     else "entries"
                 )
                 if slot == "count":
-                    text = f"共 {int(payload.get('value', 0))} 条"
+                    if not isinstance(payload.get("value"), int):
+                        continue
+                    value = int(payload["value"])
+                    text = (
+                        f"符合条件的知识条目共 {value} 条。"
+                        if outcome.completeness == "complete"
+                        else f"本次匹配中可确认 {value} 条；结果受语义检索或预算限制，"
+                        "不代表完整总数。"
+                    )
+                    summary = {"value": value}
                 elif slot == "group_count":
-                    group_by = payload.get("group_by", "字段")
-                    bucket_count = len(payload.get("buckets", []))
-                    text = f"按 {group_by} 分组，共 {bucket_count} 组"
+                    buckets = payload.get("buckets")
+                    group_by = payload.get("group_by")
+                    if not isinstance(buckets, list) or not isinstance(group_by, str):
+                        continue
+                    label = {
+                        "main_type": "知识类型",
+                        "info_nature": "信息性质",
+                        "updated_month": "更新月份",
+                    }.get(group_by, group_by)
+                    rendered = (
+                        "、".join(
+                            f"{item.get('key')} {int(item.get('count', 0))} 条"
+                            for item in buckets
+                        )
+                        or "没有可确认分组"
+                    )
+                    suffix = (
+                        "。"
+                        if outcome.completeness == "complete"
+                        else "；仅代表本次有限结果。"
+                    )
+                    text = f"按{label}统计：{rendered}{suffix}"
+                    summary = {"group_by": group_by, "buckets": buckets}
                 else:
-                    text = f"返回 {len(payload.get('entry_ids', []))} 条 Entry"
+                    if not isinstance(payload.get("entry_ids"), list):
+                        continue
+                    returned_entry_ids = payload["entry_ids"]
+                    suffix = (
+                        "。"
+                        if outcome.completeness == "complete"
+                        else "；列表受 top-k 或预算限制，不代表完整集合。"
+                    )
+                    text = f"本次返回 {len(returned_entry_ids)} 条匹配知识条目{suffix}"
+                    summary = {
+                        "returned_count": len(returned_entry_ids),
+                        "entry_ids": returned_entry_ids,
+                        "has_more": bool(payload.get("has_more")),
+                    }
                 fact_request_id = node.consumer_request_ids[0]
                 facts_by_node[node.id] = CompositeToolFact(
                     handle=outcome.result_handle
@@ -821,7 +901,7 @@ def materialize_composite_execution(
                     kind=slot,
                     text=text[:2000],
                     completeness=outcome.completeness,
-                    summary={key: value for key, value in payload.items() if key != "text"},
+                    summary=summary,
                 )
         if (
             status == "completed"
@@ -867,7 +947,13 @@ async def run_graph_scheduler(
     def elapsed_ms() -> int:
         return elapsed_offset_ms + int((monotonic() - started_at) * 1000)
 
-    def timeout_outcome(node: GraphNode, message: str, *, duration_ms: int = 0) -> NodeOutcome:
+    def timeout_outcome(
+        node: GraphNode,
+        message: str,
+        *,
+        duration_ms: int = 0,
+        upstream_fingerprints: list[str] | None = None,
+    ) -> NodeOutcome:
         return NodeOutcome(
             node_id=node.id,
             fingerprint=node.fingerprint,
@@ -875,6 +961,7 @@ async def run_graph_scheduler(
             completeness="limited",
             error=message,
             duration_ms=duration_ms,
+            upstream_fingerprints=upstream_fingerprints or [],
             reused=len(node.consumer_request_ids) > 1,
             server_audits=[
                 NodeServerAudit(status="limited", error=message, duration_ms=duration_ms)
@@ -920,17 +1007,23 @@ async def run_graph_scheduler(
             wave_quotas: dict[str, dict[str, int]] = quotas,
         ) -> tuple[str, NodeOutcome]:
             node_started_at = monotonic()
+            deps: dict[str, NodeOutcome] = {}
             try:
                 if cancel_check is not None:
                     await cancel_check()
+                deps = {dep: outcomes[dep] for dep in node.dependencies if dep in outcomes}
+                upstream_fingerprints = [deps[dep].fingerprint for dep in node.dependencies]
                 remaining_duration_ms = graph.frozen_budget.max_duration_ms - elapsed_ms()
                 node_duration_ms = min(
                     remaining_duration_ms,
                     wave_quotas[node.id]["duration_ms"],
                 )
                 if node_duration_ms <= 0:
-                    return node.id, timeout_outcome(node, "共享执行图总耗时预算已耗尽")
-                deps = {dep: outcomes[dep] for dep in node.dependencies if dep in outcomes}
+                    return node.id, timeout_outcome(
+                        node,
+                        "共享执行图总耗时预算已耗尽",
+                        upstream_fingerprints=upstream_fingerprints,
+                    )
                 blocked = [item for item in deps.values() if item.status in {"failed", "cancelled"}]
                 if blocked:
                     message = "上游节点失败，未执行当前节点"
@@ -940,7 +1033,7 @@ async def run_graph_scheduler(
                         status="failed",
                         completeness="unknown",
                         error=message,
-                        upstream_fingerprints=[item.fingerprint for item in blocked],
+                        upstream_fingerprints=upstream_fingerprints,
                         reused=len(node.consumer_request_ids) > 1,
                         server_audits=[NodeServerAudit(status="failed", error=message)],
                     )
@@ -953,6 +1046,7 @@ async def run_graph_scheduler(
                         node,
                         "共享执行图节点超过耗时预算",
                         duration_ms=duration_ms,
+                        upstream_fingerprints=upstream_fingerprints,
                     )
                 if isinstance(result, NodeOutcome):
                     outcome = result
@@ -964,6 +1058,22 @@ async def run_graph_scheduler(
                         result=result if isinstance(result, dict) else {"value": result},
                         result_handle=stable_result_handle(node.fingerprint, node.kind),
                     )
+                if outcome.node_id != node.id or outcome.fingerprint != node.fingerprint:
+                    raise ValueError("共享执行图节点返回身份不匹配")
+                if outcome.upstream_fingerprints not in ([], upstream_fingerprints):
+                    raise ValueError("共享执行图节点返回上游 fingerprint 不匹配")
+                quota = wave_quotas[node.id]
+                if (
+                    outcome.tool_calls > quota["tool_calls"]
+                    or outcome.entry_count > quota["entries"]
+                    or outcome.evidence_count > quota["evidence"]
+                    or outcome.bucket_count > quota["buckets"]
+                    or outcome.duration_ms > quota["duration_ms"]
+                ):
+                    raise ValueError("共享执行图节点返回超过预分配预算")
+                outcome = outcome.model_copy(
+                    update={"upstream_fingerprints": upstream_fingerprints}
+                )
                 if elapsed_ms() > graph.frozen_budget.max_duration_ms:
                     message = "共享执行图总耗时预算已超限"
                     outcome = outcome.model_copy(
@@ -996,6 +1106,11 @@ async def run_graph_scheduler(
                     completeness="unknown",
                     error=message,
                     duration_ms=duration_ms,
+                    upstream_fingerprints=[
+                        deps[dependency].fingerprint
+                        for dependency in node.dependencies
+                        if dependency in deps
+                    ],
                     reused=len(node.consumer_request_ids) > 1,
                     server_audits=[
                         NodeServerAudit(
@@ -1545,6 +1660,7 @@ async def execute_shared_execution_graph_plan(
 
     active = settings or get_settings()
     scope = run_scope_fingerprint(
+        run_id=run.id,
         owner_user_id=run.owner_user_id,
         workspace_id=run.workspace_id,
         project_id=run.project_id,

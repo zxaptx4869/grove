@@ -30,6 +30,7 @@ from app.services.knowledge_agent.shared_execution_graph import (
     restore_shared_execution_graph,
     run_graph_scheduler,
     run_scope_fingerprint,
+    validate_shared_execution_state,
 )
 from app.services.knowledge_agent.tools import (
     EvidenceReadItem,
@@ -75,7 +76,11 @@ def _plan(*, duplicate: bool = False):
 
 def _scope() -> str:
     return run_scope_fingerprint(
-        owner_user_id=1, workspace_id=2, project_id=None, scope_type="workspace"
+        run_id=1,
+        owner_user_id=1,
+        workspace_id=2,
+        project_id=None,
+        scope_type="workspace",
     )
 
 
@@ -311,6 +316,198 @@ async def test_scheduler_checkpoints_terminal_nodes_and_reuses_recovery() -> Non
     assert executed == ["n2", "n3"]
     assert checkpoints == [["n1", "n2"], ["n1", "n2", "n3"]]
     assert len(state.outcomes) == 3
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "terminal_status",
+    ["completed", "empty", "limited", "partial", "failed"],
+)
+async def test_graph_recovery_reuses_every_persisted_terminal_status(
+    terminal_status: str,
+) -> None:
+    """恢复时所有已提交终态都不可重放，失败只沿依赖向后传播。"""
+    graph = compile_shared_execution_graph(_plan(), scope_fingerprint=_scope())
+    first = graph.nodes[0]
+    restored = SharedExecutionState(
+        plan_digest=graph.plan_digest,
+        outcomes=[
+            NodeOutcome(
+                node_id=first.id,
+                fingerprint=first.fingerprint,
+                status=terminal_status,
+                completeness="unknown" if terminal_status == "failed" else "limited",
+                error="已提交失败" if terminal_status == "failed" else None,
+            )
+        ],
+    )
+    executed: list[str] = []
+
+    async def execute(node, _deps, _quota):
+        executed.append(node.id)
+        return NodeOutcome(
+            node_id=node.id,
+            fingerprint=node.fingerprint,
+            status="completed",
+            completeness="complete",
+        )
+
+    state = await run_graph_scheduler(graph, state=restored, execute_node=execute)
+    assert state.outcomes[0] == restored.outcomes[0]
+    assert executed == ([] if terminal_status == "failed" else ["n2", "n3"])
+    assert len(state.outcomes) == 3
+
+
+def test_graph_recovery_rejects_corrupt_upstream_and_global_budget() -> None:
+    graph = compile_shared_execution_graph(_plan(), scope_fingerprint=_scope())
+    first, second = graph.nodes[:2]
+    first_outcome = NodeOutcome(
+        node_id=first.id,
+        fingerprint=first.fingerprint,
+        status="completed",
+        completeness="complete",
+    )
+    corrupt_upstream = SharedExecutionState(
+        plan_digest=graph.plan_digest,
+        outcomes=[
+            first_outcome,
+            NodeOutcome(
+                node_id=second.id,
+                fingerprint=second.fingerprint,
+                status="completed",
+                completeness="complete",
+                upstream_fingerprints=["f" * 64],
+            ),
+        ],
+    )
+    with pytest.raises(ValueError, match="上游 fingerprint"):
+        validate_shared_execution_state(graph, corrupt_upstream)
+
+    over_budget = SharedExecutionState(
+        plan_digest=graph.plan_digest,
+        outcomes=[
+            first_outcome.model_copy(
+                update={"tool_calls": graph.frozen_budget.max_tool_calls + 1}
+            )
+        ],
+    )
+    with pytest.raises(ValueError, match="超过冻结总预算"):
+        validate_shared_execution_state(graph, over_budget)
+
+
+@pytest.mark.asyncio
+async def test_graph_budget_rejects_node_result_over_preallocated_quota() -> None:
+    graph = compile_shared_execution_graph(_plan(), scope_fingerprint=_scope())
+
+    async def execute(node, _deps, quota):
+        return NodeOutcome(
+            node_id=node.id,
+            fingerprint=node.fingerprint,
+            status="completed",
+            completeness="complete",
+            tool_calls=quota["tool_calls"] + 1,
+        )
+
+    state = await run_graph_scheduler(graph, execute_node=execute)
+    assert state.outcomes[0].status == "failed"
+    assert "超过预分配预算" in (state.outcomes[0].error or "")
+    assert state.outcomes[0].server_audits[0].status == "failed"
+
+
+@pytest.mark.asyncio
+async def test_graph_parallel_wave_cancel_discards_late_results_before_checkpoint() -> None:
+    plan = _structured_plan()
+    graph = compile_shared_execution_graph(plan, scope_fingerprint=_scope())
+    root = next(node for node in graph.nodes if node.kind == "structured_entry_set")
+    restored = SharedExecutionState(
+        plan_digest=graph.plan_digest,
+        outcomes=[
+            NodeOutcome(
+                node_id=root.id,
+                fingerprint=root.fingerprint,
+                status="completed",
+                completeness="complete",
+                result={"entry_set": {}},
+            )
+        ],
+    )
+    cancelled = False
+    finished: list[str] = []
+    checkpoints: list[SharedExecutionState] = []
+    pending_count = len(graph.nodes) - 1
+
+    class RunCancelled(Exception):
+        pass
+
+    async def cancel_check():
+        if cancelled:
+            raise RunCancelled("cancelled")
+
+    async def execute(node, _deps, _quota):
+        nonlocal cancelled
+        await asyncio.sleep(0)
+        finished.append(node.id)
+        if len(finished) == pending_count:
+            cancelled = True
+        return NodeOutcome(
+            node_id=node.id,
+            fingerprint=node.fingerprint,
+            status="completed",
+            completeness="complete",
+            result={"value": 0},
+        )
+
+    async def checkpoint(state):
+        checkpoints.append(state)
+
+    with pytest.raises(RunCancelled):
+        await run_graph_scheduler(
+            graph,
+            state=restored,
+            execute_node=execute,
+            cancel_check=cancel_check,
+            checkpoint=checkpoint,
+        )
+    assert sorted(finished) == sorted(node.id for node in graph.nodes if node.id != root.id)
+    assert checkpoints == []
+    assert [item.node_id for item in restored.outcomes] == [root.id]
+
+
+@pytest.mark.asyncio
+async def test_graph_idempotent_complete_state_has_no_duplicate_execution_or_checkpoint(
+) -> None:
+    graph = compile_shared_execution_graph(_plan(), scope_fingerprint=_scope())
+
+    async def execute(node, _deps, _quota):
+        return NodeOutcome(
+            node_id=node.id,
+            fingerprint=node.fingerprint,
+            status="completed",
+            completeness="complete",
+        )
+
+    complete = await run_graph_scheduler(graph, execute_node=execute)
+    executions = 0
+    checkpoints = 0
+
+    async def must_not_execute(_node, _deps, _quota):
+        nonlocal executions
+        executions += 1
+        raise AssertionError("完整恢复状态不得重放节点")
+
+    async def must_not_checkpoint(_state):
+        nonlocal checkpoints
+        checkpoints += 1
+
+    recovered = await run_graph_scheduler(
+        graph,
+        state=complete,
+        execute_node=must_not_execute,
+        checkpoint=must_not_checkpoint,
+    )
+    assert recovered == complete
+    assert executions == 0
+    assert checkpoints == 0
 
 
 @pytest.mark.asyncio
@@ -575,6 +772,10 @@ def test_compile_aggregate_carries_entry_set_and_materializes_once() -> None:
                 else {"group_by": "info_nature", "buckets": [{"key": "x", "count": 2}]}
             ),
             result_handle=f"res_{node.id}",
+            upstream_fingerprints=[
+                next(item.fingerprint for item in graph.nodes if item.id == dependency_id)
+                for dependency_id in node.dependencies
+            ],
         )
         for node in graph.nodes
     ]
@@ -584,7 +785,10 @@ def test_compile_aggregate_carries_entry_set_and_materializes_once() -> None:
         SharedExecutionState(plan_digest=graph.plan_digest, outcomes=outcomes),
     )
     assert {fact.kind for fact in snapshot.tool_facts} == {"count", "group_count"}
-    assert next(fact for fact in snapshot.tool_facts if fact.kind == "count").text == "共 2 条"
+    assert (
+        next(fact for fact in snapshot.tool_facts if fact.kind == "count").text
+        == "符合条件的知识条目共 2 条。"
+    )
     assert grouped.id in graph.original_request_map["s1"]
 
 
