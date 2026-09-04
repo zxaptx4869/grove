@@ -17,6 +17,8 @@ Android 真机通过 Expo Go 连接开发服务器时，电脑和手机必须能
 
 `EXPO_PUBLIC_API_BASE_URL` 必须是运行设备可访问的 Grove 后端地址，且不应写死在代码中：iOS Simulator 使用 `http://127.0.0.1:8000`；Android Emulator 使用 `http://10.0.2.2:8000`；局域网真机使用开发电脑的局域网 IP；部署后改为 HTTPS API 地址。后端开发服务需绑定到真机可访问的网络接口时，请按本机网络与防火墙设置启动。
 
+`npm run ios` 固定以 IPv4 localhost 启动 Metro，避免较新 Node.js 将 `localhost` 优先解析为 `::1`，但 Expo Go 仍打开 `exp://127.0.0.1:8081`，从而显示 `Could not connect to the server`。需要清理 Metro 缓存时执行 `npm run ios -- --clear`。
+
 ## 校验
 
 ```bash

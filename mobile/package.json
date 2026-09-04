@@ -6,7 +6,7 @@
   "scripts": {
     "start": "expo start",
     "web": "expo start --web",
-    "ios": "expo start --ios",
+    "ios": "node --dns-result-order=ipv4first node_modules/expo/bin/cli start --ios --localhost",
     "android": "expo start --android",
     "lint": "eslint .",
     "typecheck": "tsc --noEmit",
