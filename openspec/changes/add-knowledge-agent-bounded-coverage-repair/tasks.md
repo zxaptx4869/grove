@@ -1,10 +1,10 @@
 ## 1. 持久化、配置与闭合类型骨架
 
-- [ ] 1.1 为 `KnowledgeAgentRun` 追加补查控制、计划、串行执行、共享图和图 state 可空字段，新建 Alembic 迁移并验证 SQLite/MySQL 8 DDL 与旧行兼容。验收：`cd backend && .venv/bin/pytest -q tests/test_knowledge_agent_models.py tests/test_knowledge_agent_worker.py -k 'coverage_repair or legacy'`
-- [ ] 1.2 增加默认关闭的补查开关和查询/结构化请求/节点/工具/Entry/Evidence/桶/耗时/计划与快照字节配置，实施数值范围校验。验收：`cd backend && .venv/bin/pytest -q tests/test_config.py -k coverage_repair`
-- [ ] 1.3 实现 `CoverageRepairBudget/Plan/Snapshot` 闭合 Pydantic 类型、严格字节门禁、稳定序列化和损坏快照拒绝；基线快照能完整往返 answer/coverage/basis/fallback。验收：`cd backend && .venv/bin/pytest -q tests/test_knowledge_agent_coverage_repair.py -k 'snapshot or bytes or schema'`
-- [ ] 1.4 增加补查 Run step/purpose/stop reason 常量，保证旧 Run 与旧客户端投影不反向猜测补查。验收：`cd backend && .venv/bin/pytest -q tests/test_knowledge_agent_api.py tests/test_knowledge_agent_conversations.py -k 'coverage_repair or legacy'`
-- [ ] 1.5 完成持久化与类型骨架的本地提交。验收：`cd backend && .venv/bin/ruff check app tests && cd .. && git diff --check`
+- [x] 1.1 为 `KnowledgeAgentRun` 追加补查控制、计划、串行执行、共享图和图 state 可空字段，新建 Alembic 迁移并验证 SQLite/MySQL 8 DDL 与旧行兼容。验收：`cd backend && .venv/bin/pytest -q tests/test_knowledge_agent_models.py tests/test_knowledge_agent_worker.py -k 'coverage_repair or legacy'`
+- [x] 1.2 增加默认关闭的补查开关和查询/结构化请求/节点/工具/Entry/Evidence/桶/耗时/计划与快照字节配置，实施数值范围校验。验收：`cd backend && .venv/bin/pytest -q tests/test_config.py -k coverage_repair`
+- [x] 1.3 实现 `CoverageRepairBudget/Plan/Snapshot` 闭合 Pydantic 类型、严格字节门禁、稳定序列化和损坏快照拒绝；基线快照能完整往返 answer/coverage/basis/fallback。验收：`cd backend && .venv/bin/pytest -q tests/test_knowledge_agent_coverage_repair.py -k 'snapshot or bytes or schema'`
+- [x] 1.4 增加补查 Run step/purpose/stop reason 常量，保证旧 Run 与旧客户端投影不反向猜测补查。验收：`cd backend && .venv/bin/pytest -q tests/test_knowledge_agent_api.py tests/test_knowledge_agent_conversations.py -k 'coverage_repair or legacy'`
+- [x] 1.5 完成持久化与类型骨架的本地提交。验收：`cd backend && .venv/bin/ruff check app tests && cd .. && git diff --check`
 
 ## 2. 逐项准入、模型候选与服务端规范化
 

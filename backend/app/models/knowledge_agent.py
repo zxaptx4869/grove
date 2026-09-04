@@ -321,6 +321,9 @@ STEP_BASIS_ROUTE = "basis_route"
 STEP_COMPOSITE_ANSWER_PLAN = "composite_answer_plan"
 STEP_COMPOSITE_ANSWER_EXECUTE = "composite_answer_execute"
 STEP_COMPOSITE_ANSWER_COVERAGE = "composite_answer_coverage"
+STEP_COVERAGE_REPAIR_PLAN = "coverage_repair_plan"
+STEP_COVERAGE_REPAIR_EXECUTE = "coverage_repair_execute"
+STEP_COVERAGE_REPAIR_SYNTHESIZE = "coverage_repair_synthesize"
 
 # ---- Run 步骤（候选草稿操作分支） ----
 STEP_DRAFT_VERIFY_EVIDENCE = "draft_verify_evidence"
@@ -348,6 +351,9 @@ PURPOSE_STRUCTURED_QUERY_PLAN = "structured_query_plan"
 # ---- 模型调用用途（开放讨论依据规划） ----
 PURPOSE_BASIS_ROUTE = "basis_route"
 PURPOSE_COMPOSITE_ANSWER_PLAN = "composite_answer_plan"
+PURPOSE_COVERAGE_REPAIR_PLAN = "coverage_repair_plan"
+PURPOSE_COVERAGE_REPAIR_GRAPH = "coverage_repair_graph"
+PURPOSE_COVERAGE_REPAIR_SYNTHESIS = "coverage_repair_synthesis"
 
 # ---- 调查状态 ----
 INVESTIGATION_STATUS_ACTIVE = "active"
@@ -598,6 +604,12 @@ class KnowledgeAgentRun(Base):
     # SharedExecutionGraph/State v1：仅 quick 新 Run 启用时写入，旧 Run 保持 NULL
     shared_execution_graph_json: Mapped[str | None] = mapped_column(Text, nullable=True)
     shared_execution_state_json: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # CoverageRepair v1：内部基线、新计划与独立执行检查点
+    coverage_repair_json: Mapped[str | None] = mapped_column(Text, nullable=True)
+    coverage_repair_plan_json: Mapped[str | None] = mapped_column(Text, nullable=True)
+    coverage_repair_execution_json: Mapped[str | None] = mapped_column(Text, nullable=True)
+    coverage_repair_graph_json: Mapped[str | None] = mapped_column(Text, nullable=True)
+    coverage_repair_graph_state_json: Mapped[str | None] = mapped_column(Text, nullable=True)
     error: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False

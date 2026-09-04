@@ -51,7 +51,8 @@ class CompositeAnswerExecutionSnapshot(StrictCompositeSnapshot):
 
     schema_version: Literal["v1"] = "v1"
     elapsed_ms: int = Field(default=0, ge=0, le=600_000)
-    inputs: list[CompositeExecutionInputSnapshot] = Field(default_factory=list, max_length=5)
+    # 首次最多 5 份请求，一次补查最多追加 2 份。
+    inputs: list[CompositeExecutionInputSnapshot] = Field(default_factory=list, max_length=7)
     tool_facts: list[CompositeToolFact] = Field(default_factory=list, max_length=16)
 
 

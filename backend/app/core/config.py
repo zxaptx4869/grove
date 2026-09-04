@@ -276,6 +276,49 @@ class Settings(BaseSettings):
     knowledge_agent_shared_execution_graph_timeout_seconds: float = Field(
         default=30.0, ge=1.0, le=180.0, description="共享执行图总耗时预算（秒）"
     )
+    # quick 覆盖缺口补查：每 Run 最多一次，默认关闭
+    knowledge_agent_coverage_repair_enabled: bool = Field(
+        default=False, description="quick 复合回答一次有界覆盖补查是否启用"
+    )
+    knowledge_agent_coverage_repair_planner_timeout_seconds: float = Field(
+        default=15.0, ge=1.0, le=120.0, description="覆盖补查规划模型超时（秒）"
+    )
+    knowledge_agent_coverage_repair_max_queries: int = Field(
+        default=2, ge=1, le=4, description="覆盖补查最多新查询数"
+    )
+    knowledge_agent_coverage_repair_max_structured_requests: int = Field(
+        default=1, ge=0, le=2, description="覆盖补查最多结构化请求数"
+    )
+    knowledge_agent_coverage_repair_max_nodes: int = Field(
+        default=8, ge=1, le=24, description="覆盖补查共享图最多新节点数"
+    )
+    knowledge_agent_coverage_repair_max_tool_calls: int = Field(
+        default=6, ge=1, le=24, description="覆盖补查最多工具调用数"
+    )
+    knowledge_agent_coverage_repair_max_entries: int = Field(
+        default=20, ge=1, le=100, description="覆盖补查最多读取 Entry 数"
+    )
+    knowledge_agent_coverage_repair_max_evidence: int = Field(
+        default=20, ge=1, le=100, description="覆盖补查最多使用 Evidence 数"
+    )
+    knowledge_agent_coverage_repair_max_buckets: int = Field(
+        default=16, ge=0, le=100, description="覆盖补查最多分组桶数"
+    )
+    knowledge_agent_coverage_repair_timeout_seconds: float = Field(
+        default=15.0, ge=1.0, le=60.0, description="覆盖补查只读执行总超时（秒）"
+    )
+    knowledge_agent_coverage_repair_plan_bytes_limit: int = Field(
+        default=12000, ge=1000, le=30000, description="覆盖补查计划 JSON 最大字节数"
+    )
+    knowledge_agent_coverage_repair_graph_bytes_limit: int = Field(
+        default=16000, ge=1000, le=30000, description="覆盖补查图 JSON 最大字节数"
+    )
+    knowledge_agent_coverage_repair_state_bytes_limit: int = Field(
+        default=48000, ge=1000, le=64000, description="覆盖补查图 state JSON 最大字节数"
+    )
+    knowledge_agent_coverage_repair_snapshot_bytes_limit: int = Field(
+        default=60000, ge=1000, le=64000, description="覆盖补查控制快照 JSON 最大字节数"
+    )
 
     # 知识 Agent Worker 租约（秒）：processing 超过该阈值可恢复重试
     knowledge_agent_lease_seconds: int = Field(

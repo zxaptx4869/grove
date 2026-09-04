@@ -62,3 +62,32 @@ def test_shared_execution_graph_budget_validation() -> None:
         Settings(knowledge_agent_shared_execution_graph_max_nodes=0)
     with pytest.raises(ValidationError):
         Settings(knowledge_agent_shared_execution_graph_state_bytes_limit=65000)
+
+
+def test_coverage_repair_defaults_are_bounded_and_disabled(monkeypatch) -> None:
+    """一次覆盖补查默认关闭，且比首次执行预算更小。"""
+    monkeypatch.delenv("KNOWLEDGE_AGENT_COVERAGE_REPAIR_ENABLED", raising=False)
+    settings = Settings(_env_file=None)
+
+    assert settings.knowledge_agent_coverage_repair_enabled is False
+    assert settings.knowledge_agent_coverage_repair_max_queries == 2
+    assert settings.knowledge_agent_coverage_repair_max_structured_requests == 1
+    assert settings.knowledge_agent_coverage_repair_max_nodes == 8
+    assert settings.knowledge_agent_coverage_repair_max_tool_calls == 6
+    assert settings.knowledge_agent_coverage_repair_max_entries == 20
+    assert settings.knowledge_agent_coverage_repair_max_evidence == 20
+    assert settings.knowledge_agent_coverage_repair_timeout_seconds == 15.0
+    assert settings.knowledge_agent_coverage_repair_snapshot_bytes_limit < 65535
+
+
+def test_coverage_repair_budget_validation() -> None:
+    """无界或超过 MySQL TEXT 安全阈值的补查配置直接拒绝。"""
+    import pytest
+    from pydantic import ValidationError
+
+    with pytest.raises(ValidationError):
+        Settings(knowledge_agent_coverage_repair_max_queries=0)
+    with pytest.raises(ValidationError):
+        Settings(knowledge_agent_coverage_repair_max_nodes=25)
+    with pytest.raises(ValidationError):
+        Settings(knowledge_agent_coverage_repair_snapshot_bytes_limit=65000)
