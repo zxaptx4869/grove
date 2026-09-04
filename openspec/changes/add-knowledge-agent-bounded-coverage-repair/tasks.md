@@ -8,12 +8,12 @@
 
 ## 2. 逐项准入、模型候选与服务端规范化
 
-- [ ] 2.1 实现基于 coverage status、basis policy、合法句柄与 input completeness 的可修复准入；排除 answered/failed、纯 model_allowed 漏答和当前不可核验 external_required。验收：`cd backend && .venv/bin/pytest -q tests/test_knowledge_agent_coverage_repair.py -k eligibility`
-- [ ] 2.2 实现 `CoverageRepairPlanDraft v1` 与 planner prompt，只接收原始问题、不可变义务、已执行摘要、可修复 id 和冻结预算，只输出有界 retrieval/结构化请求候选。验收：`cd backend && .venv/bin/pytest -q tests/test_knowledge_agent_coverage_repair.py -k 'draft or prompt or planner'`
-- [ ] 2.3 实现服务端规范化：目标必须属于准入集合，依据策略不放宽，结构化请求复用 B1 校验，范围只从 Run 注入，超限或未知/写字段拒绝整份候选。验收：`cd backend && .venv/bin/pytest -q tests/test_knowledge_agent_coverage_repair.py -k normalization`
-- [ ] 2.4 实现与执行器无关的 retrieval/structured canonical signature，拒绝首次已完成或候选内重复请求；全部无新查询时固化 `no_novel_request`。验收：`cd backend && .venv/bin/pytest -q tests/test_knowledge_agent_coverage_repair.py -k 'duplicate or canonical or no_novel'`
-- [ ] 2.5 实现 planner 最多一次调用、provider/model/fallback/error/duration/usage 审计与规划前后取消检查；模型失败保留基线。验收：`cd backend && .venv/bin/pytest -q tests/test_knowledge_agent_coverage_repair.py -k 'plan_once or observability or cancel'`
-- [ ] 2.6 完成准入与规划的本地提交。验收：`cd backend && .venv/bin/ruff check app tests && cd .. && git diff --check`
+- [x] 2.1 实现基于 coverage status、basis policy、合法句柄与 input completeness 的可修复准入；排除 answered/failed、纯 model_allowed 漏答和当前不可核验 external_required。验收：`cd backend && .venv/bin/pytest -q tests/test_knowledge_agent_coverage_repair.py -k eligibility`
+- [x] 2.2 实现 `CoverageRepairPlanDraft v1` 与 planner prompt，只接收原始问题、不可变义务、已执行摘要、可修复 id 和冻结预算，只输出有界 retrieval/结构化请求候选。验收：`cd backend && .venv/bin/pytest -q tests/test_knowledge_agent_coverage_repair.py -k 'draft or prompt or planner'`
+- [x] 2.3 实现服务端规范化：目标必须属于准入集合，依据策略不放宽，结构化请求复用 B1 校验，范围只从 Run 注入，超限或未知/写字段拒绝整份候选。验收：`cd backend && .venv/bin/pytest -q tests/test_knowledge_agent_coverage_repair.py -k normalization`
+- [x] 2.4 实现与执行器无关的 retrieval/structured canonical signature，拒绝首次已完成或候选内重复请求；全部无新查询时固化 `no_novel_request`。验收：`cd backend && .venv/bin/pytest -q tests/test_knowledge_agent_coverage_repair.py -k 'duplicate or canonical or no_novel'`
+- [x] 2.5 实现 planner 最多一次调用、provider/model/fallback/error/duration/usage 审计与规划前后取消检查；模型失败保留基线。验收：`cd backend && .venv/bin/pytest -q tests/test_knowledge_agent_coverage_repair.py -k 'plan_once or observability or cancel'`
+- [x] 2.6 完成准入与规划的本地提交。验收：`cd backend && .venv/bin/ruff check app tests && cd .. && git diff --check`
 
 ## 3. 串行/共享图补查、去重与恢复
 

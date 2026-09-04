@@ -2,23 +2,37 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
+from dataclasses import replace
 from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
+from app.agents.coverage_repair import (
+    COVERAGE_REPAIR_PLAN_PROMPT_VERSION,
+    CoverageRepairPlanDraft,
+    run_coverage_repair_planner,
+)
+from app.agents.structured_query import StructuredQueryPlanDraft
 from app.core.config import Settings, get_settings
 from app.schemas.knowledge_agent import KnowledgeAnswerOut
 from app.services.knowledge_agent.composite_answer import (
+    NormalizedCompositeAnswerPlan,
     NormalizedCompositeRetrievalRequest,
     NormalizedCompositeStructuredRequest,
 )
 from app.services.knowledge_agent.composite_answer_types import (
     CompositeAnswerCoverageSnapshot,
+    CompositeAnswerExecutionSnapshot,
+)
+from app.services.knowledge_agent.observability import record_model_invocation
+from app.services.knowledge_agent.structured_query import (
+    StructuredQueryPlanError,
+    normalize_structured_query_plan,
 )
 
 COVERAGE_REPAIR_SCHEMA_VERSION = "v1"
-COVERAGE_REPAIR_PLAN_PROMPT_VERSION = "v1"
 
 CoverageRepairStage = Literal[
     "baseline_ready",
@@ -128,6 +142,221 @@ class NormalizedCoverageRepairPlan(StrictCoverageRepairModel):
     )
 
 
+class CoverageRepairEligibility(StrictCoverageRepairModel):
+    """服务端从实际 coverage 和执行派生的可修复目标。"""
+
+    requirement_ids: list[str] = Field(default_factory=list, max_length=8)
+    reasons: dict[str, Literal["missing_grove_basis", "limited_input", "input_failure"]] = (
+        Field(default_factory=dict)
+    )
+
+
+class CoverageRepairPlanError(ValueError):
+    """补查候选无法在不改写首次计划时安全执行。"""
+
+
+class CoverageRepairNoNovelRequest(CoverageRepairPlanError):
+    """候选为空或全部与首次请求等价。"""
+
+
+def derive_repair_eligibility(
+    plan: NormalizedCompositeAnswerPlan,
+    execution: CompositeAnswerExecutionSnapshot,
+    coverage: CompositeAnswerCoverageSnapshot,
+) -> CoverageRepairEligibility:
+    """只让能被现有 Grove 只读工具改善的真实缺口准入。"""
+    requirement_by_id = {item.id: item for item in plan.requirements}
+    inputs_by_requirement = {
+        item.id: [row for row in execution.inputs if item.id in row.requirement_ids]
+        for item in plan.requirements
+    }
+    ids: list[str] = []
+    reasons: dict[str, str] = {}
+    for row in coverage.requirements:
+        requirement = requirement_by_id.get(row.requirement_id)
+        if (
+            requirement is None
+            or row.status not in {"partial", "insufficient"}
+            or requirement.basis_policy not in {"grove_only", "grove_required"}
+        ):
+            continue
+        inputs = inputs_by_requirement[row.requirement_id]
+        if any(item.status in {"partial", "denied", "error", "cancelled"} for item in inputs):
+            reason = "input_failure"
+        elif any(
+            item.status in {"empty", "limited"} or item.completeness != "complete"
+            for item in inputs
+        ):
+            reason = "limited_input"
+        elif not row.evidence_handles and not row.result_handles:
+            reason = "missing_grove_basis"
+        else:
+            # 已有完整 Grove 依据却仍 partial 通常是综合表达问题，
+            # 现有工具补查不会提供更多可验证信息。
+            continue
+        ids.append(row.requirement_id)
+        reasons[row.requirement_id] = reason
+    return CoverageRepairEligibility(requirement_ids=ids, reasons=reasons)
+
+
+def _clean_text(value: str) -> str:
+    return " ".join(value.split())
+
+
+def coverage_repair_request_signature(
+    kind: Literal["retrieval", "structured"],
+    payload: dict[str, Any],
+    *,
+    scope_fingerprint: str,
+) -> str:
+    """只对可证明等价的规范化只读请求生成稳定签名。"""
+    raw = json.dumps(
+        {
+            "version": "coverage-repair-request-v1",
+            "kind": kind,
+            "payload": payload,
+            "scope": scope_fingerprint,
+        },
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    )
+    return hashlib.sha256(raw.encode("utf-8")).hexdigest()
+
+
+def _retrieval_signature(query: str, *, scope_fingerprint: str) -> str:
+    return coverage_repair_request_signature(
+        "retrieval",
+        {"query": _clean_text(query), "completeness": "limited_or_unknown"},
+        scope_fingerprint=scope_fingerprint,
+    )
+
+
+def _structured_signature(query_plan, *, scope_fingerprint: str) -> str:
+    return coverage_repair_request_signature(
+        "structured",
+        query_plan.model_dump(mode="json", by_alias=True),
+        scope_fingerprint=scope_fingerprint,
+    )
+
+
+def normalize_coverage_repair_plan(
+    candidate: CoverageRepairPlanDraft | dict,
+    *,
+    original_plan: NormalizedCompositeAnswerPlan,
+    eligible_requirement_ids: set[str],
+    scope_fingerprint: str,
+    budget: CoverageRepairBudget,
+    settings: Settings | None = None,
+) -> NormalizedCoverageRepairPlan:
+    """校验目标、B1 结构和精确重复，再生成接续稳定 id。"""
+    active = settings or get_settings()
+    try:
+        draft = (
+            candidate
+            if isinstance(candidate, CoverageRepairPlanDraft)
+            else CoverageRepairPlanDraft.model_validate(candidate)
+        )
+    except ValidationError as exc:
+        raise CoverageRepairPlanError(f"补查计划 schema 非法：{exc}") from exc
+
+    targets = list(dict.fromkeys(draft.target_requirement_ids))
+    unknown_targets = sorted(set(targets) - eligible_requirement_ids)
+    if unknown_targets:
+        raise CoverageRepairPlanError(f"补查引用非准入义务：{unknown_targets}")
+    request_count = len(draft.retrieval_requests) + len(draft.structured_requests)
+    if request_count == 0:
+        raise CoverageRepairNoNovelRequest("模型未提出新补查请求")
+    if not targets:
+        raise CoverageRepairPlanError("非空补查请求必须声明目标义务")
+    if request_count > budget.max_queries:
+        raise CoverageRepairPlanError("补查查询数超过冻结预算")
+    if len(draft.structured_requests) > budget.max_structured_requests:
+        raise CoverageRepairPlanError("补查结构化请求数超过冻结预算")
+    raw_ids = [item.id for item in [*draft.retrieval_requests, *draft.structured_requests]]
+    if len(raw_ids) != len(set(raw_ids)):
+        raise CoverageRepairPlanError("补查请求 id 不得重复")
+
+    retrieval: list[NormalizedCompositeRetrievalRequest] = []
+    structured: list[NormalizedCompositeStructuredRequest] = []
+    referenced_targets: set[str] = set()
+    for index, item in enumerate(
+        draft.retrieval_requests, start=len(original_plan.retrieval_requests) + 1
+    ):
+        query = _clean_text(item.query)
+        requirement_ids = list(dict.fromkeys(item.requirement_ids))
+        if not query:
+            raise CoverageRepairPlanError("补查检索文本不能为空")
+        if not set(requirement_ids).issubset(set(targets)):
+            raise CoverageRepairPlanError("补查检索引用了未声明目标")
+        referenced_targets.update(requirement_ids)
+        retrieval.append(
+            NormalizedCompositeRetrievalRequest(
+                id=f"q{index}", query=query, requirement_ids=requirement_ids
+            )
+        )
+    for index, item in enumerate(
+        draft.structured_requests, start=len(original_plan.structured_requests) + 1
+    ):
+        requirement_ids = list(dict.fromkeys(item.requirement_ids))
+        if not set(requirement_ids).issubset(set(targets)):
+            raise CoverageRepairPlanError("补查结构化请求引用了未声明目标")
+        try:
+            query_plan = normalize_structured_query_plan(
+                StructuredQueryPlanDraft(
+                    entry_set=item.entry_set,
+                    outputs=item.outputs,
+                    reason="",
+                ),
+                settings=active,
+            )
+        except StructuredQueryPlanError as exc:
+            raise CoverageRepairPlanError(f"补查结构化请求非法：{exc}") from exc
+        referenced_targets.update(requirement_ids)
+        structured.append(
+            NormalizedCompositeStructuredRequest(
+                id=f"s{index}", query_plan=query_plan, requirement_ids=requirement_ids
+            )
+        )
+    if set(targets) != referenced_targets:
+        raise CoverageRepairPlanError("每个补查目标义务必须至少关联一份新请求")
+
+    original_signatures = {
+        *(
+            _retrieval_signature(item.query, scope_fingerprint=scope_fingerprint)
+            for item in original_plan.retrieval_requests
+        ),
+        *(
+            _structured_signature(item.query_plan, scope_fingerprint=scope_fingerprint)
+            for item in original_plan.structured_requests
+        ),
+    }
+    new_signatures = [
+        *(
+            _retrieval_signature(item.query, scope_fingerprint=scope_fingerprint)
+            for item in retrieval
+        ),
+        *(
+            _structured_signature(item.query_plan, scope_fingerprint=scope_fingerprint)
+            for item in structured
+        ),
+    ]
+    duplicate_count = sum(item in original_signatures for item in new_signatures)
+    duplicate_count += len(new_signatures) - len(set(new_signatures))
+    if duplicate_count:
+        if duplicate_count >= len(new_signatures):
+            raise CoverageRepairNoNovelRequest("补查请求全部与已完成请求等价")
+        raise CoverageRepairPlanError("补查候选混合了重复与新请求")
+
+    plan = NormalizedCoverageRepairPlan(
+        target_requirement_ids=targets,
+        retrieval_requests=retrieval,
+        structured_requests=structured,
+    )
+    dump_coverage_repair_plan(plan, budget=budget, settings=active)
+    return plan
+
+
 def dump_coverage_repair_snapshot(
     snapshot: CoverageRepairSnapshot, *, settings: Settings | None = None
 ) -> str:
@@ -193,3 +422,116 @@ def restore_coverage_repair_plan(
         return NormalizedCoverageRepairPlan.model_validate_json(raw)
     except (ValidationError, json.JSONDecodeError) as exc:
         raise ValueError(f"覆盖补查计划非法：{exc}") from exc
+
+
+async def plan_and_persist_coverage_repair(
+    db,
+    run,
+    snapshot: CoverageRepairSnapshot,
+    *,
+    original_plan: NormalizedCompositeAnswerPlan,
+    original_execution: CompositeAnswerExecutionSnapshot,
+    current_message: str,
+    scope_fingerprint: str,
+    cancel_check,
+    settings: Settings | None = None,
+) -> tuple[NormalizedCoverageRepairPlan | None, CoverageRepairSnapshot]:
+    """复用已固化计划或最多调用一次 planner，一并提交审计。"""
+    active = settings or get_settings()
+    existing = restore_coverage_repair_plan(
+        getattr(run, "coverage_repair_plan_json", None),
+        budget=snapshot.frozen_budget,
+        settings=active,
+    )
+    if existing is not None:
+        return existing, snapshot
+    if snapshot.planner_attempted:
+        return None, snapshot
+
+    requirements = [
+        {
+            "id": item.id,
+            "summary": item.summary,
+            "kind": item.kind,
+            "basis_policy": item.basis_policy,
+            "coverage_status": next(
+                row.status
+                for row in snapshot.baseline.coverage.requirements
+                if row.requirement_id == item.id
+            ),
+            "coverage_note": next(
+                row.note
+                for row in snapshot.baseline.coverage.requirements
+                if row.requirement_id == item.id
+            ),
+        }
+        for item in original_plan.requirements
+    ]
+    executed_inputs = [
+        {
+            "request_id": item.request_id,
+            "kind": item.kind,
+            "requirement_ids": item.requirement_ids,
+            "status": item.status,
+            "completeness": item.completeness,
+            "error": item.error,
+        }
+        for item in original_execution.inputs
+    ]
+    await cancel_check()
+    candidate, meta = await run_coverage_repair_planner(
+        db,
+        run.workspace_id,
+        current_message=current_message,
+        requirements=requirements,
+        eligible_requirement_ids=snapshot.eligible_requirement_ids,
+        executed_inputs=executed_inputs,
+        budget=snapshot.frozen_budget.model_dump(mode="json"),
+    )
+    plan = None
+    updated = snapshot.model_copy(deep=True)
+    updated.planner_attempted = True
+    if candidate is None:
+        updated.stage = "failed"
+        updated.stop_reason = "planner_failed"
+        updated.error = meta.error or "覆盖补查规划失败"
+    else:
+        try:
+            plan = normalize_coverage_repair_plan(
+                candidate,
+                original_plan=original_plan,
+                eligible_requirement_ids=set(snapshot.eligible_requirement_ids),
+                scope_fingerprint=scope_fingerprint,
+                budget=snapshot.frozen_budget,
+                settings=active,
+            )
+        except CoverageRepairNoNovelRequest as exc:
+            updated.stage = "skipped"
+            updated.stop_reason = "no_novel_request"
+            updated.error = str(exc)[:500]
+        except CoverageRepairPlanError as exc:
+            meta = replace(
+                meta,
+                is_fallback=True,
+                error=f"覆盖补查计划校验失败：{exc}",
+            )
+            updated.stage = "failed"
+            updated.stop_reason = "planner_failed"
+            updated.error = str(exc)[:500]
+    await cancel_check()
+    await record_model_invocation(
+        db,
+        run_id=run.id,
+        meta=meta,
+        prompt_version=COVERAGE_REPAIR_PLAN_PROMPT_VERSION,
+    )
+    if plan is not None:
+        run.coverage_repair_plan_json = dump_coverage_repair_plan(
+            plan, budget=snapshot.frozen_budget, settings=active
+        )
+        updated.stage = "plan_ready"
+        updated.stop_reason = None
+        updated.error = None
+    run.coverage_repair_json = dump_coverage_repair_snapshot(updated, settings=active)
+    await db.commit()
+    return plan, updated
