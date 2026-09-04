@@ -36,6 +36,12 @@ NODE_KINDS = (
 NODE_TERMINAL_STATUSES = ("completed", "empty", "limited", "partial", "failed", "cancelled")
 
 
+class SharedExecutionGraphExecutionStartedError(RuntimeError):
+    """图节点已经开始后发生的协调器错误，禁止整体回退串行重放。"""
+
+    shared_execution_started = True
+
+
 class GraphModel(BaseModel):
     """共享图快照的闭合基础模型。"""
 
@@ -100,6 +106,54 @@ class GraphNode(GraphModel):
         return list(dict.fromkeys(values))
 
 
+class NodeToolAudit(GraphModel):
+    """由节点返回、等待协调器持久化的单次真实工具审计。"""
+
+    tool_name: str = Field(min_length=1, max_length=64)
+    status: str = Field(min_length=1, max_length=16)
+    error: str | None = Field(default=None, max_length=500)
+    duration_ms: int = Field(default=0, ge=0, le=180000)
+    summary: dict[str, Any] = Field(default_factory=dict)
+
+    @field_validator("summary")
+    @classmethod
+    def _bounded_summary(cls, value: dict[str, Any]) -> dict[str, Any]:
+        raw = json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+        if len(raw.encode("utf-8")) > 2000:
+            raise ValueError("节点工具审计摘要超过长度上限")
+        return value
+
+
+class NodeModelAudit(GraphModel):
+    """由节点返回、等待协调器持久化的单次真实模型审计。"""
+
+    purpose: str = Field(min_length=1, max_length=32)
+    provider: str = Field(min_length=1, max_length=32)
+    model: str | None = Field(default=None, max_length=128)
+    is_fallback: bool
+    error: str | None = Field(default=None, max_length=500)
+    duration_ms: int = Field(default=0, ge=0, le=180000)
+    usage: dict[str, Any] | None = None
+
+    @field_validator("usage")
+    @classmethod
+    def _bounded_usage(cls, value: dict[str, Any] | None) -> dict[str, Any] | None:
+        if value is None:
+            return None
+        raw = json.dumps(value, ensure_ascii=False, sort_keys=True, default=str)
+        if len(raw.encode("utf-8")) > 4000:
+            raise ValueError("节点模型 usage 超过长度上限")
+        return value
+
+
+class NodeServerAudit(GraphModel):
+    """没有伪造工具调用的调度器失败/预算审计。"""
+
+    status: Literal["limited", "partial", "failed"]
+    error: str = Field(min_length=1, max_length=500)
+    duration_ms: int = Field(default=0, ge=0, le=180000)
+
+
 class NodeOutcome(GraphModel):
     """一次已提交节点终态及有界结果句柄。"""
 
@@ -118,8 +172,9 @@ class NodeOutcome(GraphModel):
     upstream_fingerprints: list[str] = Field(default_factory=list, max_length=4)
     reused: bool = False
     # 节点执行产生的脱敏审计由协调器按 node id 顺序写入，独立会话不直接抢占序号。
-    tool_audits: list[dict[str, Any]] = Field(default_factory=list, max_length=32)
-    model_audits: list[dict[str, Any]] = Field(default_factory=list, max_length=8)
+    tool_audits: list[NodeToolAudit] = Field(default_factory=list, max_length=32)
+    model_audits: list[NodeModelAudit] = Field(default_factory=list, max_length=8)
+    server_audits: list[NodeServerAudit] = Field(default_factory=list, max_length=8)
 
     @field_validator("result")
     @classmethod
@@ -656,7 +711,9 @@ def allocate_wave_quota(
         ),
     }
     allocation: dict[str, dict[str, int]] = {}
-    for node in sorted(nodes, key=lambda item: int(item.id[1:])):
+    ordered_nodes = sorted(nodes, key=lambda item: int(item.id[1:]))
+    for index, node in enumerate(ordered_nodes):
+        remaining_nodes = len(ordered_nodes) - index
         wants = {
             "tool_calls": budget.max_entries
             if node.kind == "entry_evidence"
@@ -667,9 +724,10 @@ def allocate_wave_quota(
             else 0,
             "evidence": budget.max_evidence if node.kind == "entry_evidence" else 0,
             "buckets": budget.max_buckets if node.kind == "aggregate_group_count" else 0,
-            "duration_ms": max(
-                1,
-                quotas["duration_ms"] // max(1, len(nodes)),
+            "duration_ms": (
+                max(1, quotas["duration_ms"] // remaining_nodes)
+                if quotas["duration_ms"] > 0
+                else 0
             ),
         }
         granted = {key: min(value, quotas[key]) for key, value in wants.items()}
@@ -809,14 +867,18 @@ async def run_graph_scheduler(
     def elapsed_ms() -> int:
         return elapsed_offset_ms + int((monotonic() - started_at) * 1000)
 
-    def timeout_outcome(node: GraphNode, message: str) -> NodeOutcome:
+    def timeout_outcome(node: GraphNode, message: str, *, duration_ms: int = 0) -> NodeOutcome:
         return NodeOutcome(
             node_id=node.id,
             fingerprint=node.fingerprint,
             status="limited",
             completeness="limited",
             error=message,
-            duration_ms=elapsed_ms(),
+            duration_ms=duration_ms,
+            reused=len(node.consumer_request_ids) > 1,
+            server_audits=[
+                NodeServerAudit(status="limited", error=message, duration_ms=duration_ms)
+            ],
         )
 
     def remaining_budget() -> dict[str, int]:
@@ -857,23 +919,41 @@ async def run_graph_scheduler(
             node: GraphNode,
             wave_quotas: dict[str, dict[str, int]] = quotas,
         ) -> tuple[str, NodeOutcome]:
+            node_started_at = monotonic()
             try:
                 if cancel_check is not None:
                     await cancel_check()
-                if elapsed_ms() >= graph.frozen_budget.max_duration_ms:
+                remaining_duration_ms = graph.frozen_budget.max_duration_ms - elapsed_ms()
+                node_duration_ms = min(
+                    remaining_duration_ms,
+                    wave_quotas[node.id]["duration_ms"],
+                )
+                if node_duration_ms <= 0:
                     return node.id, timeout_outcome(node, "共享执行图总耗时预算已耗尽")
                 deps = {dep: outcomes[dep] for dep in node.dependencies if dep in outcomes}
                 blocked = [item for item in deps.values() if item.status in {"failed", "cancelled"}]
                 if blocked:
+                    message = "上游节点失败，未执行当前节点"
                     return node.id, NodeOutcome(
                         node_id=node.id,
                         fingerprint=node.fingerprint,
                         status="failed",
                         completeness="unknown",
-                        error="上游节点失败，未执行当前节点",
+                        error=message,
                         upstream_fingerprints=[item.fingerprint for item in blocked],
+                        reused=len(node.consumer_request_ids) > 1,
+                        server_audits=[NodeServerAudit(status="failed", error=message)],
                     )
-                result = await execute_node(node, deps, wave_quotas[node.id])
+                try:
+                    async with asyncio.timeout(node_duration_ms / 1000):
+                        result = await execute_node(node, deps, wave_quotas[node.id])
+                except TimeoutError:
+                    duration_ms = int((monotonic() - node_started_at) * 1000)
+                    return node.id, timeout_outcome(
+                        node,
+                        "共享执行图节点超过耗时预算",
+                        duration_ms=duration_ms,
+                    )
                 if isinstance(result, NodeOutcome):
                     outcome = result
                 else:
@@ -885,11 +965,20 @@ async def run_graph_scheduler(
                         result_handle=stable_result_handle(node.fingerprint, node.kind),
                     )
                 if elapsed_ms() > graph.frozen_budget.max_duration_ms:
+                    message = "共享执行图总耗时预算已超限"
                     outcome = outcome.model_copy(
                         update={
                             "status": "limited",
                             "completeness": "limited",
-                            "error": "共享执行图总耗时预算已超限",
+                            "error": message,
+                            "server_audits": [
+                                *outcome.server_audits,
+                                NodeServerAudit(
+                                    status="limited",
+                                    error=message,
+                                    duration_ms=outcome.duration_ms,
+                                ),
+                            ],
                         }
                     )
                 return node.id, outcome
@@ -898,12 +987,23 @@ async def run_graph_scheduler(
             except Exception as exc:  # noqa: BLE001
                 if exc.__class__.__name__ == "RunCancelled":
                     raise
+                message = str(exc)[:500] or "共享执行图节点执行失败"
+                duration_ms = int((monotonic() - node_started_at) * 1000)
                 return node.id, NodeOutcome(
                     node_id=node.id,
                     fingerprint=node.fingerprint,
                     status="failed",
                     completeness="unknown",
-                    error=str(exc)[:500],
+                    error=message,
+                    duration_ms=duration_ms,
+                    reused=len(node.consumer_request_ids) > 1,
+                    server_audits=[
+                        NodeServerAudit(
+                            status="failed",
+                            error=message,
+                            duration_ms=duration_ms,
+                        )
+                    ],
                 )
 
         results: list[tuple[str, NodeOutcome]] = []
@@ -967,8 +1067,8 @@ async def execute_graph_node(
     )
 
     started_at = monotonic()
-    tool_audits: list[dict[str, Any]] = []
-    model_audits: list[dict[str, Any]] = []
+    tool_audits: list[NodeToolAudit] = []
+    model_audits: list[NodeModelAudit] = []
     allowance = quota or {
         "tool_calls": 1,
         "entries": 30,
@@ -1016,18 +1116,18 @@ async def execute_graph_node(
         summary: dict[str, Any] | None = None,
     ) -> None:
         tool_audits.append(
-            {
-                "tool_name": tool_name,
-                "status": status,
-                "error": error,
-                "duration_ms": max(0, duration_ms),
-                "summary": summary or {},
-            }
+            NodeToolAudit(
+                tool_name=tool_name,
+                status=status,
+                error=error,
+                duration_ms=max(0, duration_ms),
+                summary=summary or {},
+            )
         )
 
     def add_model_audit(meta: dict[str, Any] | None) -> None:
         if meta:
-            model_audits.append(dict(meta))
+            model_audits.append(NodeModelAudit.model_validate(meta))
 
     await cancel_check()
     params = node.normalized_params
@@ -1080,10 +1180,54 @@ async def execute_graph_node(
             # 候选集不作为内容读取额度扣减，避免同一 Entry 被重复计数。
         )
     if node.kind == "structured_entry_set":
+        entry_set_payload = params.get("entry_set", {})
+        if entry_set_payload.get("semantic_query") is not None:
+            if allowance["tool_calls"] <= 0 or allowance["entries"] <= 0:
+                return outcome(
+                    status="limited",
+                    completeness="limited",
+                    result={"entry_set": entry_set_payload, "entry_ids": []},
+                )
+            from app.services.knowledge_agent.structured_query import NormalizedEntrySetSpec
+            from app.services.knowledge_agent.structured_query_tools import (
+                prepare_semantic_entry_set,
+            )
+
+            semantic_model_audits = []
+            semantic_started_at = monotonic()
+            # 每个结构化集合独立准备；不能沿用同一 Run 中上一个请求的语义候选。
+            ctx.structured_query_entry_ids = None
+            ctx.structured_query_entry_order = None
+            entries = await prepare_semantic_entry_set(
+                db,
+                ctx,
+                NormalizedEntrySetSpec.model_validate(entry_set_payload),
+                record_observability=False,
+                model_audits=semantic_model_audits,
+            )
+            for meta in semantic_model_audits:
+                add_model_audit(meta.__dict__)
+            entry_ids = [entry.id for entry in entries][: allowance["entries"]]
+            add_tool_audit(
+                "prepare_semantic_entry_set",
+                "empty" if not entry_ids else "limited",
+                duration_ms=int((monotonic() - semantic_started_at) * 1000),
+                summary={"entry_count": len(entry_ids)},
+            )
+            return outcome(
+                status="empty" if not entry_ids else "limited",
+                completeness="limited",
+                result={
+                    "entry_set": entry_set_payload,
+                    "entry_ids": entry_ids,
+                    "entry_order": entry_ids,
+                },
+                tool_calls=1,
+            )
         return outcome(
             status="completed",
             completeness="complete",
-            result={"entry_set": params.get("entry_set", {})},
+            result={"entry_set": entry_set_payload},
         )
     if node.kind in {"entry_content", "entry_list"}:
         source = dependencies.get(str(params.get("source")))
@@ -1161,6 +1305,16 @@ async def execute_graph_node(
             )
 
             entry_set = NormalizedEntrySetSpec.model_validate(source_payload["entry_set"])
+            if "entry_ids" in source_payload:
+                ctx.structured_query_entry_ids = {
+                    int(value) for value in source_payload.get("entry_ids", [])
+                }
+                ctx.structured_query_entry_order = [
+                    int(value)
+                    for value in source_payload.get(
+                        "entry_order", source_payload.get("entry_ids", [])
+                    )
+                ]
             sort = NormalizedEntrySort.model_validate(
                 params.get("sort", {"field": "updated_at", "direction": "desc"})
             )
@@ -1181,6 +1335,7 @@ async def execute_graph_node(
                 ),
                 cancel_check=cancel_check,
                 registry=STRUCTURED_QUERY_TOOL_REGISTRY,
+                record_audit=False,
             )
             add_tool_audit(
                 "query_entries",
@@ -1245,6 +1400,7 @@ async def execute_graph_node(
             if not source_ids:
                 unavailable = True
                 continue
+            evidence_started_at = monotonic()
             try:
                 evidence = await read_source_evidence(
                     db,
@@ -1260,7 +1416,7 @@ async def execute_graph_node(
                     "read_source_evidence",
                     "error",
                     error=str(exc),
-                    duration_ms=int((monotonic() - started_at) * 1000),
+                    duration_ms=int((monotonic() - evidence_started_at) * 1000),
                     summary={"entry_id": int(entry_id)},
                 )
                 unavailable = True
@@ -1271,7 +1427,7 @@ async def execute_graph_node(
                 "partial"
                 if any(not item.citable for item in evidence.items)
                 else "completed",
-                duration_ms=int((monotonic() - started_at) * 1000),
+                duration_ms=int((monotonic() - evidence_started_at) * 1000),
                 summary={"entry_id": int(entry_id), "source_count": len(evidence.items)},
             )
             for item in evidence.items:
@@ -1313,6 +1469,16 @@ async def execute_graph_node(
         entry_set = NormalizedEntrySetSpec.model_validate(
             source_payload.get("entry_set", params["entry_set"])
         )
+        if "entry_ids" in source_payload:
+            ctx.structured_query_entry_ids = {
+                int(value) for value in source_payload.get("entry_ids", [])
+            }
+            ctx.structured_query_entry_order = [
+                int(value)
+                for value in source_payload.get(
+                    "entry_order", source_payload.get("entry_ids", [])
+                )
+            ]
         operation = "count" if node.kind == "aggregate_count" else "group_count"
         request = {
             "entry_set": entry_set.model_dump(mode="json", by_alias=True),
@@ -1333,6 +1499,7 @@ async def execute_graph_node(
             ),
             cancel_check=cancel_check,
             registry=STRUCTURED_QUERY_TOOL_REGISTRY,
+            record_audit=False,
         )
         add_tool_audit(
             "aggregate_entries",
@@ -1416,6 +1583,13 @@ async def execute_shared_execution_graph_plan(
             record_tool_call,
         )
 
+        # 先完成有界序列化校验，避免 state 无法保存时残留待提交审计并触发串行回退。
+        state_raw = dump_shared_execution_state(
+            next_state,
+            settings=active,
+            budget=graph.frozen_budget,
+        )
+        newly_persisted_nodes: list[str] = []
         for next_outcome in sorted(next_state.outcomes, key=lambda item: int(item.node_id[1:])):
             if next_outcome.node_id in persisted_nodes:
                 continue
@@ -1435,27 +1609,42 @@ async def execute_shared_execution_graph_plan(
                     db,
                     run_id=run.id,
                     sequence=await next_tool_sequence(db, run.id),
-                    tool_name=str(audit.get("tool_name", "shared_node"))[:64],
-                    status=str(audit.get("status", next_outcome.status)),
+                    tool_name=audit.tool_name,
+                    status=audit.status,
                     params_summary=json.dumps(common, ensure_ascii=False)[:1000],
-                    result_summary=json.dumps(audit.get("summary", {}), ensure_ascii=False)[:2000],
-                    error=audit.get("error") or next_outcome.error,
-                    duration_ms=int(audit.get("duration_ms", next_outcome.duration_ms)),
+                    result_summary=json.dumps(audit.summary, ensure_ascii=False)[:2000],
+                    error=audit.error or next_outcome.error,
+                    duration_ms=audit.duration_ms,
                 )
             for meta in next_outcome.model_audits:
                 await record_model_invocation(
                     db,
                     run_id=run.id,
-                    meta=StageMeta(**meta),
+                    meta=StageMeta(**meta.model_dump()),
                     prompt_version="v1",
                 )
-            persisted_nodes.add(next_outcome.node_id)
-        run.shared_execution_state_json = dump_shared_execution_state(
-            next_state,
-            settings=active,
-            budget=graph.frozen_budget,
-        )
+            for audit in next_outcome.server_audits:
+                error_payload = json.dumps(
+                    {**common, "status": audit.status, "error": audit.error},
+                    ensure_ascii=False,
+                )[:500]
+                await record_model_invocation(
+                    db,
+                    run_id=run.id,
+                    meta=StageMeta(
+                        purpose="shared_execution_graph",
+                        provider="server",
+                        model=None,
+                        is_fallback=True,
+                        error=error_payload,
+                        duration_ms=audit.duration_ms,
+                    ),
+                    prompt_version="v1",
+                )
+            newly_persisted_nodes.append(next_outcome.node_id)
+        run.shared_execution_state_json = state_raw
         await db.commit()
+        persisted_nodes.update(newly_persisted_nodes)
 
     def isolated_context() -> RunToolContext:
         """并行白名单只取得不可共享的工具上下文副本。"""
@@ -1484,7 +1673,9 @@ async def execute_shared_execution_graph_plan(
         dependencies: dict[str, NodeOutcome],
         quota: dict[str, int],
     ) -> NodeOutcome:
+        nonlocal node_execution_started
         await cancel_check()
+        node_execution_started = True
         # Evidence、Run 和检查点维持在协调器会话；只有白名单结构化只读节点
         # 使用独立会话和上下文，避免并发共享 ORM session 或发现集合。
         if node.parallel_eligible:
@@ -1511,13 +1702,23 @@ async def execute_shared_execution_graph_plan(
             cancel_check=cancel_check,
         )
 
-    state = await run_graph_scheduler(
-        graph,
-        state=state,
-        execute_node=run_node,
-        cancel_check=cancel_check,
-        checkpoint=checkpoint,
-    )
+    node_execution_started = False
+    try:
+        state = await run_graph_scheduler(
+            graph,
+            state=state,
+            execute_node=run_node,
+            cancel_check=cancel_check,
+            checkpoint=checkpoint,
+        )
+    except Exception as exc:  # noqa: BLE001
+        if exc.__class__.__name__ == "RunCancelled":
+            raise
+        if node_execution_started:
+            raise SharedExecutionGraphExecutionStartedError(
+                f"共享执行图开始执行后协调器失败：{str(exc)[:500]}"
+            ) from exc
+        raise
     await cancel_check()
     snapshot = materialize_composite_execution(plan, graph, state)
     run.composite_answer_execution_json = snapshot.model_dump_json(
@@ -1536,6 +1737,7 @@ __all__ = [
     "FrozenBudget",
     "SharedExecutionGraph",
     "SharedExecutionState",
+    "SharedExecutionGraphExecutionStartedError",
     "compile_shared_execution_graph",
     "validate_shared_execution_graph",
     "validate_shared_execution_state",

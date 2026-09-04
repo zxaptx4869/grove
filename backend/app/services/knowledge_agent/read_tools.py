@@ -203,6 +203,7 @@ async def dispatch_read_tool(
     budget: ReadToolBudget,
     cancel_check: CancelCheck,
     registry: Mapping[str, ReadToolSpec] | None = None,
+    record_audit: bool = True,
 ) -> ReadToolDispatchResult:
     """校验并调用白名单只读工具；未知/越权参数不尝试修正或猜测。"""
     started = perf_counter()
@@ -218,18 +219,19 @@ async def dispatch_read_tool(
         )
         error = "工具未注册或版本不受支持"
         duration = int((perf_counter() - started) * 1000)
-        await _record_dispatch(
-            db,
-            ctx=ctx,
-            tool_name=tool_name[:64],
-            tool_version=tool_version[:32],
-            fingerprint=fingerprint,
-            params_summary={"rejected_keys": raw_keys},
-            result_summary={"status": TOOL_DENIED},
-            status=TOOL_DENIED,
-            error=error,
-            duration_ms=duration,
-        )
+        if record_audit:
+            await _record_dispatch(
+                db,
+                ctx=ctx,
+                tool_name=tool_name[:64],
+                tool_version=tool_version[:32],
+                fingerprint=fingerprint,
+                params_summary={"rejected_keys": raw_keys},
+                result_summary={"status": TOOL_DENIED},
+                status=TOOL_DENIED,
+                error=error,
+                duration_ms=duration,
+            )
         return ReadToolDispatchResult(
             tool_name=tool_name,
             tool_version=tool_version,
@@ -252,18 +254,19 @@ async def dispatch_read_tool(
         )
         error = f"工具参数非法：{exc.error_count()} 项"
         duration = int((perf_counter() - started) * 1000)
-        await _record_dispatch(
-            db,
-            ctx=ctx,
-            tool_name=tool_name,
-            tool_version=tool_version,
-            fingerprint=fingerprint,
-            params_summary={"rejected_keys": raw_keys},
-            result_summary={"status": TOOL_DENIED},
-            status=TOOL_DENIED,
-            error=error,
-            duration_ms=duration,
-        )
+        if record_audit:
+            await _record_dispatch(
+                db,
+                ctx=ctx,
+                tool_name=tool_name,
+                tool_version=tool_version,
+                fingerprint=fingerprint,
+                params_summary={"rejected_keys": raw_keys},
+                result_summary={"status": TOOL_DENIED},
+                status=TOOL_DENIED,
+                error=error,
+                duration_ms=duration,
+            )
         return ReadToolDispatchResult(
             tool_name=tool_name,
             tool_version=tool_version,
@@ -308,18 +311,19 @@ async def dispatch_read_tool(
     if budget.calls_used >= budget.max_calls or budget.remaining_seconds() <= 0:
         error = "只读工具调用预算已耗尽"
         duration = int((perf_counter() - started) * 1000)
-        await _record_dispatch(
-            db,
-            ctx=ctx,
-            tool_name=tool_name,
-            tool_version=tool_version,
-            fingerprint=fingerprint,
-            params_summary=normalized_params,
-            result_summary={"status": TOOL_DENIED, "budget_exhausted": True},
-            status=TOOL_DENIED,
-            error=error,
-            duration_ms=duration,
-        )
+        if record_audit:
+            await _record_dispatch(
+                db,
+                ctx=ctx,
+                tool_name=tool_name,
+                tool_version=tool_version,
+                fingerprint=fingerprint,
+                params_summary=normalized_params,
+                result_summary={"status": TOOL_DENIED, "budget_exhausted": True},
+                status=TOOL_DENIED,
+                error=error,
+                duration_ms=duration,
+            )
         return ReadToolDispatchResult(
             tool_name=tool_name,
             tool_version=tool_version,
@@ -346,18 +350,19 @@ async def dispatch_read_tool(
     except Exception as exc:  # noqa: BLE001
         if exc.__class__.__name__ == "RunCancelled":
             duration = int((perf_counter() - started) * 1000)
-            await _record_dispatch(
-                db,
-                ctx=ctx,
-                tool_name=tool_name,
-                tool_version=tool_version,
-                fingerprint=fingerprint,
-                params_summary=normalized_params,
-                result_summary={"status": TOOL_CANCELLED},
-                status=TOOL_CANCELLED,
-                error="Run 已取消",
-                duration_ms=duration,
-            )
+            if record_audit:
+                await _record_dispatch(
+                    db,
+                    ctx=ctx,
+                    tool_name=tool_name,
+                    tool_version=tool_version,
+                    fingerprint=fingerprint,
+                    params_summary=normalized_params,
+                    result_summary={"status": TOOL_CANCELLED},
+                    status=TOOL_CANCELLED,
+                    error="Run 已取消",
+                    duration_ms=duration,
+                )
             raise
         execution = ReadToolExecution(
             status=TOOL_ERROR,
@@ -383,18 +388,19 @@ async def dispatch_read_tool(
         "completeness": completeness,
         "payload_keys": sorted(payload),
     }
-    await _record_dispatch(
-        db,
-        ctx=ctx,
-        tool_name=tool_name,
-        tool_version=tool_version,
-        fingerprint=fingerprint,
-        params_summary=normalized_params,
-        result_summary=audit,
-        status=status,
-        error=error,
-        duration_ms=duration,
-    )
+    if record_audit:
+        await _record_dispatch(
+            db,
+            ctx=ctx,
+            tool_name=tool_name,
+            tool_version=tool_version,
+            fingerprint=fingerprint,
+            params_summary=normalized_params,
+            result_summary=audit,
+            status=status,
+            error=error,
+            duration_ms=duration,
+        )
     return ReadToolDispatchResult(
         tool_name=tool_name,
         tool_version=tool_version,

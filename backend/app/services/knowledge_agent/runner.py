@@ -619,8 +619,8 @@ async def execute_run(db: AsyncSession, run: KnowledgeAgentRun) -> None:
                 shared_graph_enabled = getattr(
                     settings, "knowledge_agent_shared_execution_graph_enabled", False
                 )
-                persisted_shared_graph = bool(
-                    getattr(run, "shared_execution_graph_json", None)
+                persisted_shared_graph = (
+                    getattr(run, "shared_execution_graph_json", None) is not None
                 )
                 use_shared_graph = shared_graph_enabled or persisted_shared_graph
                 if use_shared_graph:
@@ -649,6 +649,8 @@ async def execute_run(db: AsyncSession, run: KnowledgeAgentRun) -> None:
                 except Exception as exc:  # noqa: BLE001
                     # 共享图只允许在图尚未产生节点终态时兼容回退；已有结果不得重跑串行。
                     if exc.__class__.__name__ == "RunCancelled":
+                        raise
+                    if getattr(exc, "shared_execution_started", False):
                         raise
                     if not shared_graph_enabled or persisted_shared_graph:
                         # 已固化图必须按原图恢复，不能因部署开关回滚而串行重跑。

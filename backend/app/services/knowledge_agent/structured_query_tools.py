@@ -347,6 +347,9 @@ async def prepare_semantic_entry_set(
     db: AsyncSession,
     ctx: RunToolContext,
     entry_set: NormalizedEntrySetSpec,
+    *,
+    record_observability: bool = True,
+    model_audits: list[StageMeta] | None = None,
 ) -> list[Entry]:
     """准备一次共享语义集合；同一 ctx 后续输出只复用，不再次召回/重排。"""
     settings = get_settings()
@@ -388,12 +391,15 @@ async def prepare_semantic_entry_set(
         settings.knowledge_agent_structured_query_semantic_candidate_limit,
     )
     if embedding_meta is not None:
-        await record_model_invocation(
-            db,
-            run_id=ctx.run_id,
-            meta=embedding_meta,
-            prompt_version=STRUCTURED_QUERY_TOOL_VERSION,
-        )
+        if model_audits is not None:
+            model_audits.append(embedding_meta)
+        if record_observability:
+            await record_model_invocation(
+                db,
+                run_id=ctx.run_id,
+                meta=embedding_meta,
+                prompt_version=STRUCTURED_QUERY_TOOL_VERSION,
+            )
     rerank_meta = None
     ranked: list[Entry] = []
     if candidates:
@@ -413,12 +419,15 @@ async def prepare_semantic_entry_set(
             error=error,
             duration_ms=int((perf_counter() - started) * 1000),
         )
-        await record_model_invocation(
-            db,
-            run_id=ctx.run_id,
-            meta=rerank_meta,
-            prompt_version=STRUCTURED_QUERY_TOOL_VERSION,
-        )
+        if model_audits is not None:
+            model_audits.append(rerank_meta)
+        if record_observability:
+            await record_model_invocation(
+                db,
+                run_id=ctx.run_id,
+                meta=rerank_meta,
+                prompt_version=STRUCTURED_QUERY_TOOL_VERSION,
+            )
         by_id = {entry.id: entry for entry in candidates}
         seen: set[int] = set()
         for item in draft.results:

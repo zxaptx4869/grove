@@ -1,6 +1,7 @@
 """共享执行图的协议、精确去重、调度与恢复单元测试。"""
 
 import asyncio
+from time import monotonic
 from types import SimpleNamespace
 
 import pytest
@@ -12,10 +13,12 @@ from app.services.knowledge_agent.composite_answer_execution import (
     execute_composite_answer_plan,
 )
 from app.services.knowledge_agent.composite_answer_types import CompositeExecutionInputSnapshot
+from app.services.knowledge_agent.observability import StageMeta
 from app.services.knowledge_agent.shared_execution_graph import (
     GraphNode,
     NodeOutcome,
     SharedExecutionGraph,
+    SharedExecutionGraphExecutionStartedError,
     SharedExecutionState,
     allocate_wave_quota,
     compile_shared_execution_graph,
@@ -102,6 +105,43 @@ def _structured_plan():
                 {
                     "id": "s1",
                     "entry_set": {},
+                    "outputs": [
+                        {"kind": "count"},
+                        {"kind": "group_count", "group_by": "info_nature"},
+                    ],
+                    "requirement_ids": ["count", "groups"],
+                }
+            ],
+        }
+    )
+
+
+def _semantic_structured_plan():
+    return normalize_composite_answer_plan(
+        {
+            "schema_version": "v1",
+            "requirements": [
+                {
+                    "id": "count",
+                    "order": 0,
+                    "summary": "统计相关知识",
+                    "kind": "aggregate",
+                    "basis_policy": "grove_only",
+                },
+                {
+                    "id": "groups",
+                    "order": 1,
+                    "summary": "分组相关知识",
+                    "kind": "aggregate",
+                    "basis_policy": "grove_only",
+                },
+            ],
+            "statement_message_ids": [],
+            "retrieval_requests": [],
+            "structured_requests": [
+                {
+                    "id": "s1",
+                    "entry_set": {"semantic_query": "甲醛 来源"},
                     "outputs": [
                         {"kind": "count"},
                         {"kind": "group_count", "group_by": "info_nature"},
@@ -203,6 +243,7 @@ async def test_scheduler_propagates_upstream_failure() -> None:
 
     state = await run_graph_scheduler(graph, execute_node=execute)
     assert [item.status for item in state.outcomes] == ["failed", "failed", "failed"]
+    assert all(item.server_audits for item in state.outcomes)
 
 
 @pytest.mark.asyncio
@@ -305,20 +346,121 @@ async def test_scheduler_cancellation_stops_new_nodes_without_terminal_state() -
 @pytest.mark.asyncio
 async def test_scheduler_enforces_total_duration_budget() -> None:
     graph = compile_shared_execution_graph(_plan(), scope_fingerprint=_scope())
-    graph.frozen_budget.max_duration_ms = 1
+    graph.frozen_budget.max_duration_ms = 10
+    cancelled = False
 
     async def execute(node, _deps, _quota):
-        await asyncio.sleep(0.01)
-        return NodeOutcome(
-            node_id=node.id,
-            fingerprint=node.fingerprint,
-            status="completed",
-            completeness="complete",
-        )
+        nonlocal cancelled
+        try:
+            await asyncio.sleep(0.25)
+            return NodeOutcome(
+                node_id=node.id,
+                fingerprint=node.fingerprint,
+                status="completed",
+                completeness="complete",
+            )
+        except asyncio.CancelledError:
+            cancelled = True
+            raise
 
+    started_at = monotonic()
     state = await run_graph_scheduler(graph, execute_node=execute)
+    elapsed = monotonic() - started_at
+    assert elapsed < 0.15
+    assert cancelled is True
     assert state.outcomes[0].status == "limited"
     assert "耗时" in (state.outcomes[0].error or "")
+    assert state.outcomes[0].server_audits[0].status == "limited"
+
+
+@pytest.mark.asyncio
+async def test_semantic_structured_set_is_prepared_once_and_shared_by_outputs(
+    monkeypatch,
+) -> None:
+    graph = compile_shared_execution_graph(
+        _semantic_structured_plan(), scope_fingerprint=_scope()
+    )
+    entry_set_node = next(node for node in graph.nodes if node.kind == "structured_entry_set")
+    output_nodes = [node for node in graph.nodes if node.kind.startswith("aggregate_")]
+    prepare_calls = 0
+
+    async def prepare(_db, _ctx, _entry_set, *, record_observability, model_audits):
+        nonlocal prepare_calls
+        prepare_calls += 1
+        assert record_observability is False
+        model_audits.append(
+            StageMeta(
+                purpose="embedding",
+                provider="test",
+                model="embedding-test",
+                is_fallback=False,
+                error=None,
+                duration_ms=1,
+            )
+        )
+        return [SimpleNamespace(id=9), SimpleNamespace(id=10)]
+
+    seen_sets: list[tuple[set[int] | None, list[int] | None]] = []
+
+    async def dispatch(_db, current_ctx, **kwargs):
+        seen_sets.append(
+            (current_ctx.structured_query_entry_ids, current_ctx.structured_query_entry_order)
+        )
+        operation = kwargs["params"]["operation"]
+        return SimpleNamespace(
+            status="completed",
+            completeness="limited",
+            payload={"value": 2}
+            if operation == "count"
+            else {"group_by": "info_nature", "buckets": []},
+            error=None,
+            duration_ms=1,
+        )
+
+    monkeypatch.setattr(
+        "app.services.knowledge_agent.structured_query_tools.prepare_semantic_entry_set",
+        prepare,
+    )
+    monkeypatch.setattr(
+        "app.services.knowledge_agent.read_tools.dispatch_read_tool",
+        dispatch,
+    )
+    ctx = RunToolContext(1, 2, 1, "workspace", None, None)
+    prepared = await execute_graph_node(
+        None,
+        ctx,
+        entry_set_node,
+        {},
+        quota={
+            "tool_calls": 1,
+            "entries": 2,
+            "evidence": 0,
+            "buckets": 0,
+            "duration_ms": 1000,
+        },
+        cancel_check=_not_cancelled,
+    )
+    for node in output_nodes:
+        isolated_ctx = RunToolContext(1, 2, 1, "workspace", None, None)
+        await execute_graph_node(
+            None,
+            isolated_ctx,
+            node,
+            {entry_set_node.id: prepared},
+            quota={
+                "tool_calls": 1,
+                "entries": 2,
+                "evidence": 0,
+                "buckets": 2,
+                "duration_ms": 1000,
+            },
+            cancel_check=_not_cancelled,
+        )
+
+    assert prepare_calls == 1
+    assert prepared.result["entry_ids"] == [9, 10]
+    assert len(prepared.model_audits) == 1
+    assert seen_sets == [({9, 10}, [9, 10]), ({9, 10}, [9, 10])]
 
 
 @pytest.mark.asyncio
@@ -495,6 +637,52 @@ async def test_enabled_path_executes_graph_nodes_and_persists_checkpoints(monkey
     assert artifacts.snapshot.inputs[0].evidence_handles == ["ev_1"]
     assert run.shared_execution_state_json is not None
     assert run.composite_answer_execution_json is not None
+
+
+@pytest.mark.asyncio
+async def test_checkpoint_failure_after_node_start_forbids_serial_fallback(monkeypatch) -> None:
+    """真实节点开始后即使首个检查点失败，也必须显式失败而不是整体重放。"""
+    plan = _plan()
+
+    class FailingDb:
+        def __init__(self):
+            self.commits = 0
+
+        async def commit(self):
+            self.commits += 1
+            if self.commits > 1:
+                raise RuntimeError("检查点提交失败")
+
+    run = SimpleNamespace(
+        id=21,
+        owner_user_id=1,
+        workspace_id=2,
+        project_id=None,
+        scope_type="workspace",
+        shared_execution_graph_json=None,
+        shared_execution_state_json=None,
+        composite_answer_execution_json=None,
+    )
+    ctx = RunToolContext(21, 2, 1, "workspace", None, None)
+
+    async def execute(_db, _ctx, node, _deps, *, quota, cancel_check):
+        del quota, cancel_check
+        return NodeOutcome(
+            node_id=node.id,
+            fingerprint=node.fingerprint,
+            status="completed",
+            completeness="limited",
+            result={"entry_ids": []},
+            tool_calls=1,
+        )
+
+    monkeypatch.setattr(
+        "app.services.knowledge_agent.shared_execution_graph.execute_graph_node", execute
+    )
+    with pytest.raises(SharedExecutionGraphExecutionStartedError):
+        await execute_shared_execution_graph_plan(
+            FailingDb(), run, ctx, plan, cancel_check=_not_cancelled
+        )
 
 
 @pytest.mark.asyncio

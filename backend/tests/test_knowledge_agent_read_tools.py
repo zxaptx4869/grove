@@ -120,6 +120,50 @@ async def test_dispatcher_injects_run_scope_and_records_bounded_audit() -> None:
 
 
 @pytest.mark.asyncio
+async def test_dispatcher_can_return_outcome_without_writing_audit() -> None:
+    """并行节点可把审计交给协调器，独立会话不抢占工具序号。"""
+
+    async def _handler(db, ctx, params):
+        del db, ctx, params
+        return ReadToolExecution(
+            status=TOOL_COMPLETED,
+            payload={"count": 1},
+            completeness=RESULT_COMPLETENESS_COMPLETE,
+        )
+
+    registry = {
+        "fake_query": ReadToolSpec("fake_query", "v1", _FakeParams, _handler)
+    }
+    async with async_session_factory() as db:
+        run, ctx = await _run_context(db)
+        result = await dispatch_read_tool(
+            db,
+            ctx,
+            tool_name="fake_query",
+            tool_version="v1",
+            params={"query": "经验"},
+            budget=ReadToolBudget(1, 1, 1000),
+            cancel_check=_noop_cancel,
+            registry=registry,
+            record_audit=False,
+        )
+        calls = list(
+            (
+                await db.execute(
+                    select(KnowledgeAgentToolCall).where(
+                        KnowledgeAgentToolCall.run_id == run.id
+                    )
+                )
+            )
+            .scalars()
+            .all()
+        )
+
+    assert result.status == TOOL_COMPLETED
+    assert calls == []
+
+
+@pytest.mark.asyncio
 async def test_dispatcher_denies_unknown_tool_without_guessing() -> None:
     """未知名称只记录 denied，不动态导入、反射或猜测相近工具。"""
     async with async_session_factory() as db:

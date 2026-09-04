@@ -69,6 +69,7 @@ from app.services.knowledge_agent.runs import (
 from app.services.knowledge_agent.shared_execution_graph import (
     compile_shared_execution_graph,
     dump_shared_execution_graph,
+    execute_shared_execution_graph_plan,
     run_scope_fingerprint,
 )
 from app.services.knowledge_agent.structured_query import (
@@ -2178,7 +2179,10 @@ async def test_composite_quick_routes_before_plan_and_skips_legacy_basis(monkeyp
 
 
 @pytest.mark.asyncio
-async def test_runner_restores_persisted_graph_when_switch_is_disabled(monkeypatch) -> None:
+@pytest.mark.parametrize("corrupt_empty_snapshot", [False, True])
+async def test_runner_restores_persisted_graph_when_switch_is_disabled(
+    monkeypatch, corrupt_empty_snapshot: bool
+) -> None:
     """部署回滚开关后，已有图 Run 仍由共享图入口恢复，不整体串行重跑。"""
     settings = Settings(
         knowledge_agent_composite_answer_enabled=True,
@@ -2216,7 +2220,7 @@ async def test_runner_restores_persisted_graph_when_switch_is_disabled(monkeypat
 
     async def _shared(db, run, ctx, current_plan, **kwargs):
         selected.append("shared")
-        assert run.shared_execution_graph_json
+        assert run.shared_execution_graph_json is not None
         return SimpleNamespace(snapshot=CompositeAnswerExecutionSnapshot())
 
     async def _serial(*args, **kwargs):
@@ -2259,21 +2263,234 @@ async def test_runner_restores_persisted_graph_when_switch_is_disabled(monkeypat
         workspace = await create_workspace(db, user)
         _conversation, run = await _conversation_and_run(db, user, workspace, "有多少知识？")
         run.status = RUN_PROCESSING
-        run.shared_execution_graph_json = dump_shared_execution_graph(
-            compile_shared_execution_graph(
-                plan,
-                scope_fingerprint=run_scope_fingerprint(
-                    owner_user_id=user.id,
-                    workspace_id=workspace.id,
-                    project_id=None,
-                    scope_type=SCOPE_WORKSPACE,
-                ),
+        run.shared_execution_graph_json = (
+            ""
+            if corrupt_empty_snapshot
+            else dump_shared_execution_graph(
+                compile_shared_execution_graph(
+                    plan,
+                    scope_fingerprint=run_scope_fingerprint(
+                        owner_user_id=user.id,
+                        workspace_id=workspace.id,
+                        project_id=None,
+                        scope_type=SCOPE_WORKSPACE,
+                    ),
+                )
             )
         )
         await db.commit()
         await execute_run(db, run)
         assert selected == ["shared"]
         assert run.status == RUN_COMPLETED
+
+
+@pytest.mark.asyncio
+async def test_shared_graph_scheduler_failure_is_visible_in_fallback_summary(
+    monkeypatch,
+) -> None:
+    """调度异常和受阻后继都由协调器提交 server fallback，不会静默消失。"""
+    plan = normalize_composite_answer_plan(
+        {
+            "schema_version": "v1",
+            "requirements": [
+                {
+                    "id": "source",
+                    "order": 0,
+                    "summary": "读取来源",
+                    "kind": "retrieve",
+                    "basis_policy": "grove_required",
+                }
+            ],
+            "statement_message_ids": [],
+            "retrieval_requests": [
+                {
+                    "id": "q1",
+                    "query": "甲醛来源",
+                    "requirement_ids": ["source"],
+                }
+            ],
+            "structured_requests": [],
+        }
+    )
+
+    async def _fail_node(*args, **kwargs):
+        del args, kwargs
+        raise RuntimeError("节点执行失败")
+
+    async def _not_cancelled():
+        return None
+
+    monkeypatch.setattr(
+        "app.services.knowledge_agent.shared_execution_graph.execute_graph_node",
+        _fail_node,
+    )
+    async with async_session_factory() as db:
+        user = await create_user(db, "共享图失败审计")
+        workspace = await create_workspace(db, user)
+        _conversation, run = await _conversation_and_run(db, user, workspace, "甲醛来源？")
+        run.status = RUN_PROCESSING
+        await db.flush()
+        ctx = RunToolContext(
+            run_id=run.id,
+            workspace_id=workspace.id,
+            owner_user_id=user.id,
+            scope_type=SCOPE_WORKSPACE,
+            project_id=None,
+            project_name=None,
+        )
+        await execute_shared_execution_graph_plan(
+            db,
+            run,
+            ctx,
+            plan,
+            cancel_check=_not_cancelled,
+        )
+        summary = await run_fallback_summary(db, run.id)
+        invocations = list(
+            (
+                await db.execute(
+                    select(KnowledgeAgentModelInvocation).where(
+                        KnowledgeAgentModelInvocation.run_id == run.id,
+                        KnowledgeAgentModelInvocation.purpose == "shared_execution_graph",
+                    )
+                )
+            )
+            .scalars()
+            .all()
+        )
+
+    assert summary["has_fallback"] is True
+    assert len(invocations) == 3
+    assert all(item.provider == "server" and item.is_fallback for item in invocations)
+    assert all("node_fingerprint" in (item.error or "") for item in invocations)
+
+
+@pytest.mark.asyncio
+async def test_shared_graph_observability_records_actual_models_and_one_shared_tool(
+    monkeypatch,
+) -> None:
+    """等价消费者只产生一次工具事实，模型 provider/usage 由协调器落库。"""
+    plan = normalize_composite_answer_plan(
+        {
+            "schema_version": "v1",
+            "requirements": [
+                {
+                    "id": "first",
+                    "order": 0,
+                    "summary": "读取来源",
+                    "kind": "retrieve",
+                    "basis_policy": "grove_required",
+                },
+                {
+                    "id": "second",
+                    "order": 1,
+                    "summary": "再次读取来源",
+                    "kind": "retrieve",
+                    "basis_policy": "grove_required",
+                },
+            ],
+            "statement_message_ids": [],
+            "retrieval_requests": [
+                {
+                    "id": "q1",
+                    "query": "甲醛来源",
+                    "requirement_ids": ["first"],
+                },
+                {
+                    "id": "q2",
+                    "query": "甲醛来源",
+                    "requirement_ids": ["second"],
+                },
+            ],
+            "structured_requests": [],
+        }
+    )
+    search_calls = 0
+
+    async def _search(*args, **kwargs):
+        nonlocal search_calls
+        del args, kwargs
+        search_calls += 1
+        return SimpleNamespace(
+            items=[],
+            embedding_meta=StageMeta(
+                purpose="embedding",
+                provider="test-provider",
+                model="embedding-test",
+                is_fallback=False,
+                error=None,
+                duration_ms=3,
+                usage={"input_tokens": 2},
+            ).__dict__,
+            rerank_meta=None,
+        )
+
+    async def _read(*args, **kwargs):
+        del args, kwargs
+        return SimpleNamespace(items=[], denied_entry_ids=[], unavailable_entry_ids=[])
+
+    async def _not_cancelled():
+        return None
+
+    monkeypatch.setattr(
+        "app.services.knowledge_agent.tools.search_confirmed_knowledge", _search
+    )
+    monkeypatch.setattr("app.services.knowledge_agent.tools.read_entries", _read)
+    async with async_session_factory() as db:
+        user = await create_user(db, "共享图实际审计")
+        workspace = await create_workspace(db, user)
+        _conversation, run = await _conversation_and_run(db, user, workspace, "甲醛来源？")
+        run.status = RUN_PROCESSING
+        await db.flush()
+        ctx = RunToolContext(
+            run_id=run.id,
+            workspace_id=workspace.id,
+            owner_user_id=user.id,
+            scope_type=SCOPE_WORKSPACE,
+            project_id=None,
+            project_name=None,
+        )
+        await execute_shared_execution_graph_plan(
+            db,
+            run,
+            ctx,
+            plan,
+            cancel_check=_not_cancelled,
+        )
+        invocations = list(
+            (
+                await db.execute(
+                    select(KnowledgeAgentModelInvocation).where(
+                        KnowledgeAgentModelInvocation.run_id == run.id
+                    )
+                )
+            )
+            .scalars()
+            .all()
+        )
+        search_audits = list(
+            (
+                await db.execute(
+                    select(KnowledgeAgentToolCall).where(
+                        KnowledgeAgentToolCall.run_id == run.id,
+                        KnowledgeAgentToolCall.tool_name == "search_confirmed_knowledge",
+                    )
+                )
+            )
+            .scalars()
+            .all()
+        )
+
+    assert search_calls == 1
+    assert len(search_audits) == 1
+    params_summary = json.loads(search_audits[0].params_summary or "{}")
+    assert params_summary["consumer_count"] == 2
+    assert params_summary["reused"] is True
+    assert len(params_summary["node_fingerprint"]) == 64
+    assert len(invocations) == 1
+    assert invocations[0].provider == "test-provider"
+    assert invocations[0].model == "embedding-test"
+    assert json.loads(invocations[0].usage_json or "{}") == {"input_tokens": 2}
 
 
 @pytest.mark.asyncio
