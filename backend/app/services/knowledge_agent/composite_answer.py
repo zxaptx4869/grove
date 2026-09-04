@@ -5,6 +5,7 @@ from dataclasses import replace
 from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
+from sqlalchemy import select
 
 from app.agents.composite_answer import (
     COMPOSITE_ANSWER_PLAN_PROMPT_VERSION,
@@ -21,6 +22,7 @@ from app.models.knowledge_agent import (
     BASIS_STRATEGY_KNOWLEDGE_ONLY,
     BASIS_STRATEGY_MODEL_FIRST,
     PURPOSE_COMPOSITE_ANSWER_PLAN,
+    KnowledgeAgentModelInvocation,
 )
 from app.services.knowledge_agent.basis import (
     UserStatementCandidate,
@@ -283,6 +285,21 @@ def persist_composite_answer_plan(run, plan: NormalizedCompositeAnswerPlan) -> N
     run.planned_basis_strategy = _compatibility_basis_strategy(plan)
 
 
+async def _composite_planning_already_attempted(db, run_id: int) -> bool:
+    """使用已提交的模型调用记录区分“未规划”与“规划失败”。"""
+    invocation_id = (
+        await db.execute(
+            select(KnowledgeAgentModelInvocation.id)
+            .where(
+                KnowledgeAgentModelInvocation.run_id == run_id,
+                KnowledgeAgentModelInvocation.purpose == PURPOSE_COMPOSITE_ANSWER_PLAN,
+            )
+            .limit(1)
+        )
+    ).scalar_one_or_none()
+    return invocation_id is not None
+
+
 async def plan_and_persist_composite_answer(
     db,
     run,
@@ -308,6 +325,10 @@ async def plan_and_persist_composite_answer(
     existing = restore_composite_answer_plan(run.composite_answer_plan_json, settings=settings)
     if existing is not None:
         return existing
+    if await _composite_planning_already_attempted(db, run.id):
+        # 规划失败同样是已提交的首次决策；恢复只能沿用旧 quick fallback，
+        # 不能因为计划 JSON 为空而再次调用模型。
+        return None
 
     knowledge_only = (
         run.request_basis_mode == BASIS_MODE_KNOWLEDGE_ONLY

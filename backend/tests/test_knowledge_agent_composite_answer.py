@@ -330,6 +330,9 @@ async def test_plan_and_persist_composite_answer_reuses_snapshot(monkeypatch) ->
     async def _record(*args, **kwargs):
         recorded.append(kwargs)
 
+    async def _not_attempted(*args, **kwargs):
+        return False
+
     class _Db:
         commits = 0
 
@@ -343,6 +346,10 @@ async def test_plan_and_persist_composite_answer_reuses_snapshot(monkeypatch) ->
     monkeypatch.setattr(
         "app.services.knowledge_agent.composite_answer.record_model_invocation",
         _record,
+    )
+    monkeypatch.setattr(
+        "app.services.knowledge_agent.composite_answer._composite_planning_already_attempted",
+        _not_attempted,
     )
     run = SimpleNamespace(
         id=7,
@@ -440,6 +447,9 @@ async def test_natural_knowledge_only_is_passed_to_planner_and_hard_enforced(
     async def _record(*args, **kwargs):
         return None
 
+    async def _not_attempted(*args, **kwargs):
+        return False
+
     class _Db:
         async def commit(self):
             return None
@@ -451,6 +461,10 @@ async def test_natural_knowledge_only_is_passed_to_planner_and_hard_enforced(
     monkeypatch.setattr(
         "app.services.knowledge_agent.composite_answer.record_model_invocation",
         _record,
+    )
+    monkeypatch.setattr(
+        "app.services.knowledge_agent.composite_answer._composite_planning_already_attempted",
+        _not_attempted,
     )
     run = SimpleNamespace(
         id=8,
@@ -500,6 +514,9 @@ async def test_invalid_composite_candidate_records_explicit_fallback(monkeypatch
     async def _record(*args, **kwargs):
         recorded.append(kwargs["meta"])
 
+    async def _not_attempted(*args, **kwargs):
+        return False
+
     class _Db:
         async def commit(self):
             return None
@@ -511,6 +528,10 @@ async def test_invalid_composite_candidate_records_explicit_fallback(monkeypatch
     monkeypatch.setattr(
         "app.services.knowledge_agent.composite_answer.record_model_invocation",
         _record,
+    )
+    monkeypatch.setattr(
+        "app.services.knowledge_agent.composite_answer._composite_planning_already_attempted",
+        _not_attempted,
     )
     run = SimpleNamespace(
         id=9,
@@ -535,6 +556,81 @@ async def test_invalid_composite_candidate_records_explicit_fallback(monkeypatch
     assert run.composite_answer_plan_json is None
     assert recorded[0].is_fallback is True
     assert "要求 Grove" in (recorded[0].error or "")
+
+
+@pytest.mark.asyncio
+async def test_failed_composite_planning_is_not_repeated_on_recovery(monkeypatch) -> None:
+    """规划 fallback 的调用记录是恢复控制状态，同一 Run 不再规划。"""
+    planner_calls = 0
+    planning_attempted = False
+
+    async def _planner(*args, **kwargs):
+        nonlocal planner_calls
+        planner_calls += 1
+        from app.services.knowledge_agent.observability import StageMeta
+
+        return (
+            None,
+            StageMeta(
+                purpose="composite_answer_plan",
+                provider="llm",
+                model="fake",
+                is_fallback=True,
+                error="规划失败",
+                duration_ms=1,
+            ),
+        )
+
+    async def _already_attempted(*args, **kwargs):
+        return planning_attempted
+
+    async def _record(*args, **kwargs):
+        nonlocal planning_attempted
+        planning_attempted = True
+
+    class _Db:
+        commits = 0
+
+        async def commit(self):
+            self.commits += 1
+
+    monkeypatch.setattr(
+        "app.services.knowledge_agent.composite_answer.run_composite_answer_planner",
+        _planner,
+    )
+    monkeypatch.setattr(
+        "app.services.knowledge_agent.composite_answer._composite_planning_already_attempted",
+        _already_attempted,
+    )
+    monkeypatch.setattr(
+        "app.services.knowledge_agent.composite_answer.record_model_invocation",
+        _record,
+    )
+    run = SimpleNamespace(
+        id=10,
+        workspace_id=1,
+        request_basis_mode="auto",
+        composite_answer_plan_json=None,
+        planned_basis_strategy=None,
+    )
+    db = _Db()
+    kwargs = {
+        "current_message": "问题",
+        "standalone_query": "问题",
+        "scope_label": "全部知识",
+        "context_decision": "new_topic",
+        "topic_summary": None,
+        "allowed_statements": [],
+        "feature_enabled": True,
+    }
+
+    first = await plan_and_persist_composite_answer(db, run, **kwargs)
+    second = await plan_and_persist_composite_answer(db, run, **kwargs)
+
+    assert first is None and second is None
+    assert planner_calls == 1
+    assert db.commits == 1
+    assert run.composite_answer_plan_json is None
 
 
 def _multiple_input_plan():

@@ -34,6 +34,7 @@ from app.schemas.knowledge_agent import KnowledgeRunSubmitRequest
 from app.services.knowledge_agent.basis import BasisPlan
 from app.services.knowledge_agent.composite_answer import (
     normalize_composite_answer_plan,
+    plan_and_persist_composite_answer,
 )
 from app.services.knowledge_agent.composite_answer_execution import (
     composite_request_fingerprint,
@@ -213,6 +214,59 @@ async def test_composite_recovery_reuses_completed_fingerprint_and_runs_missing(
     assert executed == ["group_count"]
     assert [item.request_id for item in result.snapshot.inputs] == ["s1", "s2"]
     assert [fact.request_id for fact in result.snapshot.tool_facts] == ["s1", "s2"]
+
+
+@pytest.mark.asyncio
+async def test_composite_recovery_reuses_persisted_planning_fallback(monkeypatch) -> None:
+    """规划失败记录提交后，租约恢复不得再次调用规划模型。"""
+    async def _forbidden(*args, **kwargs):  # pragma: no cover
+        raise AssertionError("恢复不应重新规划")
+
+    monkeypatch.setattr(
+        "app.services.knowledge_agent.composite_answer.run_composite_answer_planner",
+        _forbidden,
+    )
+    async with async_session_factory() as db:
+        user = await create_user(db, "规划失败恢复")
+        workspace = await create_workspace(db, user)
+        _conversation, run = await _conversation_and_run(db, user, workspace, "复合问题")
+        db.add(
+            KnowledgeAgentModelInvocation(
+                run_id=run.id,
+                purpose="composite_answer_plan",
+                prompt_version="v1",
+                provider="llm",
+                model="fake",
+                is_fallback=True,
+                error="规划失败",
+                duration_ms=1,
+            )
+        )
+        await db.commit()
+
+        plan = await plan_and_persist_composite_answer(
+            db,
+            run,
+            current_message="复合问题",
+            standalone_query="复合问题",
+            scope_label="全部知识",
+            context_decision="new_topic",
+            topic_summary=None,
+            allowed_statements=[],
+            feature_enabled=True,
+        )
+        invocations = (
+            await db.execute(
+                select(KnowledgeAgentModelInvocation).where(
+                    KnowledgeAgentModelInvocation.run_id == run.id,
+                    KnowledgeAgentModelInvocation.purpose
+                    == "composite_answer_plan",
+                )
+            )
+        ).scalars().all()
+
+    assert plan is None
+    assert len(invocations) == 1
 
 
 @pytest.mark.asyncio
