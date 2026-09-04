@@ -89,6 +89,27 @@ def test_coverage_repair_snapshot_rejects_unknown_fields_and_bytes() -> None:
         )
 
 
+def test_coverage_repair_snapshot_uses_frozen_bytes_after_config_shrinks() -> None:
+    """恢复期写检查点只服从 Run 冻结上限，不被新部署缩小值改道。"""
+    baseline = _baseline().model_copy(deep=True)
+    baseline.answer.answer = "甲" * 1600
+    snapshot = CoverageRepairSnapshot(
+        stage="executing",
+        execution_mode="serial",
+        frozen_budget=CoverageRepairBudget(max_snapshot_bytes=10_000),
+        eligible_requirement_ids=["r1"],
+        baseline=baseline,
+    )
+    changed = Settings(
+        _env_file=None,
+        knowledge_agent_coverage_repair_snapshot_bytes_limit=1000,
+    )
+
+    raw = dump_coverage_repair_snapshot(snapshot, settings=changed)
+
+    assert restore_coverage_repair_snapshot(raw, settings=changed) == snapshot
+
+
 def test_coverage_repair_run_fields_are_internal_nullable_snapshots() -> None:
     """Run ORM 只追加内部可空列，不改变公开协议。"""
     from app.models import KnowledgeAgentRun
@@ -623,3 +644,93 @@ def test_merge_execution_rejects_request_and_handle_conflicts() -> None:
         merge_composite_execution(
             _original_plan(), _eligibility_execution(), _repair_plan(), repair
         )
+
+
+@pytest.mark.asyncio
+async def test_repair_cancel_checkpoint_stops_before_any_tool(monkeypatch) -> None:
+    """进入 executing 后的取消边界不得启动补查请求。"""
+    from app.services.knowledge_agent.runner import RunCancelled
+
+    called = False
+
+    async def forbidden(*args, **kwargs):  # pragma: no cover
+        nonlocal called
+        called = True
+        raise AssertionError("取消后不得启动执行器")
+
+    monkeypatch.setattr(
+        "app.services.knowledge_agent.composite_answer_execution."
+        "execute_composite_answer_plan",
+        forbidden,
+    )
+
+    class Db:
+        async def commit(self):
+            return None
+
+    run = SimpleNamespace(
+        id=12,
+        coverage_repair_json=None,
+        coverage_repair_execution_json=None,
+        coverage_repair_graph_json=None,
+        coverage_repair_graph_state_json=None,
+    )
+
+    async def cancelled():
+        raise RunCancelled()
+
+    snapshot = CoverageRepairSnapshot(
+        stage="plan_ready",
+        execution_mode="serial",
+        frozen_budget=CoverageRepairBudget(),
+        eligible_requirement_ids=["r2"],
+        baseline=_baseline(),
+    )
+    with pytest.raises(RunCancelled):
+        await execute_coverage_repair(
+            Db(),
+            run,
+            object(),
+            _original_plan(),
+            _repair_plan(),
+            snapshot,
+            cancel_check=cancelled,
+        )
+
+    assert called is False
+    assert restore_coverage_repair_snapshot(run.coverage_repair_json).stage == "executing"
+
+
+@pytest.mark.asyncio
+async def test_repair_serial_budget_exhaustion_dispatches_no_tool(monkeypatch) -> None:
+    """冻结工具预算不足一个检索请求时固化 limited，不发生透支调用。"""
+    from app.services.knowledge_agent.composite_answer_execution import (
+        execute_composite_answer_plan,
+    )
+
+    async def forbidden(*args, **kwargs):  # pragma: no cover
+        raise AssertionError("预算耗尽不得调用检索工具")
+
+    monkeypatch.setattr(
+        "app.services.knowledge_agent.composite_answer_execution."
+        "search_confirmed_knowledge",
+        forbidden,
+    )
+
+    class Db:
+        async def commit(self):
+            return None
+
+    run = SimpleNamespace(id=13, composite_answer_execution_json=None)
+    result = await execute_composite_answer_plan(
+        Db(),
+        run,
+        object(),
+        coverage_repair_execution_plan(_original_plan(), _repair_plan()),
+        cancel_check=_noop,
+        max_tool_calls=1,
+    )
+
+    assert result.snapshot.inputs[0].status == "limited"
+    assert result.snapshot.inputs[0].tool_calls == 0
+    assert "预算已耗尽" in result.snapshot.inputs[0].error

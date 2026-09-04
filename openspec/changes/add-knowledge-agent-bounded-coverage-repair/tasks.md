@@ -21,27 +21,27 @@
 - [x] 3.2 接入串行补查：只执行新请求，每个请求终态持久化，恢复只重放未提交请求，Entry/Evidence/耗时/字节预算使用冻结值。验收：`cd backend && .venv/bin/pytest -q tests/test_knowledge_agent_coverage_repair.py -k 'serial and (execute or recovery or budget)'`
 - [x] 3.3 接入共享补查图：最多八个新节点，使用独立图/state 和冻结预算，继承稳定拓扑、并行会话隔离、协调器顺序审计与迟到结果拒绝。验收：`cd backend && .venv/bin/pytest -q tests/test_knowledge_agent_coverage_repair.py tests/test_knowledge_agent_shared_execution_graph.py -k 'repair_graph'`
 - [x] 3.4 固化补查 execution mode；开关/配置变化后仍恢复原串行或图路径，快照非法或指纹不匹配时显式失败，不重规划、改道或重放首次执行。验收：`cd backend && .venv/bin/pytest -q tests/test_knowledge_agent_coverage_repair.py tests/test_knowledge_agent_worker.py -k 'flag_change or frozen or corrupt or no_replay'`
-- [ ] 3.5 在新请求命中同 Run 已读来源时复用 Evidence 行/句柄，并以实际工具计数断言首次完成节点、重复请求和 Evidence 均未重放。验收：`cd backend && .venv/bin/pytest -q tests/test_knowledge_agent_coverage_repair_eval.py -k 'reuse or no_duplicate_call'`
+- [x] 3.5 在新请求命中同 Run 已读来源时复用 Evidence 行/句柄，并以实际工具计数断言首次完成节点、重复请求和 Evidence 均未重放。验收：`cd backend && .venv/bin/pytest -q tests/test_knowledge_agent_coverage_repair_eval.py -k 'reuse or no_duplicate_call'`
 - [x] 3.6 实现首次与补查 execution 稳定合并，拒绝 request/handle 冲突，保留首次输入序列化值并只追加新合法句柄。验收：`cd backend && .venv/bin/pytest -q tests/test_knowledge_agent_coverage_repair.py -k merge_execution`
-- [ ] 3.7 完成补查执行与恢复的本地提交。验收：`cd backend && .venv/bin/ruff check app tests && cd .. && git diff --check`
+- [x] 3.7 完成补查执行与恢复的本地提交。验收：`cd backend && .venv/bin/ruff check app tests && cd .. && git diff --check`
 
 ## 4. Runner 编排、再综合与诚实失败
 
 - [x] 4.1 在 quick 复合路径首次综合后持久化基线快照，按准入决定跳过或进入一次补查；开关关闭、investigate、entries、兼容 quick 与规划 fallback 不变。验收：`cd backend && .venv/bin/pytest -q tests/test_knowledge_agent_runner.py tests/test_knowledge_agent_coverage_repair.py -k 'runner or feature_flag or unaffected'`
 - [x] 4.2 只在补查产生新合法 Evidence/tool fact 时用合并 execution 再综合，重用现有句柄校验、数字事实、coverage、basis 和 Citation 派生。验收：`cd backend && .venv/bin/pytest -q tests/test_knowledge_agent_coverage_repair.py -k 'resynthesis or coverage or basis or citation'`
 - [x] 4.3 实现 coverage 非退化门禁：新回答不能丢失基线 answered 义务；补查 planner/执行/再综合失败时恢复基线 answer/coverage/basis，并显式保留 partial/insufficient/gaps/fallback。验收：`cd backend && .venv/bin/pytest -q tests/test_knowledge_agent_coverage_repair.py -k 'baseline_fallback or non_regression or failure'`
-- [ ] 4.4 在规划、节点启动/接纳、检查点、再综合和终态前复用取消检查，取消不投影内部基线为正常回答或推进工作集。验收：`cd backend && .venv/bin/pytest -q tests/test_knowledge_agent_worker.py tests/test_knowledge_agent_coverage_repair.py -k 'repair and cancel'`
+- [x] 4.4 在规划、节点启动/接纳、检查点、再综合和终态前复用取消检查，取消不投影内部基线为正常回答或推进工作集。验收：`cd backend && .venv/bin/pytest -q tests/test_knowledge_agent_worker.py tests/test_knowledge_agent_coverage_repair.py -k 'repair and cancel'`
 - [x] 4.5 将补查 planner/图/工具/再综合/停止的真实状态写入现有审计与 fallback 汇总，确定性跳过不伪造调用。验收：`cd backend && .venv/bin/pytest -q tests/test_knowledge_agent_coverage_repair.py tests/test_knowledge_agent_runner.py -k 'observability or fallback_summary or skipped'`
 - [x] 4.6 保持现有 Run/消息页与原生端只投影 answer/points/Citation/coverage/gaps/basis/fallback 和既有计划摘要，内部补查查询、图、节点、范围与指纹不出现在公开 JSON。验收：`cd backend && .venv/bin/pytest -q tests/test_knowledge_agent_api.py tests/test_knowledge_agent_conversations.py -k 'coverage_repair or composite or legacy' && cd ../mobile && npm test -- --runInBand src/knowledge-agent/api.test.ts src/knowledge-agent/adapters/answer.test.ts`
-- [ ] 4.7 完成 Runner、综合和协议兼容的本地提交。验收：`cd backend && .venv/bin/ruff check app tests && cd ../mobile && npm run typecheck && npm run lint && cd .. && git diff --check`
+- [x] 4.7 完成 Runner、综合和协议兼容的本地提交。验收：`cd backend && .venv/bin/ruff check app tests && cd ../mobile && npm run typecheck && npm run lint && cd .. && git diff --check`
 
 ## 5. 评估、隔离、无写入与压力覆盖
 
-- [ ] 5.1 建立代表性评估夹具：复合解释 + Grove Evidence + 结构化统计，覆盖首次完整跳过、可修复 partial/insufficient、补查改善和补查后仍有缺口。验收：`cd backend && .venv/bin/pytest -q tests/test_knowledge_agent_coverage_repair_eval.py -k coverage`
-- [ ] 5.2 覆盖串行/共享图结果等价、首次节点无重放、候选重复调用拒绝、同 Run Evidence 复用与实际工具调用次数。验收：`cd backend && .venv/bin/pytest -q tests/test_knowledge_agent_coverage_repair_eval.py -k 'serial_graph_equivalence or call_count or reuse'`
-- [ ] 5.3 覆盖 planner 非法/失败、工具部分失败、再综合失败、预算耗尽、无新查询和基线非退化，断言状态、gaps 与 fallback 不伪正常。验收：`cd backend && .venv/bin/pytest -q tests/test_knowledge_agent_coverage_repair.py tests/test_knowledge_agent_coverage_repair_eval.py -k 'failure or budget or no_novel or non_regression'`
-- [ ] 5.4 覆盖取消、每类检查点恢复、配置/开关变化、损坏快照、重复提交和租约重试，断言每 Run 最多一次 planner/补查阶段。验收：`cd backend && .venv/bin/pytest -q tests/test_knowledge_agent_worker.py tests/test_knowledge_agent_coverage_repair.py -k 'repair and (cancel or recovery or idempotent or corrupt or flag_change)'`
-- [ ] 5.5 建立 owner/Workspace/项目/跨 Run 隔离硬门禁，以前后计数验证 Entry、Source、Candidate、Draft/Extraction、目录、Operation 和事实工作集无写入副作用。验收：`cd backend && .venv/bin/pytest -q tests/test_knowledge_agent_coverage_repair_eval.py -k guardrail`
+- [x] 5.1 建立代表性评估夹具：复合解释 + Grove Evidence + 结构化统计，覆盖首次完整跳过、可修复 partial/insufficient、补查改善和补查后仍有缺口。验收：`cd backend && .venv/bin/pytest -q tests/test_knowledge_agent_coverage_repair_eval.py -k coverage`
+- [x] 5.2 覆盖串行/共享图结果等价、首次节点无重放、候选重复调用拒绝、同 Run Evidence 复用与实际工具调用次数。验收：`cd backend && .venv/bin/pytest -q tests/test_knowledge_agent_coverage_repair_eval.py -k 'serial_graph_equivalence or call_count or reuse'`
+- [x] 5.3 覆盖 planner 非法/失败、工具部分失败、再综合失败、预算耗尽、无新查询和基线非退化，断言状态、gaps 与 fallback 不伪正常。验收：`cd backend && .venv/bin/pytest -q tests/test_knowledge_agent_coverage_repair.py tests/test_knowledge_agent_coverage_repair_eval.py -k 'failure or budget or no_novel or non_regression'`
+- [x] 5.4 覆盖取消、每类检查点恢复、配置/开关变化、损坏快照、重复提交和租约重试，断言每 Run 最多一次 planner/补查阶段。验收：`cd backend && .venv/bin/pytest -q tests/test_knowledge_agent_worker.py tests/test_knowledge_agent_coverage_repair.py -k 'repair and (cancel or recovery or idempotent or corrupt or flag_change)'`
+- [x] 5.5 建立 owner/Workspace/项目/跨 Run 隔离硬门禁，以前后计数验证 Entry、Source、Candidate、Draft/Extraction、目录、Operation 和事实工作集无写入副作用。验收：`cd backend && .venv/bin/pytest -q tests/test_knowledge_agent_coverage_repair_eval.py -k guardrail`
 - [ ] 5.6 完成评估、隔离与无写入门禁的本地提交。验收：`cd backend && .venv/bin/ruff check app tests && cd .. && git diff --check`
 
 ## 6. 自动化验收、文档与本地收尾

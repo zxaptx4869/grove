@@ -616,10 +616,9 @@ def dump_coverage_repair_snapshot(
     snapshot: CoverageRepairSnapshot, *, settings: Settings | None = None
 ) -> str:
     """在完整基线无法写入时直接失败，不截断回答。"""
-    active = settings or get_settings()
     raw = snapshot.model_dump_json(exclude_none=True)
     limit = min(
-        active.knowledge_agent_coverage_repair_snapshot_bytes_limit,
+        _COVERAGE_REPAIR_HARD_JSON_BYTES_LIMIT,
         snapshot.frozen_budget.max_snapshot_bytes,
     )
     if len(raw.encode("utf-8")) > limit:
@@ -650,11 +649,9 @@ def dump_coverage_repair_plan(
     budget: CoverageRepairBudget,
     settings: Settings | None = None,
 ) -> str:
-    """计划固化前同时校验现行和快照字节上限。"""
-    active = settings or get_settings()
+    """计划按 planner 前冻结的字节预算固化。"""
     raw = plan.model_dump_json(exclude_none=True)
-    limit = min(active.knowledge_agent_coverage_repair_plan_bytes_limit, budget.max_plan_bytes)
-    if len(raw.encode("utf-8")) > limit:
+    if len(raw.encode("utf-8")) > budget.max_plan_bytes:
         raise ValueError("覆盖补查计划超过 JSON 字节预算")
     return raw
 

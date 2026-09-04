@@ -560,6 +560,11 @@ async def test_recover_stale_run_requeues_once_then_fails() -> None:
             claimed_at=datetime.now(UTC) - timedelta(days=1),
             retry_count=0,
             max_retries=1,
+            coverage_repair_json="frozen-control",
+            coverage_repair_plan_json="frozen-plan",
+            coverage_repair_execution_json="frozen-execution",
+            coverage_repair_graph_json="frozen-graph",
+            coverage_repair_graph_state_json="frozen-state",
         )
         exhausted = KnowledgeAgentRun(
             conversation_id=conversation.id,
@@ -584,6 +589,11 @@ async def test_recover_stale_run_requeues_once_then_fails() -> None:
         assert stale.status == RUN_WAITING
         assert stale.retry_count == 1
         assert stale.claimed_at is None
+        assert stale.coverage_repair_json == "frozen-control"
+        assert stale.coverage_repair_plan_json == "frozen-plan"
+        assert stale.coverage_repair_execution_json == "frozen-execution"
+        assert stale.coverage_repair_graph_json == "frozen-graph"
+        assert stale.coverage_repair_graph_state_json == "frozen-state"
         assert exhausted.status == RUN_FAILED
         assert exhausted.active_slot is None
         assert "超过恢复上限" in (exhausted.error or "")
