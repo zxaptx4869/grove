@@ -117,6 +117,9 @@ class NodeOutcome(GraphModel):
     bucket_count: int = Field(default=0, ge=0, le=500)
     upstream_fingerprints: list[str] = Field(default_factory=list, max_length=4)
     reused: bool = False
+    # 节点执行产生的脱敏审计由协调器按 node id 顺序写入，独立会话不直接抢占序号。
+    tool_audits: list[dict[str, Any]] = Field(default_factory=list, max_length=32)
+    model_audits: list[dict[str, Any]] = Field(default_factory=list, max_length=8)
 
     @field_validator("result")
     @classmethod
@@ -633,6 +636,7 @@ def allocate_wave_quota(
     remaining_entries: int | None = None,
     remaining_evidence: int | None = None,
     remaining_buckets: int | None = None,
+    remaining_duration_ms: int | None = None,
 ) -> dict[str, dict[str, int]]:
     """按稳定 node id 预分配额度，避免并发完成先后影响结果。"""
     quotas = {
@@ -644,17 +648,29 @@ def allocate_wave_quota(
             0, budget.max_evidence if remaining_evidence is None else remaining_evidence
         ),
         "buckets": max(0, budget.max_buckets if remaining_buckets is None else remaining_buckets),
+        "duration_ms": max(
+            0,
+            budget.max_duration_ms
+            if remaining_duration_ms is None
+            else remaining_duration_ms,
+        ),
     }
     allocation: dict[str, dict[str, int]] = {}
     for node in sorted(nodes, key=lambda item: int(item.id[1:])):
         wants = {
-            "tool_calls": 1,
+            "tool_calls": budget.max_entries
+            if node.kind == "entry_evidence"
+            else 1,
             "entries": budget.max_entries
             if node.kind
             in {"semantic_entry_set", "structured_entry_set", "entry_list", "entry_content"}
             else 0,
             "evidence": budget.max_evidence if node.kind == "entry_evidence" else 0,
             "buckets": budget.max_buckets if node.kind == "aggregate_group_count" else 0,
+            "duration_ms": max(
+                1,
+                quotas["duration_ms"] // max(1, len(nodes)),
+            ),
         }
         granted = {key: min(value, quotas[key]) for key, value in wants.items()}
         if node.kind == "entry_evidence" and granted["evidence"] == 0:
@@ -787,6 +803,21 @@ async def run_graph_scheduler(
     current = state or SharedExecutionState(plan_digest=graph.plan_digest)
     validate_shared_execution_state(graph, current)
     outcomes = {item.node_id: item for item in current.outcomes}
+    started_at = monotonic()
+    elapsed_offset_ms = sum(item.duration_ms for item in outcomes.values())
+
+    def elapsed_ms() -> int:
+        return elapsed_offset_ms + int((monotonic() - started_at) * 1000)
+
+    def timeout_outcome(node: GraphNode, message: str) -> NodeOutcome:
+        return NodeOutcome(
+            node_id=node.id,
+            fingerprint=node.fingerprint,
+            status="limited",
+            completeness="limited",
+            error=message,
+            duration_ms=elapsed_ms(),
+        )
 
     def remaining_budget() -> dict[str, int]:
         """仅从已提交节点终态扣减全局预算，绝不按波次重置。"""
@@ -809,6 +840,7 @@ async def run_graph_scheduler(
         if cancel_check is not None:
             await cancel_check()
         remaining = remaining_budget()
+        remaining["duration_ms"] = max(0, graph.frozen_budget.max_duration_ms - elapsed_ms())
         quotas = allocate_wave_quota(
             wave,
             budget=graph.frozen_budget,
@@ -816,6 +848,7 @@ async def run_graph_scheduler(
             remaining_entries=remaining["entries"],
             remaining_evidence=remaining["evidence"],
             remaining_buckets=remaining["buckets"],
+            remaining_duration_ms=remaining["duration_ms"],
         )
         parallel = [node for node in wave if node.parallel_eligible]
         serial = [node for node in wave if not node.parallel_eligible]
@@ -827,6 +860,8 @@ async def run_graph_scheduler(
             try:
                 if cancel_check is not None:
                     await cancel_check()
+                if elapsed_ms() >= graph.frozen_budget.max_duration_ms:
+                    return node.id, timeout_outcome(node, "共享执行图总耗时预算已耗尽")
                 deps = {dep: outcomes[dep] for dep in node.dependencies if dep in outcomes}
                 blocked = [item for item in deps.values() if item.status in {"failed", "cancelled"}]
                 if blocked:
@@ -848,6 +883,14 @@ async def run_graph_scheduler(
                         status="completed",
                         result=result if isinstance(result, dict) else {"value": result},
                         result_handle=stable_result_handle(node.fingerprint, node.kind),
+                    )
+                if elapsed_ms() > graph.frozen_budget.max_duration_ms:
+                    outcome = outcome.model_copy(
+                        update={
+                            "status": "limited",
+                            "completeness": "limited",
+                            "error": "共享执行图总耗时预算已超限",
+                        }
                     )
                 return node.id, outcome
             except asyncio.CancelledError:
@@ -924,11 +967,14 @@ async def execute_graph_node(
     )
 
     started_at = monotonic()
+    tool_audits: list[dict[str, Any]] = []
+    model_audits: list[dict[str, Any]] = []
     allowance = quota or {
         "tool_calls": 1,
         "entries": 30,
         "evidence": 30,
         "buckets": 24,
+        "duration_ms": 30_000,
     }
 
     def outcome(
@@ -957,27 +1003,79 @@ async def execute_graph_node(
             bucket_count=min(bucket_count, allowance["buckets"]),
             upstream_fingerprints=[item.fingerprint for item in dependencies.values()],
             reused=len(node.consumer_request_ids) > 1,
+            tool_audits=list(tool_audits),
+            model_audits=list(model_audits),
         )
+
+    def add_tool_audit(
+        tool_name: str,
+        status: str,
+        *,
+        error: str | None = None,
+        duration_ms: int = 0,
+        summary: dict[str, Any] | None = None,
+    ) -> None:
+        tool_audits.append(
+            {
+                "tool_name": tool_name,
+                "status": status,
+                "error": error,
+                "duration_ms": max(0, duration_ms),
+                "summary": summary or {},
+            }
+        )
+
+    def add_model_audit(meta: dict[str, Any] | None) -> None:
+        if meta:
+            model_audits.append(dict(meta))
 
     await cancel_check()
     params = node.normalized_params
     if node.kind == "semantic_entry_set":
         if allowance["tool_calls"] <= 0:
             return outcome(status="limited", completeness="limited", result={})
-        output = await search_confirmed_knowledge(
-            db,
-            ctx,
-            str(params["query"]),
-            recall_limit=min(
-                int(params.get("max_entries", 30)), allowance["entries"],
-            ),
-            context_limit=min(int(params.get("max_entries", 30)), allowance["entries"]),
-        )
+        try:
+            output = await search_confirmed_knowledge(
+                db,
+                ctx,
+                str(params["query"]),
+                recall_limit=min(
+                    int(params.get("max_entries", 30)), allowance["entries"],
+                ),
+                context_limit=min(int(params.get("max_entries", 30)), allowance["entries"]),
+            )
+        except Exception as exc:  # noqa: BLE001
+            if exc.__class__.__name__ == "RunCancelled":
+                raise
+            add_tool_audit(
+                "search_confirmed_knowledge",
+                "error",
+                error=str(exc),
+                duration_ms=int((monotonic() - started_at) * 1000),
+            )
+            return outcome(
+                status="failed",
+                completeness="unknown",
+                error=f"检索工具执行失败：{exc}"[:500],
+                tool_calls=1,
+            )
+        add_model_audit(output.embedding_meta)
+        add_model_audit(output.rerank_meta)
         entry_ids = [item.entry_id for item in output.items]
+        add_tool_audit(
+            "search_confirmed_knowledge",
+            "empty" if not entry_ids else "completed",
+            duration_ms=int((monotonic() - started_at) * 1000),
+            summary={"entry_count": len(entry_ids)},
+        )
         return outcome(
             status="empty" if not entry_ids else "limited",
             completeness="limited",
-            result={"entry_ids": entry_ids},
+            result={
+                "entry_ids": entry_ids,
+                "embedding_meta": output.embedding_meta,
+                "rerank_meta": output.rerank_meta,
+            },
             tool_calls=1,
             # 候选集不作为内容读取额度扣减，避免同一 Entry 被重复计数。
         )
@@ -992,11 +1090,41 @@ async def execute_graph_node(
         source_payload = source.result or {} if source else {}
         entry_ids = list(source_payload.get("entry_ids", []))
         if node.kind == "entry_content":
-            if allowance["entries"] <= 0:
+            if allowance["tool_calls"] <= 0 or allowance["entries"] <= 0:
                 return outcome(status="limited", completeness="limited", result={})
             entry_ids = entry_ids[: allowance["entries"]]
-            output = await read_entries(db, ctx, entry_ids)
+            try:
+                output = await read_entries(db, ctx, entry_ids)
+            except Exception as exc:  # noqa: BLE001
+                if exc.__class__.__name__ == "RunCancelled":
+                    raise
+                add_tool_audit(
+                    "read_entries",
+                    "error",
+                    error=str(exc),
+                    duration_ms=int((monotonic() - started_at) * 1000),
+                )
+                return outcome(
+                    status="failed",
+                    completeness="unknown",
+                    error=f"Entry 读取工具执行失败：{exc}"[:500],
+                    tool_calls=1,
+                )
             read_ids = [item.entry_id for item in output.items]
+            add_tool_audit(
+                "read_entries",
+                "partial"
+                if output.denied_entry_ids or output.unavailable_entry_ids
+                else "empty"
+                if not read_ids
+                else "completed",
+                duration_ms=int((monotonic() - started_at) * 1000),
+                summary={
+                    "entry_count": len(read_ids),
+                    "denied": len(output.denied_entry_ids),
+                    "unavailable": len(output.unavailable_entry_ids),
+                },
+            )
             entry_sources = {
                 str(item.entry_id): [
                     source_id
@@ -1020,6 +1148,8 @@ async def execute_graph_node(
                 entry_count=len(read_ids),
             )
         if "entry_set" in source_payload:
+            if allowance["tool_calls"] <= 0 or allowance["entries"] <= 0:
+                return outcome(status="limited", completeness="limited", result={})
             from app.services.knowledge_agent.read_tools import ReadToolBudget, dispatch_read_tool
             from app.services.knowledge_agent.structured_query import (
                 NormalizedEntrySetSpec,
@@ -1044,9 +1174,20 @@ async def execute_graph_node(
                     "limit": min(int(params.get("limit", 30)), allowance["entries"]),
                     "sort": sort.model_dump(mode="json"),
                 },
-                budget=ReadToolBudget(max_calls=1, timeout_seconds=30, max_result_bytes=16000),
+                budget=ReadToolBudget(
+                    max_calls=1,
+                    timeout_seconds=max(0.001, allowance["duration_ms"] / 1000),
+                    max_result_bytes=16000,
+                ),
                 cancel_check=cancel_check,
                 registry=STRUCTURED_QUERY_TOOL_REGISTRY,
+            )
+            add_tool_audit(
+                "query_entries",
+                dispatched.status,
+                error=dispatched.error,
+                duration_ms=dispatched.duration_ms,
+                summary={"entry_count": len(dispatched.payload.get("items", []))},
             )
             items = list(dispatched.payload.get("items", []))
             status = "empty" if not items else dispatched.status
@@ -1094,19 +1235,44 @@ async def execute_graph_node(
             )
         evidence_handles: list[str] = []
         remaining_evidence = allowance["evidence"]
+        evidence_calls = 0
         unavailable = False
         for entry_id in entry_ids:
-            if remaining_evidence <= 0:
+            if remaining_evidence <= 0 or evidence_calls >= allowance["tool_calls"]:
+                unavailable = unavailable or remaining_evidence > 0
                 break
             source_ids = entry_sources.get(str(entry_id), [])
             if not source_ids:
                 unavailable = True
                 continue
-            evidence = await read_source_evidence(
-                db,
-                ctx,
-                entry_id=int(entry_id),
-                source_ids=[int(value) for value in source_ids][:remaining_evidence],
+            try:
+                evidence = await read_source_evidence(
+                    db,
+                    ctx,
+                    entry_id=int(entry_id),
+                    source_ids=[int(value) for value in source_ids][:remaining_evidence],
+                )
+            except Exception as exc:  # noqa: BLE001
+                if exc.__class__.__name__ == "RunCancelled":
+                    raise
+                evidence_calls += 1
+                add_tool_audit(
+                    "read_source_evidence",
+                    "error",
+                    error=str(exc),
+                    duration_ms=int((monotonic() - started_at) * 1000),
+                    summary={"entry_id": int(entry_id)},
+                )
+                unavailable = True
+                continue
+            evidence_calls += 1
+            add_tool_audit(
+                "read_source_evidence",
+                "partial"
+                if any(not item.citable for item in evidence.items)
+                else "completed",
+                duration_ms=int((monotonic() - started_at) * 1000),
+                summary={"entry_id": int(entry_id), "source_count": len(evidence.items)},
             )
             for item in evidence.items:
                 if item.citable and item.evidence_handle:
@@ -1129,7 +1295,7 @@ async def execute_graph_node(
             status=status,
             completeness=completeness,
             result={"entry_ids": entry_ids, "evidence_handles": evidence_handles},
-            tool_calls=1 if entry_sources else 0,
+            tool_calls=evidence_calls,
             evidence_count=len(evidence_handles),
         )
     if node.kind in {"aggregate_count", "aggregate_group_count"}:
@@ -1140,6 +1306,8 @@ async def execute_graph_node(
             STRUCTURED_QUERY_TOOL_VERSION,
         )
 
+        if allowance["tool_calls"] <= 0:
+            return outcome(status="limited", completeness="limited", result={})
         source = dependencies.get(str(params.get("source")))
         source_payload = source.result or {} if source else {}
         entry_set = NormalizedEntrySetSpec.model_validate(
@@ -1160,11 +1328,18 @@ async def execute_graph_node(
             params=request,
             budget=ReadToolBudget(
                 max_calls=1,
-                timeout_seconds=30,
+                timeout_seconds=max(0.001, allowance["duration_ms"] / 1000),
                 max_result_bytes=16000,
             ),
             cancel_check=cancel_check,
             registry=STRUCTURED_QUERY_TOOL_REGISTRY,
+        )
+        add_tool_audit(
+            "aggregate_entries",
+            dispatched.status,
+            error=dispatched.error,
+            duration_ms=dispatched.duration_ms,
+            summary={"operation": operation},
         )
         payload = dict(dispatched.payload)
         buckets = payload.get("buckets", [])
@@ -1229,10 +1404,52 @@ async def execute_shared_execution_graph_plan(
         budget=graph.frozen_budget,
     ) or SharedExecutionState(plan_digest=graph.plan_digest)
     await cancel_check()
+    persisted_nodes = {item.node_id for item in state.outcomes}
 
     async def checkpoint(next_state: SharedExecutionState) -> None:
         """仅在协调器接受终态且再次确认未取消后写入检查点。"""
         await cancel_check()
+        from app.services.knowledge_agent.observability import (
+            StageMeta,
+            next_tool_sequence,
+            record_model_invocation,
+            record_tool_call,
+        )
+
+        for next_outcome in sorted(next_state.outcomes, key=lambda item: int(item.node_id[1:])):
+            if next_outcome.node_id in persisted_nodes:
+                continue
+            common = {
+                "node_fingerprint": next_outcome.fingerprint,
+                "consumer_count": len(
+                    next(
+                        node.consumer_request_ids
+                        for node in graph.nodes
+                        if node.id == next_outcome.node_id
+                    )
+                ),
+                "reused": next_outcome.reused,
+            }
+            for audit in next_outcome.tool_audits:
+                await record_tool_call(
+                    db,
+                    run_id=run.id,
+                    sequence=await next_tool_sequence(db, run.id),
+                    tool_name=str(audit.get("tool_name", "shared_node"))[:64],
+                    status=str(audit.get("status", next_outcome.status)),
+                    params_summary=json.dumps(common, ensure_ascii=False)[:1000],
+                    result_summary=json.dumps(audit.get("summary", {}), ensure_ascii=False)[:2000],
+                    error=audit.get("error") or next_outcome.error,
+                    duration_ms=int(audit.get("duration_ms", next_outcome.duration_ms)),
+                )
+            for meta in next_outcome.model_audits:
+                await record_model_invocation(
+                    db,
+                    run_id=run.id,
+                    meta=StageMeta(**meta),
+                    prompt_version="v1",
+                )
+            persisted_nodes.add(next_outcome.node_id)
         run.shared_execution_state_json = dump_shared_execution_state(
             next_state,
             settings=active,
@@ -1283,7 +1500,7 @@ async def execute_shared_execution_graph_plan(
                     cancel_check=cancel_check,
                 )
                 await cancel_check()
-                await node_db.commit()
+                # 并行会话只读；工具/模型审计由协调器在 checkpoint 中顺序落库。
                 return result
         return await execute_graph_node(
             db,
@@ -1301,6 +1518,7 @@ async def execute_shared_execution_graph_plan(
         cancel_check=cancel_check,
         checkpoint=checkpoint,
     )
+    await cancel_check()
     snapshot = materialize_composite_execution(plan, graph, state)
     run.composite_answer_execution_json = snapshot.model_dump_json(
         by_alias=True,

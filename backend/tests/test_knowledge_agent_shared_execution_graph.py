@@ -1,5 +1,6 @@
 """共享执行图的协议、精确去重、调度与恢复单元测试。"""
 
+import asyncio
 from types import SimpleNamespace
 
 import pytest
@@ -299,6 +300,72 @@ async def test_scheduler_cancellation_stops_new_nodes_without_terminal_state() -
             cancel_check=cancel_check,
         )
     assert calls == 1
+
+
+@pytest.mark.asyncio
+async def test_scheduler_enforces_total_duration_budget() -> None:
+    graph = compile_shared_execution_graph(_plan(), scope_fingerprint=_scope())
+    graph.frozen_budget.max_duration_ms = 1
+
+    async def execute(node, _deps, _quota):
+        await asyncio.sleep(0.01)
+        return NodeOutcome(
+            node_id=node.id,
+            fingerprint=node.fingerprint,
+            status="completed",
+            completeness="complete",
+        )
+
+    state = await run_graph_scheduler(graph, execute_node=execute)
+    assert state.outcomes[0].status == "limited"
+    assert "耗时" in (state.outcomes[0].error or "")
+
+
+@pytest.mark.asyncio
+async def test_entry_evidence_consumes_one_tool_call_per_entry(monkeypatch) -> None:
+    graph = compile_shared_execution_graph(_plan(), scope_fingerprint=_scope())
+    content, evidence = graph.nodes[1:]
+    ctx = RunToolContext(1, 2, 1, "workspace", None, None, {9, 10})
+    calls: list[int] = []
+
+    async def read_evidence(_db, _ctx, entry_id, source_ids):
+        calls.append(entry_id)
+        return EvidenceReadOutput(
+            items=[
+                EvidenceReadItem(
+                    entry_id=entry_id,
+                    source_id=source_ids[0],
+                    evidence_handle=f"ev_{entry_id}",
+                    citable=True,
+                    status="completed",
+                )
+            ]
+        )
+
+    monkeypatch.setattr("app.services.knowledge_agent.tools.read_source_evidence", read_evidence)
+    outcome = await execute_graph_node(
+        None,
+        ctx,
+        evidence,
+        {
+            content.id: NodeOutcome(
+                node_id=content.id,
+                fingerprint=content.fingerprint,
+                status="completed",
+                completeness="complete",
+                result={
+                    "entry_ids": [9, 10],
+                    "entry_sources": {"9": [33], "10": [44]},
+                },
+            )
+        },
+        quota={"tool_calls": 1, "entries": 2, "evidence": 2, "buckets": 0, "duration_ms": 1000},
+        cancel_check=_not_cancelled,
+    )
+    assert calls == [9]
+    assert outcome.tool_calls == 1
+    assert outcome.status == "limited"
+    assert outcome.result["evidence_handles"] == ["ev_9"]
 
 
 @pytest.mark.asyncio

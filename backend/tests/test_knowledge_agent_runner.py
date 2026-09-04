@@ -66,6 +66,11 @@ from app.services.knowledge_agent.runs import (
     submit_message,
     update_run_step,
 )
+from app.services.knowledge_agent.shared_execution_graph import (
+    compile_shared_execution_graph,
+    dump_shared_execution_graph,
+    run_scope_fingerprint,
+)
 from app.services.knowledge_agent.structured_query import (
     plan_and_persist_structured_query,
 )
@@ -2170,6 +2175,105 @@ async def test_composite_quick_routes_before_plan_and_skips_legacy_basis(monkeyp
         assert run.status == RUN_COMPLETED
         assert run.composite_answer_coverage_json is not None
         assert json.loads(run.answer_json)["points"][0]["requirement_ids"] == ["r1"]
+
+
+@pytest.mark.asyncio
+async def test_runner_restores_persisted_graph_when_switch_is_disabled(monkeypatch) -> None:
+    """部署回滚开关后，已有图 Run 仍由共享图入口恢复，不整体串行重跑。"""
+    settings = Settings(
+        knowledge_agent_composite_answer_enabled=True,
+        knowledge_agent_shared_execution_graph_enabled=False,
+    )
+    monkeypatch.setattr("app.services.knowledge_agent.runner.get_settings", lambda: settings)
+    plan = normalize_composite_answer_plan(
+        {
+            "schema_version": "v1",
+            "requirements": [
+                {
+                    "id": "count",
+                    "order": 0,
+                    "summary": "统计知识数量",
+                    "kind": "aggregate",
+                    "basis_policy": "grove_only",
+                }
+            ],
+            "statement_message_ids": [],
+            "retrieval_requests": [],
+            "structured_requests": [
+                {
+                    "id": "s1",
+                    "entry_set": {},
+                    "outputs": [{"kind": "count"}],
+                    "requirement_ids": ["count"],
+                }
+            ],
+        }
+    )
+    selected: list[str] = []
+
+    async def _plan(*args, **kwargs):
+        return plan
+
+    async def _shared(db, run, ctx, current_plan, **kwargs):
+        selected.append("shared")
+        assert run.shared_execution_graph_json
+        return SimpleNamespace(snapshot=CompositeAnswerExecutionSnapshot())
+
+    async def _serial(*args, **kwargs):
+        selected.append("serial")
+        raise AssertionError("已有固化图不得回退串行执行")
+
+    async def _build(*args, **kwargs):
+        answer = KnowledgeAnswerOut(answer="共 0 条", status="completed")
+        return CompositeAnswerResult(
+            answer=answer,
+            coverage=CompositeAnswerCoverageSnapshot(
+                requirements=[
+                    {"requirement_id": "r1", "status": "answered", "model_knowledge_used": False}
+                ]
+            ),
+            answer_basis=build_answer_basis(
+                answer=answer,
+                user_statement_ids=[],
+                model_knowledge_used=False,
+                external_material_required=False,
+            ),
+            run_status=RUN_COMPLETED,
+            answer_fallback=False,
+        )
+
+    monkeypatch.setattr(
+        "app.services.knowledge_agent.runner.plan_and_persist_composite_answer", _plan
+    )
+    monkeypatch.setattr(
+        "app.services.knowledge_agent.shared_execution_graph.execute_shared_execution_graph_plan",
+        _shared,
+    )
+    monkeypatch.setattr(
+        "app.services.knowledge_agent.composite_answer_execution.execute_composite_answer_plan",
+        _serial,
+    )
+    monkeypatch.setattr("app.services.knowledge_agent.runner.build_composite_answer", _build)
+    async with async_session_factory() as db:
+        user = await create_user(db, "固化图回滚")
+        workspace = await create_workspace(db, user)
+        _conversation, run = await _conversation_and_run(db, user, workspace, "有多少知识？")
+        run.status = RUN_PROCESSING
+        run.shared_execution_graph_json = dump_shared_execution_graph(
+            compile_shared_execution_graph(
+                plan,
+                scope_fingerprint=run_scope_fingerprint(
+                    owner_user_id=user.id,
+                    workspace_id=workspace.id,
+                    project_id=None,
+                    scope_type=SCOPE_WORKSPACE,
+                ),
+            )
+        )
+        await db.commit()
+        await execute_run(db, run)
+        assert selected == ["shared"]
+        assert run.status == RUN_COMPLETED
 
 
 @pytest.mark.asyncio
