@@ -820,3 +820,85 @@ async def test_api_projects_bounded_composite_summary_to_run_and_messages(
     user_message = next(item for item in page["items"] if item["role"] == "user")
     assert user_message["composite_answer_plan"] == public_plan
     assert user_message["composite_answer_coverage"] == public_coverage
+
+
+@pytest.mark.asyncio
+async def test_shared_graph_internal_snapshots_never_enter_public_protocol(
+    client: httpx.AsyncClient,
+) -> None:
+    """Run 与消息页不得暴露共享图、内部查询、句柄、全文或授权参数。"""
+    await _register(client)
+    conversation = await _conversation(client)
+    submitted = await client.post(
+        f"/api/knowledge-agent/conversations/{conversation['id']}/messages",
+        json={
+            "client_message_id": "shared-graph-redaction",
+            "message": "公开问题",
+        },
+    )
+    assert submitted.status_code == 201
+    run_id = submitted.json()["run"]["id"]
+    internal_secrets = {
+        "graph": "内部图查询-不可公开",
+        "entry": "Entry 全文-不可公开",
+        "source": "Source 全文-不可公开",
+        "authorization": "Bearer secret-token",
+        "reasoning": "隐藏推理-不可公开",
+        "handle": "res_internal_handle",
+    }
+    async with async_session_factory() as db:
+        run = await db.get(KnowledgeAgentRun, run_id)
+        assert run is not None
+        run.shared_execution_graph_json = json.dumps(internal_secrets, ensure_ascii=False)
+        run.shared_execution_state_json = json.dumps(internal_secrets, ensure_ascii=False)
+        run.composite_answer_execution_json = json.dumps(
+            internal_secrets, ensure_ascii=False
+        )
+        await db.commit()
+
+    run_payload = (await client.get(f"/api/knowledge-agent/runs/{run_id}")).json()
+    message_page = (
+        await client.get(
+            f"/api/knowledge-agent/conversations/{conversation['id']}/messages"
+        )
+    ).json()
+    serialized = json.dumps(
+        {"run": run_payload, "message_page": message_page}, ensure_ascii=False
+    )
+    assert all(secret not in serialized for secret in internal_secrets.values())
+    for forbidden_key in (
+        "shared_execution_graph",
+        "shared_execution_state",
+        "composite_answer_execution",
+        "node_fingerprint",
+    ):
+        assert forbidden_key not in serialized
+
+
+@pytest.mark.asyncio
+async def test_legacy_run_without_shared_graph_fields_remains_readable(
+    client: httpx.AsyncClient,
+) -> None:
+    """迁移前语义的 Run 没有图字段时，Run 与历史消息仍按原协议返回。"""
+    await _register(client)
+    conversation = await _conversation(client)
+    submitted = await client.post(
+        f"/api/knowledge-agent/conversations/{conversation['id']}/messages",
+        json={"client_message_id": "legacy-no-graph", "message": "旧问题"},
+    )
+    assert submitted.status_code == 201
+    run_id = submitted.json()["run"]["id"]
+    async with async_session_factory() as db:
+        run = await db.get(KnowledgeAgentRun, run_id)
+        assert run is not None
+        assert run.shared_execution_graph_json is None
+        assert run.shared_execution_state_json is None
+
+    run_response = await client.get(f"/api/knowledge-agent/runs/{run_id}")
+    page_response = await client.get(
+        f"/api/knowledge-agent/conversations/{conversation['id']}/messages"
+    )
+    assert run_response.status_code == 200
+    assert page_response.status_code == 200
+    assert run_response.json()["id"] == run_id
+    assert {item["id"] for item in page_response.json()["runs"]} == {run_id}
