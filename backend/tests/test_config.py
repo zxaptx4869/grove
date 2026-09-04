@@ -6,7 +6,7 @@ from app.core.config import Settings
 def test_default_database_url_is_sqlite(monkeypatch) -> None:
     """未配置环境变量时，DATABASE_URL 应使用默认 SQLite 连接串。"""
     monkeypatch.delenv("DATABASE_URL", raising=False)
-    settings = Settings()
+    settings = Settings(_env_file=None)
     assert settings.database_url == "sqlite+aiosqlite:///./grove.db"
 
 
@@ -19,7 +19,7 @@ def test_cors_origin_list_parsing() -> None:
 def test_composite_answer_defaults_are_bounded_and_disabled(monkeypatch) -> None:
     """复合回答默认关闭，计划与执行预算保持有界。"""
     monkeypatch.delenv("KNOWLEDGE_AGENT_COMPOSITE_ANSWER_ENABLED", raising=False)
-    settings = Settings()
+    settings = Settings(_env_file=None)
 
     assert settings.knowledge_agent_composite_answer_enabled is False
     assert settings.knowledge_agent_composite_answer_max_requirements == 8

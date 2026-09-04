@@ -10,6 +10,10 @@ os.environ.setdefault("CONTEXT_WORKER_ENABLED", "false")
 os.environ.setdefault("DIRECTORY_DRAFT_WORKER_ENABLED", "false")
 os.environ.setdefault("EMBEDDING_WORKER_ENABLED", "false")
 os.environ.setdefault("KNOWLEDGE_AGENT_WORKER_ENABLED", "false")
+# 全量测试的基线固定关闭渐进式知识 Agent 能力，不受开发 .env 影响；
+# 需要开启的用例在测试内显式 monkeypatch 配置。
+os.environ["KNOWLEDGE_AGENT_STRUCTURED_QUERY_ENABLED"] = "false"
+os.environ["KNOWLEDGE_AGENT_COMPOSITE_ANSWER_ENABLED"] = "false"
 # 测试环境使用内存密钥存储，避免触碰系统钥匙串
 os.environ.setdefault("SECRET_STORE", "memory")
 
