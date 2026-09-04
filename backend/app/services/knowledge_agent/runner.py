@@ -48,6 +48,7 @@ from app.models.knowledge_agent import (
     STEP_RESULT_MODE_ROUTE,
     STEP_SEARCH,
     STEP_VALIDATE_REFERENCES,
+    KnowledgeAgentModelInvocation,
 )
 from app.schemas.knowledge_agent import KnowledgeAnswerOut
 from app.services.knowledge_agent.basis import (
@@ -630,13 +631,55 @@ async def execute_run(db: AsyncSession, run: KnowledgeAgentRun) -> None:
 
                 await _check_cancelled(run.id)
                 await update_run_step(run.id, STEP_COMPOSITE_ANSWER_EXECUTE)
-                artifacts = await execute_plan(
-                    db,
-                    run,
-                    ctx,
-                    composite_plan,
-                    cancel_check=lambda: _check_cancelled(run.id),
-                )
+                try:
+                    artifacts = await execute_plan(
+                        db,
+                        run,
+                        ctx,
+                        composite_plan,
+                        cancel_check=lambda: _check_cancelled(run.id),
+                    )
+                except Exception as exc:  # noqa: BLE001
+                    # 共享图只允许在图尚未产生节点终态时兼容回退；已有结果不得重跑串行。
+                    if exc.__class__.__name__ == "RunCancelled":
+                        raise
+                    if not getattr(
+                        settings, "knowledge_agent_shared_execution_graph_enabled", False
+                    ):
+                        raise
+                    state_raw = getattr(run, "shared_execution_state_json", None)
+                    has_node_results = False
+                    if state_raw:
+                        try:
+                            has_node_results = bool(json.loads(state_raw).get("outcomes"))
+                        except (TypeError, json.JSONDecodeError):
+                            has_node_results = True
+                    if has_node_results:
+                        raise
+                    db.add(
+                        KnowledgeAgentModelInvocation(
+                            run_id=run.id,
+                            purpose="shared_execution_graph",
+                            prompt_version="v1",
+                            provider="server",
+                            model=None,
+                            is_fallback=True,
+                            error=f"共享执行图编译/初始化失败：{str(exc)[:500]}",
+                            duration_ms=0,
+                        )
+                    )
+                    await db.commit()
+                    from app.services.knowledge_agent.composite_answer_execution import (
+                        execute_composite_answer_plan,
+                    )
+
+                    artifacts = await execute_composite_answer_plan(
+                        db,
+                        run,
+                        ctx,
+                        composite_plan,
+                        cancel_check=lambda: _check_cancelled(run.id),
+                    )
                 statement_context = [
                     {"message_id": item.message_id, "content": item.content}
                     for item in allowed_statements
