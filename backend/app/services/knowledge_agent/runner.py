@@ -837,7 +837,14 @@ async def execute_run(db: AsyncSession, run: KnowledgeAgentRun) -> None:
     allowed_statements = None
     # 复合特性开启时，quick/investigate 先于依据规划解析；
     # 开关关闭则完全沿用下方旧顺序与快捷分支。
-    if getattr(settings, "knowledge_agent_composite_answer_enabled", False):
+    composite_snapshot_exists = bool(
+        getattr(run, "composite_answer_plan_json", None)
+        or getattr(run, "coverage_repair_json", None)
+    )
+    if (
+        getattr(settings, "knowledge_agent_composite_answer_enabled", False)
+        or composite_snapshot_exists
+    ):
         await _check_cancelled(run.id)
         await update_run_step(run.id, STEP_INVESTIGATION_ROUTE)
         if run.actual_answer_mode is None:

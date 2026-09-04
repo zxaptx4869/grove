@@ -42,14 +42,14 @@
 - [x] 5.3 覆盖 planner 非法/失败、工具部分失败、再综合失败、预算耗尽、无新查询和基线非退化，断言状态、gaps 与 fallback 不伪正常。验收：`cd backend && .venv/bin/pytest -q tests/test_knowledge_agent_coverage_repair.py tests/test_knowledge_agent_coverage_repair_eval.py -k 'failure or budget or no_novel or non_regression'`
 - [x] 5.4 覆盖取消、每类检查点恢复、配置/开关变化、损坏快照、重复提交和租约重试，断言每 Run 最多一次 planner/补查阶段。验收：`cd backend && .venv/bin/pytest -q tests/test_knowledge_agent_worker.py tests/test_knowledge_agent_coverage_repair.py -k 'repair and (cancel or recovery or idempotent or corrupt or flag_change)'`
 - [x] 5.5 建立 owner/Workspace/项目/跨 Run 隔离硬门禁，以前后计数验证 Entry、Source、Candidate、Draft/Extraction、目录、Operation 和事实工作集无写入副作用。验收：`cd backend && .venv/bin/pytest -q tests/test_knowledge_agent_coverage_repair_eval.py -k guardrail`
-- [ ] 5.6 完成评估、隔离与无写入门禁的本地提交。验收：`cd backend && .venv/bin/ruff check app tests && cd .. && git diff --check`
+- [x] 5.6 完成评估、隔离与无写入门禁的本地提交。验收：`cd backend && .venv/bin/ruff check app tests && cd .. && git diff --check`
 
 ## 6. 自动化验收、文档与本地收尾
 
-- [ ] 6.1 更新 `backend/.env.example` 的补查开关与预算占位，在知识 Agent 产品形态与迭代记录中将本阶段记为本地完成待走查，不把 B2、外部搜索或 Operation Plan 写成已实现。验收：`openspec validate --all --strict && git diff --check`
-- [ ] 6.2 执行迁移 upgrade/downgrade/upgrade，再启动后端并用 curl 验证 Conversation、提交、Run、取消、历史和可观测端点为预期 401/200，记录串行/图补查、失败保底和无重放的脱敏摘要。验收：写入 `docs/验收记录/add-knowledge-agent-bounded-coverage-repair-curl.md`
-- [ ] 6.3 运行后端全量 pytest、Ruff 和迁移往返。验收：`cd backend && .venv/bin/alembic upgrade head && .venv/bin/alembic downgrade -1 && .venv/bin/alembic upgrade head && .venv/bin/pytest -q && .venv/bin/ruff check .`
-- [ ] 6.4 运行原生端全量测试、typecheck 与 lint；向用户提供无新 UI 的真机兼容走查清单，覆盖完整回答跳过、缺口改善、剩余 partial/insufficient、Citation、fallback、取消和历史恢复，由用户执行并反馈。验收：`cd mobile && npm test -- --runInBand && npm run typecheck && npm run lint`
-- [ ] 6.5 执行 `git diff --check` 与 `openspec validate --all --strict`，核对 tasks 与实际完成项，停留在本地特性分支，不归档、不推送、不合并。验收：`openspec status --change add-knowledge-agent-bounded-coverage-repair && git status --short --branch`
-- [ ] 6.6 按 AGENTS.md 检查遗留问题，若有则先向用户说明背景、原因与影响，只在用户同意后登记到 `docs/discussions/Grove后续优化清单.md`。验收：`git status --short`
-- [ ] 6.7 完成验收文档与自动化结果的本地提交；等待用户真机验收反馈和后续明确归档/推送/合并授权。验收：`git log --oneline --decorate -8 && git status --short --branch`
+- [x] 6.1 更新 `backend/.env.example` 的补查开关与预算占位，在知识 Agent 产品形态与迭代记录中将本阶段记为本地完成待走查，不把 B2、外部搜索或 Operation Plan 写成已实现。验收：`openspec validate --all --strict && git diff --check`
+- [x] 6.2 执行迁移 upgrade/downgrade/upgrade，再启动后端并用 curl 验证 Conversation、提交、Run、取消、历史和可观测端点为预期 401/200，记录串行/图补查、失败保底和无重放的脱敏摘要。验收：写入 `docs/验收记录/add-knowledge-agent-bounded-coverage-repair-curl.md`
+- [x] 6.3 运行后端全量 pytest、Ruff 和迁移往返。验收：`cd backend && .venv/bin/alembic upgrade head && .venv/bin/alembic downgrade -1 && .venv/bin/alembic upgrade head && .venv/bin/pytest -q && .venv/bin/ruff check .`
+- [x] 6.4 运行原生端全量测试、typecheck 与 lint；向用户提供无新 UI 的真机兼容走查清单，覆盖完整回答跳过、缺口改善、剩余 partial/insufficient、Citation、fallback、取消和历史恢复，由用户执行并反馈。验收：`cd mobile && npm test -- --runInBand && npm run typecheck && npm run lint`
+- [x] 6.5 执行 `git diff --check` 与 `openspec validate --all --strict`，核对 tasks 与实际完成项，停留在本地特性分支，不归档、不推送、不合并。验收：`openspec status --change add-knowledge-agent-bounded-coverage-repair && git status --short --branch`
+- [x] 6.6 按 AGENTS.md 检查遗留问题，若有则先向用户说明背景、原因与影响，只在用户同意后登记到 `docs/discussions/Grove后续优化清单.md`。验收：`git status --short`
+- [x] 6.7 完成验收文档与自动化结果的本地提交；等待用户真机验收反馈和后续明确归档/推送/合并授权。验收：`git log --oneline --decorate -8 && git status --short --branch`

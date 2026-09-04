@@ -2445,6 +2445,108 @@ async def test_composite_quick_skips_repair_when_coverage_is_complete(monkeypatc
 
 
 @pytest.mark.asyncio
+async def test_runner_restores_completed_repair_when_feature_flags_are_disabled(
+    monkeypatch,
+) -> None:
+    """部署关闭父开关和补查开关后，已有补查 Run 仍从冻结终态恢复。"""
+    from app.services.knowledge_agent.coverage_repair import (
+        CoverageRepairBudget,
+        CoverageRepairSnapshot,
+        coverage_repair_material_from_result,
+        dump_coverage_repair_snapshot,
+    )
+
+    settings = Settings(
+        knowledge_agent_composite_answer_enabled=False,
+        knowledge_agent_coverage_repair_enabled=False,
+    )
+    monkeypatch.setattr("app.services.knowledge_agent.runner.get_settings", lambda: settings)
+    plan = normalize_composite_answer_plan(
+        {
+            "requirements": [
+                {
+                    "id": "definition",
+                    "order": 0,
+                    "summary": "解释概念",
+                    "kind": "explain",
+                    "basis_policy": "model_allowed",
+                }
+            ]
+        }
+    )
+    answer = KnowledgeAnswerOut(answer="冻结补查终态", status="completed")
+    final_result = CompositeAnswerResult(
+        answer=answer,
+        coverage=CompositeAnswerCoverageSnapshot(
+            requirements=[{"requirement_id": "r1", "status": "answered"}]
+        ),
+        answer_basis=build_answer_basis(
+            answer=answer,
+            user_statement_ids=[],
+            model_knowledge_used=True,
+            external_material_required=False,
+        ),
+        run_status=RUN_COMPLETED,
+        answer_fallback=False,
+    )
+
+    async def answer_mode(*args, **kwargs):
+        from app.services.knowledge_agent.investigation import AnswerModeResolution
+
+        return AnswerModeResolution(mode="quick")
+
+    async def plan_answer(*args, **kwargs):
+        return plan
+
+    async def execute(*args, **kwargs):
+        return SimpleNamespace(snapshot=CompositeAnswerExecutionSnapshot())
+
+    async def forbidden(*args, **kwargs):  # pragma: no cover
+        raise AssertionError("已完成补查恢复不得重新综合")
+
+    monkeypatch.setattr(
+        "app.services.knowledge_agent.runner.resolve_answer_mode", answer_mode
+    )
+    monkeypatch.setattr(
+        "app.services.knowledge_agent.runner.plan_and_persist_composite_answer",
+        plan_answer,
+    )
+    monkeypatch.setattr(
+        "app.services.knowledge_agent.composite_answer_execution."
+        "execute_composite_answer_plan",
+        execute,
+    )
+    monkeypatch.setattr(
+        "app.services.knowledge_agent.runner.build_composite_answer", forbidden
+    )
+
+    async with async_session_factory() as db:
+        user = await create_user(db, "补查开关恢复")
+        workspace = await create_workspace(db, user)
+        _conversation, run = await _conversation_and_run(db, user, workspace, "解释概念")
+        run.status = RUN_PROCESSING
+        material = coverage_repair_material_from_result(final_result)
+        run.coverage_repair_json = dump_coverage_repair_snapshot(
+            CoverageRepairSnapshot(
+                stage="completed",
+                execution_mode="serial",
+                frozen_budget=CoverageRepairBudget(),
+                baseline=material,
+                final_result=material,
+                stop_reason="completed",
+            ),
+            settings=settings,
+        )
+        await db.commit()
+
+        await execute_run(db, run)
+        await db.commit()
+
+        assert run.status == RUN_COMPLETED
+        assert json.loads(run.answer_json)["answer"] == "冻结补查终态"
+
+
+@pytest.mark.asyncio
 async def test_coverage_repair_regression_restores_baseline_and_records_fallback(
     monkeypatch,
 ) -> None:
