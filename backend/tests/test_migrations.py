@@ -36,9 +36,7 @@ def test_structured_query_plan_migration_upgrade_downgrade_upgrade(
             return next(
                 (
                     row
-                    for row in connection.execute(
-                        "PRAGMA table_info(knowledge_agent_runs)"
-                    )
+                    for row in connection.execute("PRAGMA table_info(knowledge_agent_runs)")
                     if row[1] == "structured_query_plan_json"
                 ),
                 None,
@@ -123,5 +121,51 @@ def test_composite_answer_migration_mysql8_uses_nullable_text() -> None:
         "composite_answer_execution_json",
         "composite_answer_coverage_json",
     ):
+        assert f"{column} text" in normalized
+        assert f"{column} text not null" not in normalized
+
+
+def test_shared_execution_graph_migration_upgrade_downgrade_upgrade(
+    tmp_path: Path,
+) -> None:
+    """图与检查点列仅追加到新 Run，SQLite 往返不回填历史数据。"""
+    db_path = tmp_path / "shared-execution-graph-roundtrip.db"
+    env = os.environ.copy()
+    env["DATABASE_URL"] = f"sqlite+aiosqlite:///{db_path}"
+    backend = Path(__file__).resolve().parents[1]
+    column_names = {"shared_execution_graph_json", "shared_execution_state_json"}
+
+    def _alembic(*args: str) -> None:
+        result = subprocess.run(
+            [sys.executable, "-m", "alembic", *args],
+            cwd=backend,
+            env=env,
+            capture_output=True,
+            text=True,
+        )
+        assert result.returncode == 0, result.stdout + result.stderr
+
+    def _columns() -> dict[str, tuple]:
+        with sqlite3.connect(db_path) as connection:
+            return {
+                row[1]: row
+                for row in connection.execute("PRAGMA table_info(knowledge_agent_runs)")
+                if row[1] in column_names
+            }
+
+    _alembic("upgrade", "head")
+    assert set(_columns()) == column_names
+    _alembic("downgrade", "fa1b2c3d4e5f")
+    assert _columns() == {}
+    _alembic("upgrade", "head")
+    assert set(_columns()) == column_names
+
+
+def test_shared_execution_graph_migration_mysql8_uses_nullable_text() -> None:
+    """MySQL 8 DDL 保持普通可空 TEXT，避免方言专属 JSON 类型。"""
+    ddl = str(CreateTable(KnowledgeAgentRun.__table__).compile(dialect=mysql.dialect()))
+    normalized = " ".join(ddl.lower().split())
+
+    for column in ("shared_execution_graph_json", "shared_execution_state_json"):
         assert f"{column} text" in normalized
         assert f"{column} text not null" not in normalized
