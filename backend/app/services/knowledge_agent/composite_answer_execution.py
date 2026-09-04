@@ -38,11 +38,21 @@ from app.services.knowledge_agent.tools import (
     RunToolContext,
     read_entries,
     read_source_evidence,
+    record_tool_failure,
     record_tool_result,
     search_confirmed_knowledge,
 )
 
 COMPOSITE_EXECUTION_VERSION = "v1"
+_COMMITTED_INPUT_STATUSES = {
+    "completed",
+    "empty",
+    "limited",
+    "partial",
+    "denied",
+    "error",
+    "cancelled",
+}
 
 
 @dataclass(frozen=True)
@@ -262,13 +272,26 @@ async def _execute_retrieval(
 
     await cancel_check()
     started = perf_counter()
-    search = await search_confirmed_knowledge(
-        db,
-        ctx,
-        request.query,
-        recall_limit=min(settings.knowledge_agent_recall_limit, remaining_entries),
-        context_limit=min(settings.knowledge_agent_context_limit, remaining_entries),
-    )
+    try:
+        search = await search_confirmed_knowledge(
+            db,
+            ctx,
+            request.query,
+            recall_limit=min(settings.knowledge_agent_recall_limit, remaining_entries),
+            context_limit=min(settings.knowledge_agent_context_limit, remaining_entries),
+        )
+    except Exception as exc:  # noqa: BLE001
+        if exc.__class__.__name__ == "RunCancelled":
+            raise
+        await record_tool_failure(
+            db,
+            run_id=run.id,
+            tool_name="search_confirmed_knowledge",
+            params={"request_id": request.id, "query": request.query[:200]},
+            error=f"检索工具执行失败：{exc}",
+            duration_ms=int((perf_counter() - started) * 1000),
+        )
+        raise
     if search.embedding_meta:
         await record_model_invocation(
             db,
@@ -304,7 +327,20 @@ async def _execute_retrieval(
 
     await cancel_check()
     started = perf_counter()
-    entries = await read_entries(db, ctx, entry_ids)
+    try:
+        entries = await read_entries(db, ctx, entry_ids)
+    except Exception as exc:  # noqa: BLE001
+        if exc.__class__.__name__ == "RunCancelled":
+            raise
+        await record_tool_failure(
+            db,
+            run_id=run.id,
+            tool_name="read_entries",
+            params={"request_id": request.id, "entry_ids": entry_ids},
+            error=f"Entry 读取工具执行失败：{exc}",
+            duration_ms=int((perf_counter() - started) * 1000),
+        )
+        raise
     await record_tool_result(
         db,
         run_id=run.id,
@@ -329,7 +365,24 @@ async def _execute_retrieval(
         if not source_ids:
             continue
         started = perf_counter()
-        evidence = await read_source_evidence(db, ctx, item.entry_id, source_ids)
+        try:
+            evidence = await read_source_evidence(db, ctx, item.entry_id, source_ids)
+        except Exception as exc:  # noqa: BLE001
+            if exc.__class__.__name__ == "RunCancelled":
+                raise
+            await record_tool_failure(
+                db,
+                run_id=run.id,
+                tool_name="read_source_evidence",
+                params={
+                    "request_id": request.id,
+                    "entry_id": item.entry_id,
+                    "source_ids": source_ids,
+                },
+                error=f"Evidence 读取工具执行失败：{exc}",
+                duration_ms=int((perf_counter() - started) * 1000),
+            )
+            raise
         citable = [row for row in evidence.items if row.citable and row.evidence_handle]
         unavailable += len(evidence.items) - len(citable)
         evidence_handles.extend(str(row.evidence_handle) for row in citable)
@@ -455,14 +508,21 @@ async def execute_composite_answer_plan(
         or any(fact.request_id not in planned_request_ids for fact in snapshot.tool_facts)
     ):
         raise ValueError("复合回答执行快照与已固化计划不一致")
+    base_elapsed_ms = snapshot.elapsed_ms
     started_at = monotonic()
     existing = {item.request_id: item for item in snapshot.inputs}
+
+    def _elapsed_ms() -> int:
+        return base_elapsed_ms + int((monotonic() - started_at) * 1000)
 
     async def _time_guard() -> None:
         await cancel_check()
         if (
-            monotonic() - started_at
-            >= active_settings.knowledge_agent_composite_answer_execution_timeout_seconds
+            _elapsed_ms()
+            >= int(
+                active_settings.knowledge_agent_composite_answer_execution_timeout_seconds
+                * 1000
+            )
         ):
             raise TimeoutError("复合回答执行总耗时预算已耗尽")
 
@@ -501,7 +561,7 @@ async def execute_composite_answer_plan(
         if (
             restored is not None
             and restored.fingerprint == fingerprint
-            and restored.status in {"completed", "empty", "limited"}
+            and restored.status in _COMMITTED_INPUT_STATUSES
         ):
             continue
         try:
@@ -531,6 +591,7 @@ async def execute_composite_answer_plan(
             )
         snapshot.inputs = [old for old in snapshot.inputs if old.request_id != request.id]
         snapshot.inputs.append(item)
+        snapshot.elapsed_ms = _elapsed_ms()
         snapshot = await _persist_checkpoint(db, run, snapshot, settings=active_settings)
         existing[item.request_id] = item
 
@@ -547,7 +608,7 @@ async def execute_composite_answer_plan(
         if (
             restored is not None
             and restored.fingerprint == fingerprint
-            and restored.status in {"completed", "empty", "limited"}
+            and restored.status in _COMMITTED_INPUT_STATUSES
         ):
             continue
         try:
@@ -578,6 +639,7 @@ async def execute_composite_answer_plan(
         snapshot.tool_facts = [
             fact for fact in snapshot.tool_facts if fact.request_id != request.id
         ] + facts
+        snapshot.elapsed_ms = _elapsed_ms()
         snapshot = await _persist_checkpoint(db, run, snapshot, settings=active_settings)
         existing[item.request_id] = item
 

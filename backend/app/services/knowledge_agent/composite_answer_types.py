@@ -50,6 +50,7 @@ class CompositeAnswerExecutionSnapshot(StrictCompositeSnapshot):
     """CompositeAnswerExecution v1：只保存有界输入结果和工具事实。"""
 
     schema_version: Literal["v1"] = "v1"
+    elapsed_ms: int = Field(default=0, ge=0, le=600_000)
     inputs: list[CompositeExecutionInputSnapshot] = Field(default_factory=list, max_length=5)
     tool_facts: list[CompositeToolFact] = Field(default_factory=list, max_length=16)
 

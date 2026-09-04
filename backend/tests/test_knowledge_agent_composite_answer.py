@@ -943,7 +943,7 @@ async def test_composite_cancel_before_request_does_not_commit_late_checkpoint(
 
 @pytest.mark.asyncio
 async def test_composite_total_timeout_becomes_partial_checkpoint(monkeypatch) -> None:
-    """总耗时预算用尽时保留 partial 检查点，不把整条 Run 抛成失败。"""
+    """总耗时预算用尽时保留并复用 partial 检查点。"""
     plan = normalize_composite_answer_plan(_candidate_plan())
     moments = iter([0.0, 2.0, 2.0])
     monkeypatch.setattr(
@@ -977,8 +977,9 @@ async def test_composite_total_timeout_becomes_partial_checkpoint(monkeypatch) -
         project_id=None,
         project_name=None,
     )
+    db = _Db()
     result = await execute_composite_answer_plan(
-        _Db(),
+        db,
         run,
         ctx,
         plan,
@@ -990,6 +991,72 @@ async def test_composite_total_timeout_becomes_partial_checkpoint(monkeypatch) -
     assert result.snapshot.inputs[0].status == "partial"
     assert "耗时预算" in (result.snapshot.inputs[0].error or "")
     assert run.composite_answer_execution_json is not None
+    restored = await execute_composite_answer_plan(
+        db,
+        run,
+        ctx,
+        plan,
+        cancel_check=_not_cancelled,
+        settings=Settings(
+            knowledge_agent_composite_answer_execution_timeout_seconds=1.0
+        ),
+    )
+    assert restored.snapshot == result.snapshot
+    assert db.commits == 1
+
+
+@pytest.mark.asyncio
+async def test_composite_recovery_preserves_total_timeout_budget(monkeypatch) -> None:
+    """恢复从已提交的累计耗时继续，不重置整体执行预算。"""
+    plan = normalize_composite_answer_plan(_candidate_plan())
+    monkeypatch.setattr(
+        "app.services.knowledge_agent.composite_answer_execution.monotonic",
+        lambda: 10.0,
+    )
+
+    async def _forbidden(*args, **kwargs):  # pragma: no cover
+        raise AssertionError("累计耗时超限后不应执行检索")
+
+    monkeypatch.setattr(
+        "app.services.knowledge_agent.composite_answer_execution.search_confirmed_knowledge",
+        _forbidden,
+    )
+
+    class _Db:
+        async def commit(self):
+            return None
+
+    async def _not_cancelled():
+        return None
+
+    run = SimpleNamespace(
+        id=75,
+        composite_answer_execution_json=CompositeAnswerExecutionSnapshot(
+            elapsed_ms=1_000
+        ).model_dump_json(),
+    )
+    ctx = RunToolContext(
+        run_id=75,
+        workspace_id=1,
+        owner_user_id=1,
+        scope_type="workspace",
+        project_id=None,
+        project_name=None,
+    )
+    result = await execute_composite_answer_plan(
+        _Db(),
+        run,
+        ctx,
+        plan,
+        cancel_check=_not_cancelled,
+        settings=Settings(
+            knowledge_agent_composite_answer_execution_timeout_seconds=1.0
+        ),
+    )
+
+    assert result.snapshot.inputs[0].status == "partial"
+    assert result.snapshot.elapsed_ms == 1_000
+    assert "耗时预算" in (result.snapshot.inputs[0].error or "")
 
 
 def test_composite_request_fingerprint_binds_run_plan_and_normalized_params() -> None:

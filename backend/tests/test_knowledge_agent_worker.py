@@ -29,6 +29,7 @@ from app.models.knowledge_agent import (
     RUN_PROCESSING,
     RUN_WAITING,
     SCOPE_WORKSPACE,
+    TOOL_ERROR,
 )
 from app.schemas.knowledge_agent import KnowledgeRunSubmitRequest
 from app.services.knowledge_agent.basis import BasisPlan
@@ -267,6 +268,71 @@ async def test_composite_recovery_reuses_persisted_planning_fallback(monkeypatch
 
     assert plan is None
     assert len(invocations) == 1
+
+
+@pytest.mark.asyncio
+async def test_composite_retrieval_exception_records_failed_tool_call(monkeypatch) -> None:
+    """检索工具抛异常时同时保留失败审计和 partial 执行快照。"""
+    plan = normalize_composite_answer_plan(
+        {
+            "requirements": [
+                {
+                    "id": "knowledge",
+                    "order": 0,
+                    "summary": "查询知识",
+                    "kind": "retrieve",
+                    "basis_policy": "grove_required",
+                }
+            ],
+            "retrieval_requests": [
+                {
+                    "id": "search",
+                    "query": "测试检索",
+                    "requirement_ids": ["knowledge"],
+                }
+            ],
+        }
+    )
+
+    async def _failed_search(*args, **kwargs):
+        raise RuntimeError("模拟检索失败")
+
+    monkeypatch.setattr(
+        "app.services.knowledge_agent.composite_answer_execution.search_confirmed_knowledge",
+        _failed_search,
+    )
+    async with async_session_factory() as db:
+        user = await create_user(db, "检索失败审计")
+        workspace = await create_workspace(db, user)
+        _conversation, run = await _conversation_and_run(db, user, workspace, "查询知识")
+        ctx = RunToolContext(
+            run_id=run.id,
+            workspace_id=run.workspace_id,
+            owner_user_id=run.owner_user_id,
+            scope_type=run.scope_type,
+            project_id=run.project_id,
+            project_name=run.project_name,
+        )
+        result = await execute_composite_answer_plan(
+            db,
+            run,
+            ctx,
+            plan,
+            cancel_check=_never_cancel,
+        )
+        calls = (
+            await db.execute(
+                select(KnowledgeAgentToolCall).where(
+                    KnowledgeAgentToolCall.run_id == run.id
+                )
+            )
+        ).scalars().all()
+
+    assert result.snapshot.inputs[0].status == "partial"
+    assert len(calls) == 1
+    assert calls[0].tool_name == "search_confirmed_knowledge"
+    assert calls[0].status == TOOL_ERROR
+    assert "模拟检索失败" in (calls[0].error or "")
 
 
 @pytest.mark.asyncio

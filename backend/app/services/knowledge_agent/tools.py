@@ -17,6 +17,7 @@ from app.models.knowledge_agent import (
     SCOPE_PROJECT,
     TOOL_DENIED,
     TOOL_EMPTY,
+    TOOL_ERROR,
     TOOL_OK,
     TOOL_PARTIAL,
     TOOL_UNAVAILABLE,
@@ -527,4 +528,28 @@ async def record_tool_result(
         investigation_id=investigation_id,
         round_number=round_number,
         query_sequence=query_sequence,
+    )
+
+
+async def record_tool_failure(
+    db: AsyncSession,
+    *,
+    run_id: int,
+    tool_name: str,
+    params: dict,
+    error: str,
+    duration_ms: int,
+) -> None:
+    """记录真实抛异常的只读工具，不把 partial 快照冒充工具审计。"""
+    sequence = await next_tool_sequence(db, run_id)
+    await record_tool_call(
+        db,
+        run_id=run_id,
+        sequence=sequence,
+        tool_name=tool_name,
+        status=TOOL_ERROR,
+        params_summary=json.dumps(params, ensure_ascii=False)[:500],
+        result_summary=json.dumps({"status": TOOL_ERROR}, ensure_ascii=False),
+        error=error[:500],
+        duration_ms=duration_ms,
     )
