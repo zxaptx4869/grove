@@ -1030,6 +1030,7 @@ async def execute_shared_execution_graph_plan(
         ctx,
         plan,
         cancel_check=cancel_check,
+        deduplicate_equivalent_requests=True,
     )
     # 将兼容快照按 request 映射为节点终态；每个节点只写一份 result handle。
     outcomes: list[NodeOutcome] = []

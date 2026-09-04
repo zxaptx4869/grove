@@ -17,17 +17,17 @@
 
 ## 3. 节点执行、兼容物化与完整性
 
-- [ ] 3.1 为各闭合节点实现执行适配器，复用现有语义检索、Entry 读取、Evidence 核验、B1 `EntrySetSpec`、`query_entries` 与 `aggregate_entries`；范围只从 Run 注入，不再次调用任何 planner。验收：`cd backend && .venv/bin/pytest -q tests/test_knowledge_agent_shared_execution_graph.py tests/test_knowledge_agent_structured_query.py -k 'node_executor or dispatcher or scope'`
-- [ ] 3.2 让共享 entry-set 结果服务多个输出，aggregate 仍直接查询逻辑完整集合，不从 entries limit 反推；semantic/top-k/截断/异常继续产生 limited/unknown。验收：`cd backend && .venv/bin/pytest -q tests/test_knowledge_agent_shared_execution_graph.py -k 'shared_set or aggregate or completeness'`
-- [ ] 3.3 生成与节点 fingerprint 和输出槽绑定的稳定 result handle；同一共享节点只产生一份工具事实，requirement 关联由合法消费者映射派生。验收：`cd backend && .venv/bin/pytest -q tests/test_knowledge_agent_shared_execution_graph.py -k 'result_handle or tool_fact or consumer'`
-- [ ] 3.4 实现 graph state 到现有 `CompositeAnswerExecutionSnapshot` 的确定性物化器，按原始 request 聚合 Entry/Evidence/result handles、状态、完整性和错误；兼容综合器无需识别内部图。验收：`cd backend && .venv/bin/pytest -q tests/test_knowledge_agent_shared_execution_graph.py tests/test_knowledge_agent_composite_answer.py -k 'materialize or compatibility or coverage'`
+- [x] 3.1 为各闭合节点实现执行适配器，复用现有语义检索、Entry 读取、Evidence 核验、B1 `EntrySetSpec`、`query_entries` 与 `aggregate_entries`；范围只从 Run 注入，不再次调用任何 planner。验收：`cd backend && .venv/bin/pytest -q tests/test_knowledge_agent_shared_execution_graph.py tests/test_knowledge_agent_structured_query.py -k 'node_executor or dispatcher or scope'`
+- [x] 3.2 让共享 entry-set 结果服务多个输出，aggregate 仍直接查询逻辑完整集合，不从 entries limit 反推；semantic/top-k/截断/异常继续产生 limited/unknown。验收：`cd backend && .venv/bin/pytest -q tests/test_knowledge_agent_shared_execution_graph.py -k 'shared_set or aggregate or completeness'`
+- [x] 3.3 生成与节点 fingerprint 和输出槽绑定的稳定 result handle；同一共享节点只产生一份工具事实，requirement 关联由合法消费者映射派生。验收：`cd backend && .venv/bin/pytest -q tests/test_knowledge_agent_shared_execution_graph.py -k 'result_handle or tool_fact or consumer'`
+- [x] 3.4 实现 graph state 到现有 `CompositeAnswerExecutionSnapshot` 的确定性物化器，按原始 request 聚合 Entry/Evidence/result handles、状态、完整性和错误；兼容综合器无需识别内部图。验收：`cd backend && .venv/bin/pytest -q tests/test_knowledge_agent_shared_execution_graph.py tests/test_knowledge_agent_composite_answer.py -k 'materialize or compatibility or coverage'`
 - [ ] 3.5 比较同一固化计划的串行与共享图输出，确认 Evidence、精确/limited 语义、tool fact、逐项覆盖、answer basis 和最终状态等价，重复底层调用数减少。验收：`cd backend && .venv/bin/pytest -q tests/test_knowledge_agent_shared_execution_graph_eval.py -k equivalence`
 - [ ] 3.6 完成节点执行与兼容物化的本地提交。验收：`cd backend && .venv/bin/ruff check app tests && git diff --check`
 
 ## 4. 确定性调度、安全并行与恢复
 
-- [ ] 4.1 实现 Kahn 拓扑 ready 波次、稳定 node id 准入和依赖状态传播；上游失败只阻止后继，其他独立分支继续。验收：`cd backend && .venv/bin/pytest -q tests/test_knowledge_agent_shared_execution_graph.py -k 'topological or ready or upstream_failure'`
-- [ ] 4.2 在每个波次启动前按稳定顺序预分配工具、Entry、Evidence、桶和耗时额度；同波次完成先后不得改变谁获得预算。验收：`cd backend && .venv/bin/pytest -q tests/test_knowledge_agent_shared_execution_graph.py -k 'quota or deterministic_budget'`
+- [x] 4.1 实现 Kahn 拓扑 ready 波次、稳定 node id 准入和依赖状态传播；上游失败只阻止后继，其他独立分支继续。验收：`cd backend && .venv/bin/pytest -q tests/test_knowledge_agent_shared_execution_graph.py -k 'topological or ready or upstream_failure'`
+- [x] 4.2 在每个波次启动前按稳定顺序预分配工具、Entry、Evidence、桶和耗时额度；同波次完成先后不得改变谁获得预算。验收：`cd backend && .venv/bin/pytest -q tests/test_knowledge_agent_shared_execution_graph.py -k 'quota or deterministic_budget'`
 - [ ] 4.3 为并行白名单节点使用独立 `AsyncSession` 与不可变 Run 工具上下文，限制并发度；Evidence、Run、审计、检查点和最终物化继续由协调器串行写入。验收：`cd backend && .venv/bin/pytest -q tests/test_knowledge_agent_shared_execution_graph.py -k 'parallel or isolated_session or coordinator'`
 - [ ] 4.4 每个节点终态后保存按 node id 稳定排序的有界检查点；`completed/empty/limited/partial/failed` 恢复均复用，只重放没有已提交结果的节点。验收：`cd backend && .venv/bin/pytest -q tests/test_knowledge_agent_worker.py tests/test_knowledge_agent_shared_execution_graph.py -k 'graph and (checkpoint or recovery or terminal)'`
 - [ ] 4.5 在节点启动、结果接纳、检查点与终态前检查取消；取消停止新节点，独立会话迟到结果不得写入 state、Evidence、成功审计或正常回答。验收：`cd backend && .venv/bin/pytest -q tests/test_knowledge_agent_worker.py tests/test_knowledge_agent_shared_execution_graph.py -k 'graph and cancel'`
@@ -36,7 +36,7 @@
 
 ## 5. Runner 接入、可观测与安全门禁
 
-- [ ] 5.1 在 quick 复合回答执行边界接入共享图开关：新 Run 可使用共享图，关闭时完全沿用串行路径；investigate、entries、旧 quick 和规划失败兼容路径不变。验收：`cd backend && .venv/bin/pytest -q tests/test_knowledge_agent_runner.py tests/test_knowledge_agent_investigation_runner.py tests/test_knowledge_agent_structured_entry_search.py -k 'shared_graph or investigate or entries or feature_flag'`
+- [x] 5.1 在 quick 复合回答执行边界接入共享图开关：新 Run 可使用共享图，关闭时完全沿用串行路径；investigate、entries、旧 quick 和规划失败兼容路径不变。验收：`cd backend && .venv/bin/pytest -q tests/test_knowledge_agent_runner.py tests/test_knowledge_agent_investigation_runner.py tests/test_knowledge_agent_structured_entry_search.py -k 'shared_graph or investigate or entries or feature_flag'`
 - [ ] 5.2 让并行节点 outcome 由协调器顺序写入模型/工具审计，记录实际 provider/model/status/fallback/error/duration/usage、node fingerprint、消费者数与 reused；共享节点不伪造多次调用，失败不从 fallback 摘要消失。验收：`cd backend && .venv/bin/pytest -q tests/test_knowledge_agent_shared_execution_graph.py tests/test_knowledge_agent_runner.py -k 'observability or audit or fallback_summary'`
 - [ ] 5.3 增加安全硬门禁：跨 Workspace/项目/Run 结果复用为零，Candidate/Draft/Extraction 不进入节点输入，图控制字段/未知节点/写操作被拒绝，查询与统计不推进事实工作集。验收：`cd backend && .venv/bin/pytest -q tests/test_knowledge_agent_shared_execution_graph_eval.py -k guardrail`
 - [ ] 5.4 保持 Run、消息页和原生端公开协议不暴露 graph、query、fingerprint、Entry/Source 全文、授权参数或隐藏推理；旧 Run 与缺少新字段的旧服务端继续兼容。验收：`cd backend && .venv/bin/pytest -q tests/test_knowledge_agent_api.py tests/test_knowledge_agent_conversations.py -k 'shared_graph or legacy' && cd ../mobile && npm test -- --runInBand src/knowledge-agent/api.test.ts src/knowledge-agent/adapters/answer.test.ts`

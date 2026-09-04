@@ -2,7 +2,7 @@
 
 import hashlib
 import json
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from time import monotonic, perf_counter
 
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -192,9 +192,10 @@ def structured_result_tool_facts(
         group_by = str(group.get("group_by", ""))
         completeness = group.get("completeness", RESULT_COMPLETENESS_UNKNOWN)
         buckets = list(group.get("buckets", []))
-        rendered = "、".join(
-            f"{item.get('key')} {int(item.get('count', 0))} 条" for item in buckets
-        ) or "没有可确认分组"
+        rendered = (
+            "、".join(f"{item.get('key')} {int(item.get('count', 0))} 条" for item in buckets)
+            or "没有可确认分组"
+        )
         suffix = "。" if completeness == RESULT_COMPLETENESS_COMPLETE else "；仅代表本次有限结果。"
         facts.append(
             CompositeToolFact(
@@ -491,6 +492,7 @@ async def execute_composite_answer_plan(
     *,
     cancel_check,
     settings: Settings | None = None,
+    deduplicate_equivalent_requests: bool = False,
 ) -> CompositeExecutionArtifacts:
     """按 retrieval → structured 固定顺序执行；恢复只重放未完成请求。"""
     active_settings = settings or get_settings()
@@ -511,18 +513,18 @@ async def execute_composite_answer_plan(
     base_elapsed_ms = snapshot.elapsed_ms
     started_at = monotonic()
     existing = {item.request_id: item for item in snapshot.inputs}
+    retrieval_reuse: dict[str, CompositeExecutionInputSnapshot] = {}
+    structured_reuse: dict[
+        str, tuple[CompositeExecutionInputSnapshot, list[CompositeToolFact]]
+    ] = {}
 
     def _elapsed_ms() -> int:
         return base_elapsed_ms + int((monotonic() - started_at) * 1000)
 
     async def _time_guard() -> None:
         await cancel_check()
-        if (
-            _elapsed_ms()
-            >= int(
-                active_settings.knowledge_agent_composite_answer_execution_timeout_seconds
-                * 1000
-            )
+        if _elapsed_ms() >= int(
+            active_settings.knowledge_agent_composite_answer_execution_timeout_seconds * 1000
         ):
             raise TimeoutError("复合回答执行总耗时预算已耗尽")
 
@@ -536,13 +538,7 @@ async def execute_composite_answer_plan(
         remaining_evidence = max(
             0,
             active_settings.knowledge_agent_composite_answer_max_evidence
-            - len(
-                {
-                        handle
-                        for item in other_inputs
-                    for handle in item.evidence_handles
-                }
-            ),
+            - len({handle for item in other_inputs for handle in item.evidence_handles}),
         )
         fingerprint_params = {
             "query": request.query,
@@ -563,6 +559,33 @@ async def execute_composite_answer_plan(
             and restored.fingerprint == fingerprint
             and restored.status in _COMMITTED_INPUT_STATUSES
         ):
+            continue
+        reuse_key = json.dumps(
+            {
+                "query": request.query,
+                "max_entries": active_settings.knowledge_agent_composite_answer_max_entries,
+                "max_evidence": active_settings.knowledge_agent_composite_answer_max_evidence,
+            },
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+        )
+        reusable = retrieval_reuse.get(reuse_key) if deduplicate_equivalent_requests else None
+        if reusable is not None:
+            item = replace(
+                reusable,
+                request_id=request.id,
+                requirement_ids=request.requirement_ids,
+            )
+            snapshot.inputs.append(item)
+            snapshot.elapsed_ms = _elapsed_ms()
+            snapshot = await _persist_checkpoint(
+                db,
+                run,
+                snapshot,
+                settings=active_settings,
+            )
+            existing[item.request_id] = item
             continue
         try:
             await _time_guard()
@@ -594,6 +617,8 @@ async def execute_composite_answer_plan(
         snapshot.elapsed_ms = _elapsed_ms()
         snapshot = await _persist_checkpoint(db, run, snapshot, settings=active_settings)
         existing[item.request_id] = item
+        if deduplicate_equivalent_requests:
+            retrieval_reuse[reuse_key] = item
 
     for request in plan.structured_requests:
         params = request.query_plan.model_dump(mode="json", by_alias=True)
@@ -610,6 +635,42 @@ async def execute_composite_answer_plan(
             and restored.fingerprint == fingerprint
             and restored.status in _COMMITTED_INPUT_STATUSES
         ):
+            continue
+        reuse_key = json.dumps(
+            request.query_plan.model_dump(mode="json", by_alias=True),
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+        )
+        reusable = structured_reuse.get(reuse_key) if deduplicate_equivalent_requests else None
+        if reusable is not None:
+            source_item, source_facts = reusable
+            item = replace(
+                source_item,
+                request_id=request.id,
+                requirement_ids=request.requirement_ids,
+            )
+            shared_requirements = sorted(
+                {
+                    requirement_id
+                    for fact in source_facts
+                    for requirement_id in fact.requirement_ids + request.requirement_ids
+                },
+                key=lambda value: int(value[1:]),
+            )
+            snapshot.tool_facts = [
+                replace(fact, requirement_ids=shared_requirements) if fact in source_facts else fact
+                for fact in snapshot.tool_facts
+            ]
+            snapshot.inputs.append(item)
+            snapshot.elapsed_ms = _elapsed_ms()
+            snapshot = await _persist_checkpoint(
+                db,
+                run,
+                snapshot,
+                settings=active_settings,
+            )
+            existing[item.request_id] = item
             continue
         try:
             await _time_guard()
@@ -642,6 +703,8 @@ async def execute_composite_answer_plan(
         snapshot.elapsed_ms = _elapsed_ms()
         snapshot = await _persist_checkpoint(db, run, snapshot, settings=active_settings)
         existing[item.request_id] = item
+        if deduplicate_equivalent_requests:
+            structured_reuse[reuse_key] = (item, facts)
 
     await cancel_check()
     return CompositeExecutionArtifacts(snapshot=snapshot)
