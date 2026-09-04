@@ -451,9 +451,7 @@ class KnowledgeConversation(Base):
     owner_user_id: Mapped[int] = mapped_column(
         BigInteger, ForeignKey("users.id", ondelete="CASCADE"), index=True, nullable=False
     )
-    scope_type: Mapped[str] = mapped_column(
-        String(16), default=SCOPE_WORKSPACE, nullable=False
-    )
+    scope_type: Mapped[str] = mapped_column(String(16), default=SCOPE_WORKSPACE, nullable=False)
     project_id: Mapped[int | None] = mapped_column(
         BigInteger, ForeignKey("projects.id", ondelete="SET NULL"), index=True, nullable=True
     )
@@ -538,12 +536,8 @@ class KnowledgeAgentRun(Base):
     # 消息关联：user_message_id/assistant_message_id 由应用层维护，
     # 避免 messages↔runs 循环外键在 SQLite/MySQL 上的建表兼容问题
     user_message_id: Mapped[int | None] = mapped_column(BigInteger, index=True, nullable=True)
-    assistant_message_id: Mapped[int | None] = mapped_column(
-        BigInteger, index=True, nullable=True
-    )
-    status: Mapped[str] = mapped_column(
-        String(16), default=RUN_WAITING, nullable=False, index=True
-    )
+    assistant_message_id: Mapped[int | None] = mapped_column(BigInteger, index=True, nullable=True)
+    status: Mapped[str] = mapped_column(String(16), default=RUN_WAITING, nullable=False, index=True)
     current_step: Mapped[str | None] = mapped_column(String(32), nullable=True)
     active_slot: Mapped[str | None] = mapped_column(String(8), nullable=True)
     cancel_requested: Mapped[bool] = mapped_column(
@@ -601,6 +595,9 @@ class KnowledgeAgentRun(Base):
     composite_answer_plan_json: Mapped[str | None] = mapped_column(Text, nullable=True)
     composite_answer_execution_json: Mapped[str | None] = mapped_column(Text, nullable=True)
     composite_answer_coverage_json: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # SharedExecutionGraph/State v1：仅 quick 新 Run 启用时写入，旧 Run 保持 NULL
+    shared_execution_graph_json: Mapped[str | None] = mapped_column(Text, nullable=True)
+    shared_execution_state_json: Mapped[str | None] = mapped_column(Text, nullable=True)
     error: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
@@ -700,9 +697,7 @@ class KnowledgeCandidateDraft(Base):
         BigInteger, ForeignKey("projects.id", ondelete="SET NULL"), index=True, nullable=True
     )
     target_project_name: Mapped[str | None] = mapped_column(String(64), nullable=True)
-    status: Mapped[str] = mapped_column(
-        String(16), default=DRAFT_GENERATING, nullable=False
-    )
+    status: Mapped[str] = mapped_column(String(16), default=DRAFT_GENERATING, nullable=False)
     # 草稿字段：generating 期间为空，生成成功进入 draft 后填充
     title: Mapped[str | None] = mapped_column(String(255), nullable=True)
     content: Mapped[str | None] = mapped_column(Text, nullable=True)
@@ -729,12 +724,8 @@ class KnowledgeCandidateDraft(Base):
     )
 
     conversation: Mapped["KnowledgeConversation"] = relationship()
-    operation_run: Mapped["KnowledgeAgentRun"] = relationship(
-        foreign_keys=[operation_run_id]
-    )
-    source_run: Mapped["KnowledgeAgentRun | None"] = relationship(
-        foreign_keys=[source_run_id]
-    )
+    operation_run: Mapped["KnowledgeAgentRun"] = relationship(foreign_keys=[operation_run_id])
+    source_run: Mapped["KnowledgeAgentRun | None"] = relationship(foreign_keys=[source_run_id])
     confirmed_candidate: Mapped["Candidate | None"] = relationship(
         foreign_keys=[confirmed_candidate_id]
     )
@@ -846,15 +837,9 @@ class KnowledgeEntryRevisionDraft(Base):
     )
 
     conversation: Mapped["KnowledgeConversation"] = relationship()
-    operation_run: Mapped["KnowledgeAgentRun"] = relationship(
-        foreign_keys=[operation_run_id]
-    )
-    source_run: Mapped["KnowledgeAgentRun | None"] = relationship(
-        foreign_keys=[source_run_id]
-    )
-    target_entry: Mapped["Entry | None"] = relationship(
-        foreign_keys=[target_entry_id]
-    )
+    operation_run: Mapped["KnowledgeAgentRun"] = relationship(foreign_keys=[operation_run_id])
+    source_run: Mapped["KnowledgeAgentRun | None"] = relationship(foreign_keys=[source_run_id])
+    target_entry: Mapped["Entry | None"] = relationship(foreign_keys=[target_entry_id])
     execution: Mapped["KnowledgeEntryRevisionExecution | None"] = relationship(
         foreign_keys=[execution_id]
     )
@@ -948,9 +933,7 @@ class KnowledgeEntryRevisionExecution(Base):
     )
 
     conversation: Mapped["KnowledgeConversation"] = relationship()
-    draft: Mapped["KnowledgeEntryRevisionDraft"] = relationship(
-        foreign_keys=[draft_id]
-    )
+    draft: Mapped["KnowledgeEntryRevisionDraft"] = relationship(foreign_keys=[draft_id])
     entry: Mapped["Entry | None"] = relationship(foreign_keys=[entry_id])
 
 
@@ -1193,9 +1176,7 @@ class KnowledgeContextVersion(Base):
     )
     project_name: Mapped[str | None] = mapped_column(String(64), nullable=True)
     topic_label: Mapped[str] = mapped_column(String(255), nullable=False)
-    status: Mapped[str] = mapped_column(
-        String(16), default=CONTEXT_STATUS_ACTIVE, nullable=False
-    )
+    status: Mapped[str] = mapped_column(String(16), default=CONTEXT_STATUS_ACTIVE, nullable=False)
     close_reason: Mapped[str | None] = mapped_column(String(16), nullable=True)
     active_slot: Mapped[str | None] = mapped_column(String(8), nullable=True)
     created_at: Mapped[datetime] = mapped_column(
@@ -1205,9 +1186,7 @@ class KnowledgeContextVersion(Base):
         DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False
     )
 
-    conversation: Mapped["KnowledgeConversation"] = relationship(
-        back_populates="context_versions"
-    )
+    conversation: Mapped["KnowledgeConversation"] = relationship(back_populates="context_versions")
     parent_version: Mapped["KnowledgeContextVersion | None"] = relationship(
         remote_side=[id],
         post_update=True,
@@ -1264,9 +1243,7 @@ class KnowledgeWorkingSetItem(Base):
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )
 
-    context_version: Mapped["KnowledgeContextVersion"] = relationship(
-        back_populates="items"
-    )
+    context_version: Mapped["KnowledgeContextVersion"] = relationship(back_populates="items")
     entry: Mapped["Entry"] = relationship()
 
 
@@ -1324,15 +1301,9 @@ class KnowledgeInvestigation(Base):
     max_evidence: Mapped[int] = mapped_column(Integer, default=12, nullable=False)
     # 进度与累计计数
     current_round: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
-    total_queries_executed: Mapped[int] = mapped_column(
-        Integer, default=0, nullable=False
-    )
-    distinct_entries_found: Mapped[int] = mapped_column(
-        Integer, default=0, nullable=False
-    )
-    citable_evidence_count: Mapped[int] = mapped_column(
-        Integer, default=0, nullable=False
-    )
+    total_queries_executed: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    distinct_entries_found: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    citable_evidence_count: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
     stop_reason: Mapped[str | None] = mapped_column(String(32), nullable=True)
     # JSON 摘要：过程观察，不是正式知识
     coverage_summary: Mapped[str | None] = mapped_column(Text, nullable=True)
@@ -1419,9 +1390,7 @@ class KnowledgeInvestigationRound(Base):
         DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False
     )
 
-    investigation: Mapped["KnowledgeInvestigation"] = relationship(
-        back_populates="rounds"
-    )
+    investigation: Mapped["KnowledgeInvestigation"] = relationship(back_populates="rounds")
     queries: Mapped[list["KnowledgeInvestigationQuery"]] = relationship(
         back_populates="round",
         cascade="all, delete-orphan",
@@ -1485,9 +1454,5 @@ class KnowledgeInvestigationQuery(Base):
         DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False
     )
 
-    investigation: Mapped["KnowledgeInvestigation"] = relationship(
-        back_populates="queries"
-    )
-    round: Mapped["KnowledgeInvestigationRound | None"] = relationship(
-        back_populates="queries"
-    )
+    investigation: Mapped["KnowledgeInvestigation"] = relationship(back_populates="queries")
+    round: Mapped["KnowledgeInvestigationRound | None"] = relationship(back_populates="queries")

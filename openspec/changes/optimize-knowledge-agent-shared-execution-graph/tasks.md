@@ -1,10 +1,10 @@
 ## 1. 图领域骨架、配置与迁移
 
-- [ ] 1.1 增加 `SharedExecutionGraph v1`、冻结预算、闭合节点类型、消费者映射、`NodeOutcome` 与节点终态 Pydantic 模型；限制节点、依赖、参数、结果和错误字段长度，历史未知字段直接拒绝。验收：`cd backend && .venv/bin/pytest -q tests/test_knowledge_agent_shared_execution_graph.py -k 'schema or closed or bounds' && .venv/bin/ruff check app/services/knowledge_agent tests/test_knowledge_agent_shared_execution_graph.py`
-- [ ] 1.2 增加共享图独立特性开关及节点数、深度、单节点依赖、并发度、图/state 字节和总执行预算配置；默认关闭并在 `.env.example` 提供占位值，测试环境隔离开发 `.env`。验收：`cd backend && .venv/bin/pytest -q tests/test_config.py -k shared_execution_graph && .venv/bin/ruff check app/core/config.py tests/test_config.py`
-- [ ] 1.3 以追加 Alembic 迁移为 Knowledge Agent Run 增加可空 `shared_execution_graph_json` 与 `shared_execution_state_json`，不回填旧 Run，兼容 SQLite/MySQL 8。验收：`cd backend && .venv/bin/alembic upgrade head && .venv/bin/alembic downgrade -1 && .venv/bin/alembic upgrade head && .venv/bin/pytest -q tests/test_migrations.py -k shared_execution_graph`
-- [ ] 1.4 增加 graph/state 严格序列化、字节校验与恢复入口；旧 Run 空字段、超限、schema 损坏及 plan digest 不匹配分别按规格处理。验收：`cd backend && .venv/bin/pytest -q tests/test_knowledge_agent_shared_execution_graph.py -k 'serialize or restore or corrupt or digest'`
-- [ ] 1.5 完成图领域骨架、配置和迁移的本地提交。验收：`git diff --check && git status --short`
+- [x] 1.1 增加 `SharedExecutionGraph v1`、冻结预算、闭合节点类型、消费者映射、`NodeOutcome` 与节点终态 Pydantic 模型；限制节点、依赖、参数、结果和错误字段长度，历史未知字段直接拒绝。验收：`cd backend && .venv/bin/pytest -q tests/test_knowledge_agent_shared_execution_graph.py -k 'schema or closed or bounds' && .venv/bin/ruff check app/services/knowledge_agent tests/test_knowledge_agent_shared_execution_graph.py`
+- [x] 1.2 增加共享图独立特性开关及节点数、深度、单节点依赖、并发度、图/state 字节和总执行预算配置；默认关闭并在 `.env.example` 提供占位值，测试环境隔离开发 `.env`。验收：`cd backend && .venv/bin/pytest -q tests/test_config.py -k shared_execution_graph && .venv/bin/ruff check app/core/config.py tests/test_config.py`
+- [x] 1.3 以追加 Alembic 迁移为 Knowledge Agent Run 增加可空 `shared_execution_graph_json` 与 `shared_execution_state_json`，不回填旧 Run，兼容 SQLite/MySQL 8。验收：`cd backend && .venv/bin/alembic upgrade head && .venv/bin/alembic downgrade -1 && .venv/bin/alembic upgrade head && .venv/bin/pytest -q tests/test_migrations.py -k shared_execution_graph`
+- [x] 1.4 增加 graph/state 严格序列化、字节校验与恢复入口；旧 Run 空字段、超限、schema 损坏及 plan digest 不匹配分别按规格处理。验收：`cd backend && .venv/bin/pytest -q tests/test_knowledge_agent_shared_execution_graph.py -k 'serialize or restore or corrupt or digest'`
+- [x] 1.5 完成图领域骨架、配置和迁移的本地提交。验收：`git diff --check && git status --short`
 
 ## 2. 服务端图编译、精确去重与校验
 

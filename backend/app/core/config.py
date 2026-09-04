@@ -47,9 +47,7 @@ class Settings(BaseSettings):
     )
 
     # 项目上下文最小生成间隔（秒）：距上次成功生成不足该时长时不立即重新生成
-    context_min_interval_seconds: float = Field(
-        default=300.0, description="项目上下文最小生成间隔"
-    )
+    context_min_interval_seconds: float = Field(default=300.0, description="项目上下文最小生成间隔")
 
     # 进程内项目上下文 Worker：应用启动时是否开启（测试环境可关闭）
     context_worker_enabled: bool = Field(default=True, description="是否启用项目上下文 Worker")
@@ -70,9 +68,7 @@ class Settings(BaseSettings):
     )
 
     # 知识 Agent 固定执行图预算：搜索召回上限、回答上下文 Entry 上限与 Evidence 读取上限
-    knowledge_agent_recall_limit: int = Field(
-        default=20, description="知识 Agent 混合召回候选上限"
-    )
+    knowledge_agent_recall_limit: int = Field(default=20, description="知识 Agent 混合召回候选上限")
     knowledge_agent_context_limit: int = Field(
         default=15, description="知识 Agent 回答上下文最多使用的 Entry 条数"
     )
@@ -186,9 +182,7 @@ class Settings(BaseSettings):
     )
     knowledge_agent_structured_query_result_json_bytes_limit: int = Field(
         default=60000,
-        description=(
-            "结构化查询 v2 结果 JSON 最大字节数（低于 MySQL TEXT 65535 字节）"
-        ),
+        description=("结构化查询 v2 结果 JSON 最大字节数（低于 MySQL TEXT 65535 字节）"),
     )
     # 结果形态路由：auto 请求独立路由；关闭时 auto 一律 answer
     knowledge_agent_result_mode_router_enabled: bool = Field(
@@ -245,6 +239,43 @@ class Settings(BaseSettings):
     knowledge_agent_composite_answer_execution_timeout_seconds: float = Field(
         default=30.0, ge=1.0, le=180.0, description="复合回答一次受控执行总超时（秒）"
     )
+    # quick 共享执行图：独立开关与服务端固化预算，默认关闭
+    knowledge_agent_shared_execution_graph_enabled: bool = Field(
+        default=False, description="quick 复合回答共享执行图是否启用"
+    )
+    knowledge_agent_shared_execution_graph_max_nodes: int = Field(
+        default=24, ge=1, le=100, description="共享执行图最大节点数"
+    )
+    knowledge_agent_shared_execution_graph_max_depth: int = Field(
+        default=4, ge=1, le=20, description="共享执行图最大深度"
+    )
+    knowledge_agent_shared_execution_graph_max_dependencies: int = Field(
+        default=4, ge=0, le=20, description="共享执行图单节点最大依赖数"
+    )
+    knowledge_agent_shared_execution_graph_max_concurrency: int = Field(
+        default=2, ge=1, le=16, description="共享执行图最大并发度"
+    )
+    knowledge_agent_shared_execution_graph_max_tool_calls: int = Field(
+        default=12, ge=0, le=100, description="共享执行图最大工具调用数"
+    )
+    knowledge_agent_shared_execution_graph_max_entries: int = Field(
+        default=30, ge=0, le=500, description="共享执行图最大 Entry 数"
+    )
+    knowledge_agent_shared_execution_graph_max_evidence: int = Field(
+        default=30, ge=0, le=500, description="共享执行图最大 Evidence 数"
+    )
+    knowledge_agent_shared_execution_graph_max_buckets: int = Field(
+        default=24, ge=0, le=500, description="共享执行图最大分组桶数"
+    )
+    knowledge_agent_shared_execution_graph_bytes_limit: int = Field(
+        default=24000, ge=1000, le=60000, description="共享执行图 JSON 最大字节数"
+    )
+    knowledge_agent_shared_execution_graph_state_bytes_limit: int = Field(
+        default=60000, ge=1000, le=64000, description="共享执行图 state JSON 最大字节数"
+    )
+    knowledge_agent_shared_execution_graph_timeout_seconds: float = Field(
+        default=30.0, ge=1.0, le=180.0, description="共享执行图总耗时预算（秒）"
+    )
 
     # 知识 Agent Worker 租约（秒）：processing 超过该阈值可恢复重试
     knowledge_agent_lease_seconds: int = Field(
@@ -260,9 +291,7 @@ class Settings(BaseSettings):
 
     # 视觉模型：产品不提供密钥，用户 BYOK 配置
     vision_provider: str = Field(default="doubao", description="视觉模型 Provider")
-    vision_model: str = Field(
-        default="doubao-seed-2-0-lite-260428", description="视觉模型名"
-    )
+    vision_model: str = Field(default="doubao-seed-2-0-lite-260428", description="视觉模型名")
     doubao_base_url: str = Field(
         default="https://ark.cn-beijing.volces.com/api/v3",
         description="豆包方舟 OpenAI 兼容地址",
