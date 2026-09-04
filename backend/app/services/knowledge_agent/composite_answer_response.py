@@ -313,6 +313,7 @@ async def build_composite_answer(
     scope_label: str,
     statement_context: list[dict],
     cancel_check,
+    invocation_purpose: str = "answer",
 ) -> CompositeAnswerResult:
     """使用同一批输入最多生成两次输出，随后由服务端确定性合并与判定。"""
     entries, evidence_requirements = await _answer_entries(db, run.id, execution)
@@ -341,6 +342,7 @@ async def build_composite_answer(
             current_message,
             scope_label,
             entries,
+            purpose=invocation_purpose,
             user_statements=selected_statements or None,
             allow_model_knowledge=allow_model,
             external_material_required=external_required,

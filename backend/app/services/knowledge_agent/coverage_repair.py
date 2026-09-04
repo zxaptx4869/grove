@@ -16,17 +16,18 @@ from app.agents.coverage_repair import (
 )
 from app.agents.structured_query import StructuredQueryPlanDraft
 from app.core.config import Settings, get_settings
-from app.schemas.knowledge_agent import KnowledgeAnswerOut
+from app.schemas.knowledge_agent import KnowledgeAnswerBasisOut, KnowledgeAnswerOut
 from app.services.knowledge_agent.composite_answer import (
     NormalizedCompositeAnswerPlan,
     NormalizedCompositeRetrievalRequest,
     NormalizedCompositeStructuredRequest,
 )
+from app.services.knowledge_agent.composite_answer_response import CompositeAnswerResult
 from app.services.knowledge_agent.composite_answer_types import (
     CompositeAnswerCoverageSnapshot,
     CompositeAnswerExecutionSnapshot,
 )
-from app.services.knowledge_agent.observability import record_model_invocation
+from app.services.knowledge_agent.observability import StageMeta, record_model_invocation
 from app.services.knowledge_agent.structured_query import (
     StructuredQueryPlanError,
     normalize_structured_query_plan,
@@ -125,6 +126,8 @@ class CoverageRepairSnapshot(StrictCoverageRepairModel):
     eligible_requirement_ids: list[str] = Field(default_factory=list, max_length=8)
     baseline: CoverageRepairBaseline
     planner_attempted: bool = False
+    synthesis_attempted: bool = False
+    final_result: CoverageRepairBaseline | None = None
     stop_reason: CoverageRepairStopReason | None = None
     error: str | None = Field(default=None, max_length=500)
 
@@ -158,6 +161,57 @@ class CoverageRepairPlanError(ValueError):
 
 class CoverageRepairNoNovelRequest(CoverageRepairPlanError):
     """候选为空或全部与首次请求等价。"""
+
+
+def coverage_repair_material_from_result(
+    result: CompositeAnswerResult,
+) -> CoverageRepairBaseline:
+    """把已校验结果固化为可恢复材料，不保存任何内部模型草稿。"""
+    return CoverageRepairBaseline(
+        answer=result.answer,
+        coverage=result.coverage,
+        answer_basis=result.answer_basis.model_dump(mode="json"),
+        run_status=result.run_status,
+        answer_fallback=result.answer_fallback,
+    )
+
+
+def coverage_repair_result_from_material(
+    material: CoverageRepairBaseline,
+) -> CompositeAnswerResult:
+    """从控制快照恢复已校验结果。"""
+    return CompositeAnswerResult(
+        answer=material.answer,
+        coverage=material.coverage,
+        answer_basis=KnowledgeAnswerBasisOut.model_validate(material.answer_basis),
+        run_status=material.run_status,
+        answer_fallback=material.answer_fallback,
+    )
+
+
+def coverage_is_non_regressive(
+    baseline: CompositeAnswerCoverageSnapshot,
+    candidate: CompositeAnswerCoverageSnapshot,
+) -> bool:
+    """候选逐义务不得比首次合法 coverage 更差，也不得改变义务集合。"""
+    rank = {"failed": 0, "insufficient": 1, "partial": 2, "answered": 3}
+    before = {item.requirement_id: item.status for item in baseline.requirements}
+    after = {item.requirement_id: item.status for item in candidate.requirements}
+    return before.keys() == after.keys() and all(
+        rank[after[item]] >= rank[status] for item, status in before.items()
+    )
+
+
+def coverage_repair_has_usable_results(
+    execution: CompositeAnswerExecutionSnapshot,
+) -> bool:
+    """只有补查实际形成合法 Evidence/result 时才值得再次综合。"""
+    return bool(
+        execution.tool_facts
+        or any(
+            item.evidence_handles or item.result_handles for item in execution.inputs
+        )
+    )
 
 
 class RepairRunStorageAdapter:
@@ -242,6 +296,22 @@ def _repair_execution_settings(
             ),
         }
     )
+
+
+def restore_coverage_repair_execution(
+    raw: str | None,
+    snapshot: CoverageRepairSnapshot,
+    *,
+    settings: Settings | None = None,
+) -> CompositeAnswerExecutionSnapshot:
+    """使用快照冻结字节预算恢复补查 execution。"""
+    from app.services.knowledge_agent.composite_answer_execution import (
+        restore_composite_execution,
+    )
+
+    active = settings or get_settings()
+    bounded = _repair_execution_settings(active, snapshot.frozen_budget)
+    return restore_composite_execution(raw, settings=bounded)
 
 
 async def execute_coverage_repair(
@@ -627,7 +697,32 @@ async def plan_and_persist_coverage_repair(
     if existing is not None:
         return existing, snapshot
     if snapshot.planner_attempted:
-        return None, snapshot
+        interrupted = snapshot.model_copy(
+            update={
+                "stage": "failed",
+                "stop_reason": "planner_failed",
+                "error": snapshot.error or "补查规划未形成可恢复计划",
+            },
+            deep=True,
+        )
+        run.coverage_repair_json = dump_coverage_repair_snapshot(
+            interrupted, settings=active
+        )
+        await record_model_invocation(
+            db,
+            run_id=run.id,
+            meta=StageMeta(
+                purpose="coverage_repair_plan",
+                provider="server",
+                model=None,
+                is_fallback=True,
+                error=interrupted.error,
+                duration_ms=0,
+            ),
+            prompt_version=COVERAGE_REPAIR_PLAN_PROMPT_VERSION,
+        )
+        await db.commit()
+        return None, interrupted
 
     requirements = [
         {
@@ -660,6 +755,11 @@ async def plan_and_persist_coverage_repair(
         for item in original_execution.inputs
     ]
     await cancel_check()
+    attempted = snapshot.model_copy(update={"planner_attempted": True}, deep=True)
+    run.coverage_repair_json = dump_coverage_repair_snapshot(
+        attempted, settings=active
+    )
+    await db.commit()
     candidate, meta = await run_coverage_repair_planner(
         db,
         run.workspace_id,
@@ -670,8 +770,7 @@ async def plan_and_persist_coverage_repair(
         budget=snapshot.frozen_budget.model_dump(mode="json"),
     )
     plan = None
-    updated = snapshot.model_copy(deep=True)
-    updated.planner_attempted = True
+    updated = attempted.model_copy(deep=True)
     if candidate is None:
         updated.stage = "failed"
         updated.stop_reason = "planner_failed"

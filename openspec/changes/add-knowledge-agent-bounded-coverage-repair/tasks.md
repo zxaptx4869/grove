@@ -27,12 +27,12 @@
 
 ## 4. Runner 编排、再综合与诚实失败
 
-- [ ] 4.1 在 quick 复合路径首次综合后持久化基线快照，按准入决定跳过或进入一次补查；开关关闭、investigate、entries、兼容 quick 与规划 fallback 不变。验收：`cd backend && .venv/bin/pytest -q tests/test_knowledge_agent_runner.py tests/test_knowledge_agent_coverage_repair.py -k 'runner or feature_flag or unaffected'`
-- [ ] 4.2 只在补查产生新合法 Evidence/tool fact 时用合并 execution 再综合，重用现有句柄校验、数字事实、coverage、basis 和 Citation 派生。验收：`cd backend && .venv/bin/pytest -q tests/test_knowledge_agent_coverage_repair.py -k 'resynthesis or coverage or basis or citation'`
-- [ ] 4.3 实现 coverage 非退化门禁：新回答不能丢失基线 answered 义务；补查 planner/执行/再综合失败时恢复基线 answer/coverage/basis，并显式保留 partial/insufficient/gaps/fallback。验收：`cd backend && .venv/bin/pytest -q tests/test_knowledge_agent_coverage_repair.py -k 'baseline_fallback or non_regression or failure'`
+- [x] 4.1 在 quick 复合路径首次综合后持久化基线快照，按准入决定跳过或进入一次补查；开关关闭、investigate、entries、兼容 quick 与规划 fallback 不变。验收：`cd backend && .venv/bin/pytest -q tests/test_knowledge_agent_runner.py tests/test_knowledge_agent_coverage_repair.py -k 'runner or feature_flag or unaffected'`
+- [x] 4.2 只在补查产生新合法 Evidence/tool fact 时用合并 execution 再综合，重用现有句柄校验、数字事实、coverage、basis 和 Citation 派生。验收：`cd backend && .venv/bin/pytest -q tests/test_knowledge_agent_coverage_repair.py -k 'resynthesis or coverage or basis or citation'`
+- [x] 4.3 实现 coverage 非退化门禁：新回答不能丢失基线 answered 义务；补查 planner/执行/再综合失败时恢复基线 answer/coverage/basis，并显式保留 partial/insufficient/gaps/fallback。验收：`cd backend && .venv/bin/pytest -q tests/test_knowledge_agent_coverage_repair.py -k 'baseline_fallback or non_regression or failure'`
 - [ ] 4.4 在规划、节点启动/接纳、检查点、再综合和终态前复用取消检查，取消不投影内部基线为正常回答或推进工作集。验收：`cd backend && .venv/bin/pytest -q tests/test_knowledge_agent_worker.py tests/test_knowledge_agent_coverage_repair.py -k 'repair and cancel'`
-- [ ] 4.5 将补查 planner/图/工具/再综合/停止的真实状态写入现有审计与 fallback 汇总，确定性跳过不伪造调用。验收：`cd backend && .venv/bin/pytest -q tests/test_knowledge_agent_coverage_repair.py tests/test_knowledge_agent_runner.py -k 'observability or fallback_summary or skipped'`
-- [ ] 4.6 保持现有 Run/消息页与原生端只投影 answer/points/Citation/coverage/gaps/basis/fallback 和既有计划摘要，内部补查查询、图、节点、范围与指纹不出现在公开 JSON。验收：`cd backend && .venv/bin/pytest -q tests/test_knowledge_agent_api.py tests/test_knowledge_agent_conversations.py -k 'coverage_repair or composite or legacy' && cd ../mobile && npm test -- --runInBand src/knowledge-agent/api.test.ts src/knowledge-agent/adapters/answer.test.ts`
+- [x] 4.5 将补查 planner/图/工具/再综合/停止的真实状态写入现有审计与 fallback 汇总，确定性跳过不伪造调用。验收：`cd backend && .venv/bin/pytest -q tests/test_knowledge_agent_coverage_repair.py tests/test_knowledge_agent_runner.py -k 'observability or fallback_summary or skipped'`
+- [x] 4.6 保持现有 Run/消息页与原生端只投影 answer/points/Citation/coverage/gaps/basis/fallback 和既有计划摘要，内部补查查询、图、节点、范围与指纹不出现在公开 JSON。验收：`cd backend && .venv/bin/pytest -q tests/test_knowledge_agent_api.py tests/test_knowledge_agent_conversations.py -k 'coverage_repair or composite or legacy' && cd ../mobile && npm test -- --runInBand src/knowledge-agent/api.test.ts src/knowledge-agent/adapters/answer.test.ts`
 - [ ] 4.7 完成 Runner、综合和协议兼容的本地提交。验收：`cd backend && .venv/bin/ruff check app tests && cd ../mobile && npm run typecheck && npm run lint && cd .. && git diff --check`
 
 ## 5. 评估、隔离、无写入与压力覆盖

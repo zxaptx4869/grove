@@ -57,6 +57,7 @@ from app.services.knowledge_agent.composite_answer_response import (
 from app.services.knowledge_agent.composite_answer_types import (
     CompositeAnswerCoverageSnapshot,
     CompositeAnswerExecutionSnapshot,
+    CompositeExecutionInputSnapshot,
 )
 from app.services.knowledge_agent.follow_up import ContextDecisionResult
 from app.services.knowledge_agent.observability import StageMeta, run_fallback_summary
@@ -2176,6 +2177,451 @@ async def test_composite_quick_routes_before_plan_and_skips_legacy_basis(monkeyp
         assert run.status == RUN_COMPLETED
         assert run.composite_answer_coverage_json is not None
         assert json.loads(run.answer_json)["points"][0]["requirement_ids"] == ["r1"]
+
+
+@pytest.mark.asyncio
+async def test_composite_quick_runs_one_bounded_coverage_repair(monkeypatch) -> None:
+    """首次 partial 只补查新请求，再综合改善 coverage 并固化一次终态。"""
+    from app.agents.coverage_repair import CoverageRepairPlanDraft
+
+    settings = Settings(
+        knowledge_agent_composite_answer_enabled=True,
+        knowledge_agent_coverage_repair_enabled=True,
+        knowledge_agent_shared_execution_graph_enabled=False,
+    )
+    monkeypatch.setattr("app.services.knowledge_agent.runner.get_settings", lambda: settings)
+    plan = normalize_composite_answer_plan(
+        {
+            "requirements": [
+                {
+                    "id": "source",
+                    "order": 0,
+                    "summary": "说明知识中的材料来源",
+                    "kind": "retrieve",
+                    "basis_policy": "grove_required",
+                }
+            ],
+            "retrieval_requests": [
+                {
+                    "id": "initial",
+                    "query": "甲醛 来源",
+                    "requirement_ids": ["source"],
+                }
+            ],
+        }
+    )
+    events: list[str] = []
+
+    async def answer_mode(*args, **kwargs):
+        from app.services.knowledge_agent.investigation import AnswerModeResolution
+
+        return AnswerModeResolution(mode="quick")
+
+    async def plan_answer(*args, **kwargs):
+        return plan
+
+    async def execute(db, run, ctx, current_plan, **kwargs):
+        request = current_plan.retrieval_requests[0]
+        events.append(f"execute:{request.id}")
+        if request.id == "q1":
+            return SimpleNamespace(
+                snapshot=CompositeAnswerExecutionSnapshot(
+                    inputs=[
+                        CompositeExecutionInputSnapshot(
+                            request_id="q1",
+                            kind="retrieval",
+                            requirement_ids=["r1"],
+                            fingerprint="a" * 64,
+                            status="limited",
+                            completeness="limited",
+                        )
+                    ]
+                )
+            )
+        return SimpleNamespace(
+            snapshot=CompositeAnswerExecutionSnapshot(
+                inputs=[
+                    CompositeExecutionInputSnapshot(
+                        request_id="q2",
+                        kind="retrieval",
+                        requirement_ids=["r1"],
+                        fingerprint="b" * 64,
+                        status="completed",
+                        completeness="limited",
+                        evidence_handles=["ev_repair"],
+                    )
+                ]
+            )
+        )
+
+    async def planner(*args, **kwargs):
+        events.append("repair_plan")
+        return (
+            CoverageRepairPlanDraft.model_validate(
+                {
+                    "target_requirement_ids": ["r1"],
+                    "retrieval_requests": [
+                        {
+                            "id": "repair",
+                            "query": "装修材料 释放源",
+                            "requirement_ids": ["r1"],
+                        }
+                    ],
+                }
+            ),
+            StageMeta(
+                purpose="coverage_repair_plan",
+                provider="test",
+                model="test",
+                is_fallback=False,
+                error=None,
+                duration_ms=1,
+            ),
+        )
+
+    build_count = 0
+
+    async def build(*args, **kwargs):
+        nonlocal build_count
+        build_count += 1
+        improved = build_count == 2
+        events.append("repair_synthesis" if improved else "baseline_synthesis")
+        answer = KnowledgeAnswerOut(
+            answer="已说明材料来源。" if improved else "暂缺材料来源。",
+            status="completed" if improved else "partial",
+        )
+        return CompositeAnswerResult(
+            answer=answer,
+            coverage=CompositeAnswerCoverageSnapshot(
+                requirements=[
+                    {
+                        "requirement_id": "r1",
+                        "status": "answered" if improved else "partial",
+                        "evidence_handles": ["ev_repair"] if improved else [],
+                        "note": None if improved else "相关输入为部分结果或执行不完整",
+                    }
+                ]
+            ),
+            answer_basis=build_answer_basis(
+                answer=answer,
+                user_statement_ids=[],
+                model_knowledge_used=False,
+                external_material_required=False,
+            ),
+            run_status=RUN_COMPLETED if improved else RUN_PARTIAL,
+            answer_fallback=False,
+        )
+
+    monkeypatch.setattr(
+        "app.services.knowledge_agent.runner.resolve_answer_mode", answer_mode
+    )
+    monkeypatch.setattr(
+        "app.services.knowledge_agent.runner.plan_and_persist_composite_answer",
+        plan_answer,
+    )
+    monkeypatch.setattr(
+        "app.services.knowledge_agent.composite_answer_execution."
+        "execute_composite_answer_plan",
+        execute,
+    )
+    monkeypatch.setattr(
+        "app.services.knowledge_agent.coverage_repair.run_coverage_repair_planner",
+        planner,
+    )
+    monkeypatch.setattr("app.services.knowledge_agent.runner.build_composite_answer", build)
+
+    async with async_session_factory() as db:
+        user = await create_user(db, "覆盖补查")
+        workspace = await create_workspace(db, user)
+        _conversation, run = await _conversation_and_run(
+            db, user, workspace, "甲醛可能来自哪些材料？"
+        )
+        run.status = RUN_PROCESSING
+        await db.commit()
+
+        await execute_run(db, run)
+        await db.commit()
+
+        assert events == [
+            "execute:q1",
+            "baseline_synthesis",
+            "repair_plan",
+            "execute:q2",
+            "repair_synthesis",
+        ]
+        assert run.status == RUN_COMPLETED
+        assert json.loads(run.answer_json)["answer"] == "已说明材料来源。"
+        control = json.loads(run.coverage_repair_json)
+        assert control["stage"] == "completed"
+        assert control["planner_attempted"] is True
+        assert control["synthesis_attempted"] is True
+        assert control["stop_reason"] == "completed"
+        assert run.composite_answer_execution_json is None
+        assert run.coverage_repair_execution_json is None
+
+
+@pytest.mark.asyncio
+async def test_composite_quick_skips_repair_when_coverage_is_complete(monkeypatch) -> None:
+    """首次完整回答不调用补查 planner，并固化确定性 not_needed。"""
+    settings = Settings(
+        knowledge_agent_composite_answer_enabled=True,
+        knowledge_agent_coverage_repair_enabled=True,
+    )
+    monkeypatch.setattr("app.services.knowledge_agent.runner.get_settings", lambda: settings)
+    plan = normalize_composite_answer_plan(
+        {
+            "requirements": [
+                {
+                    "id": "definition",
+                    "order": 0,
+                    "summary": "解释概念",
+                    "kind": "explain",
+                    "basis_policy": "model_allowed",
+                }
+            ]
+        }
+    )
+
+    async def answer_mode(*args, **kwargs):
+        from app.services.knowledge_agent.investigation import AnswerModeResolution
+
+        return AnswerModeResolution(mode="quick")
+
+    async def execute(*args, **kwargs):
+        return SimpleNamespace(snapshot=CompositeAnswerExecutionSnapshot())
+
+    async def plan_answer(*args, **kwargs):
+        return plan
+
+    async def build(*args, **kwargs):
+        answer = KnowledgeAnswerOut(answer="解释完整。", status="completed")
+        return CompositeAnswerResult(
+            answer=answer,
+            coverage=CompositeAnswerCoverageSnapshot(
+                requirements=[{"requirement_id": "r1", "status": "answered"}]
+            ),
+            answer_basis=build_answer_basis(
+                answer=answer,
+                user_statement_ids=[],
+                model_knowledge_used=True,
+                external_material_required=False,
+            ),
+            run_status=RUN_COMPLETED,
+            answer_fallback=False,
+        )
+
+    async def forbidden(*args, **kwargs):  # pragma: no cover
+        raise AssertionError("完整 coverage 不应调用补查 planner")
+
+    monkeypatch.setattr(
+        "app.services.knowledge_agent.runner.resolve_answer_mode", answer_mode
+    )
+    monkeypatch.setattr(
+        "app.services.knowledge_agent.runner.plan_and_persist_composite_answer",
+        plan_answer,
+    )
+    monkeypatch.setattr(
+        "app.services.knowledge_agent.composite_answer_execution."
+        "execute_composite_answer_plan",
+        execute,
+    )
+    monkeypatch.setattr("app.services.knowledge_agent.runner.build_composite_answer", build)
+    monkeypatch.setattr(
+        "app.services.knowledge_agent.coverage_repair.run_coverage_repair_planner",
+        forbidden,
+    )
+
+    async with async_session_factory() as db:
+        user = await create_user(db, "完整跳过")
+        workspace = await create_workspace(db, user)
+        _conversation, run = await _conversation_and_run(db, user, workspace, "解释概念")
+        run.status = RUN_PROCESSING
+        await db.commit()
+        await execute_run(db, run)
+        await db.commit()
+
+        assert json.loads(run.coverage_repair_json)["stop_reason"] == "not_needed"
+        assert run.status == RUN_COMPLETED
+
+
+@pytest.mark.asyncio
+async def test_coverage_repair_regression_restores_baseline_and_records_fallback(
+    monkeypatch,
+) -> None:
+    """再综合 coverage 退化时不覆盖首次答案，并留下显式 server fallback。"""
+    from app.services.knowledge_agent.coverage_repair import (
+        CoverageRepairBudget,
+        CoverageRepairSnapshot,
+        coverage_repair_material_from_result,
+        dump_coverage_repair_plan,
+        dump_coverage_repair_snapshot,
+        normalize_coverage_repair_plan,
+    )
+    from app.services.knowledge_agent.runner import _run_bounded_coverage_repair
+
+    settings = Settings(
+        knowledge_agent_composite_answer_enabled=True,
+        knowledge_agent_coverage_repair_enabled=True,
+    )
+    plan = normalize_composite_answer_plan(
+        {
+            "requirements": [
+                {
+                    "id": "source",
+                    "order": 0,
+                    "summary": "说明来源",
+                    "kind": "retrieve",
+                    "basis_policy": "grove_required",
+                }
+            ],
+            "retrieval_requests": [
+                {
+                    "id": "initial",
+                    "query": "甲醛 来源",
+                    "requirement_ids": ["source"],
+                }
+            ],
+        }
+    )
+    original_execution = CompositeAnswerExecutionSnapshot(
+        inputs=[
+            CompositeExecutionInputSnapshot(
+                request_id="q1",
+                kind="retrieval",
+                requirement_ids=["r1"],
+                fingerprint="a" * 64,
+                status="limited",
+                completeness="limited",
+            )
+        ]
+    )
+    baseline_answer = KnowledgeAnswerOut(answer="首次部分回答", status="partial")
+    baseline = CompositeAnswerResult(
+        answer=baseline_answer,
+        coverage=CompositeAnswerCoverageSnapshot(
+            requirements=[{"requirement_id": "r1", "status": "partial"}]
+        ),
+        answer_basis=build_answer_basis(
+            answer=baseline_answer,
+            user_statement_ids=[],
+            model_knowledge_used=False,
+            external_material_required=False,
+        ),
+        run_status=RUN_PARTIAL,
+        answer_fallback=False,
+    )
+    budget = CoverageRepairBudget()
+    repair_plan = normalize_coverage_repair_plan(
+        {
+            "target_requirement_ids": ["r1"],
+            "retrieval_requests": [
+                {
+                    "id": "repair",
+                    "query": "装修材料 释放源",
+                    "requirement_ids": ["r1"],
+                }
+            ],
+        },
+        original_plan=plan,
+        eligible_requirement_ids={"r1"},
+        scope_fingerprint="scope-a",
+        budget=budget,
+        settings=settings,
+    )
+    repair_execution = CompositeAnswerExecutionSnapshot(
+        inputs=[
+            CompositeExecutionInputSnapshot(
+                request_id="q2",
+                kind="retrieval",
+                requirement_ids=["r1"],
+                fingerprint="b" * 64,
+                status="completed",
+                completeness="limited",
+                evidence_handles=["ev_repair"],
+            )
+        ]
+    )
+
+    async def regressive_build(*args, **kwargs):
+        answer = KnowledgeAnswerOut(answer="退化候选", status="insufficient")
+        return CompositeAnswerResult(
+            answer=answer,
+            coverage=CompositeAnswerCoverageSnapshot(
+                requirements=[{"requirement_id": "r1", "status": "insufficient"}]
+            ),
+            answer_basis=build_answer_basis(
+                answer=answer,
+                user_statement_ids=[],
+                model_knowledge_used=False,
+                external_material_required=False,
+            ),
+            run_status=RUN_COMPLETED,
+            answer_fallback=False,
+        )
+
+    monkeypatch.setattr(
+        "app.services.knowledge_agent.runner.build_composite_answer",
+        regressive_build,
+    )
+    async with async_session_factory() as db:
+        user = await create_user(db, "补查非退化")
+        workspace = await create_workspace(db, user)
+        _conversation, run = await _conversation_and_run(db, user, workspace, "说明来源")
+        run.status = RUN_PROCESSING
+        snapshot = CoverageRepairSnapshot(
+            stage="execution_ready",
+            execution_mode="serial",
+            frozen_budget=budget,
+            eligible_requirement_ids=["r1"],
+            baseline=coverage_repair_material_from_result(baseline),
+            planner_attempted=True,
+        )
+        run.coverage_repair_json = dump_coverage_repair_snapshot(
+            snapshot, settings=settings
+        )
+        run.coverage_repair_plan_json = dump_coverage_repair_plan(
+            repair_plan, budget=budget, settings=settings
+        )
+        run.coverage_repair_execution_json = repair_execution.model_dump_json()
+        await db.commit()
+        ctx = RunToolContext(
+            run_id=run.id,
+            workspace_id=workspace.id,
+            owner_user_id=user.id,
+            scope_type=SCOPE_WORKSPACE,
+            project_id=None,
+            project_name=None,
+        )
+
+        result = await _run_bounded_coverage_repair(
+            db,
+            run,
+            ctx,
+            plan,
+            original_execution,
+            snapshot,
+            current_message="说明来源",
+            standalone_query="说明来源",
+            scope="全部知识",
+            statement_context=[],
+            settings=settings,
+        )
+
+        assert result.answer.answer == "首次部分回答"
+        control = json.loads(run.coverage_repair_json)
+        assert control["stage"] == "failed"
+        assert control["stop_reason"] == "synthesis_failed"
+        invocations = (
+            await db.execute(
+                select(KnowledgeAgentModelInvocation).where(
+                    KnowledgeAgentModelInvocation.run_id == run.id,
+                    KnowledgeAgentModelInvocation.purpose
+                    == "coverage_repair_synthesis",
+                )
+            )
+        ).scalars().all()
+        assert len(invocations) == 1
+        assert invocations[0].is_fallback is True
 
 
 @pytest.mark.asyncio

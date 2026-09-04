@@ -29,6 +29,8 @@ from app.models.knowledge_agent import (
     CONTEXT_DECISION_CONTINUE,
     CONTEXT_MODE_AUTO,
     PURPOSE_CONTEXT_DECISION,
+    PURPOSE_COVERAGE_REPAIR_GRAPH,
+    PURPOSE_COVERAGE_REPAIR_SYNTHESIS,
     RESULT_MODE_AUTO,
     RESULT_MODE_ENTRIES,
     RUN_COMPLETED,
@@ -40,6 +42,9 @@ from app.models.knowledge_agent import (
     STEP_COMPOSITE_ANSWER_EXECUTE,
     STEP_COMPOSITE_ANSWER_PLAN,
     STEP_CONTEXT_DECISION,
+    STEP_COVERAGE_REPAIR_EXECUTE,
+    STEP_COVERAGE_REPAIR_PLAN,
+    STEP_COVERAGE_REPAIR_SYNTHESIZE,
     STEP_FINALIZE,
     STEP_INVESTIGATION_ROUTE,
     STEP_ORGANIZE_ANSWER,
@@ -63,6 +68,7 @@ from app.services.knowledge_agent.composite_answer import (
     plan_and_persist_composite_answer,
 )
 from app.services.knowledge_agent.composite_answer_response import (
+    CompositeAnswerResult,
     build_composite_answer,
 )
 from app.services.knowledge_agent.conversations import scope_label
@@ -104,6 +110,29 @@ logger = logging.getLogger(__name__)
 
 class RunCancelled(Exception):
     """Run 已被取消：模型结果不得写入正常回答。"""
+
+
+async def _record_server_fallback(
+    db: AsyncSession,
+    run_id: int,
+    *,
+    purpose: str,
+    error: str,
+) -> None:
+    """记录补查确定性编排失败，不伪造模型或工具调用。"""
+    db.add(
+        KnowledgeAgentModelInvocation(
+            run_id=run_id,
+            purpose=purpose,
+            prompt_version="v1",
+            provider="server",
+            model=None,
+            is_fallback=True,
+            error=error[:500],
+            duration_ms=0,
+        )
+    )
+    await db.flush()
 
 
 async def _check_cancelled(run_id: int) -> None:
@@ -449,6 +478,248 @@ async def _run_open_answer_without_grove(
     )
 
 
+async def _run_bounded_coverage_repair(
+    db: AsyncSession,
+    run: KnowledgeAgentRun,
+    ctx: RunToolContext,
+    composite_plan,
+    original_execution,
+    snapshot,
+    *,
+    current_message: str,
+    standalone_query: str,
+    scope: str,
+    statement_context: list[dict],
+    settings,
+) -> CompositeAnswerResult:
+    """恢复或完成一次补查；任何局部失败都返回首次合法结果。"""
+    from app.services.knowledge_agent.coverage_repair import (
+        coverage_is_non_regressive,
+        coverage_repair_has_usable_results,
+        coverage_repair_material_from_result,
+        coverage_repair_result_from_material,
+        dump_coverage_repair_snapshot,
+        execute_coverage_repair,
+        merge_composite_execution,
+        plan_and_persist_coverage_repair,
+        restore_coverage_repair_execution,
+        restore_coverage_repair_plan,
+    )
+    from app.services.knowledge_agent.shared_execution_graph import (
+        run_scope_fingerprint,
+    )
+
+    baseline_result = coverage_repair_result_from_material(snapshot.baseline)
+    if snapshot.stage == "completed":
+        return coverage_repair_result_from_material(
+            snapshot.final_result or snapshot.baseline
+        )
+    if snapshot.stage in {"skipped", "failed"}:
+        return baseline_result
+
+    async def fail_repair(reason: str, purpose: str, error: str):
+        await _record_server_fallback(
+            db,
+            run.id,
+            purpose=purpose,
+            error=error,
+        )
+        failed = snapshot.model_copy(
+            update={"stage": "failed", "stop_reason": reason, "error": error[:500]},
+            deep=True,
+        )
+        run.coverage_repair_json = dump_coverage_repair_snapshot(
+            failed, settings=settings
+        )
+        await db.commit()
+        return baseline_result
+
+    scope_fingerprint = run_scope_fingerprint(
+        run_id=run.id,
+        owner_user_id=run.owner_user_id,
+        workspace_id=run.workspace_id,
+        project_id=run.project_id,
+        scope_type=run.scope_type,
+    )
+    repair_plan = None
+    if snapshot.stage == "baseline_ready":
+        await _check_cancelled(run.id)
+        await update_run_step(run.id, STEP_COVERAGE_REPAIR_PLAN)
+        try:
+            repair_plan, snapshot = await plan_and_persist_coverage_repair(
+                db,
+                run,
+                snapshot,
+                original_plan=composite_plan,
+                original_execution=original_execution,
+                current_message=current_message,
+                scope_fingerprint=scope_fingerprint,
+                cancel_check=lambda: _check_cancelled(run.id),
+                settings=settings,
+            )
+        except RunCancelled:
+            raise
+        except Exception as exc:  # noqa: BLE001
+            return await fail_repair(
+                "planner_failed",
+                PURPOSE_COVERAGE_REPAIR_GRAPH,
+                f"覆盖补查计划恢复失败：{exc}",
+            )
+        if repair_plan is None:
+            return baseline_result
+    else:
+        try:
+            repair_plan = restore_coverage_repair_plan(
+                run.coverage_repair_plan_json,
+                budget=snapshot.frozen_budget,
+                settings=settings,
+            )
+        except Exception as exc:  # noqa: BLE001
+            return await fail_repair(
+                "planner_failed",
+                PURPOSE_COVERAGE_REPAIR_GRAPH,
+                f"覆盖补查计划快照损坏：{exc}",
+            )
+        if repair_plan is None:
+            return await fail_repair(
+                "planner_failed",
+                PURPOSE_COVERAGE_REPAIR_GRAPH,
+                "覆盖补查计划检查点缺失",
+            )
+
+    if snapshot.stage in {"plan_ready", "executing"}:
+        await _check_cancelled(run.id)
+        await update_run_step(run.id, STEP_COVERAGE_REPAIR_EXECUTE)
+        try:
+            repair_execution, snapshot = await execute_coverage_repair(
+                db,
+                run,
+                ctx,
+                composite_plan,
+                repair_plan,
+                snapshot,
+                cancel_check=lambda: _check_cancelled(run.id),
+                settings=settings,
+            )
+        except RunCancelled:
+            raise
+        except Exception as exc:  # noqa: BLE001
+            return await fail_repair(
+                "execution_failed",
+                PURPOSE_COVERAGE_REPAIR_GRAPH,
+                f"覆盖补查执行失败：{exc}",
+            )
+    else:
+        try:
+            repair_execution = restore_coverage_repair_execution(
+                run.coverage_repair_execution_json,
+                snapshot,
+                settings=settings,
+            )
+        except Exception as exc:  # noqa: BLE001
+            return await fail_repair(
+                "execution_failed",
+                PURPOSE_COVERAGE_REPAIR_GRAPH,
+                f"覆盖补查执行快照损坏：{exc}",
+            )
+
+    if not coverage_repair_has_usable_results(repair_execution):
+        completed = snapshot.model_copy(
+            update={
+                "stage": "completed",
+                "stop_reason": "completed_with_gaps",
+                "final_result": snapshot.baseline,
+            },
+            deep=True,
+        )
+        run.coverage_repair_json = dump_coverage_repair_snapshot(
+            completed, settings=settings
+        )
+        await db.commit()
+        return baseline_result
+
+    if snapshot.synthesis_attempted:
+        return await fail_repair(
+            "synthesis_failed",
+            PURPOSE_COVERAGE_REPAIR_SYNTHESIS,
+            "覆盖补查再综合未形成可恢复结果",
+        )
+
+    snapshot = snapshot.model_copy(update={"synthesis_attempted": True}, deep=True)
+    run.coverage_repair_json = dump_coverage_repair_snapshot(snapshot, settings=settings)
+    await db.commit()
+    await _check_cancelled(run.id)
+    await update_run_step(run.id, STEP_COVERAGE_REPAIR_SYNTHESIZE)
+    try:
+        merged_execution = merge_composite_execution(
+            composite_plan,
+            original_execution,
+            repair_plan,
+            repair_execution,
+        )
+        candidate = await build_composite_answer(
+            db,
+            run,
+            composite_plan,
+            merged_execution,
+            current_message=current_message,
+            standalone_query=standalone_query,
+            scope_label=scope,
+            statement_context=statement_context,
+            cancel_check=lambda: _check_cancelled(run.id),
+            invocation_purpose=PURPOSE_COVERAGE_REPAIR_SYNTHESIS,
+        )
+    except RunCancelled:
+        raise
+    except Exception as exc:  # noqa: BLE001
+        return await fail_repair(
+            "synthesis_failed",
+            PURPOSE_COVERAGE_REPAIR_SYNTHESIS,
+            f"覆盖补查再综合失败：{exc}",
+        )
+
+    if candidate.answer_fallback:
+        failed = snapshot.model_copy(
+            update={
+                "stage": "failed",
+                "stop_reason": "synthesis_failed",
+                "error": "覆盖补查再综合模型降级，已恢复首次合法结果",
+            },
+            deep=True,
+        )
+        run.coverage_repair_json = dump_coverage_repair_snapshot(
+            failed, settings=settings
+        )
+        await db.commit()
+        return baseline_result
+    if not coverage_is_non_regressive(
+        snapshot.baseline.coverage, candidate.coverage
+    ):
+        return await fail_repair(
+            "synthesis_failed",
+            PURPOSE_COVERAGE_REPAIR_SYNTHESIS,
+            "覆盖补查再综合发生 coverage 退化，已恢复首次合法结果",
+        )
+
+    has_gaps = any(
+        item.status != "answered" for item in candidate.coverage.requirements
+    )
+    completed = snapshot.model_copy(
+        update={
+            "stage": "completed",
+            "stop_reason": "completed_with_gaps" if has_gaps else "completed",
+            "error": None,
+            "final_result": coverage_repair_material_from_result(candidate),
+        },
+        deep=True,
+    )
+    run.coverage_repair_json = dump_coverage_repair_snapshot(
+        completed, settings=settings
+    )
+    await db.commit()
+    return candidate
+
+
 async def execute_run(db: AsyncSession, run: KnowledgeAgentRun) -> None:
     """执行一次 Run 的连续追问固定执行图。
 
@@ -638,6 +909,7 @@ async def execute_run(db: AsyncSession, run: KnowledgeAgentRun) -> None:
 
                 await _check_cancelled(run.id)
                 await update_run_step(run.id, STEP_COMPOSITE_ANSWER_EXECUTE)
+                executed_with_shared_graph = False
                 try:
                     artifacts = await execute_plan(
                         db,
@@ -646,6 +918,7 @@ async def execute_run(db: AsyncSession, run: KnowledgeAgentRun) -> None:
                         composite_plan,
                         cancel_check=lambda: _check_cancelled(run.id),
                     )
+                    executed_with_shared_graph = use_shared_graph
                 except Exception as exc:  # noqa: BLE001
                     # 共享图只允许在图尚未产生节点终态时兼容回退；已有结果不得重跑串行。
                     if exc.__class__.__name__ == "RunCancelled":
@@ -694,17 +967,97 @@ async def execute_run(db: AsyncSession, run: KnowledgeAgentRun) -> None:
                 ]
                 await _check_cancelled(run.id)
                 await update_run_step(run.id, STEP_COMPOSITE_ANSWER_COVERAGE)
-                composite_result = await build_composite_answer(
-                    db,
-                    run,
-                    composite_plan,
-                    artifacts.snapshot,
-                    current_message=query,
-                    standalone_query=decision.standalone_query or query,
-                    scope_label=scope,
-                    statement_context=statement_context,
-                    cancel_check=lambda: _check_cancelled(run.id),
+                from app.services.knowledge_agent.coverage_repair import (
+                    CoverageRepairBudget,
+                    CoverageRepairSnapshot,
+                    coverage_repair_material_from_result,
+                    coverage_repair_result_from_material,
+                    derive_repair_eligibility,
+                    dump_coverage_repair_snapshot,
+                    restore_coverage_repair_snapshot,
                 )
+
+                repair_snapshot = restore_coverage_repair_snapshot(
+                    run.coverage_repair_json,
+                    settings=settings,
+                )
+                if repair_snapshot is None:
+                    composite_result = await build_composite_answer(
+                        db,
+                        run,
+                        composite_plan,
+                        artifacts.snapshot,
+                        current_message=query,
+                        standalone_query=decision.standalone_query or query,
+                        scope_label=scope,
+                        statement_context=statement_context,
+                        cancel_check=lambda: _check_cancelled(run.id),
+                    )
+                    if getattr(
+                        settings, "knowledge_agent_coverage_repair_enabled", False
+                    ):
+                        eligibility = derive_repair_eligibility(
+                            composite_plan,
+                            artifacts.snapshot,
+                            composite_result.coverage,
+                        )
+                        has_unanswered = any(
+                            item.status != "answered"
+                            for item in composite_result.coverage.requirements
+                        )
+                        repair_snapshot = CoverageRepairSnapshot(
+                            stage=(
+                                "baseline_ready"
+                                if eligibility.requirement_ids
+                                else "skipped"
+                            ),
+                            execution_mode=(
+                                "shared_graph"
+                                if executed_with_shared_graph
+                                else "serial"
+                            ),
+                            frozen_budget=CoverageRepairBudget.from_settings(settings),
+                            eligible_requirement_ids=eligibility.requirement_ids,
+                            baseline=coverage_repair_material_from_result(
+                                composite_result
+                            ),
+                            stop_reason=(
+                                None
+                                if eligibility.requirement_ids
+                                else (
+                                    "not_repairable"
+                                    if has_unanswered
+                                    else "not_needed"
+                                )
+                            ),
+                        )
+                        run.coverage_repair_json = dump_coverage_repair_snapshot(
+                            repair_snapshot,
+                            settings=settings,
+                        )
+                        await db.commit()
+                else:
+                    composite_result = coverage_repair_result_from_material(
+                        repair_snapshot.final_result
+                        if repair_snapshot.stage == "completed"
+                        and repair_snapshot.final_result is not None
+                        else repair_snapshot.baseline
+                    )
+
+                if repair_snapshot is not None:
+                    composite_result = await _run_bounded_coverage_repair(
+                        db,
+                        run,
+                        ctx,
+                        composite_plan,
+                        artifacts.snapshot,
+                        repair_snapshot,
+                        current_message=query,
+                        standalone_query=decision.standalone_query or query,
+                        scope=scope,
+                        statement_context=statement_context,
+                        settings=settings,
+                    )
                 await _check_cancelled(run.id)
                 run.composite_answer_coverage_json = composite_result.coverage.model_dump_json()
                 await update_run_step(run.id, STEP_FINALIZE)
