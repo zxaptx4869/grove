@@ -501,6 +501,19 @@ def scope_payload(project_id: int | None) -> dict:
     }
 
 
+def blocked_reason(turn: Turn, previous: dict | None) -> str | None:
+    previous = previous or {}
+    items = (previous.get("run", {}).get("entry_result") or {}).get("items", [])
+    if turn.reference_previous and len(items) < 2:
+        return "上一轮没有返回两个对象，未发送无锚点指代"
+    if turn.requires_previous_answer and previous.get("evaluation", {}).get("status") not in {
+        "pass",
+        "review",
+    }:
+        return "上一轮回答未通过前置检查，后续解释追问留待修复后验证"
+    return None
+
+
 async def run_case(
     client, oracle, snapshot, scopes, case: Case, repeat: int, report, directory, seconds
 ):
@@ -520,16 +533,14 @@ async def run_case(
     save_report(report, directory)
     for index, turn in enumerate(case.turns, 1):
         previous = record["turns"][-1] if record["turns"] else None
-        previous_items = ((previous or {}).get("run", {}).get("entry_result") or {}).get(
-            "items", []
-        )
-        if turn.reference_previous and len(previous_items) < 2:
+        blocked = blocked_reason(turn, previous)
+        if blocked:
             record["turns"].append(
                 {
                     "message": turn.message,
                     "evaluation": {
                         "status": "blocked",
-                        "errors": ["上一轮没有返回两个对象，未发送无锚点指代"],
+                        "errors": [blocked],
                     },
                 }
             )
@@ -647,6 +658,9 @@ async def run_suite(args, password: str) -> int:
         "suite_digest": digest([asdict(case) for case in cases]),
         "suite": [asdict(case) for case in cases],
         "repeat": args.repeat,
+        "runner_sha256": hashlib.sha256(
+            await asyncio.to_thread(Path(__file__).read_bytes)
+        ).hexdigest(),
     }
     authenticated = False
     async with httpx.AsyncClient(base_url=args.base_url, timeout=30, trust_env=False) as client:
@@ -694,6 +708,8 @@ async def run_suite(args, password: str) -> int:
             report["domain_unchanged"] = (
                 oracle.snapshot()["domain_hashes"] == baseline["domain_hashes"]
             )
+            if not report["domain_unchanged"] and report["status"] == "completed":
+                report["status"] = "invalidated"
             report["finished_at"] = datetime.now(UTC).isoformat()
             if args.compare:
                 report["comparison"] = compare_reports(
@@ -703,6 +719,8 @@ async def run_suite(args, password: str) -> int:
             save_report(report, directory)
             oracle.db.close()
     print(json.dumps(report["summary"], ensure_ascii=False), flush=True)
+    if report.get("error"):
+        print(f"运行错误：{report['error']}", flush=True)
     print(f"报告：{directory / 'report.md'}", flush=True)
     return (
         0

@@ -13,6 +13,7 @@ class Turn:
     change_scope: str | None = None
     oracle_scope: str | None = None
     reference_previous: bool = False
+    requires_previous_answer: bool = False
     review: bool = False
 
 
@@ -110,7 +111,12 @@ def build_cases(project_name: str, empty_name: str | None) -> list[Case]:
                     "discussion",
                     review=True,
                 ),
-                Turn("把刚才的方法压缩成三个步骤，仍然不用查知识库。", "discussion", review=True),
+                Turn(
+                    "把刚才的方法压缩成三个步骤，仍然不用查知识库。",
+                    "discussion",
+                    requires_previous_answer=True,
+                    review=True,
+                ),
             ),
         ),
         Case(
@@ -127,7 +133,10 @@ def build_cases(project_name: str, empty_name: str | None) -> list[Case]:
                     review=True,
                 ),
                 Turn(
-                    "它适合什么样的任务？仍然只用通用知识，不查知识库。", "discussion", review=True
+                    "它适合什么样的任务？仍然只用通用知识，不查知识库。",
+                    "discussion",
+                    requires_previous_answer=True,
+                    review=True,
                 ),
             ),
         ),

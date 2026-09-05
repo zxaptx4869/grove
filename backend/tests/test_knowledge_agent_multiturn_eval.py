@@ -9,6 +9,7 @@ import pytest
 from evals.knowledge_agent_cases import Turn, build_cases
 from evals.knowledge_agent_multiturn import (
     Oracle,
+    blocked_reason,
     collect_facts,
     compare_reports,
     evaluate_turn,
@@ -123,7 +124,7 @@ def test_composite_tool_fact_must_be_displayed_and_linked_to_matching_set():
     assert collect_facts(run, diagnostic)[0]["value"] == 2
 
 
-def test_oracle_is_read_only_and_never_counts_another_workspace(tmp_path):
+def test_oracle_is_read_only_and_resolves_default_workspace(tmp_path):
     path = tmp_path / "oracle.db"
     with sqlite3.connect(path) as db:
         db.executescript("""
@@ -137,6 +138,22 @@ def test_oracle_is_read_only_and_never_counts_another_workspace(tmp_path):
     with pytest.raises(sqlite3.OperationalError, match="readonly"):
         oracle.db.execute("DELETE FROM users")
     oracle.db.close()
+
+
+def test_discussion_followup_is_blocked_after_failed_explanation():
+    turn = Turn("把刚才的方法压缩一下", "discussion", requires_previous_answer=True)
+    previous = {"evaluation": {"status": "fail"}}
+    assert blocked_reason(turn, previous) is not None
+    previous["evaluation"]["status"] = "review"
+    assert blocked_reason(turn, previous) is None
+    # 补充统计条件仍可独立执行，不因上轮失败就一律跳过。
+    assert (
+        blocked_reason(
+            Turn("包含所有类型，重新统计总数"),
+            {"evaluation": {"status": "fail"}},
+        )
+        is None
+    )
 
 
 @pytest.mark.asyncio
