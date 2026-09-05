@@ -44,14 +44,6 @@
 - [x] 5.5 建立 owner/Workspace/项目/跨 Run 隔离硬门禁，以前后计数验证 Entry、Source、Candidate、Draft/Extraction、目录、Operation 和事实工作集无写入副作用。验收：`cd backend && .venv/bin/pytest -q tests/test_knowledge_agent_coverage_repair_eval.py -k guardrail`
 - [x] 5.6 完成评估、隔离与无写入门禁的本地提交。验收：`cd backend && .venv/bin/ruff check app tests && cd .. && git diff --check`
 
-## 7. 手动验收缺陷修复（2026-09-05）
-
-- [x] 7.1 补齐修复规格和路由产品约定，通过严格校验后本地提交。
-- [ ] 7.2 修复自动复合路由、部分回答与 Run 状态、模型依据派生并增加回归。
-- [ ] 7.3 修复复合正文分组去重、补查统计口径、失败确定性事实保留和恢复回归。
-- [ ] 7.4 原生端修复不足文案、状态徽标、补查失败前置提示，补充范围和组件回归。
-- [ ] 7.5 执行后端与原生端自动化检查，记录八项复验结论并本地提交；真机走查仍待用户反馈，不归档、不推送。
-
 ## 6. 自动化验收、文档与本地收尾
 
 - [x] 6.1 更新 `backend/.env.example` 的补查开关与预算占位，在知识 Agent 产品形态与迭代记录中将本阶段记为本地完成待走查，不把 B2、外部搜索或 Operation Plan 写成已实现。验收：`openspec validate --all --strict && git diff --check`
@@ -61,3 +53,11 @@
 - [x] 6.5 执行 `git diff --check` 与 `openspec validate --all --strict`，核对 tasks 与实际完成项，停留在本地特性分支，不归档、不推送、不合并。验收：`openspec status --change add-knowledge-agent-bounded-coverage-repair && git status --short --branch`
 - [x] 6.6 按 AGENTS.md 检查遗留问题，若有则先向用户说明背景、原因与影响，只在用户同意后登记到 `docs/discussions/Grove后续优化清单.md`。验收：`git status --short`
 - [x] 6.7 完成验收文档与自动化结果的本地提交；等待用户真机验收反馈和后续明确归档/推送/合并授权。验收：`git log --oneline --decorate -8 && git status --short --branch`
+
+## 7. 手动验收缺陷修复（2026-09-05）
+
+- [x] 7.1 补齐修复规格和路由产品约定，通过严格校验后本地提交。
+- [ ] 7.2 修复自动复合路由、部分回答与 Run 状态、模型依据派生并增加回归。
+- [ ] 7.3 修复复合正文分组去重、补查统计口径、失败确定性事实保留和恢复回归。
+- [x] 7.4 原生端修复不足文案、状态徽标、补查失败前置提示，补充范围和组件回归。
+- [ ] 7.5 执行后端与原生端自动化检查，记录八项复验结论并本地提交；真机走查仍待用户反馈，不归档、不推送。

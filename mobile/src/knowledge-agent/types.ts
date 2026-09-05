@@ -195,6 +195,8 @@ export interface KnowledgeAnswer {
   answer: string;
   status: AnswerStatus;
   insufficientNote: string | null;
+  /** 服务端核验的终态缺口；旧回答可缺省。 */
+  gaps?: string[];
   /** v3 可选结构化要点；历史回答与旧模型输出缺省为空。 */
   points?: KnowledgeAnswerPoint[];
   citations: KnowledgeRunCitation[];

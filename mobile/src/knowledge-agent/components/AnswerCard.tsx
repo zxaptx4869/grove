@@ -465,7 +465,9 @@ export function AnswerCard({
                         : "综合回答"}
                 </Text>
               </View>
-              <Badge tone={tone}>{displayHeadline}</Badge>
+              <Badge tone={tone}>
+                {presentation.status === "completed" ? displayHeadline : presentation.headline}
+              </Badge>
             </View>
             {presentation.note !== null && (
               <Text
@@ -477,6 +479,15 @@ export function AnswerCard({
                 {presentation.note}
               </Text>
             )}
+            {fallback.hasFallback && (
+              <View style={styles.fallbackBox}>
+                {fallback.lines.map((line) => (
+                  <Text key={line} style={styles.fallbackText}>
+                    {line}
+                  </Text>
+                ))}
+              </View>
+            )}
             {answer &&
               (hasPoints ? (
                 <AnswerPoints points={points} />
@@ -487,14 +498,8 @@ export function AnswerCard({
                   </Text>
                 )
               ))}
-            {fallback.hasFallback && (
-              <View style={styles.fallbackBox}>
-                {fallback.lines.map((line) => (
-                  <Text key={line} style={styles.fallbackText}>
-                    {line}
-                  </Text>
-                ))}
-              </View>
+            {answer && presentation.status !== "completed" && (
+              <InvestigationGroup label="未解决缺口" items={answer.gaps ?? []} />
             )}
             <InvestigationSummary run={run} />
             {workspaceScope &&

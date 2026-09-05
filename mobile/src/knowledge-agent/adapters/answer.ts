@@ -126,7 +126,7 @@ export function presentAnswer(
         headline: "知识不足",
         note:
           answer?.insufficientNote ??
-          "当前知识库没有足够可核验的证据，我没有用模型常识补齐。",
+          "当前材料尚不足以直接回答核心问题；实际使用的依据见下方说明。",
         tone: "risk",
       };
     case "clarification":

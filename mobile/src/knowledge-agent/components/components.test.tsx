@@ -1039,6 +1039,41 @@ test("复合回答保持现有要点与依据展示，不暴露内部任务拆�
   await view.unmount();
 });
 
+test("补查失败前置提示且混合依据不覆盖部分状态和项目范围", async () => {
+  const warning = "补查后的回答整理失败，已保留首次回答；补查统计仅为工具结果，尚未完成综合";
+  const view = await render(
+    <AnswerCard
+      run={run(1, "partial", {
+        answer: "首次匹配 0 条；补查匹配 6 条", status: "partial",
+        insufficientNote: null, citations: [citation(1)], conflicts: [],
+        gaps: ["补查未完成综合"],
+      }, {
+        scopeType: "project", projectId: 26, projectName: "房子装修",
+        answerBasis: {
+          schemaVersion: "v1", grove: { used: true, citationCount: 1, entryCount: 1 },
+          userStatements: { messageIds: [] }, modelKnowledge: { used: true },
+          externalMaterial: { status: "not_used" },
+        },
+        fallbackSummary: { hasFallback: true, stages: [
+          { purpose: "answer", isFallback: false, provider: "llm", model: "test", error: null },
+          { purpose: "coverage_repair_synthesis", isFallback: true,
+            provider: "llm", model: "test", error: "结构化输出校验失败" },
+        ] },
+      })}
+      scopeLabel="房子装修" onCitationPress={jest.fn()} onRetry={jest.fn()} onOrganize={jest.fn()}
+    />, { wrapper },
+  );
+  expect(view.getByText("部分结果")).toBeOnTheScreen();
+  expect(view.getAllByText("混合依据").length).toBeGreaterThan(0);
+  expect(view.getByText(warning)).toBeOnTheScreen();
+  expect(view.getByText("· 补查未完成综合")).toBeOnTheScreen();
+  expect(view.getByText("检索范围：房子装修")).toBeOnTheScreen();
+  expect(view.queryByText("全部知识")).toBeNull();
+  const tree = JSON.stringify(view.toJSON());
+  expect(tree.indexOf(warning)).toBeLessThan(tree.indexOf("首次匹配 0 条"));
+  await view.unmount();
+});
+
 test("无结构化要点时回退纯文本与底部来源条", async () => {
   const view = await render(
     <AnswerCard
