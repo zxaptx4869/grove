@@ -27,6 +27,7 @@ def sample():
     }
     run = {
         "status": "completed",
+        "project_id": None,
         "context_decision": "new_topic",
         "answer": None,
         "entry_result": {
@@ -84,6 +85,7 @@ def test_group_requires_all_expected_buckets_including_empty_projects():
 
 def test_list_checks_order_and_reference_uses_actually_displayed_second_item():
     snapshot, run, observation = sample()
+    run["project_id"] = 1
     turn = Turn("最近五条", "list")
     run["entry_result"]["items"] = [{"entry_id": 11}, {"entry_id": 10}]
     assert evaluate_turn(turn, run, {}, observation, snapshot, 1)["status"] == "pass"
@@ -154,6 +156,17 @@ def test_discussion_followup_is_blocked_after_failed_explanation():
         )
         is None
     )
+
+
+def test_matching_workspace_total_does_not_prove_named_project_was_filtered():
+    snapshot, run, observation = sample()
+    turn = Turn("只统计有记录项目", oracle_scope="project")
+    # 数据恰好都在项目 1，Workspace 总数也为 2，但执行范围没有收敛。
+    result = evaluate_turn(turn, run, {}, observation, snapshot, 1)
+    assert result["expected"] == result["actual"][0] == 2
+    assert result["status"] == "fail"
+    run["project_id"] = 1
+    assert evaluate_turn(turn, run, {}, observation, snapshot, 1)["status"] == "pass"
 
 
 @pytest.mark.asyncio

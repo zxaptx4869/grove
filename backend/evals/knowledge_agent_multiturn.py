@@ -192,6 +192,12 @@ def matches_set(entry_set: dict | None, turn: Turn) -> bool:
     )
 
 
+def matches_scope(run: dict, entry_set: dict | None, project_id: int | None) -> bool:
+    """数值相同不能证明项目筛选生效，必须核对实际集合范围。"""
+    actual = (entry_set or {}).get("project_id", run.get("project_id"))
+    return actual == project_id and run.get("project_id") in {None, project_id}
+
+
 def evaluate_turn(
     turn: Turn,
     run: dict,
@@ -248,7 +254,19 @@ def evaluate_turn(
         if fact["kind"] == turn.kind
         and fact.get("completeness") == "complete"
         and matches_set(fact.get("entry_set"), turn)
+        and matches_scope(run, fact.get("entry_set"), project_id)
     ]
+    if turn.kind in {"count", "group"} and any(fact["kind"] == turn.kind for fact in facts):
+        if not any(
+            fact["kind"] == turn.kind
+            and matches_scope(
+                run,
+                fact.get("entry_set"),
+                project_id,
+            )
+            for fact in facts
+        ):
+            errors.append("统计数字未绑定到预期项目范围，不能凭数值巧合判通过")
     if turn.kind == "count":
         expected = len(rows)
         actual = [fact.get("value") for fact in facts if fact["kind"] == "count"]
@@ -281,7 +299,11 @@ def evaluate_turn(
             )[:5]
         ]
         actual = [item["entry_id"] for item in items]
-        if actual != expected or not matches_set(snapshot_result.get("set_summary"), turn):
+        if (
+            actual != expected
+            or not matches_set(snapshot_result.get("set_summary"), turn)
+            or not matches_scope(run, snapshot_result.get("set_summary"), project_id)
+        ):
             errors.append("最近五条对象或筛选口径不匹配")
     elif turn.kind == "reference":
         previous_items = ((previous or {}).get("run", {}).get("entry_result") or {}).get(
@@ -473,6 +495,11 @@ def compare_reports(old: dict, new: dict) -> dict:
         old["baseline"]["domain_hashes"] == new["baseline"]["domain_hashes"]
         and old["provider"] == new["provider"]
         and old.get("suite_digest") == new.get("suite_digest")
+        and old.get("grader_sha256", old.get("runner_sha256"))
+        == new.get(
+            "grader_sha256",
+            new.get("runner_sha256"),
+        )
         and old.get("domain_unchanged") is True
         and new.get("domain_unchanged") is True
     )
@@ -734,6 +761,50 @@ async def run_suite(args, password: str) -> int:
     )
 
 
+def regrade_saved_report(source: Path, output: Path) -> Path:
+    """只重评已有响应；不登录、不请求接口、不重新调用模型。"""
+    report = json.loads(source.read_text(encoding="utf-8"))
+    if report.get("status") != "completed" or not report.get("domain_unchanged"):
+        raise ValueError("只允许重评已完成且数据未变化的批次")
+    case_specs = {case["id"]: case for case in report["suite"]}
+    for case in report["cases"]:
+        scope = case_specs[case["case_id"]]["scope"]
+        previous = None
+        for turn in case["turns"]:
+            if "request" not in turn:
+                previous = turn
+                continue
+            spec = Turn(**turn["request"])
+            scope = spec.change_scope or scope
+            turn["evaluation"] = evaluate_turn(
+                spec,
+                turn["run"],
+                turn["diagnostic"],
+                turn["observability"],
+                report["baseline"],
+                report["scopes"][spec.oracle_scope or scope],
+                previous,
+            )
+            if turn["run"]["project_id"] != report["scopes"][scope]:
+                turn["evaluation"]["errors"].append("Run 固化范围与接口选择不一致")
+                turn["evaluation"]["status"] = "fail"
+            previous = turn
+    report["source_report"] = str(source.resolve())
+    report["source_batch_id"] = report["batch_id"]
+    report["regraded_at"] = datetime.now(UTC).isoformat()
+    report["grader_sha256"] = hashlib.sha256(Path(__file__).read_bytes()).hexdigest()
+    report["batch_id"] = (
+        datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ") + "-regraded-" + uuid.uuid4().hex[:6]
+    )
+    report.pop("comparison", None)
+    directory = output / report["batch_id"]
+    directory.mkdir(parents=True, mode=0o700)
+    save_report(report, directory)
+    print(json.dumps(report["summary"], ensure_ascii=False), flush=True)
+    print(f"报告：{directory / 'report.md'}", flush=True)
+    return directory
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--base-url", default="http://127.0.0.1:8000")
@@ -744,12 +815,17 @@ def main() -> int:
     parser.add_argument("--repeat", type=int, choices=range(1, 6), default=1)
     parser.add_argument("--turn-timeout", type=float, default=240)
     parser.add_argument("--compare", type=Path, help="上一批 report.json")
+    parser.add_argument("--regrade", type=Path, help="只重评已有 report.json，不调用模型")
     args = parser.parse_args()
     endpoint = urlparse(args.base_url)
     if endpoint.scheme != "http" or endpoint.hostname not in {"localhost", "127.0.0.1", "::1"}:
         parser.error("本工具仅用于本机开发服务，禁止向远程地址发送账号凭据")
     if args.turn_timeout <= 0:
         parser.error("单轮超时必须大于零")
+    if args.regrade:
+        directory = regrade_saved_report(args.regrade, args.output)
+        results = json.loads((directory / "report.json").read_text(encoding="utf-8"))["summary"]
+        return 1 if any(results["statuses"].get(key) for key in ("fail", "blocked")) else 0
     password = os.environ.get("GROVE_EVAL_PASSWORD") or getpass.getpass("demo 登录密码：")
     return asyncio.run(run_suite(args, password))
 
