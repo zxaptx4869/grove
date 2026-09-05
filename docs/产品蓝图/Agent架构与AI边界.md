@@ -1,5 +1,7 @@
 # Agent 架构与 AI 边界
 
+自动回答模式的路由必须识别当前可用能力：复合 quick 开启时，“解释 + Grove 来源 + 结构化统计”组合优先进入 quick，不以“多个方面”单独作为 investigate 理由；只有确需多轮冲突核验时选择调查。用户显式选择 investigate 仍使用现有调查流程，其结构化统计能力不在本次有界补查修复中扩张。
+
 [返回产品蓝图索引](../产品蓝图.md)
 
 > 权威范围：Project Context Snapshot、专业 Agent 职责、PydanticAI 角色与公共上下文。

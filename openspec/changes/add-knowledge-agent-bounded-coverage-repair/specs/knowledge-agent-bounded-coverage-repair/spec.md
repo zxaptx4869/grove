@@ -1,5 +1,31 @@
 ## ADDED Requirements
 
+### Requirement: 补查统计保持口径且失败展示不丢失确定性事实
+系统 MUST 向补查规划器提供已执行参数与事实摘要，并校验同义务结构化请求保持类型、性质和时间过滤。首次和补查有限统计 MUST 标明不同匹配批次，不得冒充同一完整总数。再综合失败 MUST 保留首次正文，并可合并独立可核验的服务端统计到可恢复 final_result；界面 MUST 在正文前明确提示补查综合失败。
+
+#### Scenario: 补查试图放宽类型条件
+- **WHEN** 首次统计限定 knowledge/method，补查增加 reminder
+- **THEN** 服务端拒绝该候选，保持首次结果并记录可见 fallback
+
+#### Scenario: 有限统计不同且模型综合失败
+- **WHEN** 首次有限匹配为 0 条，合法新查询匹配为 6 条，再综合输出校验失败
+- **THEN** 保留首次合法正文，分别展示首次与补查有限事实及非完整总数边界，明确综合未完成，恢复时返回相同材料且不重放模型
+
+### Requirement: 回答质量修复保持真实状态和依据
+系统 MUST 在复合能力开启时将解释、来源和统计组合问题优先路由到 quick，而不因多方面问题自动选择不支持统计的调查流程。显式模式 MUST 保留。通过引用校验并明确直接回答核心问题的部分内容 MUST NOT 因整体 insufficient 标记矛盾而被归为全无结果。状态和模型依据展示 MUST 来自最终保留内容，不得以权限代替实际使用。复合回答 MUST 按冻结义务分组并去除同义务重复正文。
+
+#### Scenario: 自动模式解释加来源加统计
+- **WHEN** 开启复合能力，原始消息同时要求概念解释、当前项目来源与数量统计
+- **THEN** 路由提示明确选择 quick，原始消息用于决策，显式 investigate 不被覆盖
+
+#### Scenario: 部分回答与全局不足标记冲突
+- **WHEN** 有合法要点被明确评估为直接回答核心问题的一部分，但全局标记 insufficient
+- **THEN** answer 与 Run 为 partial，保留 Citation 与缺口；只有边缘证据时仍可 insufficient
+
+#### Scenario: 原生端状态不被依据标签覆盖
+- **WHEN** 回答为 partial 或 insufficient 且存在模型知识依据
+- **THEN** 状态徽标仍显示部分结果或知识不足，默认文案不声称没有使用模型常识
+
 ### Requirement: 只有真实且可修复的逐项缺口进入一次补查
 系统 MUST 在 quick 复合回答首次固定计划、只读执行和合法综合完成后，从服务端派生的逐项 coverage 中筛选状态为 `insufficient` 或 `partial` 且能由现有 Grove 闭合只读工具改善的回答义务。每个 Run MUST 最多进入一次补查阶段；`answered`、`failed`、纯模型输出漏答和没有真实外部工具可满足的 `external_required` MUST NOT 触发工具补查。
 
