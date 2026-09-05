@@ -1,148 +1,27 @@
 ---
 name: openspec-sync-specs
-description: Sync delta specs from a change to main specs. Use when the user wants to update main specs with changes from a delta spec, without archiving the change.
-allowed-tools: Bash(openspec:*)
+description: 用户需要将现有 change 的规格增量提前同步到主规格、同时保留 active change 时使用。常规完成收尾直接使用 archive 流程，不额外启动独立同步阶段。
 license: MIT
-compatibility: Requires openspec CLI.
 metadata:
+  compatibility: Requires openspec CLI.
   author: openspec
   version: "1.0"
-  generatedBy: "1.6.0"
 ---
 
-Sync delta specs from a change to main specs.
+# 提前同步主规格
 
-This is an **agent-driven** operation - you will read delta specs and directly edit main specs to apply the changes. This allows intelligent merging (e.g., adding a scenario without copying the entire requirement).
+按 [AGENTS.md](../../../AGENTS.md) 的范围与批准规则执行。同步不表示实施或验收通过，也不自动归档或推送。
 
-**Store selection:** If the user names a store (a store is a standalone OpenSpec repo registered on this machine) or the work lives in one, run `openspec store list --json` to discover registered store ids, then pass `--store <id>` on the commands that read or write specs and changes (`new change`, `status`, `instructions`, `list`, `show`, `validate`, `archive`, `doctor`, `context`). Other commands do not take the flag. Hints printed by commands already carry the flag; keep it on follow-ups. Without a store, commands act on the nearest local `openspec/` root.
+## 确定与读取
 
-**Input**: Optionally specify a change name. If omitted, check if it can be inferred from conversation context. If vague or ambiguous you MUST prompt for available changes.
+- 沿用用户指定或本任务已明确的 change；无法唯一确定时才查询 `openspec list --json` 并请求选择，不凭最近修改时间猜测。
+- 首次或状态变化时运行 `openspec status --change <name> --json`，从返回的实际路径定位 delta 与主规格。独立 store 按需发现 ID 并在支持的命令上保留 `--store <id>`，不把其路径替换成本仓库路径。
+- 只读取相关 delta 和对应需求及关联场景，复用未变化的内容。没有 delta 或内容已经一致时，报告无需同步并结束该步骤；用户授权的其他工作继续。
 
-**Steps**
+## 合并规则
 
-1. **If no change name provided, prompt for selection**
-
-   Run `openspec list --json` to get available changes. Use the **AskUserQuestion tool** to let the user select.
-
-   Show changes that have delta specs (under `specs/` directory).
-
-   **IMPORTANT**: Do NOT guess or auto-select a change. Always let the user choose.
-
-2. **Resolve change context**
-
-   Run:
-   ```bash
-   openspec status --change "<name>" --json
-   ```
-
-3. **Find delta specs**
-
-   Use `artifactPaths.specs.existingOutputPaths` from the status JSON as the list of delta spec files.
-
-   Each delta spec file contains sections like:
-   - `## ADDED Requirements` - New requirements to add
-   - `## MODIFIED Requirements` - Changes to existing requirements
-   - `## REMOVED Requirements` - Requirements to remove
-   - `## RENAMED Requirements` - Requirements to rename (FROM:/TO: format)
-
-   If no delta specs found, inform user and stop.
-
-4. **For each delta spec, apply changes to main specs**
-
-   For each repo-local capability delta spec path returned by the CLI:
-
-   a. **Read the delta spec** to understand the intended changes
-
-   b. **Read the main spec** at `openspec/specs/<capability>/spec.md` (may not exist yet)
-
-   c. **Apply changes intelligently**:
-
-      **ADDED Requirements:**
-      - If requirement doesn't exist in main spec → add it
-      - If requirement already exists → update it to match (treat as implicit MODIFIED)
-
-      **MODIFIED Requirements:**
-      - Find the requirement in main spec
-      - Apply the changes - this can be:
-        - Adding new scenarios (don't need to copy existing ones)
-        - Modifying existing scenarios
-        - Changing the requirement description
-      - Preserve scenarios/content not mentioned in the delta
-
-      **REMOVED Requirements:**
-      - Remove the entire requirement block from main spec
-
-      **RENAMED Requirements:**
-      - Find the FROM requirement, rename to TO
-
-   d. **Create new main spec** if capability doesn't exist yet:
-      - Create `openspec/specs/<capability>/spec.md`
-      - Add Purpose section (can be brief, mark as TBD)
-      - Add Requirements section with the ADDED requirements
-
-5. **Show summary**
-
-   After applying all changes, summarize:
-   - Which capabilities were updated
-   - What changes were made (requirements added/modified/removed/renamed)
-
-**Delta Spec Format Reference**
-
-```markdown
-## ADDED Requirements
-
-### Requirement: New Feature
-The system SHALL do something new.
-
-#### Scenario: Basic case
-- **WHEN** user does X
-- **THEN** system does Y
-
-## MODIFIED Requirements
-
-### Requirement: Existing Feature
-#### Scenario: New scenario to add
-- **WHEN** user does A
-- **THEN** system does B
-
-## REMOVED Requirements
-
-### Requirement: Deprecated Feature
-
-## RENAMED Requirements
-
-- FROM: `### Requirement: Old Name`
-- TO: `### Requirement: New Name`
-```
-
-**Key Principle: Intelligent Merging**
-
-Unlike programmatic merging, you can apply **partial updates**:
-- To add a scenario, just include that scenario under MODIFIED - don't copy existing scenarios
-- The delta represents *intent*, not a wholesale replacement
-- Use your judgment to merge changes sensibly
-
-**Output On Success**
-
-```
-## Specs Synced: <change-name>
-
-Updated main specs:
-
-**<capability-1>**:
-- Added requirement: "New Feature"
-- Modified requirement: "Existing Feature" (added 1 scenario)
-
-**<capability-2>**:
-- Created new spec file
-- Added requirement: "Another Feature"
-
-Main specs are now updated. The change remains active - archive when implementation is complete.
-```
-
-**Guardrails**
-- Read both delta and main specs before making changes
-- Preserve existing content not mentioned in delta
-- If something is unclear, ask for clarification
-- Show what you're changing as you go
-- The operation should be idempotent - running twice should give same result
+1. 先说明同步范围和重要差异，按已授权的同步请求执行；遇到实质性语义冲突时先查明来源，不能解决时请求决定，其他不依赖部分可继续准备。
+2. 与当前 CLI 的 delta 格式保持一致：`ADDED` 新增需求，`MODIFIED` 使用完整更新后的需求块及保留场景，`REMOVED` 写明理由与迁移，`RENAMED` 使用 FROM/TO。被修改的需求不得只提供一个新增场景；未涉及需求保持原样。
+3. 新增主规格时填写实际 Purpose，不遗留 TBD 占位。新增或移除、改名的目标与预期不符时，区分既已同步和真实冲突，不把冲突自动当作覆盖许可。
+4. 若 CLI 已提供适合本次提前同步的命令，核实语义后使用；否则按同样语义编辑。任何中途错误先检查实际落盘状态，再恢复；重复执行已同步内容应无额外变更。
+5. 同步后校验受影响规格，并确认保留的 delta 在后续 CLI 归档中仍可处理；不能用再次同步或跳过校验掩盖不兼容。报告同步结果与 active 状态，按仓库约定本地提交。

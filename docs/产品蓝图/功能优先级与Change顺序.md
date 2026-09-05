@@ -62,7 +62,7 @@
 - [x] Project Context Snapshot 增强：纳入已确认 Entry、知识覆盖和近期主题，并记录上下文版本。
 - [x] 记录用户接受、修改和拒绝推荐的行为，为后续个性化提供信号（行为信号记录已上线）。
 
-P0-A 与 P0-B 都完成后才视为 MVP 验证版本；其中 P0-A 的 OCR 真实 Provider 评测接入不阻塞实际体验验证，但正式宣称 MVP 验证版本前需完成。实施时分开做小 change，避免一次交付过大。
+P0-A 与 P0-B 都完成后才视为 MVP 验证版本；其中 P0-A 的 OCR 真实 Provider 评测接入不阻塞实际体验验证，但正式宣称 MVP 验证版本前需完成。实施时按独立可验收结果划分 change，避免一次交付过大，也不按每个内部技术步骤机械拆分。
 
 ### P1：目录共创与知识回忆
 
@@ -167,7 +167,7 @@ P0-A 与 P0-B 都完成后才视为 MVP 验证版本；其中 P0-A 的 OCR 真�
 
 ## 建议的 OpenSpec Change 顺序
 
-每个 change 都应小到可以独立验证，禁止直接创建一个覆盖全部 P0 的巨大 change。
+以下顺序用于新功能排期参考，不是所有任务的准入清单。一个 change 应对应独立可验收的用户结果或技术风险边界；可包含为该结果必需的跨端修改，不按内部实现步骤机械拆分，也不一次覆盖全部 P0。用户当前明确决定优先，任务分流以 AGENTS.md 为准。
 
 ### 产品基线修正
 
@@ -252,48 +252,21 @@ P0-A 与 P0-B 都完成后才视为 MVP 验证版本；其中 P0-A 的 OCR 真�
 18. `add-directory-mind-map-view`
 19. `add-knowledge-overview`（知识全景：旭日图 + 思维导图合并入口，顶部切换、跨模式联动与缩放）
 
-### 已实施补充 Change（不在原建议列表）
+### 变更记录与当前行为
 
-以下 Change 已完成并归档，按主题归类：
+本专题保留产品方向与阶段里程碑，不逐项复制 change 的实现、待验收或待归档状态。当前行为查 [主规格](../../openspec/specs/)，本次任务进度查 active change，历史过程查 [归档](../../openspec/changes/archive/) 与 Git；验收结论以对应记录和用户反馈为据，不能仅凭归档目录推断。
 
-- 修订建议与版本历史：`add-entry-version-history-and-revision`、`add-ai-revision-external-knowledge`、`refine-ai-revision-source-rule`、`add-ai-revision-discussion-intent`；
-- 来源管理重构：`add-source-history-and-protections`、`refine-source-lock-and-review-status`、`refine-source-processed-lock`、`refine-source-project-recommendation`；
-- 侧栏项目切换：`add-sidebar-project-switcher`、`refine-sidebar-project-status-badge`；
-- 行为信号：`add-behavior-signal-logging`；
-- 浏览器快采：`add-browser-capture-extension`；
-- 证据高亮与来源详情：`refine-evidence-highlight`、`refine-evidence-quote-normalization`、`add-source-detail-view`。
+### Knowledge Agent 复合回答能力边界
 
-### Knowledge Agent 复合回答后续顺序
+复合回答按可独立验证的纵向能力演进，相关变更已有归档记录：
 
-阶段 B1 `add-knowledge-agent-structured-query-tools` 已完成 Entry 结果分支的一次结构化计划与服务端确定性执行。复合回答继续按纵向 change 推进，不用一个 change 同时重写所有回答路径。
+- [复合回答规划](../../openspec/changes/archive/2026-09-04-add-knowledge-agent-composite-answer-planning/proposal.md)：用有界回答义务表达混合问题，组合允许的用户陈述、Grove 检索、结构化工具和模型知识。
+- [共享执行图](../../openspec/changes/archive/2026-09-04-optimize-knowledge-agent-shared-execution-graph/proposal.md)：复用等价数据集与输出，保留服务端可信范围、预算、完整性和可观测边界。
+- [有界覆盖补查](../../openspec/changes/archive/2026-09-05-add-knowledge-agent-bounded-coverage-repair/proposal.md)：只补查真实缺口，复用已完成节点，并限制补查轮次、调用数和总预算。
 
-第一阶段 `add-knowledge-agent-composite-answer-planning` 已完成实现与自动验证，待用户原生端走查后归档：
+以上链接只提供历史来源，当前行为分别以 [复合回答规格](../../openspec/specs/knowledge-agent-composite-answer-planning/spec.md)、[共享执行图规格](../../openspec/specs/knowledge-agent-shared-execution-graph/spec.md) 和 [补查规格](../../openspec/specs/knowledge-agent-bounded-coverage-repair/spec.md) 为准。这里不再维护第二份实施进度。
 
-- 把普通 auto/quick 综合回答从单一依据二选一改为有界回答义务列表；
-- 允许同一回答组合当前用户陈述、Grove 检索、B1 结构化工具和被允许的模型通用知识；
-- 增加逐项覆盖状态与结构化综合，解决混合问题的整项漏答；
-- 保留 Entry 列表、深度调查、旧客户端和现有写入协议。
-
-后续仍按以下顺序独立实施：
-
-1. `optimize-knowledge-agent-shared-execution-graph`
-   - 将回答义务映射为可共享的数据集和输出节点；
-   - 增加依赖排序、重复查询消除、结果复用与安全并行；
-   - 保持服务端可信范围、预算、完整性和可观测边界。
-2. `add-knowledge-agent-bounded-coverage-repair`
-   - 基于逐项覆盖结果只补查真实缺口；
-   - 复用已完成节点并限制补查轮次、调用数和总预算；
-   - 在无新增知识、重复查询、取消或预算耗尽时确定性停止。
-
-第一阶段已完成范围不包括：
-
-- 跨请求共享执行图、依赖拓扑调度、自动查询合并或并行执行；
-- 基于覆盖缺口进行第二轮补查；
-- 外部搜索、quick/investigate 全面迁移、知识写入或多 Agent 自主协商。
-
-外部搜索、quick/investigate 全面迁移、知识写入和多 Agent 自主协商继续作为独立后续决策，不提前并入上述 change。
-
-每个 change 必须完整执行：proposal → specs → design → tasks → validate → 实施 → sync specs → archive → commit。推送与合并仍需用户明确确认。
+外部搜索、quick/investigate 全面迁移、知识写入和多 Agent 自主协商继续作为独立后续决策，不因内部执行机制扩展而自动进入本次范围。
 
 ## 仍需通过真实使用验证的问题
 
@@ -313,23 +286,7 @@ P0-A 与 P0-B 都完成后才视为 MVP 验证版本；其中 P0-A 的 OCR 真�
 
 ## 后续实现代理使用说明
 
-将本专题交给 DeepSeek、Codex 或其他实现代理时，应同时提供仓库内 `AGENTS.md` 与产品蓝图索引，并使用以下约束：
-
-1. 产品蓝图专题是产品决策输入，不是一次性实施任务。
-2. 每次只选择“建议的 OpenSpec Change 顺序”中的一个 change，不得同时展开后续 change。
-3. 先读取当前主规格与代码现状，再创建完整 proposal、specs、design、tasks。
-4. `openspec validate --all --strict` 通过后才允许修改业务代码。
-5. change 的 Non-Goals 必须明确列出同阶段尚未选择的其他能力。
-6. 不得因为底层模型预留了字段，就提前实现 P1、P2 或 P3 界面与流程。
-7. 每个 change 完成后独立运行后端、前端与 OpenSpec 验证，再归档和提交。
-8. 推送和合并必须等用户真实体验并明确确认。
-
-建议每次给实现代理的任务模板：
-
-```text
-请先阅读 AGENTS.md 和 docs/产品蓝图.md，再按索引只读取本次任务相关的 1 至 2 份专题、当前 openspec/specs 与相关代码。
-本次只处理“建议的 OpenSpec Change 顺序”中的 <change-name>，不要实施后续 change。
-严格执行 proposal → specs → design → tasks；运行 openspec validate --all --strict
-通过后再开始实施。遇到蓝图未锁定的产品分歧，先记录并询问，不要静默扩展范围。
-实现完成后验证、归档并本地提交；不要 push 或 merge。
-```
+- 本专题是产品决策输入，不是一次性实施任务；只处理用户当前指定的范围，不因底层预留字段而提前实现后续能力。
+- 新功能按本次用户结果与实际依赖确定 change 范围；Non-Goals 只列容易误入本次的相关能力。
+- 按产品索引读取必要专题、相关主规格和代码，复用未变化的内容；不默认展开历史 change 或全部工件。
+- 任务分流、工件要求、验证、原生端验收及提交与推送合并批准统一遵循 [AGENTS.md](../../AGENTS.md)，本专题不另设门禁或要求用户逐阶段发送命令。

@@ -1,118 +1,29 @@
 ---
 name: openspec-archive-change
-description: Archive a completed change in the experimental workflow. Use when the user wants to finalize and archive a change after implementation is complete.
-allowed-tools: Bash(openspec:*)
+description: 在正式 OpenSpec change 完成实施与验收后审查同步差异并归档，或为已授权的完整实施任务准备收尾。不用于无 change 的小修复、环境操作或普通文档维护。
 license: MIT
-compatibility: Requires openspec CLI.
 metadata:
+  compatibility: Requires openspec CLI.
   author: openspec
   version: "1.0"
-  generatedBy: "1.6.0"
 ---
 
-Archive a completed change in the experimental workflow.
+# 同步并归档 OpenSpec 变更
 
-**Store selection:** If the user names a store (a store is a standalone OpenSpec repo registered on this machine) or the work lives in one, run `openspec store list --json` to discover registered store ids, then pass `--store <id>` on the commands that read or write specs and changes (`new change`, `status`, `instructions`, `list`, `show`, `validate`, `archive`, `doctor`, `context`). Other commands do not take the flag. Hints printed by commands already carry the flag; keep it on follow-ups. Without a store, commands act on the nearest local `openspec/` root.
+完成条件、批准与本地提交遵循 [AGENTS.md](../../../AGENTS.md)。同步是常规归档的一部分，不另行强制加载 sync Skill 或委派代理。
 
-**Input**: Optionally specify a change name. If omitted, check if it can be inferred from conversation context. If vague or ambiguous you MUST prompt for available changes.
+## 核验与审阅
 
-**Steps**
+1. 使用用户指定或本任务已明确的 change；不能唯一确定时查询 `openspec list --json` 后请求选择，不仅凭唯一 active change 或最近修改时间自动归档。
+2. 使用 `openspec status --change <name> --json` 核对四类工件和实际路径，复用已知且未变化的任务、验证证据。状态变化时刷新；任务勾选不替代自动化检查或用户手动验收反馈。独立 store 按需查询 ID，在支持的命令上保留 `--store <id>`。
+3. 核实实施、相关验证、适用的手动验收与收尾严格校验均通过。缺陷先在授权范围内处理；缺失原生端用户反馈时保留 active change，保存已验证的本地成果并提供走查清单。
+4. 比较本次 delta 与对应主规格，仅展开受影响需求；检查 `MODIFIED` 的完整需求块、保留场景以及潜在同步冲突。已经核对且未变化的内容不重复读取。
+5. 集中展示归档目标、同步差异和异常，取得覆盖本次操作的批准。此前批准已覆盖目标与差异时直接沿用；不逐文件询问。用户取消就终止归档，不提供“跳过同步”作为正常完成路径。
 
-1. **If no change name provided, prompt for selection**
+## 执行与结果
 
-   Run `openspec list --json` to get available changes. Use the **AskUserQuestion tool** to let the user select.
-
-   Show only active changes (not already archived).
-   Include the schema used for each change if available.
-
-   **IMPORTANT**: Do NOT guess or auto-select a change. Always let the user choose.
-
-2. **Check artifact completion status**
-
-   Run `openspec status --change "<name>" --json` to check artifact completion.
-
-   Parse the JSON to understand:
-   - `schemaName`: The workflow being used
-   - `planningHome`, `changeRoot`, `artifactPaths`, and `actionContext`: path and scope context
-   - `artifacts`: List of artifacts with their status (`done` or other)
-
-   **If any artifacts are not `done`:**
-   - Display warning listing incomplete artifacts
-   - Use **AskUserQuestion tool** to confirm user wants to proceed
-   - Proceed if user confirms
-
-3. **Check task completion status**
-
-   Read the tasks file (typically `tasks.md`) to check for incomplete tasks.
-
-   Count tasks marked with `- [ ]` (incomplete) vs `- [x]` (complete).
-
-   **If incomplete tasks found:**
-   - Display warning showing count of incomplete tasks
-   - Use **AskUserQuestion tool** to confirm user wants to proceed
-   - Proceed if user confirms
-
-   **If no tasks file exists:** Proceed without task-related warning.
-
-4. **Assess delta spec sync state**
-
-   Use `artifactPaths.specs.existingOutputPaths` from status JSON to check for delta specs. If none exist, proceed without sync prompt.
-
-   **If delta specs exist:**
-   - Compare each delta spec with its corresponding main spec at `openspec/specs/<capability>/spec.md`
-   - Determine what changes would be applied (adds, modifications, removals, renames)
-   - Show a combined summary before prompting
-
-   **Prompt options:**
-   - If changes needed: "Sync now (recommended)", "Archive without syncing"
-   - If already synced: "Archive now", "Sync anyway", "Cancel"
-
-   If user chooses sync, use Task tool (subagent_type: "general-purpose", prompt: "Use Skill tool to invoke openspec-sync-specs for change '<name>'. Delta spec analysis: <include the analyzed delta spec summary>"). Proceed to archive regardless of choice.
-
-5. **Perform the archive**
-
-   Create an `archive` directory under `planningHome.changesDir` if it doesn't exist:
-   ```bash
-   mkdir -p "<planningHome.changesDir>/archive"
-   ```
-
-   Generate target name using current date: `YYYY-MM-DD-<change-name>`
-
-   **Check if target already exists:**
-   - If yes: Fail with error, suggest renaming existing archive or using different date
-   - If no: Move `changeRoot` to the archive directory
-
-   ```bash
-   mv "<changeRoot>" "<planningHome.changesDir>/archive/YYYY-MM-DD-<name>"
-   ```
-
-6. **Display summary**
-
-   Show archive completion summary including:
-   - Change name
-   - Schema that was used
-   - Archive location
-   - Whether specs were synced (if applicable)
-   - Note about any warnings (incomplete artifacts/tasks)
-
-**Output On Success**
-
-```
-## Archive Complete
-
-**Change:** <change-name>
-**Schema:** <schema-name>
-**Archived to:** the archive path derived from `planningHome.changesDir`/YYYY-MM-DD-<name>/
-**Specs:** ✓ Synced to main specs (or "No delta specs" or "Sync skipped")
-
-All artifacts complete. All tasks complete.
-```
-
-**Guardrails**
-- Always prompt for change selection if not provided
-- Use artifact graph (openspec status --json) for completion checking
-- Don't block archive on warnings - just inform and confirm
-- Preserve .openspec.yaml when moving to archive (it moves with the directory)
-- Show clear summary of what happened
-- If sync is requested, use openspec-sync-specs approach (agent-driven)
-- If delta specs exist, always run the sync assessment and show the combined summary before prompting
+- 批准后用 `openspec archive <name>` 同步并归档，不以直接 `mv` 替代 CLI。需要非交互参数时先核实当前 CLI 支持；确认参数只用于执行已获批准的操作，不代表代理自行批准。不得为绕过问题使用跳过验证或跳过同步参数。
+- 同步冲突先核对实际差异并修复；涉及新计划决定时补齐必要批准。发生错误后先检查主规格和归档目录实际状态，再决定如何恢复，避免盲目重试或覆盖同名归档。
+- 核验主规格差异、归档位置与严格校验结果；收尾修改后及时本地提交。仅目录存在不证明验收通过，未完成验收或同步不能报告正常完成。
+- 报告同步与归档结果、验证结论及待办；本地归档批准不包含推送合并授权。
+- 用户明确要求关闭未完成变更时，将其作为例外单独说明缺失项与后果并取得批准，不勾选未做任务，也不描述为功能验收完成。

@@ -3,24 +3,29 @@ schema: spec-driven
 # 项目上下文：提供给 OpenSpec 生成工件时的背景
 context: |
   知林 Grove：面向个人项目的 AI 知识共创工具。把用户散落的截图、文字、网页和文档，通过 AI 提取整理为可确认、可追溯的结构化知识库。
-  产品铁律：1) AI 输出永远是候选；2) 正式记录必须可溯源到原始材料；3) 数据按 Workspace 隔离；4) 人拥有最终决定权。
+  产品铁律约束 Grove 产品数据与 AI 行为：1) AI 不得直接写入正式 Entry；2) 正式记录必须可溯源到原始材料；3) 数据按 Workspace 隔离；4) 人拥有最终决定权。
   技术栈（已锁定）：后端 FastAPI + Pydantic v2 + async SQLAlchemy 2 + Alembic（Python ≥3.12）；
   前端 React 19 + TypeScript + Vite + Tailwind 4 + shadcn/ui + TanStack Query；
   数据库开发 SQLite、生产 MySQL 8；AI 采用 AIProvider 抽象（deepseek/doubao/demo）。
   工程规范：代码注释与文档用中文；环境变量用 pydantic-settings，.env 不入库；
   Web 是桌面知识整理工作台，从 1024px 视口宽度开始支持完整流程；小屏只显示电脑访问提示，不实现手机 Web 业务界面；
-  产品决策从 docs/产品蓝图.md 按任务路由读取相关专题，除跨领域审计外不得默认加载全部专题；
-  提交信息用 Conventional Commits 风格。
+  产品决策按 docs/产品蓝图.md 路由到相关专题，复用已读且未变化的内容，不默认加载全部专题；
+  任务分流、批准、验证及完成标准统一遵循 AGENTS.md，不由模板新增审批或缩小已有授权；
+  四类工件均保留，内容与复杂度相称，已有信息用引用，不为填满模板重复背景或制造无必要章节；
+  提交信息用中文 Conventional Commits 风格。
 
 # 工件规则
 rules:
   proposal:
     - 必须包含 Why / What Changes / Capabilities / Impact 四节
-    - 明确 Non-Goals（不做什么），与 docs/产品蓝图.md 路由到的相关专题范围和阶段保持一致
+    - 简述原因、范围和影响；Non-Goals 只列容易误入本次范围的相关能力，与权威产品决定保持一致
   design:
-    - 记录关键决策与取舍，避免静默猜测
+    - 保留 design.md，只写必要的技术决策与理由；无新增架构决策时可简写，不为填满模板制造备选方案和假想风险
+    - 引用 proposal 的动机和 specs 的行为，不重复抄写；验收证据已有独立记录时仅引用
     - 数据库、AI 抽象、工程结构的决策必须可追溯
   specs:
-    - 每条需求以 REQUIREMENT 形式编号，与 change 的 proposal 能力一一对应
+    - "使用标准的 ### Requirement 与 #### Scenario 结构，行为增量与 proposal 的能力对应并可验证"
+    - MODIFIED 使用完整更新后的需求块及保留场景；未涉及需求不复制，不以节省篇幅截断被修改的需求
   tasks:
-    - 任务按「骨架搭建 → 实现 → 验证」组织，每步给出可执行的验收命令
+    - 按实际依赖组织可验收工作项，使用标准复选框；不强制新增骨架阶段或按每个内部步骤拆分 change
+    - 各任务写验收标准或引用验收入口，共享验证命令集中记录；验证范围与完成条件遵循 AGENTS.md

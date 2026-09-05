@@ -1,114 +1,32 @@
 ---
 name: openspec-propose
-description: Propose a new change with all artifacts generated in one step. Use when the user wants to quickly describe what they want to build and get a complete proposal with design, specs, and tasks ready for implementation.
-allowed-tools: Bash(openspec:*)
+description: 为需要正式 OpenSpec change 的功能或行为变更生成规划工件，或响应用户明确的提案请求。环境操作、普通排查和恢复既有行为的小 bug 不自动进入提案流程。
 license: MIT
-compatibility: Requires openspec CLI.
 metadata:
+  compatibility: Requires openspec CLI.
   author: openspec
   version: "1.0"
-  generatedBy: "1.6.0"
 ---
 
-Propose a new change - create the change and generate all artifacts in one step.
+# 提出 OpenSpec 变更
 
-I'll create a change with artifacts:
-- proposal.md (what & why)
-- design.md (how)
-- tasks.md (implementation steps)
+按 [AGENTS.md](../../../AGENTS.md) 判断任务是否需要 change。仅讨论方案时不强制创建工件；用户已要求完整实施时，提案是整体任务的前置阶段。
 
-When ready to implement, run /opsx:apply
+## 创建与范围
 
----
+1. 依据用户请求、相关产品专题、主规格与代码明确目标。可从证据解决的实现细节自行判断；只有会影响范围或关键行为的缺失信息才澄清，不默认通读所有产品文档。
+2. 优先沿用本任务已明确的 change。需要新建时取简明的 kebab-case 名称，并先建立 `codex/<name>` 特性分支，再执行 `openspec new change <name>`。同名但目标不明确时先检查，仍无法判断才请求选择；不覆盖或混入无关变更。
+3. 用 `openspec status --change <name> --json` 确认 schema、依赖和实际工件路径。用户指定独立 store 时先查询 `openspec store list --json`，在支持的命令上携带 `--store <id>`。
 
-**Store selection:** If the user names a store (a store is a standalone OpenSpec repo registered on this machine) or the work lives in one, run `openspec store list --json` to discover registered store ids, then pass `--store <id>` on the commands that read or write specs and changes (`new change`, `status`, `instructions`, `list`, `show`, `validate`, `archive`, `doctor`, `context`). Other commands do not take the flag. Hints printed by commands already carry the flag; keep it on follow-ups. Without a store, commands act on the nearest local `openspec/` root.
+## 生成工件
 
-**Input**: The user's request should include a change name (kebab-case) OR a description of what they want to build.
+- 按依赖顺序获取 `openspec instructions <artifact-id> --change <name> --json`，使用当前模板与规则。四类工件均保留；取得必要依赖后可继续，不为展示进度重复读取未变化的文件。
+- proposal 写原因、范围、能力与影响；specs 写可验证的行为增量；design 写非显然的技术选择与理由，无新增决策时可简写；tasks 写可执行工作项与验收入口，不强制每次新增“骨架”阶段。
+- Non-Goals 只列容易误入本次范围的相关能力。引用已有背景、需求与共享验收命令，不在多份工件中复制；不为填满模板制造备选方案或假想风险。
+- `context` 与 `rules` 是写作约束，不复制进工件。使用 CLI 返回的实际输出路径；glob 工件应生成具体文件，不把 glob 字符串当作文件名。
+- `MODIFIED` 必须包含完整更新后的需求块及保留的场景，与 CLI 归档语义一致。未涉及的需求不复制；不以节省篇幅为由截断被修改的需求。
+- 初始状态用于确定依赖；中间仅在需要确认下一工件可生成、外部改动或出现错误时刷新状态。最终确认四类工件齐备并执行前置严格校验，不把 `apply-ready` 等同于验证通过。
 
-**Steps**
+## 交付
 
-1. **If no clear input provided, ask what they want to build**
-
-   Use the **AskUserQuestion tool** (open-ended, no preset options) to ask:
-   > "What change do you want to work on? Describe what you want to build or fix."
-
-   From their description, derive a kebab-case name (e.g., "add user authentication" → `add-user-auth`).
-
-   **IMPORTANT**: Do NOT proceed without understanding what the user wants to build.
-
-2. **Create the change directory**
-   ```bash
-   openspec new change "<name>"
-   ```
-   This creates a scaffolded change in the planning home resolved by the CLI with `.openspec.yaml`.
-
-3. **Get the artifact build order**
-   ```bash
-   openspec status --change "<name>" --json
-   ```
-   Parse the JSON to get:
-   - `applyRequires`: array of artifact IDs needed before implementation (e.g., `["tasks"]`)
-   - `artifacts`: list of all artifacts with their status and dependencies
-   - `planningHome`, `changeRoot`, `artifactPaths`, and `actionContext`: path and scope context. Use these instead of assuming repo-local paths.
-
-4. **Create artifacts in sequence until apply-ready**
-
-   Use the **TodoWrite tool** to track progress through the artifacts.
-
-   Loop through artifacts in dependency order (artifacts with no pending dependencies first):
-
-   a. **For each artifact that is `ready` (dependencies satisfied)**:
-      - Get instructions:
-        ```bash
-        openspec instructions <artifact-id> --change "<name>" --json
-        ```
-      - The instructions JSON includes:
-        - `context`: Project background (constraints for you - do NOT include in output)
-        - `rules`: Artifact-specific rules (constraints for you - do NOT include in output)
-        - `template`: The structure to use for your output file
-        - `instruction`: Schema-specific guidance for this artifact type
-        - `resolvedOutputPath`: Resolved path or pattern to write the artifact
-        - `dependencies`: Completed artifacts to read for context
-      - Read any completed dependency files for context
-      - Create the artifact file using `template` as the structure and write it to `resolvedOutputPath`
-      - Apply `context` and `rules` as constraints - but do NOT copy them into the file
-      - Show brief progress: "Created <artifact-id>"
-
-   b. **Continue until all `applyRequires` artifacts are complete**
-      - After creating each artifact, re-run `openspec status --change "<name>" --json`
-      - Check if every artifact ID in `applyRequires` has `status: "done"` in the artifacts array
-      - Stop when all `applyRequires` artifacts are done
-
-   c. **If an artifact requires user input** (unclear context):
-      - Use **AskUserQuestion tool** to clarify
-      - Then continue with creation
-
-5. **Show final status**
-   ```bash
-   openspec status --change "<name>"
-   ```
-
-**Output**
-
-After completing all artifacts, summarize:
-- Change name and location
-- List of artifacts created with brief descriptions
-- What's ready: "All artifacts created! Ready for implementation."
-- Prompt: "Run `/opsx:apply` or ask me to implement to start working on the tasks."
-
-**Artifact Creation Guidelines**
-
-- Follow the `instruction` field from `openspec instructions` for each artifact type
-- The schema defines what each artifact should contain - follow it
-- Read dependency artifacts for context before creating new ones
-- Use `template` as the structure for your output file - fill in its sections
-- **IMPORTANT**: `context` and `rules` are constraints for YOU, not content for the file
-  - Do NOT copy `<context>`, `<rules>`, `<project_context>` blocks into the artifact
-  - These guide what you write, but should never appear in the output
-
-**Guardrails**
-- Create ALL artifacts needed for implementation (as defined by schema's `apply.requires`)
-- Always read dependency artifacts before creating a new one
-- If context is critically unclear, ask the user - but prefer making reasonable decisions to keep momentum
-- If a change with that name already exists, ask if user wants to continue it or create a new one
-- Verify each artifact file exists after writing before proceeding to next
+简述变更范围、工件位置、验证结果和未决事项。只要求提案时到此交付；已授权实施时，在前置条件满足后继续实施，不要求用户重复发送阶段命令。已有计划的修订批准、阶段提交及其他边界遵循 AGENTS.md。

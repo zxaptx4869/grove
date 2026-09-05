@@ -1,160 +1,34 @@
 ---
 name: openspec-apply-change
-description: Implement tasks from an OpenSpec change. Use when the user wants to start implementing, continue implementation, or work through tasks.
-allowed-tools: Bash(openspec:*)
+description: 实施或继续明确关联 OpenSpec change 的任务。普通排查、环境操作及恢复既有行为的小 bug 直接处理，不因用户说“实现”“继续”就加载本技能。
 license: MIT
-compatibility: Requires openspec CLI.
 metadata:
+  compatibility: Requires openspec CLI.
   author: openspec
   version: "1.0"
-  generatedBy: "1.6.0"
 ---
 
-Implement tasks from an OpenSpec change.
+# 实施 OpenSpec 变更
 
-**Store selection:** If the user names a store (a store is a standalone OpenSpec repo registered on this machine) or the work lives in one, run `openspec store list --json` to discover registered store ids, then pass `--store <id>` on the commands that read or write specs and changes (`new change`, `status`, `instructions`, `list`, `show`, `validate`, `archive`, `doctor`, `context`). Other commands do not take the flag. Hints printed by commands already carry the flag; keep it on follow-ups. Without a store, commands act on the nearest local `openspec/` root.
+工程分流、批准、验证及完成标准以 [AGENTS.md](../../../AGENTS.md) 为准；本技能处理正式 change 的实施阶段，不缩小用户已授权的整体任务。
 
-**Input**: Optionally specify a change name. If omitted, check if it can be inferred from conversation context. If vague or ambiguous you MUST prompt for available changes.
+## 确定范围
 
-**Steps**
+- 使用用户指定或本任务已经明确的 change，并简短说明。无法唯一确定目标时先查询 `openspec list --json` 再请求选择，不凭最近修改时间猜测。
+- 首次接手或状态变化时，使用 `openspec status --change <name> --json` 与 `openspec instructions apply --change <name> --json` 获取工件路径、进度和阻塞；复用未变化的结果，只输出必要信息。
+- 用户指定独立 store 时，先查询 `openspec store list --json`，在支持的命令上保留 `--store <id>`；其他情况使用本仓库。
+- `contextFiles` 是可用工件集合，不是每步必读清单。首次建立范围、Non-Goals 和关键约束，当前任务只读相关需求、设计段落及代码；已有任务列表不重复完整输出。发现关联影响或矛盾再扩大读取。
 
-1. **Select the change**
+## 实施与验证
 
-   If a name is provided, use it. Otherwise:
-   - Infer from conversation context if the user mentioned a change
-   - Auto-select if only one active change exists
-   - If ambiguous, run `openspec list --json` to get available changes and use the **AskUserQuestion tool** to let the user select
+1. 确认四类工件齐备并满足前置严格校验。缺失时，若用户已授权完整实施，按可用的规划流程补齐；需要用户决定或批准的部分先形成可审阅差异。不得凭已有 tasks 跳过门禁，也不把缺失工具名称当作无法继续的理由。
+2. 按依赖完成任务，保持修改范围明确。普通错误先定位、修复并运行相关验证；实现细节可依据既有规格与代码自行决定。
+3. 必须改变计划时，集中展示关联工件的修改建议，沿用已有批准或取得必要批准；不因发现普通实现问题就退出任务。仅暂停依赖缺失信息、产品决定或授权的工作。
+4. 工作实际完成后勾选对应任务，记录验证结果并及时本地提交。功能、自动化验证、手动验收分别依据实际结果记录，不能由一个勾选替代其他证据。
+5. 报告关键进展、失败或需要决定的事项，不逐条复述任务和 CLI 指令。用户插入澄清或询问状态时回应并继续；明确取消或替换目标时按新指示处理。
 
-   Always announce: "Using change: <name>" and how to override (e.g., `/opsx:apply <other>`).
+## 交付与衔接
 
-2. **Check status to understand the schema**
-   ```bash
-   openspec status --change "<name>" --json
-   ```
-   Parse the JSON to understand:
-   - `schemaName`: The workflow being used (e.g., "spec-driven")
-   - `planningHome`, `changeRoot`, and `actionContext`: planning scope and edit constraints
-   - Which artifact contains the tasks (typically "tasks" for spec-driven, check status for others)
-
-3. **Get apply instructions**
-
-   ```bash
-   openspec instructions apply --change "<name>" --json
-   ```
-
-   This returns:
-   - `contextFiles`: artifact ID -> array of concrete file paths (varies by schema - could be proposal/specs/design/tasks or spec/tests/implementation/docs)
-   - Progress (total, complete, remaining)
-   - Task list with status
-   - Dynamic instruction based on current state
-
-   **Handle states:**
-   - If `state: "blocked"` (missing artifacts): show message, suggest using openspec-continue-change
-   - If `state: "all_done"`: congratulate, suggest archive
-   - Otherwise: proceed to implementation
-
-4. **Read context files**
-
-   Read every file path listed under `contextFiles` from the apply instructions output.
-   The files depend on the schema being used:
-   - **spec-driven**: proposal, specs, design, tasks
-   - Other schemas: follow the contextFiles from CLI output
-
-5. **Show current progress**
-
-   Display:
-   - Schema being used
-   - Progress: "N/M tasks complete"
-   - Remaining tasks overview
-   - Dynamic instruction from CLI
-
-6. **Implement tasks (loop until done or blocked)**
-
-   For each pending task:
-   - Show which task is being worked on
-   - Make the code changes required
-   - Keep changes minimal and focused
-   - Mark task complete in the tasks file: `- [ ]` → `- [x]`
-   - Continue to next task
-
-   **Pause if:**
-   - Task is unclear → ask for clarification
-   - Implementation reveals a design issue → suggest updating artifacts
-   - Error or blocker encountered → report and wait for guidance
-   - User interrupts
-
-7. **On completion or pause, show status**
-
-   Display:
-   - Tasks completed this session
-   - Overall progress: "N/M tasks complete"
-   - If all done: suggest archive
-   - If paused: explain why and wait for guidance
-
-**Output During Implementation**
-
-```
-## Implementing: <change-name> (schema: <schema-name>)
-
-Working on task 3/7: <task description>
-[...implementation happening...]
-✓ Task complete
-
-Working on task 4/7: <task description>
-[...implementation happening...]
-✓ Task complete
-```
-
-**Output On Completion**
-
-```
-## Implementation Complete
-
-**Change:** <change-name>
-**Schema:** <schema-name>
-**Progress:** 7/7 tasks complete ✓
-
-### Completed This Session
-- [x] Task 1
-- [x] Task 2
-...
-
-All tasks complete! Ready to archive this change.
-```
-
-**Output On Pause (Issue Encountered)**
-
-```
-## Implementation Paused
-
-**Change:** <change-name>
-**Schema:** <schema-name>
-**Progress:** 4/7 tasks complete
-
-### Issue Encountered
-<description of the issue>
-
-**Options:**
-1. <option 1>
-2. <option 2>
-3. Other approach
-
-What would you like to do?
-```
-
-**Guardrails**
-- Keep going through tasks until done or blocked
-- Always read context files before starting (from the apply instructions output)
-- If task is ambiguous, pause and ask before implementing
-- If implementation reveals issues, pause and suggest artifact updates
-- Keep code changes minimal and scoped to each task
-- Update task checkbox immediately after completing each task
-- Pause on errors, blockers, or unclear requirements - don't guess
-- Use contextFiles from CLI output, don't assume specific file names
-
-**Fluid Workflow Integration**
-
-This skill supports the "actions on a change" model:
-
-- **Can be invoked anytime**: Before all artifacts are done (if tasks exist), after partial implementation, interleaved with other actions
-- **Allows artifact updates**: If implementation reveals design issues, suggest updating artifacts - not phase-locked, work fluidly
+- `all_done` 仅表示任务列表状态；核验必要的测试、手动验收和规格条件后才能判断是否可归档。
+- 用户要求完整实施时，完成可执行验证并衔接归档审查，准备目标与同步差异，不以“请再运行 archive”结束。需要批准或原生端用户验收时，保存本地成果并准确说明待办。
+- 用户只要求当前阶段时交付该阶段结果。最终说明实现结果、相关验证及尚未满足的完成条件；推送与合并仍按 AGENTS.md 执行。
