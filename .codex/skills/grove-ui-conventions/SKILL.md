@@ -1,6 +1,6 @@
 ---
 name: grove-ui-conventions
-description: 知林 Grove Web 与原生 App 界面实现、原型和验收规范。Use when implementing, adjusting, prototyping, or reviewing Grove pages and React components; designing or validating native-mobile and conversational Agent prototypes; reproducing a Grove design, aligning visual fidelity, polishing UI details, or validating screenshots; handling AI candidates, confirmation, entries, sources, directory trees, task states, search, or AI reading; or validating desktop workbench layouts, mobile interaction boundaries, accessibility, copy, and interaction states.
+description: 知林 Grove Web 与原生 App 的界面实现、交互原型、视觉对齐和 UI 验收规范。仅在任务涉及页面、React 组件、原生界面、对话式 Agent 产品交互或视觉与可访问性验证时使用；不用于 Expo/Metro 启停、模拟器连接、端口占用、依赖安装、构建工具或其他纯开发环境故障排查。
 ---
 
 # Grove UI 实现规范
@@ -31,6 +31,8 @@ description: 知林 Grove Web 与原生 App 界面实现、原型和验收规范
 原型只提供视觉与交互参考，不证明功能已经实现。正式开发使用现有 React、Tailwind 4、shadcn/ui 和 Lucide 重新实现，不复制原型的内联样式、包装 iframe、演示脚本或静态业务状态；有意偏离项记录到当前 change 的 `design.md`。
 
 ## 任务分流
+
+纯开发环境故障排查不使用本 Skill，包括 Expo/Metro 启停、模拟器或真机连接、端口占用、依赖安装、构建工具和开发服务可用性问题。即使排查过程中需要打开模拟器或截取画面，只要目标是验证进程、网络或工具链而非界面、交互、视觉或可访问性，也按仓库工程约定直接处理。
 
 开始实现前按风险选择流程：
 
