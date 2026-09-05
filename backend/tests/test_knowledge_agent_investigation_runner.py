@@ -1295,7 +1295,7 @@ async def test_investigation_conflicts_kept_with_both_evidence(monkeypatch) -> N
         assert len(answer["conflicts"]) == 1
         assert answer["conflicts"][0]["summary"] == "时长说法矛盾"
         assert len(answer["citations"]) == 2
-        assert run.status == RUN_COMPLETED
+        assert run.status == RUN_PARTIAL
 
 
 @pytest.mark.asyncio
@@ -1411,7 +1411,7 @@ async def test_investigation_working_set_only_cited_entries(monkeypatch) -> None
         await execute_run(db, run)
         await db.commit()
         run = await db.get(KnowledgeAgentRun, run.id)
-        assert run.status == RUN_COMPLETED
+        assert run.status == RUN_PARTIAL
         assert run.output_context_version_id is not None
         items = (
             await db.execute(

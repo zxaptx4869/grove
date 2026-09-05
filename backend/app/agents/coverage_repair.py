@@ -22,7 +22,7 @@ from app.services.knowledge_agent.observability import StageMeta
 
 logger = logging.getLogger(__name__)
 
-COVERAGE_REPAIR_PLAN_PROMPT_VERSION = "v1"
+COVERAGE_REPAIR_PLAN_PROMPT_VERSION = "v2"
 
 
 class StrictCoverageRepairDraft(BaseModel):
@@ -66,6 +66,8 @@ COVERAGE_REPAIR_SYSTEM_PROMPT = (
     "普通知识补查只用 retrieval_requests；统计、分组、排序或有界列表只用"
     "structured_requests，其 EntrySetSpec 和 outputs 必须遵守 Grove 现有 B1 闭合"
     "协议。候选必须在输入预算内。\n"
+    "同一统计义务必须保留首次类型、性质、时间过滤，不能扩大条件增加数量；"
+    "只能在原口径内改写语义表达。阅读已执行 parameters/facts 避免重复或误解结果。\n"
     "不要重复已执行请求；如果闭合工具内没有可能增加依据的新请求，"
     "返回空 target 和空请求列表。\n"
     "绝对不要输出 owner、Workspace、项目、目录、Entry、Source 或其他对象 id，"

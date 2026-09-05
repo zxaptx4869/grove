@@ -209,7 +209,7 @@ def _general_answer_agent():
     return _fake
 
 
-def _cited_answer_agent(with_text: str | None = None):
+def _cited_answer_agent(with_text: str | None = None, *, with_model: bool = False):
     """引用回答上下文里第一个 Evidence 句柄的替身。"""
 
     async def _fake(db, workspace_id, query, scope_label, entries, **kwargs):
@@ -221,6 +221,11 @@ def _cited_answer_agent(with_text: str | None = None):
         return (
             KnowledgeAnswerDraft(
                 answer=with_text or "闭水试验通常持续 24 小时。",
+                points=[
+                    KnowledgeAnswerPointDraft(text="闭水试验通常持续 24 小时。",
+                                              evidence_handles=[handle]),
+                    KnowledgeAnswerPointDraft(text="可先按你提供的预算预留验收时间。"),
+                ] if with_model else [],
                 citations=[KnowledgeCitationDraft(evidence_handle=handle)]
                 if handle
                 else [],
@@ -364,7 +369,7 @@ async def test_hybrid_uses_statements_grove_and_model(monkeypatch) -> None:
         _patch_plan(monkeypatch, "hybrid")
         monkeypatch.setattr(
             "app.services.knowledge_agent.runner.run_knowledge_answer_agent",
-            _cited_answer_agent(),
+            _cited_answer_agent(with_model=True),
         )
         await execute_run(db, run)
         await db.commit()

@@ -124,6 +124,8 @@ async def _completed_answer_run(
         KnowledgeAnswerDraft(
             answer="闭水试验通常持续 24 小时，验收前不得放水。",
             citations=[KnowledgeCitationDraft(evidence_handle=handle)],
+            core_question_answered=True,
+            coverage_complete=True,
         )
     )
     assert await process_one_run() is True

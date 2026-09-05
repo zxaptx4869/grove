@@ -486,7 +486,8 @@ async def test_runner_all_stages_normal_has_no_fallback(monkeypatch) -> None:
 
         summary = json.loads(run.fallback_summary)
         assert summary["has_fallback"] is False
-        assert run.status == RUN_COMPLETED
+        # 调用成功不等于完整覆盖：旧草稿缺少完成度评估，Run 跟随 answer。
+        assert run.status == RUN_PARTIAL
 
 
 @pytest.mark.asyncio
@@ -1224,7 +1225,7 @@ async def test_runner_continue_merges_seed_and_new_discovery(monkeypatch) -> Non
         await execute_run(db, run)
         await db.commit()
 
-        assert run.status == RUN_COMPLETED
+        assert run.status == RUN_PARTIAL
         assert run.context_decision == CONTEXT_DECISION_CONTINUE
         assert run.standalone_query == "闭水试验为什么不能提前放水？"
         assert run.output_context_version_id is not None
@@ -1355,7 +1356,7 @@ async def test_runner_new_topic_replaces_working_set(monkeypatch) -> None:
         await execute_run(db, run)
         await db.commit()
 
-        assert run.status == RUN_COMPLETED
+        assert run.status == RUN_PARTIAL
         assert run.context_decision == CONTEXT_DECISION_NEW_TOPIC
         active = await get_active_context_version(db, conversation.id)
         assert active is not None
@@ -1528,7 +1529,7 @@ async def test_runner_continue_seed_deleted_records_unavailable(monkeypatch) -> 
         await execute_run(db, run)
         await db.commit()
 
-        assert run.status == RUN_COMPLETED
+        assert run.status == RUN_PARTIAL
         seed_calls = (
             await db.execute(
                 select(KnowledgeAgentToolCall).where(
@@ -1604,7 +1605,7 @@ async def test_runner_historical_evidence_rejected_and_context_kept(monkeypatch)
         await db.commit()
         await execute_run(db, first_run)
         await db.commit()
-        assert first_run.status == RUN_COMPLETED
+        assert first_run.status == RUN_PARTIAL
         version = await get_active_context_version(db, conversation.id)
         assert version is not None
         assert version.source_run_id == first_run.id

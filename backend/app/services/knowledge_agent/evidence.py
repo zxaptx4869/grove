@@ -369,7 +369,12 @@ async def build_validated_answer(
     core_question_answered = getattr(draft, "core_question_answered", None)
     coverage_complete = getattr(draft, "coverage_complete", None)
     assessment_missing = core_question_answered is None or coverage_complete is None
-    if draft.insufficient or core_question_answered is False:
+    has_direct_answer = bool(valid_points) and (
+        core_question_answered is True
+        or any(point.answers_core_question is True for point in valid_points)
+    )
+    contradictory_assessment = draft.insufficient or core_question_answered is False
+    if contradictory_assessment and not has_direct_answer:
         # 边缘 Evidence 不能因存在零散引用伪装为有用的部分结果。
         status = "insufficient"
     elif points and not valid_points:
@@ -390,7 +395,8 @@ async def build_validated_answer(
         citations = []
         conflicts = []
     elif (
-        stats.discarded_count > 0
+        contradictory_assessment
+        or stats.discarded_count > 0
         or assessment_missing
         or coverage_complete is False
         or gaps
@@ -415,9 +421,11 @@ async def build_validated_answer(
     return KnowledgeAnswerOut(
         answer=sanitize_answer_text(answer_text),
         status=status,
-        insufficient_note=draft.insufficient_note
-        if draft.insufficient
-        else ("全部引用被丢弃，无法提供带证据的确定结论" if not citations else None),
+        insufficient_note=(
+            draft.insufficient_note or (
+                "全部引用被丢弃，无法提供带证据的确定结论" if not citations else None
+            )
+        ) if status == "insufficient" else None,
         points=[
             KnowledgeAnswerPointOut(
                 section=sanitize_answer_text(point.section) if point.section else None,

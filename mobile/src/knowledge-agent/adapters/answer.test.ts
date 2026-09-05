@@ -201,7 +201,7 @@ test("partial 说明未覆盖内容但不默认宣称发生降级", () => {
   };
   const presentation = presentAnswer(answer, "completed");
   expect(presentation.headline).toBe("部分结果");
-  expect(presentation.note).toContain("未覆盖或失效内容");
+  expect(presentation.note).toContain("未覆盖或未核验的内容");
   expect(presentation.note).not.toContain("降级");
 });
 

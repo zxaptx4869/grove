@@ -221,6 +221,17 @@ def dump_basis_plan(plan: BasisPlan) -> str:
     )
 
 
+def answer_uses_model_knowledge(
+    answer: KnowledgeAnswerOut, *, allowed: bool, is_fallback: bool,
+) -> bool:
+    """以保留的无引用正文判定通用补充，不把允许使用当作已经使用。"""
+    if not allowed or is_fallback or answer.status not in {"completed", "partial"}:
+        return False
+    if answer.points:
+        return any(point.text.strip() and not point.citations for point in answer.points)
+    return bool(answer.answer.strip() and not answer.citations)
+
+
 def build_answer_basis(
     *,
     answer: KnowledgeAnswerOut,
@@ -234,7 +245,7 @@ def build_answer_basis(
     - Grove 数量来自最终回答 Citation（全部句柄失效时为 0）；
       复合回答的确定性结构化事实可单独表明 Grove 已使用；
     - 用户消息 ID 只使用服务端允许集合与规划器选择的交集；
-    - 模型通用知识由执行分支与提示权限保守标记，不依赖模型自由自报；
+    - 模型通用知识由权限与最终保留的无引用内容派生，不以允许使用代替实际使用；
     - 外部材料状态只能由服务端写为 not_used 或 required_unavailable。
     """
     citation_count = len(answer.citations)

@@ -26,7 +26,7 @@ from app.services.knowledge_agent.evidence import (
 from app.services.knowledge_agent.observability import record_model_invocation
 
 _NUMBER_IN_TEXT = re.compile(r"\d")
-_INTERNAL_HANDLE_IN_TEXT = re.compile(r"\b(?:res_[0-9a-f]{24}|r[1-9][0-9]*)\b")
+_INTERNAL_HANDLE_IN_TEXT = re.compile(r"\b(?:res_[0-9a-f]{24,32}|r[1-9][0-9]*)\b")
 
 
 @dataclass(frozen=True)
@@ -88,8 +88,12 @@ def _validated_draft_bindings(
         _binding_maps(plan, execution)
     )
     valid_points = []
+    seen_points: set[tuple[tuple[str, ...], str]] = set()
     invalid_count = 0
     for point in draft.points:
+        if point.answers_core_question is False:
+            invalid_count += 1
+            continue
         requirement_ids = list(dict.fromkeys(point.requirement_ids))
         evidence_handles = list(dict.fromkeys(point.evidence_handles))
         result_handles = list(dict.fromkeys(point.result_handles))
@@ -132,10 +136,18 @@ def _validated_draft_bindings(
         if not clean_text:
             invalid_count += 1
             continue
+        point_key = (tuple(sorted(requirement_ids)), " ".join(clean_text.split()))
+        if point_key in seen_points:
+            continue
+        seen_points.add(point_key)
         valid_points.append(
             point.model_copy(
                 update={
                     "text": clean_text,
+                    "section": min(
+                        (requirement_by_id[item] for item in requirement_ids),
+                        key=lambda item: item.order,
+                    ).summary,
                     "requirement_ids": requirement_ids,
                     "evidence_handles": evidence_handles,
                     "result_handles": result_handles,
@@ -167,7 +179,8 @@ async def _answer_entries(
     all_handles: list[str] = []
     for item in execution.inputs:
         for handle in item.evidence_handles:
-            all_handles.append(handle)
+            if handle not in evidence_requirements:
+                all_handles.append(handle)
             evidence_requirements.setdefault(handle, [])
             evidence_requirements[handle].extend(item.requirement_ids)
     evidence_requirements = {
@@ -302,6 +315,73 @@ def _derive_coverage(
     return CompositeAnswerCoverageSnapshot(requirements=rows)
 
 
+def label_repair_facts(
+    plan: NormalizedCompositeAnswerPlan,
+    execution: CompositeAnswerExecutionSnapshot,
+) -> CompositeAnswerExecutionSnapshot:
+    """只改展示副本，首次/补查的不同有限集合不得冒充一个总数。"""
+    original_ids = {item.id for item in plan.structured_requests}
+    repair_requirements = {
+        item for fact in execution.tool_facts if fact.request_id not in original_ids
+        for item in fact.requirement_ids
+    }
+    facts = []
+    for fact in execution.tool_facts:
+        if repair_requirements.intersection(fact.requirement_ids):
+            phase = "首次匹配" if fact.request_id in original_ids else "补查匹配"
+            facts.append(fact.model_copy(update={
+                "text": f"{phase}：{fact.text} 两批匹配可能重叠，不合并为完整总数。",
+            }))
+        else:
+            facts.append(fact)
+    return execution.model_copy(update={"tool_facts": facts})
+
+
+def preserve_answer_with_repair_facts(
+    baseline: CompositeAnswerResult,
+    plan: NormalizedCompositeAnswerPlan,
+    original: CompositeAnswerExecutionSnapshot,
+    merged: CompositeAnswerExecutionSnapshot,
+) -> CompositeAnswerResult:
+    """综合失败只附加确定性事实，保留首次正文、引用和覆盖基线。"""
+    original_handles = {fact.handle for fact in original.tool_facts}
+    new_facts = [fact for fact in merged.tool_facts if fact.handle not in original_handles]
+    if not new_facts:
+        return baseline
+    displayed = label_repair_facts(plan, merged)
+    original_texts = {fact.text for fact in original.tool_facts}
+    points = [point for point in baseline.answer.points if point.text not in original_texts]
+    summaries = {item.id: item.summary for item in plan.requirements}
+    points.extend(KnowledgeAnswerPointOut(
+        section=summaries[fact.requirement_ids[0]], text=fact.text,
+        citations=[], requirement_ids=fact.requirement_ids,
+    ) for fact in displayed.tool_facts)
+    note = "补查后的回答整理失败；保留首次回答，下列补查统计仅为工具结果，尚未完成综合。"
+    # 兼容没有结构化 points 的历史基线，不能丢失其正文。
+    answer_text = _answer_text(points, None)
+    if not baseline.answer.points and baseline.answer.answer:
+        answer_text = baseline.answer.answer + "\n\n" + answer_text
+    answer = baseline.answer.model_copy(update={
+        "points": points if baseline.answer.points else [],
+        "answer": answer_text, "status": "partial", "insufficient_note": None,
+        "gaps": [note, *baseline.answer.gaps][:8],
+    })
+    coverage = baseline.coverage.model_copy(deep=True)
+    for row in coverage.requirements:
+        handles = [fact.handle for fact in new_facts if row.requirement_id in fact.requirement_ids]
+        if handles:
+            row.result_handles = list(dict.fromkeys([*row.result_handles, *handles]))
+            if row.status in {"insufficient", "failed"}:
+                row.status = "partial"
+            row.note = note
+    basis = baseline.answer_basis.model_copy(deep=True)
+    basis.grove.used = True
+    return CompositeAnswerResult(
+        answer=answer, coverage=coverage, answer_basis=basis,
+        run_status=RUN_PARTIAL, answer_fallback=baseline.answer_fallback,
+    )
+
+
 async def build_composite_answer(
     db: AsyncSession,
     run,
@@ -316,6 +396,7 @@ async def build_composite_answer(
     invocation_purpose: str = "answer",
 ) -> CompositeAnswerResult:
     """使用同一批输入最多生成两次输出，随后由服务端确定性合并与判定。"""
+    execution = label_repair_facts(plan, execution)
     entries, evidence_requirements = await _answer_entries(db, run.id, execution)
     requirements = [item.model_dump(mode="json") for item in plan.requirements]
     tool_facts = [item.model_dump(mode="json") for item in execution.tool_facts]
@@ -459,7 +540,7 @@ async def build_composite_answer(
     run_status = (
         RUN_FAILED
         if answer_status == "failed"
-        else (RUN_PARTIAL if answer_status == "partial" else RUN_COMPLETED)
+        else (RUN_PARTIAL if answer_status in {"partial", "insufficient"} else RUN_COMPLETED)
     )
     return CompositeAnswerResult(
         answer=merged,

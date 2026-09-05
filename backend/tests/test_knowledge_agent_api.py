@@ -443,6 +443,8 @@ async def test_structured_answer_with_verified_evidence(
             KnowledgeAnswerDraft(
                 answer="闭水试验通常持续 24 小时。",
                 citations=[KnowledgeCitationDraft(evidence_handle=handle)],
+                core_question_answered=True,
+                coverage_complete=True,
             )
         ),
     )

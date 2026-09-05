@@ -110,6 +110,8 @@ def _synthesis_agent(handle_by_entry: dict[int, str] | None = None):
             KnowledgeAnswerDraft(
                 answer="恢复后的综合回答。",
                 citations=citations,
+                core_question_answered=True,
+                coverage_complete=True,
             ),
             _synthesis_meta(),
         )

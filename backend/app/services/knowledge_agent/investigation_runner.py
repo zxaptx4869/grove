@@ -54,6 +54,7 @@ from app.models.knowledge_agent import (
 from app.schemas.knowledge_agent import KnowledgeAnswerOut
 from app.services.knowledge_agent.basis import (
     BasisPlan,
+    answer_uses_model_knowledge,
     basis_strategy_allows_model_knowledge,
     build_answer_basis,
 )
@@ -675,6 +676,7 @@ async def _synthesize_investigation_answer(
     working_set: WorkingSetValidation,
     basis_plan: BasisPlan,
     statement_context: list[dict],
+    current_message: str | None = None,
 ) -> tuple[KnowledgeAnswerOut, str, list[dict], object]:
     """最终综合：返回 (回答, Run 状态, 引用线索, AnswerBasis)。"""
     await _check_cancelled(run.id)
@@ -725,7 +727,7 @@ async def _synthesize_investigation_answer(
         draft, answer_meta = await run_knowledge_answer_agent(
             db,
             run.workspace_id,
-            decision.standalone_query or "",
+            current_message or decision.standalone_query or "",
             scope,
             [],
             **open_kwargs,
@@ -761,7 +763,10 @@ async def _synthesize_investigation_answer(
             )
         run_status = (
             RUN_PARTIAL
-            if answer_meta.is_fallback or ref_stats.discarded_count
+            if (
+                answer_meta.is_fallback or ref_stats.discarded_count
+                or answer.status in {"partial", "insufficient"}
+            )
             else RUN_COMPLETED
         )
         return (
@@ -771,8 +776,8 @@ async def _synthesize_investigation_answer(
             build_answer_basis(
                 answer=answer,
                 user_statement_ids=user_statement_ids,
-                model_knowledge_used=(
-                    allow_model_knowledge and not answer_meta.is_fallback
+                model_knowledge_used=answer_uses_model_knowledge(
+                    answer, allowed=allow_model_knowledge, is_fallback=answer_meta.is_fallback,
                 ),
                 external_material_required=basis_plan.requires_external_material,
             ),
@@ -833,7 +838,7 @@ async def _synthesize_investigation_answer(
     draft, answer_meta = await run_knowledge_answer_agent(
         db,
         run.workspace_id,
-        decision.standalone_query,
+        current_message or decision.standalone_query,
         scope,
         answer_entries,
         **answer_kwargs,
@@ -887,6 +892,7 @@ async def _synthesize_investigation_answer(
             answer_meta.is_fallback
             or strict_missing
             or ref_stats.discarded_count
+            or answer.status in {"partial", "insufficient"}
         )
         else RUN_COMPLETED
     )
@@ -902,8 +908,8 @@ async def _synthesize_investigation_answer(
         build_answer_basis(
             answer=answer,
             user_statement_ids=user_statement_ids,
-            model_knowledge_used=(
-                allow_model_knowledge and not answer_meta.is_fallback
+            model_knowledge_used=answer_uses_model_knowledge(
+                answer, allowed=allow_model_knowledge, is_fallback=answer_meta.is_fallback,
             ),
             external_material_required=basis_plan.requires_external_material,
         ),
@@ -1011,6 +1017,7 @@ async def execute_investigation(
     seed_entries: list[Entry],
     basis_plan: BasisPlan,
     statement_context: list[dict],
+    current_message: str | None = None,
 ) -> None:
     """执行有界调查：最多 max_rounds 轮，应用层控制查询/Entry/Evidence 预算。"""
     settings = get_settings()
@@ -1210,6 +1217,7 @@ async def execute_investigation(
         working_set=working_set,
         basis_plan=basis_plan,
         statement_context=statement_context,
+        current_message=current_message,
     )
     if answer.status == "insufficient":
         investigation.status = INVESTIGATION_STATUS_INSUFFICIENT

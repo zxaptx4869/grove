@@ -117,7 +117,7 @@ export function presentAnswer(
       return {
         status,
         headline: "部分结果",
-        note: "已回答当前知识能够确认的部分，仍有未覆盖或失效内容。",
+        note: "已保留可用回答，仍有未覆盖或未核验的内容。",
         tone: "risk",
       };
     case "insufficient":
@@ -126,7 +126,7 @@ export function presentAnswer(
         headline: "知识不足",
         note:
           answer?.insufficientNote ??
-          "当前材料尚不足以直接回答核心问题；实际使用的依据见下方说明。",
+          "当前材料尚不足以直接回答核心问题。",
         tone: "risk",
       };
     case "clarification":

@@ -105,6 +105,8 @@ def _synthesis_agent():
         return (
             KnowledgeAnswerDraft(
                 answer="调查 API 综合回答。",
+                core_question_answered=True,
+                coverage_complete=True,
                 citations=[
                     KnowledgeCitationDraft(evidence_handle=handle)
                     for handle in handles

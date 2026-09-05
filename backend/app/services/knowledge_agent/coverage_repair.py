@@ -136,7 +136,7 @@ class NormalizedCoverageRepairPlan(StrictCoverageRepairModel):
     """只包含新请求的服务端规范化补查计划。"""
 
     schema_version: Literal["v1"] = COVERAGE_REPAIR_SCHEMA_VERSION
-    prompt_version: Literal["v1"] = COVERAGE_REPAIR_PLAN_PROMPT_VERSION
+    prompt_version: Literal["v1", "v2"] = COVERAGE_REPAIR_PLAN_PROMPT_VERSION
     target_requirement_ids: list[str] = Field(min_length=1, max_length=8)
     retrieval_requests: list[NormalizedCompositeRetrievalRequest] = Field(
         default_factory=list, max_length=4
@@ -567,6 +567,14 @@ def normalize_coverage_repair_plan(
             )
         except StructuredQueryPlanError as exc:
             raise CoverageRepairPlanError(f"补查结构化请求非法：{exc}") from exc
+        # 首次结构化口径是冻结合同；补查可以换检索表达，不能为了多命中而改过滤。
+        for previous in original_plan.structured_requests:
+            if not set(previous.requirement_ids).intersection(requirement_ids):
+                continue
+            before = previous.query_plan.entry_set.model_dump(exclude={"semantic_query"})
+            after = query_plan.entry_set.model_dump(exclude={"semantic_query"})
+            if before != after:
+                raise CoverageRepairPlanError("补查不得改变首次结构化过滤口径")
         referenced_targets.update(requirement_ids)
         structured.append(
             NormalizedCompositeStructuredRequest(
@@ -740,6 +748,13 @@ async def plan_and_persist_coverage_repair(
         }
         for item in original_plan.requirements
     ]
+    request_parameters = {
+        item.id: {"query": item.query} for item in original_plan.retrieval_requests
+    }
+    request_parameters.update({
+        item.id: {"query_plan": item.query_plan.model_dump(mode="json", by_alias=True)}
+        for item in original_plan.structured_requests
+    })
     executed_inputs = [
         {
             "request_id": item.request_id,
@@ -748,6 +763,11 @@ async def plan_and_persist_coverage_repair(
             "status": item.status,
             "completeness": item.completeness,
             "error": item.error,
+            "parameters": request_parameters.get(item.request_id, {}),
+            "facts": [
+                {"kind": fact.kind, "summary": fact.summary, "completeness": fact.completeness}
+                for fact in original_execution.tool_facts if fact.request_id == item.request_id
+            ],
         }
         for item in original_execution.inputs
     ]

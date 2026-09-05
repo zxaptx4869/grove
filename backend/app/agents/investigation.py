@@ -26,7 +26,7 @@ from app.services.knowledge_agent.observability import StageMeta
 
 logger = logging.getLogger(__name__)
 
-ANSWER_MODE_ROUTE_PROMPT_VERSION = "v1"
+ANSWER_MODE_ROUTE_PROMPT_VERSION = "v2"
 INVESTIGATION_CONTROLLER_PROMPT_VERSION = "v1"
 
 
@@ -148,7 +148,19 @@ async def run_answer_mode_router(
     agent = Agent(
         text_model,
         output_type=AnswerModeRouteDraft,
-        system_prompt=ANSWER_MODE_ROUTE_SYSTEM_PROMPT,
+        system_prompt=(
+            ANSWER_MODE_ROUTE_SYSTEM_PROMPT
+            if not settings.knowledge_agent_composite_answer_enabled
+            else (
+                "你是 Grove 回答模式路由器，只输出 quick/investigate 和简短 reason。"
+                "当前 quick 已支持多义务规划、多次只读检索、结构化数量/分组统计和一次有界补查；"
+                "investigate 只支持多轮文本检索，不支持结构化统计。"
+                "组合问题、多个方面、解释加来源、对比加统计均选择 quick；"
+                "凡要求数量或分组统计必须选择 quick，不能因为问题复杂而选择 investigate。"
+                "只有不含结构化统计且确需多轮追踪矛盾、交叉核验证据的调查才选择 investigate。"
+                "按用户原始要求判断，主题摘要只用于理解指代，不能删减要求。"
+            )
+        ),
         retries=1,
         model_settings={
             "temperature": 0,

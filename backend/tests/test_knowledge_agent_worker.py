@@ -26,6 +26,7 @@ from app.models.knowledge_agent import (
     RUN_CANCELLED,
     RUN_COMPLETED,
     RUN_FAILED,
+    RUN_PARTIAL,
     RUN_PROCESSING,
     RUN_WAITING,
     SCOPE_WORKSPACE,
@@ -698,7 +699,7 @@ async def test_crash_recovery_requeues_and_retries_successfully(monkeypatch) -> 
         await _cancel_other_waiting_runs(db, keep_run_id=run.id)
 
         # 第一次执行：构建引用阶段模拟崩溃
-        async def _boom(db, run_id, draft):
+        async def _boom(db, run_id, draft, **kwargs):
             raise RuntimeError("模拟进程崩溃")
 
         with monkeypatch.context() as ctx:
@@ -743,7 +744,7 @@ async def test_crash_recovery_requeues_and_retries_successfully(monkeypatch) -> 
         assert await process_one_run() is True
         async with async_session_factory() as db:
             run = await db.get(KnowledgeAgentRun, run.id)
-            assert run.status == RUN_COMPLETED
+            assert run.status == RUN_PARTIAL
             assert run.active_slot is None
             answer = json.loads(run.answer_json)
             assert answer["citations"][0]["quote"] == "闭水试验通常持续 24 小时"
@@ -778,7 +779,7 @@ async def test_retry_limit_exhausted_marks_failed(monkeypatch) -> None:
         await db.commit()
         await _cancel_other_waiting_runs(db, keep_run_id=run.id)
 
-        async def _boom(db, run_id, draft):
+        async def _boom(db, run_id, draft, **kwargs):
             raise RuntimeError("持续失败")
 
         monkeypatch.setattr(
@@ -850,7 +851,7 @@ async def test_crash_recovery_reuses_input_version_without_duplicates(
         assert await process_one_run() is True
         async with async_session_factory() as db:
             first_run = await db.get(KnowledgeAgentRun, first_run.id)
-            assert first_run.status == RUN_COMPLETED
+            assert first_run.status == RUN_PARTIAL
             first_version = await get_active_context_version(db, conversation.id)
             assert first_version is not None
             assert first_version.source_run_id == first_run.id
@@ -871,7 +872,7 @@ async def test_crash_recovery_reuses_input_version_without_duplicates(
             await db.commit()
             await _cancel_other_waiting_runs(db, keep_run_id=second_run_id)
 
-        async def _boom(db, run_id, draft):
+        async def _boom(db, run_id, draft, **kwargs):
             raise RuntimeError("模拟回答校验阶段崩溃")
 
         with monkeypatch.context() as ctx:
@@ -926,7 +927,7 @@ async def test_crash_recovery_reuses_input_version_without_duplicates(
 
         async with async_session_factory() as db:
             second_run = await db.get(KnowledgeAgentRun, second_run_id)
-            assert second_run.status == RUN_COMPLETED
+            assert second_run.status == RUN_PARTIAL
             assert second_run.output_context_version_id is not None
             versions = await get_conversation_context_versions(
                 db, conversation.id

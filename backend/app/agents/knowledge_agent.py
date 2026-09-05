@@ -13,7 +13,7 @@ from app.services.knowledge_agent.observability import StageMeta
 
 logger = logging.getLogger(__name__)
 
-ANSWER_PROMPT_VERSION = "v3"
+ANSWER_PROMPT_VERSION = "v4"
 
 # 开放讨论追加提示：由服务端依据计划控制是否附加（prompt 版本随 ANSWER 观测）
 OPEN_ANSWER_PROMPT_SUFFIX = (
@@ -63,6 +63,8 @@ class KnowledgeAnswerPointDraft(BaseModel):
     section: str | None = None
     text: str = ""
     evidence_handles: list[str] = []
+    # 只作相关性候选，服务端还要验证正文及引用，不以任意边缘证据冒充回答。
+    answers_core_question: bool | None = None
     # 复合回答内部绑定；普通 quick/investigate 保持空列表
     requirement_ids: list[str] = Field(default_factory=list, max_length=8)
     result_handles: list[str] = Field(default_factory=list, max_length=16)
@@ -84,6 +86,13 @@ class KnowledgeAnswerDraft(BaseModel):
     coverage_complete: bool | None = None
     coverage: list[KnowledgeEvidenceSummaryDraft] = []
     gaps: list[KnowledgeEvidenceSummaryDraft] = []
+
+
+class CompositeKnowledgeAnswerDraft(BaseModel):
+    """复合覆盖由服务端计算，模型只输出正文与冲突，避免重复状态合同。"""
+
+    points: list[KnowledgeAnswerPointDraft] = []
+    conflicts: list[KnowledgeConflictDraft] = []
 
 
 KNOWLEDGE_ANSWER_SYSTEM_PROMPT = (
@@ -115,7 +124,8 @@ KNOWLEDGE_ANSWER_SYSTEM_PROMPT = (
     "必须包含 summary 和用于支持该项的 evidence_handles，且句柄只能使用最终回答实际采用的"
     "当前 Run Evidence。gap 若对应综合上下文中列出的未解决缺口，必须原样使用该缺口文本，"
     "可以不附 Evidence；其他 gap 必须关联用于证明其边界的最终 Evidence。"
-    "边缘证据不能视为已回答核心问题。"
+    "边缘证据不能视为已回答核心问题。每个 point 填写 answers_core_question，"
+    "只有直接回答用户某项要求时为 True；旁支背景为 False，且应从正文省略。"
     "\n"
     "9. insufficient 只能用于完全没有可确认证据或没有任何部分能直接回答核心问题的情况；"
     "只要你能基于证据直接回答核心问题的任何一部分，就必须 core_question_answered=True 且"
@@ -290,10 +300,16 @@ async def run_knowledge_answer_agent(
             "服务端会自行插入结构化事实；不要重复、改写或另造其中的"
             "数字与完整性结论。复合回答的 lead 必须留空，所有正文都放入"
             "可绑定的 points。不得在正文泄漏 requirement/result/Evidence 句柄。"
+            "每个 point 必须直接回答绑定义务，section 使用该义务的 summary；"
+            "同一内容只写一次，不要单独再生成主要来源章节。"
+            "相关主题不等于回答：例如环保等级不能替代甲醛来源，命中条目不能冒充治理方案。"
+            "结构化统计由服务端插入，无需为纯统计义务生成 point。"
+            "复合协议只输出 points 和 conflicts，不输出 answer、lead、coverage、gaps"
+            "或全局完成度；这些字段由服务端派生。"
         )
     agent = Agent(
         text_model,
-        output_type=KnowledgeAnswerDraft,
+        output_type=CompositeKnowledgeAnswerDraft if composite_context else KnowledgeAnswerDraft,
         system_prompt=system_prompt,
         retries=1,
         model_settings={"temperature": 0.4},
@@ -329,7 +345,11 @@ async def run_knowledge_answer_agent(
             ),
         )
     return (
-        result.output,
+        (
+            KnowledgeAnswerDraft.model_validate(result.output.model_dump())
+            if isinstance(result.output, CompositeKnowledgeAnswerDraft)
+            else result.output
+        ),
         StageMeta(
             purpose=purpose,
             provider="llm",

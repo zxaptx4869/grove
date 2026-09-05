@@ -57,6 +57,7 @@ from app.models.knowledge_agent import (
 )
 from app.schemas.knowledge_agent import KnowledgeAnswerOut
 from app.services.knowledge_agent.basis import (
+    answer_uses_model_knowledge,
     basis_strategy_allows_model_knowledge,
     build_answer_basis,
     dump_basis_plan,
@@ -70,6 +71,7 @@ from app.services.knowledge_agent.composite_answer import (
 from app.services.knowledge_agent.composite_answer_response import (
     CompositeAnswerResult,
     build_composite_answer,
+    preserve_answer_with_repair_facts,
 )
 from app.services.knowledge_agent.conversations import scope_label
 from app.services.knowledge_agent.evidence import build_validated_answer
@@ -344,7 +346,10 @@ async def _finalize_validated_answer(
         # 开放分支没有工具结果可展示且回答模型不可用：Run 进入失败终态，
         # 不得用静态模板伪装成正常 AI 回答。
         run_status = RUN_FAILED
-    elif answer_meta.is_fallback or strict_missing or ref_stats.discarded_count or open_grove_gap:
+    elif (
+        answer_meta.is_fallback or strict_missing or ref_stats.discarded_count
+        or open_grove_gap or answer.status in {"partial", "insufficient"}
+    ):
         run_status = RUN_PARTIAL
     else:
         run_status = RUN_COMPLETED
@@ -352,7 +357,9 @@ async def _finalize_validated_answer(
     answer_basis = build_answer_basis(
         answer=answer,
         user_statement_ids=user_statement_ids or [],
-        model_knowledge_used=(allow_model_knowledge and not answer_meta.is_fallback),
+        model_knowledge_used=answer_uses_model_knowledge(
+            answer, allowed=allow_model_knowledge, is_fallback=answer_meta.is_fallback,
+        ),
         external_material_required=external_material_required,
     )
 
@@ -515,24 +522,35 @@ async def _run_bounded_coverage_repair(
             snapshot.final_result or snapshot.baseline
         )
     if snapshot.stage in {"skipped", "failed"}:
-        return baseline_result
+        return coverage_repair_result_from_material(snapshot.final_result or snapshot.baseline)
 
-    async def fail_repair(reason: str, purpose: str, error: str):
-        await _record_server_fallback(
-            db,
-            run.id,
-            purpose=purpose,
-            error=error,
-        )
+    safe_result = baseline_result
+
+    async def fail_repair(reason: str, purpose: str, error: str, *, record: bool = True):
+        if record:
+            await _record_server_fallback(db, run.id, purpose=purpose, error=error)
+        retained = safe_result
         failed = snapshot.model_copy(
-            update={"stage": "failed", "stop_reason": reason, "error": error[:500]},
+            update={
+                "stage": "failed", "stop_reason": reason, "error": error[:500],
+                "final_result": (
+                    coverage_repair_material_from_result(retained)
+                    if retained is not baseline_result else None
+                ),
+            },
             deep=True,
         )
-        run.coverage_repair_json = dump_coverage_repair_snapshot(
-            failed, settings=settings
-        )
+        try:
+            raw = dump_coverage_repair_snapshot(failed, settings=settings)
+        except ValueError:
+            # 新展示材料也服从冻结预算；预算不足时保留完整基线而非截断引用。
+            failed.final_result = None
+            failed.error = "补查失败且新增展示材料超过快照预算，已保留首次完整回答"
+            raw = dump_coverage_repair_snapshot(failed, settings=settings)
+            retained = baseline_result
+        run.coverage_repair_json = raw
         await db.commit()
-        return baseline_result
+        return retained
 
     scope_fingerprint = run_scope_fingerprint(
         run_id=run.id,
@@ -638,6 +656,19 @@ async def _run_bounded_coverage_repair(
         await db.commit()
         return baseline_result
 
+    try:
+        merged_execution = merge_composite_execution(
+            composite_plan, original_execution, repair_plan, repair_execution,
+        )
+        safe_result = preserve_answer_with_repair_facts(
+            baseline_result, composite_plan, original_execution, merged_execution,
+        )
+    except Exception as exc:  # noqa: BLE001
+        return await fail_repair(
+            "synthesis_failed", PURPOSE_COVERAGE_REPAIR_SYNTHESIS,
+            f"覆盖补查结果合并失败：{exc}",
+        )
+
     if snapshot.synthesis_attempted:
         return await fail_repair(
             "synthesis_failed",
@@ -651,12 +682,6 @@ async def _run_bounded_coverage_repair(
     await _check_cancelled(run.id)
     await update_run_step(run.id, STEP_COVERAGE_REPAIR_SYNTHESIZE)
     try:
-        merged_execution = merge_composite_execution(
-            composite_plan,
-            original_execution,
-            repair_plan,
-            repair_execution,
-        )
         candidate = await build_composite_answer(
             db,
             run,
@@ -679,19 +704,10 @@ async def _run_bounded_coverage_repair(
         )
 
     if candidate.answer_fallback:
-        failed = snapshot.model_copy(
-            update={
-                "stage": "failed",
-                "stop_reason": "synthesis_failed",
-                "error": "覆盖补查再综合模型降级，已恢复首次合法结果",
-            },
-            deep=True,
+        return await fail_repair(
+            "synthesis_failed", PURPOSE_COVERAGE_REPAIR_SYNTHESIS,
+            "覆盖补查再综合模型降级，已保留首次合法结果", record=False,
         )
-        run.coverage_repair_json = dump_coverage_repair_snapshot(
-            failed, settings=settings
-        )
-        await db.commit()
-        return baseline_result
     if not coverage_is_non_regressive(
         snapshot.baseline.coverage, candidate.coverage
     ):
@@ -713,9 +729,13 @@ async def _run_bounded_coverage_repair(
         },
         deep=True,
     )
-    run.coverage_repair_json = dump_coverage_repair_snapshot(
-        completed, settings=settings
-    )
+    try:
+        run.coverage_repair_json = dump_coverage_repair_snapshot(completed, settings=settings)
+    except ValueError as exc:
+        return await fail_repair(
+            "synthesis_failed", PURPOSE_COVERAGE_REPAIR_SYNTHESIS,
+            f"覆盖补查综合结果超过冻结快照预算：{exc}",
+        )
     await db.commit()
     return candidate
 
@@ -852,7 +872,7 @@ async def execute_run(db: AsyncSession, run: KnowledgeAgentRun) -> None:
                 db,
                 workspace_id=run.workspace_id,
                 request_mode=run.request_answer_mode or ANSWER_MODE_AUTO,
-                objective=decision.standalone_query or query,
+                objective=query,
                 topic_summary=decision.topic_label,
             )
             run.actual_answer_mode = resolution.mode
@@ -1046,7 +1066,7 @@ async def execute_run(db: AsyncSession, run: KnowledgeAgentRun) -> None:
                 else:
                     composite_result = coverage_repair_result_from_material(
                         repair_snapshot.final_result
-                        if repair_snapshot.stage == "completed"
+                        if repair_snapshot.stage in {"completed", "failed"}
                         and repair_snapshot.final_result is not None
                         else repair_snapshot.baseline
                     )
@@ -1231,6 +1251,7 @@ async def execute_run(db: AsyncSession, run: KnowledgeAgentRun) -> None:
             seed_entries=seed_entries,
             basis_plan=plan,
             statement_context=statement_context,
+            current_message=query,
         )
         return
 
