@@ -2,6 +2,7 @@
 
 import copy
 import sqlite3
+from types import SimpleNamespace
 
 import httpx
 import pytest
@@ -13,8 +14,15 @@ from evals.knowledge_agent_multiturn import (
     collect_facts,
     compare_reports,
     evaluate_turn,
+    run_suite,
     wait_run,
 )
+
+
+@pytest.mark.asyncio
+async def test_missing_comparison_file_fails_before_authentication_or_model_calls(tmp_path):
+    with pytest.raises(FileNotFoundError):
+        await run_suite(SimpleNamespace(compare=tmp_path / "missing.json"), "unused")
 
 
 def sample():

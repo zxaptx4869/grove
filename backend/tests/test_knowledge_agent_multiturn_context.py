@@ -432,3 +432,68 @@ async def test_no_grove_conflict_cannot_open_model_permission():
             allowed_statements=[],
             feature_enabled=True,
         )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("action,expected", [("continue", "new_topic"), ("clarify", "clarify")])
+async def test_first_turn_does_not_require_fact_working_set(monkeypatch, action, expected):
+    async def planner(*args, **kwargs):
+        return ContextDecisionDraft(
+            action=action,
+            standalone_query="模型猜测的历史条件",
+            clarify_question="指哪个对象？",
+        ), StageMeta(
+            purpose="context_decision",
+            provider="test",
+            model="test",
+            is_fallback=False,
+            error=None,
+            duration_ms=0,
+        )
+
+    monkeypatch.setattr(
+        "app.services.knowledge_agent.follow_up.run_context_decision_agent", planner
+    )
+    decision = await decide_context(
+        None,
+        workspace_id=1,
+        conversation_id=1,
+        current_message="总共有多少条知识？",
+        request_mode="auto",
+        active_topic_label=None,
+        working_set_titles=[],
+        history_limit=8,
+        history_message_chars=500,
+        dialogue=DialogueContext(),
+        scope_label="全部知识",
+    )
+    assert decision.decision == expected
+    assert decision.standalone_query == "总共有多少条知识？"
+
+
+def test_full_enumeration_is_canonical_unfiltered_set():
+    plan = normalize_structured_query_plan(
+        {
+            "entry_set": {
+                "main_types": ["knowledge", "method", "parameter", "reminder"],
+                "info_natures": [
+                    "fact",
+                    "experience",
+                    "advice",
+                    "speculation",
+                    "other",
+                    "unspecified",
+                ],
+            },
+            "outputs": [{"kind": "count"}],
+        }
+    )
+    assert plan.entry_set.main_types == [] and plan.entry_set.info_natures == []
+    subset = normalize_structured_query_plan(
+        {
+            "entry_set": {"main_types": ["method"], "info_natures": ["fact", "experience"]},
+            "outputs": [{"kind": "count"}],
+        }
+    )
+    assert subset.entry_set.main_types == ["method"]
+    assert subset.entry_set.info_natures == ["fact", "experience"]

@@ -118,8 +118,10 @@ def _utc_bound(value: datetime | None, field_name: str) -> datetime | None:
 
 
 def _normalize_enum_list(values: list[str], order: tuple[str, ...]) -> list[str]:
-    """去重并按服务端稳定枚举顺序规范化。"""
+    """全枚举与无筛选等价；其余子集按服务端顺序去重。"""
     selected = set(values)
+    if selected == set(order):
+        return []
     return [value for value in order if value in selected]
 
 

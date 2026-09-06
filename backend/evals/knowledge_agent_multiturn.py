@@ -646,6 +646,10 @@ async def run_case(
 
 
 async def run_suite(args, password: str) -> int:
+    # 比较文件先读取，避免跑完整批后才因临时文件失效丢失收尾报告。
+    comparison_source = (
+        json.loads(args.compare.read_text(encoding="utf-8")) if args.compare else None
+    )
     oracle = Oracle(args.database, args.username)
     baseline = oracle.snapshot()
     counts = Counter(row["project_id"] for row in baseline["entries"])
@@ -742,13 +746,11 @@ async def run_suite(args, password: str) -> int:
             if not report["domain_unchanged"] and report["status"] == "completed":
                 report["status"] = "invalidated"
             report["finished_at"] = datetime.now(UTC).isoformat()
-            if args.compare:
-                report["comparison"] = compare_reports(
-                    json.loads(args.compare.read_text(encoding="utf-8")),
-                    report,
-                )
             save_report(report, directory)
             oracle.db.close()
+            if comparison_source is not None:
+                report["comparison"] = compare_reports(comparison_source, report)
+                save_report(report, directory)
     print(json.dumps(report["summary"], ensure_ascii=False), flush=True)
     if report.get("error"):
         print(f"运行错误：{report['error']}", flush=True)

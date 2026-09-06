@@ -14,7 +14,7 @@ from app.services.knowledge_agent.observability import StageMeta
 
 logger = logging.getLogger(__name__)
 
-CONTEXT_DECISION_PROMPT_VERSION = "v2"
+CONTEXT_DECISION_PROMPT_VERSION = "v3"
 
 
 class ContextDecisionDraft(BaseModel):
@@ -60,6 +60,12 @@ CONTEXT_DECISION_SYSTEM_PROMPT = (
     "继续讨论时也保留尚未撤销的限制。"
     "\n11. 对最近展示列表的序号指代，在 result_position 返回从 1 开始的位置，"
     "standalone_query 用对应标题补全；不存在有效列表时澄清，不编造对象。其他问题返回 null。"
+    "\n12. Grove 的 main_type 是互斥字段：知识 knowledge、方法 method、参数 parameter、"
+    "提醒 reminder。info_nature 是另一字段：事实、经验、建议、推测、其他、未标注。"
+    "用户改问同一字段的另一值时是替换该字段，不是在旧值里寻找新值；"
+    "没有修改的计数/列表/排序要求仍然保留，不把计数追问改写成有哪些。"
+    "\n13. 没有历史时，可根据当前可信范围独立执行的问题选择 new_topic；"
+    "只有缺少具体指代对象或必要条件的问题才澄清，缺少历史本身不是澄清理由。"
 )
 
 

@@ -128,6 +128,7 @@ STRUCTURED_QUERY_PLAN_SYSTEM_PROMPT = (
     "仅明确要求知识类型时用 knowledge。"
     "项目名称条件使用 project_name，不要把项目名放入 semantic_query；"
     "project_name 是精确项目名称筛选，不改变授权范围；按项目计数使用 group_count(project)。"
+    "没有限制类型或性质时对应数组留空，不需要枚举所有值。"
 )
 
 

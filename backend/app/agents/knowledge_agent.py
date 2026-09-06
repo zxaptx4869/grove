@@ -13,7 +13,7 @@ from app.services.knowledge_agent.observability import StageMeta
 
 logger = logging.getLogger(__name__)
 
-ANSWER_PROMPT_VERSION = "v4"
+ANSWER_PROMPT_VERSION = "v5"
 
 # 开放讨论追加提示：由服务端依据计划控制是否附加（prompt 版本随 ANSWER 观测）
 OPEN_ANSWER_PROMPT_SUFFIX = (
@@ -33,6 +33,11 @@ OPEN_ANSWER_PROMPT_SUFFIX = (
     "也不得把模型训练知识描述为实时结果；"
     "\n"
     "5. 用户陈述与 Grove Entry 冲突时，并列说明双方及依据，不替用户裁决。"
+    "\n"
+    "6. 此开放模式下，core_question_answered 和 coverage_complete 根据允许依据能否"
+    "回答用户要求判断，不以有没有 Grove Evidence 判断。通用知识足以完整回答时，"
+    "两项均为 True、insufficient=False、gaps 为空；不要为缺少本来就不需要的引用报缺口。"
+    "需要而缺少个人事实或实时材料时仍如实标记未完成，不能声称已解决。"
 )
 
 

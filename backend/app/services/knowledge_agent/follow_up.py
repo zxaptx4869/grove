@@ -290,7 +290,18 @@ async def decide_context(
             history_message_ids=history_ids,
             meta=meta,
         )
-    # continue 但对话没有活动工作集：不猜测历史主题，改为澄清
+    # 无历史的自动首问以原问题开启任务；不使用模型臆造的历史补全文本。
+    if dialogue is not None and not history:
+        return ContextDecisionResult(
+            decision=CONTEXT_DECISION_NEW_TOPIC,
+            standalone_query=current_message,
+            topic_label=draft.topic_label.strip() or _derive_topic_label(current_message),
+            clarify_question=None,
+            degraded=False,
+            history_message_ids=[],
+            meta=meta,
+        )
+    # 兼容未提供可信对话上下文的旧调用方。
     if not active_topic_label and not (dialogue and history):
         return ContextDecisionResult(
             decision=CONTEXT_DECISION_CLARIFY,
