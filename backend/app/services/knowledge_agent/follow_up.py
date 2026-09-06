@@ -95,7 +95,9 @@ async def decide_task_context(db, run, current_message, dialogue, scope_label):
         question = state.pending_question
         decision = {"clarify": "clarify", "start": "new_topic"}.get(state.operation, "continue")
         statement_ids = state.statement_message_ids
-        standalone = state.frame.goal if references else draft.standalone_query.strip() or current_message
+        standalone = (
+            state.frame.goal if references else draft.standalone_query.strip() or current_message
+        )
         label = draft.topic_label
     except (TaskStateError, ValueError) as exc:
         question = str(exc)

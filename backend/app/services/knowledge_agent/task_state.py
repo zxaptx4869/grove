@@ -445,7 +445,10 @@ async def select_task(
         title = str(items[draft.result_position - 1].get("title", ""))[:255]
         state.input["reference"] = {"position": draft.result_position, "displayed_title": title}
         # 对象身份以实际展示快照为准，不能让模型改写的错误标题覆盖正确的序号绑定。
-        state.frame.goal = f"{current_message[:1500]}（所指展示列表第{draft.result_position}条，展示标题：{title}）"
+        state.frame.goal = (
+            f"{current_message[:1500]}"
+            f"（所指展示列表第{draft.result_position}条，展示标题：{title}）"
+        )
     write_state(run, state)
     return state, references
 
