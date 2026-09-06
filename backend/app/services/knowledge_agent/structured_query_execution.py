@@ -188,10 +188,15 @@ async def execute_structured_query_plan(
                 "status": dispatched.status,
                 "completeness": dispatched.completeness,
             }
+            if not isinstance(dispatched.payload.get("value"), int):
+                count_result = None
             output_completeness["count"] = dispatched.completeness
         else:
             group_results.append(
                 {
+                    "group_by": output.group_by,
+                    "buckets": [],
+                    "truncated": False,
                     **dispatched.payload,
                     "status": dispatched.status,
                     "completeness": dispatched.completeness,

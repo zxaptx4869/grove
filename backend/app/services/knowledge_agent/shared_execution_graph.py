@@ -852,7 +852,10 @@ def materialize_composite_execution(
                         else f"本次匹配中可确认 {value} 条；结果受语义检索或预算限制，"
                         "不代表完整总数。"
                     )
-                    summary = {"value": value}
+                    summary = {
+                        "value": value,
+                        **({"scope": payload["scope"]} if "scope" in payload else {}),
+                    }
                 elif slot == "group_count":
                     buckets = payload.get("buckets")
                     group_by = payload.get("group_by")
@@ -862,10 +865,11 @@ def materialize_composite_execution(
                         "main_type": "知识类型",
                         "info_nature": "信息性质",
                         "updated_month": "更新月份",
+                        "project": "项目",
                     }.get(group_by, group_by)
                     rendered = (
                         "、".join(
-                            f"{item.get('key')} {int(item.get('count', 0))} 条"
+                            f"{item.get('label') or item.get('key')} {int(item.get('count', 0))} 条"
                             for item in buckets
                         )
                         or "没有可确认分组"
@@ -876,7 +880,11 @@ def materialize_composite_execution(
                         else "；仅代表本次有限结果。"
                     )
                     text = f"按{label}统计：{rendered}{suffix}"
-                    summary = {"group_by": group_by, "buckets": buckets}
+                    summary = {
+                        "group_by": group_by,
+                        "buckets": buckets,
+                        **({"scope": payload["scope"]} if "scope" in payload else {}),
+                    }
                 else:
                     if not isinstance(payload.get("entry_ids"), list):
                         continue

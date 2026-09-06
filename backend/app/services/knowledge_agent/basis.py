@@ -122,6 +122,7 @@ def _contains_knowledge_only_restriction(*texts: str) -> bool:
     without_model_broadening = _BROADEN_MODEL_PATTERN.sub("", compact)
     if _NEGATIVE_MODEL_KNOWLEDGE_PATTERN.search(without_model_broadening):
         return True
+    compact = re.sub(r"(?:通用|模型|ai|外部|公共)知识", "通用常识", compact)
     without_knowledge_broadening = _BROADEN_KNOWLEDGE_PATTERN.sub("", compact)
     return bool(
         any(
@@ -135,6 +136,19 @@ def _contains_knowledge_only_restriction(*texts: str) -> bool:
 def contains_knowledge_only_restriction(*texts: str) -> bool:
     """公开复用明确 knowledge-only 自然语言门禁，避免不同规划器规则漂移。"""
     return _contains_knowledge_only_restriction(*texts)
+
+
+def contains_no_grove_restriction(*texts: str) -> bool:
+    """只识别明确禁止查 Grove 的约束，放宽“不要只查”不属于禁止。"""
+    compact = re.sub(r"[\s，。！？、；：,.!?;:]", "", " ".join(texts).casefold())
+    compact = re.sub(r"(?:不要|不用|无需|不必|别)(?:只|仅)", "允许", compact)
+    return bool(
+        re.search(
+            r"(?:不要|不用|无需|不必|别|不)(?:再|去|用)?(?:查|查询|检索|搜索|读取|使用|参考)"
+            r"(?:我的|个人|已有)?(?:知识库|grove|知林)",
+            compact,
+        )
+    )
 
 
 def _server_knowledge_only_plan() -> BasisPlan:
@@ -313,6 +327,14 @@ async def resolve_basis_plan(
     - 规划器返回的候选用户消息句柄只保留服务端允许集合内的值。
     """
     effective_mode = request_basis_mode or BASIS_MODE_KNOWLEDGE_ONLY
+    if contains_no_grove_restriction(current_message, objective):
+        if effective_mode != BASIS_MODE_AUTO or not feature_enabled:
+            raise ValueError("不查 Grove 与当前仅知识库设置冲突，需要澄清")
+        return BasisPlan(
+            strategy=BASIS_STRATEGY_MODEL_FIRST,
+            needs_grove=False,
+            candidate_statement_ids=[item.message_id for item in allowed_statements],
+        )
     if (
         not feature_enabled
         or effective_mode == BASIS_MODE_KNOWLEDGE_ONLY
@@ -470,6 +492,7 @@ async def load_allowed_user_statements(
     current_message_id: int | None,
     exclude_run_id: int | None = None,
     input_context_version_id: int | None = None,
+    history_message_ids: list[int] | None = None,
     limit: int,
     message_chars: int,
 ) -> list[UserStatementCandidate]:
@@ -509,6 +532,37 @@ async def load_allowed_user_statements(
     )
     if context_decision != CONTEXT_DECISION_CONTINUE:
         return [current_statement]
+    if history_message_ids is not None:
+        rows = (
+            (
+                await db.execute(
+                    select(KnowledgeMessage)
+                    .join(
+                        KnowledgeAgentRun,
+                        KnowledgeMessage.run_id == KnowledgeAgentRun.id,
+                    )
+                    .where(
+                        KnowledgeMessage.id.in_(history_message_ids),
+                        KnowledgeMessage.id < current.id,
+                        KnowledgeMessage.conversation_id == conversation_id,
+                        KnowledgeMessage.role == MESSAGE_ROLE_USER,
+                        KnowledgeMessage.scope_type == scope_type,
+                        KnowledgeMessage.project_id == project_id,
+                        KnowledgeAgentRun.workspace_id == workspace_id,
+                        KnowledgeAgentRun.owner_user_id == owner_user_id,
+                        KnowledgeAgentRun.status.in_(["completed", "partial"]),
+                    )
+                    .order_by(KnowledgeMessage.id.desc())
+                    .limit(limit - 1)
+                )
+            )
+            .scalars()
+            .all()
+        )
+        return [
+            UserStatementCandidate(message_id=row.id, content=row.content[:message_chars])
+            for row in reversed(rows)
+        ] + [current_statement]
     chain_ids = await _context_chain_version_ids(
         db,
         conversation_id=conversation_id,

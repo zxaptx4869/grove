@@ -60,6 +60,7 @@ from app.services.knowledge_agent.basis import (
     answer_uses_model_knowledge,
     basis_strategy_allows_model_knowledge,
     build_answer_basis,
+    contains_no_grove_restriction,
     dump_basis_plan,
     load_allowed_user_statements,
     resolve_basis_plan,
@@ -177,6 +178,7 @@ def _restore_decision(run: KnowledgeAgentRun) -> ContextDecisionResult | None:
         clarify_question=meta_json.get("clarify_question"),
         degraded=bool(meta_json.get("is_fallback") or meta_json.get("error")),
         history_message_ids=list(history_ids),
+        referenced_entry_ids=meta_json.get("referenced_entry_ids", []),
         meta=StageMeta(
             purpose=PURPOSE_CONTEXT_DECISION,
             provider=meta_json.get("provider", "server"),
@@ -206,6 +208,7 @@ def _persist_decision(
             "duration_ms": decision.meta.duration_ms,
             "prompt_version": CONTEXT_DECISION_PROMPT_VERSION,
             "clarify_question": decision.clarify_question,
+            "referenced_entry_ids": decision.referenced_entry_ids,
         },
         ensure_ascii=False,
     )
@@ -778,6 +781,14 @@ async def execute_run(db: AsyncSession, run: KnowledgeAgentRun) -> None:
     )
     decision = _restore_decision(run)
     if decision is None:
+        from app.services.knowledge_agent.dialogue_context import load_dialogue_context
+
+        dialogue = await load_dialogue_context(
+            db,
+            run,
+            limit=settings.knowledge_agent_history_limit,
+            message_chars=settings.knowledge_agent_history_message_chars,
+        )
         decision = await decide_context(
             db,
             workspace_id=run.workspace_id,
@@ -790,6 +801,8 @@ async def execute_run(db: AsyncSession, run: KnowledgeAgentRun) -> None:
             history_message_chars=settings.knowledge_agent_history_message_chars,
             user_message_id=run.user_message_id,
             exclude_run_id=run.id,
+            dialogue=dialogue,
+            scope_label=scope,
         )
         await record_model_invocation(
             db,
@@ -838,6 +851,24 @@ async def execute_run(db: AsyncSession, run: KnowledgeAgentRun) -> None:
                 prompt_version=RESULT_MODE_ROUTE_PROMPT_VERSION,
             )
         await db.commit()
+    no_grove = contains_no_grove_restriction(query, decision.standalone_query or "")
+    if no_grove and (
+        run.request_basis_mode == "knowledge_only"
+        or not settings.knowledge_agent_open_discussion_enabled
+    ):
+        await finalize_run(
+            db,
+            run,
+            answer=KnowledgeAnswerOut(
+                answer="当前设置仅允许使用知识库，但你要求不查知识库。请切换为自动依据后继续。",
+                status="clarification",
+            ),
+            status=RUN_COMPLETED,
+            fallback_summary=await run_fallback_summary(db, run.id),
+        )
+        return
+    if no_grove or decision.referenced_entry_ids:
+        run.actual_result_mode = "answer"
     if run.actual_result_mode == RESULT_MODE_ENTRIES:
         from app.services.knowledge_agent.entry_search import (
             execute_structured_entry_search,
@@ -862,8 +893,12 @@ async def execute_run(db: AsyncSession, run: KnowledgeAgentRun) -> None:
         or getattr(run, "coverage_repair_json", None)
     )
     if (
-        getattr(settings, "knowledge_agent_composite_answer_enabled", False)
-        or composite_snapshot_exists
+        not no_grove
+        and not decision.referenced_entry_ids
+        and (
+            getattr(settings, "knowledge_agent_composite_answer_enabled", False)
+            or composite_snapshot_exists
+        )
     ):
         await _check_cancelled(run.id)
         await update_run_step(run.id, STEP_INVESTIGATION_ROUTE)
@@ -897,6 +932,7 @@ async def execute_run(db: AsyncSession, run: KnowledgeAgentRun) -> None:
                 current_message_id=run.user_message_id,
                 exclude_run_id=run.id,
                 input_context_version_id=run.input_context_version_id,
+                history_message_ids=decision.history_message_ids,
                 limit=settings.knowledge_agent_statement_limit,
                 message_chars=settings.knowledge_agent_statement_message_chars,
             )
@@ -1130,6 +1166,7 @@ async def execute_run(db: AsyncSession, run: KnowledgeAgentRun) -> None:
             current_message_id=run.user_message_id,
             exclude_run_id=run.id,
             input_context_version_id=run.input_context_version_id,
+            history_message_ids=decision.history_message_ids,
             limit=getattr(settings, "knowledge_agent_statement_limit", 6),
             message_chars=getattr(settings, "knowledge_agent_statement_message_chars", 800),
         )
@@ -1279,14 +1316,19 @@ async def execute_run(db: AsyncSession, run: KnowledgeAgentRun) -> None:
     await _check_cancelled(run.id)
     await update_run_step(run.id, STEP_SEARCH)
     started = perf_counter()
-    search = await search_confirmed_knowledge(
-        db,
-        ctx,
-        decision.standalone_query or query,
-        recall_limit=settings.knowledge_agent_recall_limit,
-        context_limit=settings.knowledge_agent_context_limit,
-        seed_entries=seed_entries or None,
-    )
+    if decision.referenced_entry_ids:
+        from app.services.knowledge_agent.tools import resolve_recent_result_entries
+
+        search = await resolve_recent_result_entries(db, ctx, decision.referenced_entry_ids)
+    else:
+        search = await search_confirmed_knowledge(
+            db,
+            ctx,
+            decision.standalone_query or query,
+            recall_limit=settings.knowledge_agent_recall_limit,
+            context_limit=settings.knowledge_agent_context_limit,
+            seed_entries=seed_entries or None,
+        )
     duration_ms = int((perf_counter() - started) * 1000)
     if search.embedding_meta:
         await record_model_invocation(
@@ -1305,8 +1347,13 @@ async def execute_run(db: AsyncSession, run: KnowledgeAgentRun) -> None:
     await record_tool_result(
         db,
         run_id=run.id,
-        tool_name="search_confirmed_knowledge",
-        params={"query": (decision.standalone_query or query)[:200]},
+        tool_name="recent_result_reference"
+        if decision.referenced_entry_ids
+        else "search_confirmed_knowledge",
+        params={
+            "query": (decision.standalone_query or query)[:200],
+            "referenced_entry_ids": decision.referenced_entry_ids,
+        },
         result={
             "total": len(search.items),
             "entry_ids": [item.entry_id for item in search.items],
@@ -1314,6 +1361,20 @@ async def execute_run(db: AsyncSession, run: KnowledgeAgentRun) -> None:
         duration_ms=duration_ms,
     )
     await db.commit()
+    if not search.items and decision.referenced_entry_ids:
+        await _finalize_deterministic_insufficient(
+            db,
+            run,
+            decision,
+            input_version=input_version,
+            working_set=working_set,
+            settings=settings,
+            text="上一轮指定的条目已不可用或不在当前范围内，请重新选择条目。",
+            note="历史列表对象复验失败，未使用其他对象替代",
+            run_status=RUN_COMPLETED,
+            external_material_required=False,
+        )
+        return
     if not search.items:
         if allow_model_knowledge or plan.requires_external_material:
             # 开放分支：Grove 空结果不自动等于知识不足，按实际完成度回答

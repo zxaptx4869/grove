@@ -53,6 +53,9 @@ class NormalizedEntrySetSpec(StrictNormalizedModel):
     """不含授权范围的 EntrySetSpec v1 可执行参数。"""
 
     schema_version: Literal["v1"] = "v1"
+    project_name: str | None = Field(
+        default=None, min_length=1, max_length=64, exclude_if=lambda value: value is None,
+    )
     semantic_query: str | None = None
     main_types: list[Literal["knowledge", "method", "parameter", "reminder"]] = []
     info_natures: list[
@@ -87,7 +90,7 @@ class NormalizedCountOutput(StrictNormalizedModel):
 
 class NormalizedGroupCountOutput(StrictNormalizedModel):
     kind: Literal["group_count"] = "group_count"
-    group_by: Literal["main_type", "info_nature", "updated_month"]
+    group_by: Literal["main_type", "info_nature", "updated_month", "project"]
 
 
 NormalizedStructuredQueryOutput = Annotated[
@@ -100,7 +103,7 @@ class NormalizedStructuredQueryPlan(StrictNormalizedModel):
     """持久化并执行的 StructuredQueryPlan v1；不保存原始模型输出。"""
 
     schema_version: Literal["v1"] = "v1"
-    prompt_version: Literal["v1"] = STRUCTURED_QUERY_PLAN_PROMPT_VERSION
+    prompt_version: Literal["v1", "v2"] = STRUCTURED_QUERY_PLAN_PROMPT_VERSION
     entry_set: NormalizedEntrySetSpec
     outputs: list[NormalizedStructuredQueryOutput]
 
@@ -193,10 +196,11 @@ def normalize_structured_query_plan(
 
     plan = NormalizedStructuredQueryPlan(
         entry_set=NormalizedEntrySetSpec(
-            semantic_query=semantic_query,
-            main_types=_normalize_enum_list(
-                list(draft.entry_set.main_types), _MAIN_TYPE_ORDER
+            project_name=(
+                draft.entry_set.project_name.strip() if draft.entry_set.project_name else None
             ),
+            semantic_query=semantic_query,
+            main_types=_normalize_enum_list(list(draft.entry_set.main_types), _MAIN_TYPE_ORDER),
             info_natures=_normalize_enum_list(
                 list(draft.entry_set.info_natures), _INFO_NATURE_ORDER
             ),

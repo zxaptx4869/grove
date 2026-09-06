@@ -85,6 +85,8 @@ def _fixed_context_and_mode(monkeypatch):
         history_message_chars,
         user_message_id=None,
         exclude_run_id=None,
+        dialogue=None,
+        scope_label=None,
     ):
         return ContextDecisionResult(
             decision="new_topic",

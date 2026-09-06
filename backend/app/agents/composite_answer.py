@@ -22,7 +22,7 @@ from app.services.knowledge_agent.observability import StageMeta
 
 logger = logging.getLogger(__name__)
 
-COMPOSITE_ANSWER_PLAN_PROMPT_VERSION = "v1"
+COMPOSITE_ANSWER_PLAN_PROMPT_VERSION = "v2"
 
 CompositeRequirementKind = Literal[
     "explain",
@@ -118,6 +118,10 @@ class CompositeAnswerPlanDraft(StrictCompositeDraft):
 
 
 COMPOSITE_ANSWER_PLAN_SYSTEM_PROMPT = (
+    "泛称知识/全部记录默认包含全部四种类型，不加 knowledge 单类型过滤。"
+    "项目名称筛选用 EntrySetSpec.project_name；"
+    "项目分组用 group_count(project)。"
+    "继续追问时使用独立问题中的完整对象和条件，原始消息中的新要求与限制优先。"
     "你是 Grove 知识 Agent 的 quick 复合回答规划器。你只拆解一条原始请求中的回答义务"
     "并提出有界只读输入候选，不回答问题、不执行工具、不决定授权范围。"
     "\n"
@@ -134,7 +138,8 @@ COMPOSITE_ANSWER_PLAN_SYSTEM_PROMPT = (
     "引用。若输入声明‘仅使用知识库’，所有义务都必须 grove_only。"
     "\n"
     "Grove 普通知识读取用 retrieval_requests；统计、分组、排序或有界对象列表使用"
-    "structured_requests。EntrySetSpec 只允许 semantic_query、main_types、info_natures、"
+    "structured_requests。EntrySetSpec 只允许 project_name、semantic_query、"
+    "main_types、info_natures、"
     "带时区 UTC updated_at 闭开区间；输出只允许 entries/count/group_count。"
     "\n"
     "绝对不要输出 owner、Workspace、项目、目录、Entry、Source 或其他对象 id，不要输出"

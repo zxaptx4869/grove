@@ -170,7 +170,11 @@ def collect_facts(run: dict, diagnostic: dict) -> list[dict]:
                         "kind": "group" if fact["kind"] == "group_count" else fact["kind"],
                         **fact.get("summary", {}),
                         "completeness": fact["completeness"],
-                        "entry_set": sets.get(fact["request_id"]),
+                        "entry_set": (
+                            {**sets[fact["request_id"]], **fact.get("summary", {}).get("scope", {})}
+                            if fact["request_id"] in sets
+                            else None
+                        ),
                     }
                 )
     return facts

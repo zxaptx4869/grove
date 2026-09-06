@@ -166,6 +166,7 @@ def _group_label(value: str) -> str:
         "main_type": "知识类型",
         "info_nature": "信息性质",
         "updated_month": "更新月份",
+        "project": "项目",
     }.get(value, value)
 
 
@@ -177,7 +178,7 @@ def structured_result_tool_facts(
 ) -> list[CompositeToolFact]:
     """把 B1 输出变成稳定服务端事实；完整性决定是否允许全集措辞。"""
     facts: list[CompositeToolFact] = []
-    if result.count is not None:
+    if result.count is not None and isinstance(result.count.get("value"), int):
         completeness = result.count.get("completeness", RESULT_COMPLETENESS_UNKNOWN)
         value = int(result.count.get("value", 0))
         text = (
@@ -193,15 +194,23 @@ def structured_result_tool_facts(
                 kind="count",
                 text=text,
                 completeness=completeness,
-                summary={"value": value},
+                summary={
+                    "value": value,
+                    **({"scope": result.count["scope"]} if "scope" in result.count else {}),
+                },
             )
         )
     for group in result.group_counts:
+        if group.get("status") in {"error", "denied", "cancelled"}:
+            continue
         group_by = str(group.get("group_by", ""))
         completeness = group.get("completeness", RESULT_COMPLETENESS_UNKNOWN)
         buckets = list(group.get("buckets", []))
         rendered = (
-            "、".join(f"{item.get('key')} {int(item.get('count', 0))} 条" for item in buckets)
+            "、".join(
+                f"{item.get('label') or item.get('key')} {int(item.get('count', 0))} 条"
+                for item in buckets
+            )
             or "没有可确认分组"
         )
         suffix = "。" if completeness == RESULT_COMPLETENESS_COMPLETE else "；仅代表本次有限结果。"
@@ -213,7 +222,11 @@ def structured_result_tool_facts(
                 kind="group_count",
                 text=f"按{_group_label(group_by)}统计：{rendered}{suffix}",
                 completeness=completeness,
-                summary={"group_by": group_by, "buckets": buckets},
+                summary={
+                    "group_by": group_by,
+                    "buckets": buckets,
+                    **({"scope": group["scope"]} if "scope" in group else {}),
+                },
             )
         )
     if result.entries is not None:

@@ -1,7 +1,7 @@
 """知识 Agent 连续追问决策服务：有限历史、归一化与安全降级。"""
 
 import logging
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -20,6 +20,7 @@ from app.models.knowledge_agent import (
     MESSAGE_ROLE_USER,
     PURPOSE_CONTEXT_DECISION,
 )
+from app.services.knowledge_agent.dialogue_context import DialogueContext
 from app.services.knowledge_agent.observability import StageMeta
 
 logger = logging.getLogger(__name__)
@@ -45,6 +46,7 @@ class ContextDecisionResult:
     degraded: bool
     history_message_ids: list[int]
     meta: StageMeta
+    referenced_entry_ids: list[int] = field(default_factory=list)
 
 
 def _server_meta(duration_ms: int = 0) -> StageMeta:
@@ -136,16 +138,48 @@ async def decide_context(
     history_message_chars: int,
     user_message_id: int | None = None,
     exclude_run_id: int | None = None,
+    dialogue: DialogueContext | None = None,
+    scope_label: str | None = None,
 ) -> ContextDecisionResult:
     """执行上下文决策：显式覆盖优先，auto 走决策模型，均做归一化与安全降级。"""
-    history, history_ids = await select_decision_history(
-        db,
-        conversation_id,
-        exclude_message_id=user_message_id,
-        exclude_run_id=exclude_run_id,
-        limit=history_limit,
-        message_chars=history_message_chars,
+    if dialogue is None:
+        history, history_ids = await select_decision_history(
+            db,
+            conversation_id,
+            exclude_message_id=user_message_id,
+            exclude_run_id=exclude_run_id,
+            limit=history_limit,
+            message_chars=history_message_chars,
+        )
+    else:
+        history, history_ids = dialogue.history, dialogue.message_ids
+        active_topic_label = dialogue.topic_label
+        if not history:
+            working_set_titles = []
+    agent_context = (
+        {} if dialogue is None else {"scope_label": scope_label, "task_context": dialogue.task}
     )
+
+    def referenced_ids(draft) -> list[int]:
+        position = getattr(draft, "result_position", None)
+        if dialogue is None or position is None or position > len(dialogue.result_items):
+            return []
+        entry_id = dialogue.result_items[position - 1].get("entry_id")
+        return [entry_id] if type(entry_id) is int and entry_id > 0 else []
+
+    def invalid_reference(draft) -> ContextDecisionResult | None:
+        position = getattr(draft, "result_position", None)
+        if position is None or referenced_ids(draft):
+            return None
+        return ContextDecisionResult(
+            decision=CONTEXT_DECISION_CLARIFY,
+            standalone_query=current_message,
+            topic_label=active_topic_label,
+            clarify_question="最近的展示列表中没有这个序号，请重新选择条目或说明标题。",
+            degraded=False,
+            history_message_ids=history_ids,
+            meta=meta,
+        )
 
     # ---- 显式 new_topic：绕过分类，直接用当前消息开始独立检索 ----
     if request_mode == CONTEXT_MODE_NEW_TOPIC:
@@ -161,7 +195,7 @@ async def decide_context(
 
     # ---- 显式 continue：固定语义，只改写查询 ----
     if request_mode == CONTEXT_MODE_CONTINUE:
-        if not active_topic_label:
+        if not active_topic_label and not (dialogue and history):
             return ContextDecisionResult(
                 decision=CONTEXT_DECISION_CLARIFY,
                 standalone_query=current_message,
@@ -178,27 +212,36 @@ async def decide_context(
             active_topic_label=active_topic_label,
             working_set_titles=working_set_titles,
             history=history,
+            **agent_context,
         )
         if meta.is_fallback or draft is None:
             # 安全降级：主题标签 + 原问题形成确定性独立查询
             return ContextDecisionResult(
                 decision=CONTEXT_DECISION_CONTINUE,
-                standalone_query=f"{active_topic_label}：{current_message}",
+                standalone_query=(f"{active_topic_label or _derive_topic_label(current_message)}："
+                                  f"{current_message}"),
                 topic_label=active_topic_label,
                 clarify_question=None,
                 degraded=True,
                 history_message_ids=history_ids,
                 meta=meta,
             )
+        invalid = invalid_reference(draft)
+        if invalid is not None:
+            return invalid
         standalone = draft.standalone_query.strip()
         return ContextDecisionResult(
             decision=CONTEXT_DECISION_CONTINUE,
-            standalone_query=standalone or f"{active_topic_label}：{current_message}",
-            topic_label=active_topic_label,
+            standalone_query=standalone
+            or f"{active_topic_label or _derive_topic_label(current_message)}：{current_message}",
+            topic_label=active_topic_label
+            or draft.topic_label.strip()
+            or _derive_topic_label(current_message),
             clarify_question=None,
             degraded=False,
             history_message_ids=history_ids,
             meta=meta,
+            referenced_entry_ids=referenced_ids(draft),
         )
 
     # ---- auto：模型判断 + 应用层归一化 ----
@@ -209,6 +252,7 @@ async def decide_context(
         active_topic_label=active_topic_label,
         working_set_titles=working_set_titles,
         history=history,
+        **agent_context,
     )
     if meta.is_fallback or draft is None:
         # 分类失败显式降级为 new_topic，不偷偷沿用旧工作集
@@ -222,6 +266,9 @@ async def decide_context(
             meta=meta,
         )
 
+    invalid = invalid_reference(draft)
+    if invalid is not None:
+        return invalid
     action = draft.action
     if action == CONTEXT_DECISION_CLARIFY:
         return ContextDecisionResult(
@@ -244,7 +291,7 @@ async def decide_context(
             meta=meta,
         )
     # continue 但对话没有活动工作集：不猜测历史主题，改为澄清
-    if not active_topic_label:
+    if not active_topic_label and not (dialogue and history):
         return ContextDecisionResult(
             decision=CONTEXT_DECISION_CLARIFY,
             standalone_query=current_message,
@@ -257,9 +304,12 @@ async def decide_context(
     return ContextDecisionResult(
         decision=CONTEXT_DECISION_CONTINUE,
         standalone_query=draft.standalone_query.strip() or current_message,
-        topic_label=active_topic_label,
+        topic_label=active_topic_label
+        or draft.topic_label.strip()
+        or _derive_topic_label(current_message),
         clarify_question=None,
         degraded=False,
         history_message_ids=history_ids,
         meta=meta,
+        referenced_entry_ids=referenced_ids(draft),
     )

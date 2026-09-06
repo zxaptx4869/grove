@@ -33,10 +33,21 @@ from app.services.knowledge_agent.structured_query_execution import (
 
 def _assistant_compatibility_text(snapshot: KnowledgeEntryResultSnapshotOut) -> str:
     """为旧客户端保留有界摘要，不把有限统计包装成精确全集。"""
+    if snapshot.status == "partial" and snapshot.warning:
+        return snapshot.warning
     if snapshot.count is not None:
         if snapshot.count.completeness == RESULT_COMPLETENESS_COMPLETE:
             return f"结构化查询完成，共 {snapshot.count.value} 条正式知识。"
         return f"结构化查询完成，本次匹配到 {snapshot.count.value} 条正式知识。"
+    if snapshot.group_counts:
+        return "；".join(
+            f"{group.group_by}："
+            + "、".join(
+                f"{bucket.label or bucket.key} {bucket.count} 条" for bucket in group.buckets
+            )
+            + ("（有限结果）" if group.completeness != RESULT_COMPLETENESS_COMPLETE else "")
+            for group in snapshot.group_counts
+        )
     if snapshot.items:
         return f"找到 {len(snapshot.items)} 条相关正式知识，请使用支持结构化结果的客户端查看。"
     return "结构化查询完成，当前集合没有可展示的正式知识。"
@@ -89,6 +100,16 @@ async def execute_structured_query_entry_search(
         KnowledgeGroupCountResultOut.model_validate(item)
         for item in execution.group_counts
     ]
+    from app.services.knowledge_agent.structured_query_tools import resolve_project_filter
+
+    try:
+        result_scope = await resolve_project_filter(db, ctx, plan.entry_set)
+    except ValueError:
+        result_scope = {
+            "scope_type": run.scope_type,
+            "project_id": run.project_id,
+            "project_name": plan.entry_set.project_name or run.project_name,
+        }
     warnings = list(execution.warnings)
     snapshot = KnowledgeEntryResultSnapshotOut.model_validate(
         {
@@ -102,9 +123,7 @@ async def execute_structured_query_entry_search(
             "warning": warnings[0] if warnings else None,
             "snapshot_updated_at": datetime.now(UTC),
             "set_summary": KnowledgeEntrySetSummaryOut(
-                scope_type=run.scope_type,
-                project_id=run.project_id,
-                project_name=run.project_name,
+                **result_scope,
                 semantic_query=plan.entry_set.semantic_query,
                 main_types=list(plan.entry_set.main_types),
                 info_natures=list(plan.entry_set.info_natures),
@@ -114,9 +133,7 @@ async def execute_structured_query_entry_search(
                     else None
                 ),
                 updated_at_to=(
-                    plan.entry_set.updated_at.to
-                    if plan.entry_set.updated_at is not None
-                    else None
+                    plan.entry_set.updated_at.to if plan.entry_set.updated_at is not None else None
                 ),
                 completeness=execution.set_completeness,
             ),

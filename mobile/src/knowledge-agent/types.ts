@@ -58,9 +58,10 @@ export type StructuredQuerySortDirection = "asc" | "desc";
 export type StructuredQueryGroupField =
   | "main_type"
   | "info_nature"
-  | "updated_month";
+  | "updated_month"
+  | "project";
 /** snake_case 对象键经 API 适配后使用 camelCase。 */
-export type StructuredQueryGroupKey = "mainType" | "infoNature" | "updatedMonth";
+export type StructuredQueryGroupKey = "mainType" | "infoNature" | "updatedMonth" | "project";
 export type ExternalMaterialStatus = "not_used" | "required_unavailable";
 export type CompositeRequirementKind =
   | "explain"
@@ -305,6 +306,7 @@ export interface KnowledgeCountResult {
 
 export interface KnowledgeGroupBucket {
   key: string;
+  label?: string | null;
   count: number;
 }
 
@@ -329,6 +331,7 @@ export interface KnowledgeStructuredUpdatedAt {
 
 export interface KnowledgeStructuredEntrySetPlan {
   schemaVersion: "v1";
+  projectName?: string | null;
   semanticQuery: string | null;
   mainTypes: string[];
   infoNatures: string[];
@@ -357,7 +360,7 @@ export type KnowledgeStructuredOutput =
 
 export interface KnowledgeStructuredQueryPlan {
   schemaVersion: "v1";
-  promptVersion: "v1";
+  promptVersion: "v1" | "v2";
   entrySet: KnowledgeStructuredEntrySetPlan;
   outputs: KnowledgeStructuredOutput[];
 }

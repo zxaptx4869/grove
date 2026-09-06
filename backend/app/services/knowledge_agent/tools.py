@@ -169,6 +169,42 @@ async def _node_paths(
     return await build_node_path_map(db, project_id)
 
 
+async def resolve_recent_result_entries(
+    db: AsyncSession,
+    ctx: RunToolContext,
+    entry_ids: list[int],
+) -> SearchToolOutput:
+    """历史列表只授权定位；本轮复验对象范围，再走正常 Entry/Source 读取。"""
+    stmt = (
+        select(Entry)
+        .join(Project, Entry.project_id == Project.id)
+        .options(*entry_eager_options(), selectinload(Entry.project))
+        .where(Project.workspace_id == ctx.workspace_id, Entry.id.in_(entry_ids))
+    )
+    if ctx.project_id is not None:
+        stmt = stmt.where(Entry.project_id == ctx.project_id)
+    rows = (await db.execute(stmt)).scalars().all()
+    by_id = {entry.id: entry for entry in rows}
+    items = []
+    for entry_id in entry_ids:
+        entry = by_id.get(entry_id)
+        if entry is None:
+            continue
+        paths = await _node_paths(db, entry.project_id)
+        items.append(
+            SearchResultItem(
+                entry_id=entry.id,
+                title=entry.title,
+                project_name=_entry_project_name(entry),
+                node_path=paths.get(entry.node_id, ""),
+                summary=entry.content[:200],
+                source_count=len(entry.evidences),
+            )
+        )
+        ctx.discovered_entry_ids.add(entry.id)
+    return SearchToolOutput(items=items)
+
+
 async def search_confirmed_knowledge(
     db: AsyncSession,
     ctx: RunToolContext,

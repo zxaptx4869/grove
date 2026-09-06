@@ -55,7 +55,7 @@ class AggregateEntriesParams(ReadToolParams):
 
     entry_set: NormalizedEntrySetSpec
     operation: Literal["count", "group_count"]
-    group_by: Literal["main_type", "info_nature", "updated_month"] | None = None
+    group_by: Literal["main_type", "info_nature", "updated_month", "project"] | None = None
 
     @model_validator(mode="after")
     def validate_operation(self) -> "AggregateEntriesParams":
@@ -67,11 +67,40 @@ class AggregateEntriesParams(ReadToolParams):
         return self
 
 
+async def resolve_project_filter(
+    db: AsyncSession,
+    ctx: RunToolContext,
+    entry_set: NormalizedEntrySetSpec,
+) -> dict:
+    """名称只能收紧可信范围；不存在或重名时拒绝，绝不丢掉条件继续查全集。"""
+    scope = {
+        "scope_type": ctx.scope_type,
+        "project_id": ctx.project_id,
+        "project_name": ctx.project_name,
+    }
+    if entry_set.project_name is None:
+        return scope
+    stmt = select(Project.id, Project.name).where(
+        Project.workspace_id == ctx.workspace_id,
+        Project.name == entry_set.project_name,
+    )
+    if ctx.project_id is not None:
+        stmt = stmt.where(Project.id == ctx.project_id)
+    rows = (await db.execute(stmt.limit(2))).all()
+    if not rows:
+        raise ValueError("当前授权范围内没有这个项目，请核对项目名称或切换界面范围")
+    if len(rows) > 1:
+        raise ValueError("当前范围存在同名项目，请在界面选择具体项目后重试")
+    return {"scope_type": "project", "project_id": rows[0].id, "project_name": rows[0].name}
+
+
 def _apply_entry_set_filters(
     stmt: Select,
     entry_set: NormalizedEntrySetSpec,
 ) -> Select:
     """只应用跨 SQLite/MySQL 8 语义一致的白名单结构化条件。"""
+    if entry_set.project_name is not None:
+        stmt = stmt.where(Project.name == entry_set.project_name)
     if entry_set.main_types:
         stmt = stmt.where(Entry.main_type.in_(entry_set.main_types))
     if entry_set.info_natures:
@@ -173,6 +202,28 @@ def structured_aggregate_statement(
     base_ids = _aggregate_scope_stmt(ctx, params.entry_set).subquery()
     if params.operation == "count":
         return select(func.count()).select_from(base_ids)
+    if params.group_by == "project":
+        # 左连接已过滤集合，保留当前可访问的零条项目。
+        counts = (
+            select(Entry.project_id.label("project_id"), func.count().label("total"))
+            .where(Entry.id.in_(select(base_ids.c.id)))
+            .group_by(Entry.project_id)
+            .subquery()
+        )
+        stmt = (
+            select(
+                Project.id.label("bucket"),
+                Project.name.label("label"),
+                func.coalesce(counts.c.total, 0).label("count"),
+            )
+            .outerjoin(counts, counts.c.project_id == Project.id)
+            .where(Project.workspace_id == ctx.workspace_id)
+        )
+        if ctx.project_id is not None:
+            stmt = stmt.where(Project.id == ctx.project_id)
+        if params.entry_set.project_name is not None:
+            stmt = stmt.where(Project.name == params.entry_set.project_name)
+        return stmt.order_by(Project.id).limit(bucket_limit + 1)
     if params.group_by == "main_type":
         bucket_expr = Entry.main_type
     elif params.group_by == "info_nature":
@@ -194,6 +245,7 @@ async def aggregate_entries_handler(
     params: AggregateEntriesParams,
 ) -> ReadToolExecution:
     """直接对共享集合执行 count/group_count，不依赖任何列表输出。"""
+    resolved_scope = await resolve_project_filter(db, ctx, params.entry_set)
     settings = get_settings()
     if (
         params.entry_set.semantic_query is not None
@@ -213,14 +265,16 @@ async def aggregate_entries_handler(
     )
     if params.operation == "count":
         value = int((await db.execute(stmt)).scalar_one())
-        status = TOOL_EMPTY if value == 0 else (
-            TOOL_LIMITED if semantic else "completed"
-        )
+        status = TOOL_EMPTY if value == 0 else (TOOL_LIMITED if semantic else "completed")
         return ReadToolExecution(
             status=status,
-            payload={"value": value},
+            payload={
+                "value": value,
+                **({"scope": resolved_scope} if params.entry_set.project_name else {}),
+            },
             completeness=base_completeness,
             audit_summary={
+                **({"scope": resolved_scope} if params.entry_set.project_name else {}),
                 "operation": "count",
                 "value": value,
                 "status": status,
@@ -233,7 +287,11 @@ async def aggregate_entries_handler(
     truncated = len(rows) > settings.knowledge_agent_structured_query_bucket_limit
     rows = rows[: settings.knowledge_agent_structured_query_bucket_limit]
     buckets = [
-        {"key": str(row.bucket), "count": int(row.count)}
+        {
+            "key": str(row.bucket),
+            "count": int(row.count),
+            **({"label": row.label} if params.group_by == "project" else {}),
+        }
         for row in rows
         if row.bucket is not None
     ]
@@ -249,6 +307,7 @@ async def aggregate_entries_handler(
     return ReadToolExecution(
         status=status,
         payload={
+            **({"scope": resolved_scope} if params.entry_set.project_name else {}),
             "group_by": params.group_by,
             "buckets": buckets,
             "truncated": truncated,
@@ -256,6 +315,7 @@ async def aggregate_entries_handler(
         completeness=completeness,
         audit_summary={
             "operation": "group_count",
+            **({"scope": resolved_scope} if params.entry_set.project_name else {}),
             "group_by": params.group_by,
             "bucket_count": len(buckets),
             "buckets": buckets,
@@ -352,6 +412,7 @@ async def prepare_semantic_entry_set(
     model_audits: list[StageMeta] | None = None,
 ) -> list[Entry]:
     """准备一次共享语义集合；同一 ctx 后续输出只复用，不再次召回/重排。"""
+    await resolve_project_filter(db, ctx, entry_set)
     settings = get_settings()
     query = entry_set.semantic_query
     if query is None:
@@ -449,6 +510,7 @@ async def query_entries_handler(
     params: QueryEntriesParams,
 ) -> ReadToolExecution:
     """确定性返回有界正式 Entry 快照；列表截断只影响 entries 完整性。"""
+    await resolve_project_filter(db, ctx, params.entry_set)
     if params.entry_set.semantic_query is not None:
         return await semantic_query_entries_handler(db, ctx, params)
     settings = get_settings()
@@ -543,6 +605,7 @@ async def restore_query_entries_handler(
     summary: dict,
 ) -> ReadToolExecution | None:
     """按已提交有序 Entry id 重建当前快照；对象变化显式降为 partial。"""
+    await resolve_project_filter(db, ctx, params.entry_set)
     entry_ids = summary.get("entry_ids")
     if not isinstance(entry_ids, list) or not all(
         isinstance(entry_id, int) for entry_id in entry_ids
@@ -602,7 +665,7 @@ async def restore_aggregate_entries_handler(
     summary: dict,
 ) -> ReadToolExecution | None:
     """复用已提交的有界 count/桶摘要，不重新扫描共享集合。"""
-    del db, ctx
+    await resolve_project_filter(db, ctx, params.entry_set)
     completeness = summary.get("completeness")
     status = summary.get("status")
     if not isinstance(completeness, str) or not isinstance(status, str):
@@ -621,6 +684,8 @@ async def restore_aggregate_entries_handler(
             "buckets": buckets,
             "truncated": bool(summary.get("truncated", False)),
         }
+    if "scope" in summary:
+        payload["scope"] = summary["scope"]
     return ReadToolExecution(
         status=status,
         payload=payload,

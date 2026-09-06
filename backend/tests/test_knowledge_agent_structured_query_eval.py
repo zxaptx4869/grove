@@ -120,7 +120,7 @@ def test_eval_candidate_plan_is_normalized_without_phrase_rules(
         "semantic_structured_combination",
     }
     assert [output.kind for output in plan.outputs] == expected_outputs
-    assert plan.prompt_version == "v1"
+    assert plan.prompt_version == "v2"
     assert "reason" not in plan.model_dump(mode="json")
     if plan.entry_set.updated_at is not None:
         assert plan.entry_set.updated_at.from_ == datetime(2025, 12, 31, 16, tzinfo=UTC)

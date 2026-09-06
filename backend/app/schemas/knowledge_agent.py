@@ -74,7 +74,7 @@ StructuredQueryToolStatus = Literal[
 ]
 StructuredQuerySortField = Literal["relevance", "updated_at", "created_at"]
 StructuredQuerySortDirection = Literal["asc", "desc"]
-StructuredQueryGroupField = Literal["main_type", "info_nature", "updated_month"]
+StructuredQueryGroupField = Literal["main_type", "info_nature", "updated_month", "project"]
 CompositeRequirementKind = Literal[
     "explain",
     "retrieve",
@@ -346,6 +346,7 @@ class KnowledgeGroupBucketOut(BaseModel):
     """受限、稳定排序的单个分组桶。"""
 
     key: str
+    label: str | None = None
     count: int = Field(ge=0)
 
 
@@ -380,6 +381,7 @@ class KnowledgeStructuredEntrySetPlanOut(BaseModel):
     """不含 Run 授权范围与对象 ID 的规范化集合条件。"""
 
     schema_version: Literal["v1"] = "v1"
+    project_name: str | None = None
     semantic_query: str | None = None
     main_types: list[Literal["knowledge", "method", "parameter", "reminder"]] = []
     info_natures: list[
@@ -429,7 +431,7 @@ class KnowledgeStructuredQueryPlanOut(BaseModel):
     """服务端规范化计划摘要；不包含模型原始输出、reason 或 prompt。"""
 
     schema_version: Literal["v1"] = "v1"
-    prompt_version: Literal["v1"] = "v1"
+    prompt_version: Literal["v1", "v2"] = "v1"
     entry_set: KnowledgeStructuredEntrySetPlanOut
     outputs: list[KnowledgeStructuredOutputOut]
 

@@ -153,7 +153,7 @@ async def test_entries_runner_uses_one_plan_and_v2_when_enabled(monkeypatch) -> 
         public_run = run_out(run)
         assert public_run.structured_query_plan is not None
         assert public_run.structured_query_plan.schema_version == "v1"
-        assert public_run.structured_query_plan.prompt_version == "v1"
+        assert public_run.structured_query_plan.prompt_version == "v2"
         assert [
             output.kind for output in public_run.structured_query_plan.outputs
         ] == ["count", "entries"]

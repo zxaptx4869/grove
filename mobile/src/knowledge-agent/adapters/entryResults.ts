@@ -86,6 +86,7 @@ export function structuredFilterCopies(
 ): string[] {
   if (!summary) return [];
   const copies: string[] = [];
+  if (summary.projectName) copies.push(`项目：${summary.projectName}`);
   if (summary.semanticQuery) copies.push(`语义：${summary.semanticQuery}`);
   if (summary.mainTypes.length > 0) {
     copies.push(`类型：${listLabels(summary.mainTypes, MAIN_TYPE_LABELS)}`);
@@ -122,6 +123,7 @@ export function countCopy(count: KnowledgeCountResult): string {
 export function groupLabel(group: KnowledgeGroupCountResult): string {
   if (group.groupBy === "main_type") return "按知识类型";
   if (group.groupBy === "info_nature") return "按信息性质";
+  if (group.groupBy === "project") return "按项目";
   return "按更新月份";
 }
 
@@ -131,6 +133,7 @@ export function groupBucketLabel(
 ): string {
   if (group.groupBy === "main_type") return MAIN_TYPE_LABELS[key] ?? key;
   if (group.groupBy === "info_nature") return INFO_NATURE_LABELS[key] ?? key;
+  if (group.groupBy === "project") return group.buckets.find((item) => item.key === key)?.label ?? key;
   return key;
 }
 

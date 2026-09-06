@@ -81,7 +81,7 @@ class NormalizedCompositeAnswerPlan(StrictNormalizedCompositeModel):
     """唯一允许持久化和执行的 CompositeAnswerPlan v1。"""
 
     schema_version: Literal["v1"] = "v1"
-    prompt_version: Literal["v1"] = COMPOSITE_ANSWER_PLAN_PROMPT_VERSION
+    prompt_version: Literal["v1", "v2"] = COMPOSITE_ANSWER_PLAN_PROMPT_VERSION
     requirements: list[NormalizedCompositeRequirement] = Field(min_length=1, max_length=20)
     statement_message_ids: list[int] = Field(default_factory=list, max_length=20)
     retrieval_requests: list[NormalizedCompositeRetrievalRequest] = Field(

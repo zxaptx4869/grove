@@ -22,7 +22,7 @@ from app.services.knowledge_agent.observability import StageMeta
 
 logger = logging.getLogger(__name__)
 
-STRUCTURED_QUERY_PLAN_PROMPT_VERSION = "v1"
+STRUCTURED_QUERY_PLAN_PROMPT_VERSION = "v2"
 
 MainType = Literal["knowledge", "method", "parameter", "reminder"]
 InfoNature = Literal[
@@ -35,7 +35,7 @@ InfoNature = Literal[
 ]
 SortField = Literal["relevance", "updated_at", "created_at"]
 SortDirection = Literal["asc", "desc"]
-GroupField = Literal["main_type", "info_nature", "updated_month"]
+GroupField = Literal["main_type", "info_nature", "updated_month", "project"]
 
 
 class StrictQueryModel(BaseModel):
@@ -55,6 +55,7 @@ class EntrySetSpecDraft(StrictQueryModel):
     """EntrySetSpec v1：仅表达允许的正式知识集合条件。"""
 
     schema_version: Literal["v1"] = "v1"
+    project_name: str | None = Field(default=None, min_length=1, max_length=64)
     semantic_query: str | None = Field(default=None, min_length=1, max_length=500)
     main_types: list[MainType] = Field(default_factory=list, max_length=4)
     info_natures: list[InfoNature] = Field(default_factory=list, max_length=6)
@@ -108,12 +109,13 @@ STRUCTURED_QUERY_PLAN_SYSTEM_PROMPT = (
     "你是 Grove 知识 Agent 的一次结构化查询规划器。你只生成候选计划，不执行查询，"
     "也不回答问题。服务端会严格校验并注入真正的 owner、Workspace 与可选项目范围。"
     "\n"
-    "允许的 EntrySetSpec v1 条件只有：可选 semantic_query、main_types、info_natures、"
+    "允许的 EntrySetSpec v1 条件只有：可选 project_name、semantic_query、"
+    "main_types、info_natures、"
     "UTC updated_at 闭开区间 [from,to)。不要输出 Workspace/项目/目录/Entry/Source id，"
     "不要输出 SQL、字段名表达式、正则、任意运算符或写操作。"
     "\n"
     "允许的输出只有：entries（有界列表）、count（集合计数）、group_count（按 main_type、"
-    "info_nature 或 updated_month 分组）。每种输出最多一次，最多三个输出。"
+    "info_nature、updated_month 或 project 分组）。每种输出最多一次，最多三个输出。"
     "entries 只允许 relevance、updated_at、created_at 排序；没有 semantic_query 时禁止"
     " relevance。"
     "\n"
@@ -122,6 +124,10 @@ STRUCTURED_QUERY_PLAN_SYSTEM_PROMPT = (
     "\n"
     "自然语言日期必须根据输入给出的当前 UTC 时间换算成带时区的 ISO 8601 闭开区间。"
     "只读查询中夹带修改意图时仍只能生成允许的只读查询，不能生成修改工具或写入字段。"
+    "用户泛称知识/全部知识/正式记录时默认全部四种类型，main_types 留空；"
+    "仅明确要求知识类型时用 knowledge。"
+    "项目名称条件使用 project_name，不要把项目名放入 semantic_query；"
+    "project_name 是精确项目名称筛选，不改变授权范围；按项目计数使用 group_count(project)。"
 )
 
 

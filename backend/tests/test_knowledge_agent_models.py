@@ -121,7 +121,7 @@ async def test_structured_query_planner_reports_offline_fallback() -> None:
     assert meta.is_fallback is True
     assert meta.provider == "offline"
     assert meta.error
-    assert STRUCTURED_QUERY_PLAN_PROMPT_VERSION == "v1"
+    assert STRUCTURED_QUERY_PLAN_PROMPT_VERSION == "v2"
 
 
 @pytest.mark.asyncio
