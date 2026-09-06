@@ -7,7 +7,11 @@ from typing import Literal
 from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy import func, select
 
-from app.agents.dialogue_task import QueryTaskDeltaDraft, TaskDecisionDraft
+from app.agents.dialogue_task import (
+    QueryTaskDeltaDraft,
+    TaskDecisionDraft,
+    validate_info_nature_source,
+)
 from app.core.config import get_settings
 from app.models import KnowledgeAgentRun, KnowledgeConversation, KnowledgeMessage, Project
 from app.services.knowledge_agent.dialogue_context import DialogueContext
@@ -338,6 +342,7 @@ async def select_task(
     started = perf_counter()
     source_texts = [
         current_message,
+        run.project_name or "",
         *[m["content"] for m in state.input.get("history", []) if m["role"] == "user"],
     ]
     names = list(dict.fromkeys(draft.project_mentions))
@@ -471,6 +476,7 @@ def merge_query_delta(run, delta: QueryTaskDeltaDraft):
             raise TaskStateError("同一条件不能同时执行多个变更")
         seen.add(change.field)
         source = source_for(state, run, change.source, change.quote)
+        validate_info_nature_source(change)
         value = (
             change.value.model_dump(mode="json", by_alias=True)
             if isinstance(change.value, BaseModel)

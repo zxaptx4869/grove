@@ -189,7 +189,11 @@ async def run_structured_query_planner(
             "请输出 StructuredQueryPlan v1。",
         ]
     )
-    from app.agents.dialogue_task import TASK_QUERY_PROMPT, QueryTaskDeltaDraft
+    from app.agents.dialogue_task import (
+        TASK_QUERY_PROMPT,
+        QueryTaskDeltaDraft,
+        validate_info_nature_source,
+    )
 
     if task_context is not None:
         selected_context = {k: v for k, v in task_context.items() if k != "tasks"}
@@ -223,6 +227,11 @@ async def run_structured_query_planner(
         def validate_delta_sources(draft: QueryTaskDeltaDraft) -> QueryTaskDeltaDraft:
             if draft.clarify_question:
                 return draft
+            try:
+                for change in draft.changes:
+                    validate_info_nature_source(change)
+            except ValueError as exc:
+                raise ModelRetry(str(exc)) from exc
             references = [(change.source, change.quote) for change in draft.changes]
             if draft.outputs is not None:
                 references.append((draft.output_source, draft.output_quote))

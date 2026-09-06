@@ -382,7 +382,7 @@ async def test_empty_display_replaces_reference_and_cancellation_keeps_previous_
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("stage", ["context", "query"])
+@pytest.mark.parametrize("stage", ["context", "query", "nature"])
 @pytest.mark.parametrize("always_invalid", [False, True])
 async def test_model_output_repair_is_bounded_and_observable(monkeypatch, stage, always_invalid):
     from pydantic_ai.messages import ModelResponse, ToolCallPart
@@ -405,7 +405,10 @@ async def test_model_output_repair_is_bounded_and_observable(monkeypatch, stage,
         else:
             assert "不应进入输入的旧改写" not in str(messages)
             output = delta(
-                "不属于原话" if invalid else "按项目分组",
+                "不属于原话" if invalid and stage == "query" else "按项目分组",
+                changes=[{"field": "info_natures", "operation": "set", "value": ["fact"]}]
+                if invalid and stage == "nature"
+                else None,
                 outputs=[{"kind": "group_count", "group_by": "project"}],
             ).model_dump()
         return ModelResponse(parts=[ToolCallPart(info.output_tools[0].name, output)])
@@ -447,6 +450,36 @@ async def test_model_output_repair_is_bounded_and_observable(monkeypatch, stage,
     assert meta.is_fallback is always_invalid
     if not always_invalid:
         assert meta.usage["requests"] == 2
+
+
+@pytest.mark.asyncio
+async def test_ui_project_is_a_trusted_entity_source_without_name_in_message():
+    async with async_session_factory() as db:
+        item, workspace = await conversation(db)
+        project = await create_project(db, workspace, "界面项目")
+        item.scope_type, item.project_id = "project", project.id
+        run = await begin(db, item, "当前项目有多少条")
+        state, _ = await select_frame(db, run, project_mentions=["界面项目"])
+        assert state.input["projects"] == [{"name": "界面项目", "status": "unique"}]
+        assert run.project_id == project.id
+
+
+@pytest.mark.parametrize(
+    "value,quote",
+    [
+        ("fact", "只统计事实类"),
+        ("experience", "只统计经验"),
+        ("advice", "性质是建议"),
+        ("speculation", "推测性质"),
+        ("other", "性质为其他"),
+        ("unspecified", "未指定信息性质的记录"),
+    ],
+)
+def test_explicit_info_nature_filters_remain_supported(value, quote):
+    from app.agents.dialogue_task import validate_info_nature_source
+
+    draft = delta(quote, [{"field": "info_natures", "operation": "set", "value": [value]}])
+    validate_info_nature_source(draft.changes[0])
 
 
 @pytest.mark.asyncio

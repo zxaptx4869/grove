@@ -82,6 +82,23 @@ TypedChange = Annotated[
 ]
 
 
+def validate_info_nature_source(change: ConditionChange) -> None:
+    """性质是显式分类筛选，原文必须提及对应分类；存在词项不等于证明完整语义。"""
+    if change.field != "info_natures" or change.operation != "set":
+        return
+    labels = {
+        "fact": ("事实",),
+        "experience": ("经验",),
+        "advice": ("建议",),
+        "speculation": ("推测", "推断", "猜测"),
+        "other": ("其他", "其它"),
+        "unspecified": ("未指定", "未分类", "未设置", "没有性质"),
+    }
+    for value in change.value or []:
+        if not any(label in change.quote.casefold() for label in (value, *labels[value])):
+            raise ValueError("信息性质筛选缺少对应分类的原文依据；未指定性质时不要添加该条件")
+
+
 class QueryTaskDeltaDraft(TaskDraft):
     changes: list[TypedChange] = Field(default_factory=list, max_length=5)
     outputs: list[StructuredQueryOutputDraft] | None = Field(
