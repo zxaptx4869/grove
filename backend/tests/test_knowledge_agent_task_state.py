@@ -382,6 +382,54 @@ async def test_empty_display_replaces_reference_and_cancellation_keeps_previous_
 
 
 @pytest.mark.asyncio
+async def test_reference_title_comes_from_displayed_item_not_model_rewrite(monkeypatch):
+    from app.services.knowledge_agent.follow_up import decide_task_context
+    from app.services.knowledge_agent.observability import StageMeta
+
+    async with async_session_factory() as db:
+        item, _ = await conversation(db)
+        first = await begin(db, item, "列出两个对象")
+        await select_frame(db, first)
+        first.entry_result_json = json.dumps(
+            {
+                "schema_version": "v1",
+                "items": [
+                    {"entry_id": 1, "title": "第一个标题"},
+                    {"entry_id": 2, "title": "第二个标题"},
+                ],
+            }
+        )
+        await complete(db, first)
+        follow = await begin(db, item, "第二条展开")
+        dialogue = await load_task_dialogue(db, follow)
+        assert dialogue.task["tasks"][0]["displayed_results"][1]["position"] == 2
+
+        async def decide(*args, **kwargs):
+            return TaskDecisionDraft(
+                operation="continue",
+                task_handle=read_state(first).frame.handle,
+                topic_label="展开",
+                standalone_query="错误改写成第一个标题",
+                result_position=2,
+            ), StageMeta(
+                purpose="context_decision",
+                provider="test",
+                model="test",
+                is_fallback=False,
+                error=None,
+                duration_ms=1,
+            )
+
+        monkeypatch.setattr(
+            "app.services.knowledge_agent.follow_up.run_context_decision_agent", decide
+        )
+        decision = await decide_task_context(db, follow, "第二条展开", dialogue, "工作区")
+        assert decision.referenced_entry_ids == [2]
+        assert "第二个标题" in decision.standalone_query
+        assert "第一个标题" not in decision.standalone_query
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize("stage", ["context", "query", "nature"])
 @pytest.mark.parametrize("always_invalid", [False, True])
 async def test_model_output_repair_is_bounded_and_observable(monkeypatch, stage, always_invalid):

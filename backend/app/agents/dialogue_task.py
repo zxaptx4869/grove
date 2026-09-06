@@ -73,7 +73,10 @@ class InfoNatureChange(ConditionChange):
 
 class TimeChange(ConditionChange):
     field: Literal["updated_at"]
-    value: UpdatedAtRangeDraft | None = None
+    value: UpdatedAtRangeDraft | None = Field(
+        default=None,
+        description="仅用于明确的时间区间筛选；最近更新的若干条是排序和数量，不添加截至当前时间条件",
+    )
 
 
 TypedChange = Annotated[
@@ -125,6 +128,7 @@ task_handle 只能选输入提供的句柄；start 时为 null，其他操作选
 standalone_query 简洁补全指代，完整保留用户任务和依据限制，但不擅自加条件。
 项目名可能不带“项目”二字。project_mentions 列出用户原文中可能指项目的名称片段，
 服务端会核实；不知道该名字是否真实项目本身不是澄清理由，先提供名称候选。
+当前项目名称也可以来自可信界面范围；项目分组不需要预先枚举项目名称。
 result_position 仅在用户引用所选任务实际展示列表序号时填写，从1开始；否则为null。
 basis 默认 inherit；只在用户明确改变依据时选择 auto/no_grove/knowledge_only，
 basis_quote 必须是当前用户原文片段。讨论任务的依据限制不传染到其他独立任务。
@@ -143,12 +147,15 @@ main_types 互斥类别：knowledge 知识、method 方法、parameter 参数、
 project_name 是精确归属筛选。结合项目候选和任务语境识别省略“项目”二字的项目名，
 不能把项目名称当 semantic_query；明确“关于某主题的内容”才使用语义条件，即使有同名项目。
 需要指定项目但候选未知/重名时澄清，不删除条件或改成语义搜索来规避。
+projects 只是本轮名称核实结果，不是可用项目全集；按项目分组由工具读取当前范围内
+全部项目并返回零条项目，不依赖名称候选，不要求用户提供项目列表。
 semantic_query 只适用于主题相关性，不包含“知识”“记录”等无实际筛选意义的附加词。
 updated_at 是带时区UTC闭开区间。每个变化必须注明所提供用户消息的 source 和原文 quote；
 不能用助手回答或改写摘要作为条件来源。
 outputs=null 表示继承原任务输出；请求分组时替换为 group_count，
 分组维度允许 project/main_type/info_nature/updated_month。
 请求计数用 count，请求列表用 entries，按更新时间倒序为常用列表默认值。
+排序和数量不是时间区间；用户只要求最近更新的若干条时不添加 updated_at 条件。
 输出变化也给出用户原文 output_quote 和 output_source；首问必须给出输出。
 条件来自明确用户限制时 source_kind=explicit，需要推断才能成立时标记 inferred，不伪装为明确要求。
 结果展示的列表上限不影响全集计数。需要澄清时只填写具体 clarify_question，不执行查询。

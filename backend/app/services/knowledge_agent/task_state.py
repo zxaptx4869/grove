@@ -84,15 +84,20 @@ def write_state(run, state: TaskState) -> None:
 
 
 def public_frame(frame: TaskFrame) -> dict:
-    return frame.model_dump(
+    result = frame.model_dump(
         exclude={
             "binding",
             "origin_run_id",
             "result_run_id",
             "message_ids",
             "context_version_id",
+            "result_titles",
         }
     )
+    result["displayed_results"] = [
+        {"position": index, "title": title} for index, title in enumerate(frame.result_titles, 1)
+    ]
+    return result
 
 
 async def load_task_dialogue(db, run) -> DialogueContext:
@@ -437,6 +442,10 @@ async def select_task(
         if draft.result_position > len(items):
             raise TaskStateError("最近的展示列表中没有这个序号，请重新选择")
         references = [items[draft.result_position - 1]["entry_id"]]
+        title = str(items[draft.result_position - 1].get("title", ""))[:255]
+        state.input["reference"] = {"position": draft.result_position, "displayed_title": title}
+        # 对象身份以实际展示快照为准，不能让模型改写的错误标题覆盖正确的序号绑定。
+        state.frame.goal = f"{current_message[:1500]}（所指展示列表第{draft.result_position}条，展示标题：{title}）"
     write_state(run, state)
     return state, references
 
