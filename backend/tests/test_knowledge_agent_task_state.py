@@ -324,6 +324,64 @@ async def test_scope_boundary_and_foreign_persisted_frame_are_excluded():
 
 
 @pytest.mark.asyncio
+async def test_literal_project_candidates_are_scoped_bounded_and_not_filters():
+    async with async_session_factory() as db:
+        item, workspace = await conversation(db)
+        _, foreign_workspace = await conversation(db)
+        await create_project(db, workspace, "甲计划")
+        await create_project(db, foreign_workspace, "外部计划")
+        run = await begin(db, item, "不限定甲计划，统计全部项目，包括外部计划吗")
+        state, _ = await select_frame(db, run)
+        assert state.input["projects"] == [{"name": "甲计划", "status": "unique"}]
+        plan = merge_query_delta(run, delta("统计全部项目", outputs=[{"kind": "count"}]))
+        assert plan.entry_set.project_name is None
+        await complete(db, run)
+        for i in range(6):
+            await create_project(db, workspace, f"项目{i}")
+        crowded = await begin(db, item, "项目0项目1项目2项目3项目4项目5")
+        with pytest.raises(TaskStateError, match="上限"):
+            await select_frame(db, crowded)
+
+
+@pytest.mark.asyncio
+async def test_empty_display_replaces_reference_and_cancellation_keeps_previous_state():
+    from app.services.knowledge_agent.runs import finalize_cancelled
+
+    async with async_session_factory() as db:
+        item, _ = await conversation(db)
+        first = await begin(db, item, "列出记录")
+        await select_frame(db, first)
+        first.entry_result_json = json.dumps(
+            {
+                "schema_version": "v1",
+                "items": [
+                    {"entry_id": 1, "title": "旧条目"},
+                ],
+            }
+        )
+        await complete(db, first)
+        empty = await begin(db, item, "列出空集合")
+        await select_frame(db, empty, "continue", read_state(first).frame.handle)
+        empty.entry_result_json = json.dumps(
+            {
+                "schema_version": "v2",
+                "items": [],
+                "output_completeness": {"entries": "complete"},
+            }
+        )
+        await complete(db, empty)
+        current = await begin(db, item, "第一条")
+        with pytest.raises(TaskStateError, match="序号"):
+            await select_frame(
+                db, current, "continue", read_state(first).frame.handle, result_position=1
+            )
+        await select_frame(db, current)
+        await finalize_cancelled(db, current)
+        follow = await begin(db, item, "接着来")
+        assert [f.handle for f in read_state(follow).pool] == [read_state(first).frame.handle]
+
+
+@pytest.mark.asyncio
 async def test_condition_source_and_conflicting_operations_rejected():
     async with async_session_factory() as db:
         item, _ = await conversation(db)

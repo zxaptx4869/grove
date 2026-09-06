@@ -192,7 +192,13 @@ async def run_structured_query_planner(
     from app.agents.dialogue_task import TASK_QUERY_PROMPT, QueryTaskDeltaDraft
 
     if task_context is not None:
-        context += "\n原始请求与已选任务：" + json.dumps(task_context, ensure_ascii=False)
+        selected_context = {k: v for k, v in task_context.items() if k != "tasks"}
+        context = "\n".join([
+            f"可信范围：{scope_label}",
+            f"当前 UTC 时间：{current.astimezone(UTC).isoformat()}",
+            "原始请求与已选任务：" + json.dumps(selected_context, ensure_ascii=False),
+            "请仅输出 QueryTaskDeltaDraft；未改变的条件继承基线，泛称知识不新增类型筛选。",
+        ])
     agent = Agent(
         text_model,
         output_type=QueryTaskDeltaDraft if task_context is not None else StructuredQueryPlanDraft,

@@ -236,6 +236,7 @@ async def load_task_dialogue(db, run) -> DialogueContext:
         "pending": pending,
         "history": history,
     }
+    initial_history, initial_pool = len(history), len(state.pool)
     while (
         len(json.dumps(payload, ensure_ascii=False).encode())
         > settings.knowledge_agent_task_context_bytes
@@ -247,6 +248,8 @@ async def load_task_dialogue(db, run) -> DialogueContext:
             payload["tasks"] = [public_frame(f) for f in reversed(state.pool)]
         else:
             raise TaskStateError("任务上下文超过预算，请明确本轮需要的条件")
+    state.metadata_audit["trimmed_history"] = initial_history - len(history)
+    state.metadata_audit["trimmed_tasks"] = initial_pool - len(state.pool)
     state.input = payload
     write_state(run, state)
     return DialogueContext(
@@ -323,6 +326,26 @@ async def select_task(
         for name in names
     ):
         raise TaskStateError("项目名称候选缺少用户消息来源")
+    # 从原文精确匹配范围内名称，补足模型漏提；候选仅供消歧，不自动添加筛选。
+    predicates = [
+        Project.workspace_id == run.workspace_id,
+        Project.name != "",
+        func.instr(current_message, Project.name) > 0,
+    ]
+    if run.project_id is not None:
+        predicates.append(Project.id == run.project_id)
+    literal_names = (
+        (
+            await db.execute(
+                select(Project.name).where(*predicates).distinct().order_by(Project.name).limit(6)
+            )
+        )
+        .scalars()
+        .all()
+    )
+    names = list(dict.fromkeys([*literal_names, *names]))
+    if len(names) > 5:
+        raise TaskStateError("本轮涉及的项目超过候选上限，请明确需要统计的项目")
     matches = []
     for name in names:
         predicates = [Project.workspace_id == run.workspace_id, Project.name == name]
@@ -340,6 +363,8 @@ async def select_task(
             }
         )
     state.input["projects"] = matches
+    initial_history = len(state.input.get("history", []))
+    initial_tasks = len(state.input.get("tasks", []))
     # 当前消息和选定基线加入后仍须满足预算，优先删除未选任务和较早历史。
     while (
         len(json.dumps(state.input, ensure_ascii=False).encode())
@@ -352,9 +377,13 @@ async def select_task(
         else:
             raise TaskStateError("本轮任务上下文超过预算，请缩短请求或明确筛选条件")
     state.metadata_audit = {
+        **state.metadata_audit,
         "names": names,
+        "literal_names": list(literal_names),
         "matches": matches,
         "duration_ms": int((perf_counter() - started) * 1000),
+        "selected_trimmed_history": initial_history - len(state.input.get("history", [])),
+        "selected_trimmed_tasks": initial_tasks - len(state.input.get("tasks", [])),
     }
     references = []
     if draft.result_position is not None:
@@ -512,10 +541,14 @@ def finalize_task(run, *, usable: bool, clarification: str | None = None) -> Non
             run.output_context_version_id or state.frame.context_version_id
         )
         snapshot = json.loads(run.entry_result_json or "{}")
-        if snapshot.get("items"):
+        displays_list = snapshot and (
+            snapshot.get("schema_version") == "v1"
+            or (snapshot.get("output_completeness") or {}).get("entries") is not None
+        )
+        if displays_list or snapshot.get("items"):
             state.frame.result_run_id = run.id
             state.frame.result_titles = [
-                str(item.get("title", ""))[:255] for item in snapshot["items"][:50]
+                str(item.get("title", ""))[:255] for item in snapshot.get("items", [])[:50]
             ]
         state.pool = [f for f in state.pool if f.handle != state.frame.handle]
         state.pool.append(state.frame)
