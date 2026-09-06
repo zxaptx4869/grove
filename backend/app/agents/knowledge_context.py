@@ -6,7 +6,7 @@ from time import perf_counter
 from typing import Literal
 
 from pydantic import BaseModel, Field
-from pydantic_ai import Agent
+from pydantic_ai import Agent, ModelRetry
 from pydantic_ai.models.test import TestModel
 
 from app.models.knowledge_agent import PURPOSE_CONTEXT_DECISION
@@ -154,6 +154,17 @@ async def run_context_decision_agent(
         retries=1,
         model_settings={"temperature": 0},
     )
+    if task_protocol:
+        handles = {item["handle"] for item in task_context.get("tasks", [])}
+
+        @agent.output_validator
+        def validate_task_handle(draft: TaskDecisionDraft) -> TaskDecisionDraft:
+            if draft.task_handle is not None and draft.task_handle not in handles:
+                raise ModelRetry(f"task_handle 不在本轮候选中，只能选择 {sorted(handles)} 或 null")
+            if draft.operation in {"continue", "branch", "resume"} and not draft.task_handle:
+                raise ModelRetry("继续、深入或恢复必须指定本轮提供的任务句柄")
+            return draft
+
     model_name = getattr(text_model, "model_name", None) or getattr(text_model, "model", "unknown")
     try:
         result = await agent.run(context)

@@ -382,6 +382,114 @@ async def test_empty_display_replaces_reference_and_cancellation_keeps_previous_
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("stage", ["context", "query"])
+@pytest.mark.parametrize("always_invalid", [False, True])
+async def test_model_output_repair_is_bounded_and_observable(monkeypatch, stage, always_invalid):
+    from pydantic_ai.messages import ModelResponse, ToolCallPart
+    from pydantic_ai.models.function import FunctionModel
+
+    from app.agents import knowledge_context, structured_query
+
+    calls = []
+
+    def respond(messages, info):
+        calls.append(messages)
+        invalid = always_invalid or len(calls) == 1
+        if stage == "context":
+            output = TaskDecisionDraft(
+                operation="resume",
+                task_handle="t999" if invalid else "t1",
+                topic_label="统计",
+                standalone_query="按项目分组",
+            ).model_dump()
+        else:
+            assert "不应进入输入的旧改写" not in str(messages)
+            output = delta(
+                "不属于原话" if invalid else "按项目分组",
+                outputs=[{"kind": "group_count", "group_by": "project"}],
+            ).model_dump()
+        return ModelResponse(parts=[ToolCallPart(info.output_tools[0].name, output)])
+
+    async def model(db, workspace_id):
+        return FunctionModel(respond)
+
+    context = {
+        "protocol": "dialogue_task_v1",
+        "tasks": [{"handle": "t1"}],
+        "current_message": "按项目分组",
+        "history": [],
+    }
+    if stage == "context":
+        monkeypatch.setattr(knowledge_context, "get_text_model", model)
+        result, meta = await knowledge_context.run_context_decision_agent(
+            None,
+            1,
+            current_message="按项目分组",
+            active_topic_label=None,
+            working_set_titles=[],
+            history=[],
+            task_context=context,
+        )
+        if not always_invalid:
+            assert result.task_handle == "t1"
+    else:
+        monkeypatch.setattr(structured_query, "get_text_model", model)
+        result, meta = await structured_query.run_structured_query_planner(
+            None,
+            1,
+            objective="不应进入输入的旧改写",
+            scope_label="工作区",
+            task_context=context,
+        )
+        if not always_invalid:
+            assert result.output_quote == "按项目分组"
+    assert len(calls) == 2
+    assert meta.is_fallback is always_invalid
+    if not always_invalid:
+        assert meta.usage["requests"] == 2
+
+
+@pytest.mark.asyncio
+async def test_legacy_basis_is_preserved_without_inventing_condition_sources():
+    async with async_session_factory() as db:
+        item, _ = await conversation(db)
+        old = await begin(db, item, "不查知识库，只用通用知识讨论")
+        old.context_meta_json = "{}"
+        old.request_basis_mode = "auto"
+        old.status, old.active_slot = "completed", None
+        old.context_decision = "new_topic"
+        await db.flush()
+        current = await begin(db, item, "接着讨论")
+        frame = read_state(current).pool[0]
+        assert frame.legacy and frame.sources == {}
+        state, _ = await select_frame(db, current, "resume", frame.handle)
+        assert state.frame.basis == "no_grove"
+        assert state.frame.basis_source["message_id"] == old.user_message_id
+
+
+@pytest.mark.asyncio
+async def test_task_pool_and_branch_depth_are_bounded():
+    async with async_session_factory() as db:
+        item, _ = await conversation(db)
+        for index in range(7):
+            run = await begin(db, item, f"任务{index}")
+            await select_frame(db, run)
+            await complete(db, run)
+        assert len(read_state(run).pool) == 5
+        parent = read_state(run).frame.handle
+        for depth in range(1, 3):
+            child = await begin(db, item, f"深入{depth}")
+            state, _ = await select_frame(db, child, "branch", parent)
+            assert state.frame.depth == depth
+            await complete(db, child)
+            assert parent in {f.handle for f in read_state(child).pool}
+            parent = state.frame.handle
+        excessive = await begin(db, item, "继续深入")
+        with pytest.raises(TaskStateError, match="上限"):
+            await select_frame(db, excessive, "branch", parent)
+
+
+@pytest.mark.asyncio
 async def test_condition_source_and_conflicting_operations_rejected():
     async with async_session_factory() as db:
         item, _ = await conversation(db)

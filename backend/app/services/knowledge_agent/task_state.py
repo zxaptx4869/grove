@@ -156,6 +156,21 @@ async def load_task_dialogue(db, run) -> DialogueContext:
         elif saved is None and previous.status in {"completed", "partial"}:
             if previous.context_decision == "clarify":
                 continue
+            from app.services.knowledge_agent.basis import (
+                contains_knowledge_only_restriction,
+                contains_no_grove_restriction,
+            )
+
+            message = await db.get(KnowledgeMessage, previous.user_message_id)
+            original = message.content if message else ""
+            basis = "auto"
+            if (
+                previous.request_basis_mode == "knowledge_only"
+                or contains_knowledge_only_restriction(original)
+            ):
+                basis = "knowledge_only"
+            elif contains_no_grove_restriction(original):
+                basis = "no_grove"
             plan = json.loads(previous.structured_query_plan_json or "null")
             pool.append(
                 TaskFrame(
@@ -165,6 +180,11 @@ async def load_task_dialogue(db, run) -> DialogueContext:
                     plan=plan,
                     message_ids=[previous.user_message_id],
                     result_run_id=previous.id,
+                    context_version_id=previous.output_context_version_id,
+                    basis=basis,
+                    basis_source={"message_id": previous.user_message_id, "origin": "legacy"}
+                    if basis != "auto"
+                    else None,
                     legacy=True,
                 )
             )

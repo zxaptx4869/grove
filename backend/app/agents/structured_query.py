@@ -13,7 +13,7 @@ from time import perf_counter
 from typing import Annotated, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
-from pydantic_ai import Agent
+from pydantic_ai import Agent, ModelRetry
 from pydantic_ai.models.test import TestModel
 
 from app.core.config import get_settings
@@ -212,6 +212,28 @@ async def run_structured_query_planner(
         },
     )
     model_name = _model_name(text_model)
+    if task_context is not None:
+        sources = {
+            item["handle"]: item["content"]
+            for item in task_context.get("history", []) if item["role"] == "user"
+        }
+        sources["current"] = task_context["current_message"]
+
+        @agent.output_validator
+        def validate_delta_sources(draft: QueryTaskDeltaDraft) -> QueryTaskDeltaDraft:
+            if draft.clarify_question:
+                return draft
+            references = [(change.source, change.quote) for change in draft.changes]
+            if draft.outputs is not None:
+                references.append((draft.output_source, draft.output_quote))
+            for source, quote in references:
+                if source not in sources or not quote or quote not in sources[source]:
+                    raise ModelRetry(
+                        "source 必须为 current 或提供的用户消息句柄，quote 必须逐字摘自该原文；"
+                        "不得使用改写内容。请修正引用，不要向用户澄清已知信息。"
+                    )
+            return draft
+
     try:
         result = await agent.run(context)
         duration = int((perf_counter() - started) * 1000)
