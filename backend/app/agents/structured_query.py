@@ -192,7 +192,7 @@ async def run_structured_query_planner(
     from app.agents.dialogue_task import (
         TASK_QUERY_PROMPT,
         QueryTaskDeltaDraft,
-        validate_info_nature_source,
+        validate_filter_source,
     )
 
     if task_context is not None:
@@ -229,7 +229,7 @@ async def run_structured_query_planner(
                 return draft
             try:
                 for change in draft.changes:
-                    validate_info_nature_source(change)
+                    validate_filter_source(change)
             except ValueError as exc:
                 raise ModelRetry(str(exc)) from exc
             references = [(change.source, change.quote) for change in draft.changes]
@@ -238,6 +238,8 @@ async def run_structured_query_planner(
             for source, quote in references:
                 if source not in sources or not quote or quote not in sources[source]:
                     raise ModelRetry(
+                        f"引用无效：source={source!r}, quote={quote!r}。"
+                        f"该来源的原文是：{sources.get(source, '不存在')}。"
                         "source 必须为 current 或提供的用户消息句柄，quote 必须逐字摘自该原文；"
                         "不得使用改写内容。请修正引用，不要向用户澄清已知信息。"
                     )

@@ -1,5 +1,6 @@
 """对话任务的模型候选协议；不包含数据库权限或任意表达式。"""
 
+import re
 from typing import Annotated, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
@@ -85,8 +86,16 @@ TypedChange = Annotated[
 ]
 
 
-def validate_info_nature_source(change: ConditionChange) -> None:
-    """性质是显式分类筛选，原文必须提及对应分类；存在词项不等于证明完整语义。"""
+def validate_filter_source(change: ConditionChange) -> None:
+    """分类和时间筛选须有对应原文线索；存在词项不等于证明完整语义。"""
+    if change.field == "updated_at" and change.operation == "set":
+        if not re.search(
+            r"年|月|日|天|周|星期|季度|小时|分钟|截至|截止|至今|之前|之后|以前|以后|"
+            r"\d{4}[-/]\d|\d{1,2}:\d{2}|today|yesterday|week|month|year|before|after",
+            change.quote,
+            re.IGNORECASE,
+        ):
+            raise ValueError("时间筛选缺少日期或区间原文依据；排序与条数不应新增 updated_at")
     if change.field != "info_natures" or change.operation != "set":
         return
     labels = {
@@ -145,6 +154,7 @@ main_types 互斥类别：knowledge 知识、method 方法、parameter 参数、
 泛称知识/正式记录包含全部类型，不等于 knowledge；正式/已确认不等于 info_natures 的 fact。
 用户改问同一字段的另一值时替换旧值；未修改项目/时间等其他条件时保留。
 project_name 是精确归属筛选。结合项目候选和任务语境识别省略“项目”二字的项目名，
+界面已经限定当前项目时无需再设置 project_name；确需设置时 quote 仍摘自当前项目等用户原话。
 不能把项目名称当 semantic_query；明确“关于某主题的内容”才使用语义条件，即使有同名项目。
 需要指定项目但候选未知/重名时澄清，不删除条件或改成语义搜索来规避。
 projects 只是本轮名称核实结果，不是可用项目全集；按项目分组由工具读取当前范围内

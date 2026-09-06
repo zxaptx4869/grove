@@ -524,10 +524,40 @@ async def test_ui_project_is_a_trusted_entity_source_without_name_in_message():
     ],
 )
 def test_explicit_info_nature_filters_remain_supported(value, quote):
-    from app.agents.dialogue_task import validate_info_nature_source
+    from app.agents.dialogue_task import validate_filter_source
 
     draft = delta(quote, [{"field": "info_natures", "operation": "set", "value": [value]}])
-    validate_info_nature_source(draft.changes[0])
+    validate_filter_source(draft.changes[0])
+
+
+@pytest.mark.parametrize(
+    "quote,valid",
+    [
+        ("最近更新的五条", False),
+        ("按更新时间倒序", False),
+        ("过去七天", True),
+        ("2026-09-01 之后", True),
+        ("截至今天", True),
+    ],
+)
+def test_time_filter_requires_a_range_source(quote, valid):
+    from app.agents.dialogue_task import validate_filter_source
+
+    change = delta(
+        quote,
+        [
+            {
+                "field": "updated_at",
+                "operation": "set",
+                "value": {"to": "2026-09-06T00:00:00Z"},
+            }
+        ],
+    ).changes[0]
+    if valid:
+        validate_filter_source(change)
+    else:
+        with pytest.raises(ValueError, match="时间筛选"):
+            validate_filter_source(change)
 
 
 @pytest.mark.asyncio
