@@ -22,7 +22,7 @@ from urllib.parse import urlparse
 
 import httpx
 
-from evals.knowledge_agent_cases import Case, Turn, build_cases
+from evals.knowledge_agent_cases import Case, Turn, build_cases, build_task_cases
 
 TERMINAL = {"completed", "partial", "failed", "cancelled"}
 MAIN_TYPES = {"knowledge", "method", "parameter", "reminder"}
@@ -79,7 +79,8 @@ class Oracle:
                 (self.workspace_id,),
             )
             entries = self.rows(
-                "SELECT e.id,e.project_id,e.main_type,e.updated_at FROM entries e "
+                "SELECT e.id,e.project_id,e.main_type,e.updated_at,"
+                "COALESCE(e.info_nature,'unspecified') AS info_nature FROM entries e "
                 "JOIN projects p ON p.id=e.project_id WHERE p.workspace_id=? ORDER BY e.id",
                 (self.workspace_id,),
             )
@@ -277,7 +278,7 @@ def evaluate_turn(
         if not any(fact.get("value") == expected for fact in eligible):
             errors.append("缺少口径匹配且完整的精确总数")
     elif turn.kind == "group":
-        key = "project_id" if turn.group_by == "project" else "main_type"
+        key = "project_id" if turn.group_by == "project" else turn.group_by
         expected = dict(Counter(str(row[key]) for row in rows))
         if turn.group_by == "project":
             expected = {
@@ -660,6 +661,14 @@ async def run_suite(args, password: str) -> int:
     empty = next((item for item in projects if counts[item["id"]] == 0), None)
     scopes = {"workspace": None, "project": project["id"], "empty": empty["id"] if empty else None}
     cases = build_cases(project["name"], empty["name"] if empty else None)
+    if getattr(args, "task_suite", False):
+        other = next(
+            (p for p in projects if p["id"] != project["id"] and counts[p["id"]] > 0), None,
+        )
+        if other is None:
+            raise ValueError("任务对照需要另一个非空项目，以免相同计数掩盖错误")
+        scopes["other"] = other["id"]
+        cases = build_task_cases(project["name"], other["name"])
     if args.cases:
         selected = set(args.cases.split(","))
         if selected - {case.id for case in cases}:
@@ -818,6 +827,7 @@ def main() -> int:
     parser.add_argument("--username", default="demo")
     parser.add_argument("--output", type=Path, default=Path("/private/tmp/grove-agent-eval"))
     parser.add_argument("--cases", help="仅运行指定场景，英文逗号分隔")
+    parser.add_argument("--task-suite", action="store_true", help="运行固定的任务状态调试与保留集")
     parser.add_argument("--repeat", type=int, choices=range(1, 6), default=1)
     parser.add_argument("--turn-timeout", type=float, default=240)
     parser.add_argument("--compare", type=Path, help="上一批 report.json")

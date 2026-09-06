@@ -334,6 +334,16 @@ async def plan_and_persist_composite_answer(
         run.request_basis_mode == BASIS_MODE_KNOWLEDGE_ONLY
         or contains_knowledge_only_restriction(current_message, standalone_query)
     )
+    from app.services.knowledge_agent.task_state import read_state
+
+    task_state = read_state(run)
+    task_context = None
+    if task_state and task_state.frame:
+        task_context = {
+            "goal": task_state.frame.goal, "base": task_state.frame.plan,
+            "basis": task_state.frame.basis, "sources": task_state.frame.sources,
+            "projects": task_state.input.get("projects", []),
+        }
     candidate, meta = await run_composite_answer_planner(
         db,
         run.workspace_id,
@@ -347,6 +357,7 @@ async def plan_and_persist_composite_answer(
             for item in allowed_statements
         ],
         knowledge_only=knowledge_only,
+        **({"task_context": task_context} if task_context else {}),
     )
     plan = None
     if candidate is not None:

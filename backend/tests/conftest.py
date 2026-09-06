@@ -14,6 +14,7 @@ os.environ.setdefault("KNOWLEDGE_AGENT_WORKER_ENABLED", "false")
 # 需要开启的用例在测试内显式 monkeypatch 配置。
 os.environ["KNOWLEDGE_AGENT_STRUCTURED_QUERY_ENABLED"] = "false"
 os.environ["KNOWLEDGE_AGENT_COMPOSITE_ANSWER_ENABLED"] = "false"
+os.environ["KNOWLEDGE_AGENT_TASK_STATE_ENABLED"] = "false"
 # 测试环境使用内存密钥存储，避免触碰系统钥匙串
 os.environ.setdefault("SECRET_STORE", "memory")
 

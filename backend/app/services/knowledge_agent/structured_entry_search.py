@@ -75,6 +75,20 @@ async def execute_structured_query_entry_search(
     )
     await check_run_cancelled(run.id)
     if plan is None:
+        from app.services.knowledge_agent.task_state import read_state
+
+        state = read_state(run)
+        if state is not None:
+            from app.schemas.knowledge_agent import KnowledgeAnswerOut
+            from app.services.knowledge_agent.runs import finalize_run
+
+            await finalize_run(
+                db, run, answer=KnowledgeAnswerOut(
+                    answer=state.pending_question or "无法确定本次查询条件，请补充需要的范围",
+                    status="clarification",
+                ), status="completed", fallback_summary=await run_fallback_summary(db, run.id),
+            )
+            return True
         return False
 
     await update_run_step(run.id, STEP_STRUCTURED_QUERY_EXECUTE)
@@ -154,6 +168,16 @@ async def execute_structured_query_entry_search(
     await check_run_cancelled(run.id)
     await update_run_step(run.id, STEP_FINALIZE)
     summary = await run_fallback_summary(db, run.id)
+    assistant_text = _assistant_compatibility_text(snapshot)
+    from app.services.knowledge_agent.task_state import read_state
+
+    if read_state(run) is not None:
+        filters = [snapshot.set_summary.project_name or "当前授权范围内全部项目"]
+        if plan.entry_set.semantic_query:
+            filters.append(f"主题匹配：{plan.entry_set.semantic_query}")
+        if plan.entry_set.main_types:
+            filters.append("类型：" + "、".join(plan.entry_set.main_types))
+        assistant_text = "统计口径：" + "；".join(filters) + "。\n" + assistant_text
     await check_run_cancelled(run.id)
     await finalize_entry_run(
         db,
@@ -161,6 +185,6 @@ async def execute_structured_query_entry_search(
         status=execution.status,
         entry_snapshot=snapshot,
         fallback_summary=summary,
-        assistant_text=_assistant_compatibility_text(snapshot),
+        assistant_text=assistant_text,
     )
     return True

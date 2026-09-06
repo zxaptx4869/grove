@@ -1,6 +1,7 @@
 """知识 Agent 上下文决策器：判断继续 / 新话题 / 澄清并补全独立查询。"""
 
 import logging
+from dataclasses import asdict
 from time import perf_counter
 from typing import Literal
 
@@ -143,10 +144,13 @@ async def run_context_decision_agent(
         scope_label,
         task_context,
     )
+    from app.agents.dialogue_task import TASK_CONTEXT_PROMPT, TaskDecisionDraft
+
+    task_protocol = task_context is not None and task_context.get("protocol") == "dialogue_task_v1"
     agent = Agent(
         text_model,
-        output_type=ContextDecisionDraft,
-        system_prompt=CONTEXT_DECISION_SYSTEM_PROMPT,
+        output_type=TaskDecisionDraft if task_protocol else ContextDecisionDraft,
+        system_prompt=TASK_CONTEXT_PROMPT if task_protocol else CONTEXT_DECISION_SYSTEM_PROMPT,
         retries=1,
         model_settings={"temperature": 0},
     )
@@ -189,5 +193,6 @@ async def run_context_decision_agent(
             is_fallback=False,
             error=None,
             duration_ms=duration,
+            usage=asdict(result.usage),
         ),
     )

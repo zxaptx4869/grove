@@ -48,6 +48,7 @@ async def resolve_result_mode(
     objective: str,
     scope_label: str,
     topic_summary: str | None,
+    task_context: dict | None = None,
 ) -> ResultModeResolution:
     """按请求形态解析实际结果形态。
 
@@ -81,6 +82,7 @@ async def resolve_result_mode(
             objective=objective,
             scope_label=scope_label,
             topic_summary=topic_summary,
+            **({"task_context": task_context} if task_context is not None else {}),
         )
     except Exception as exc:  # noqa: BLE001
         return ResultModeResolution(

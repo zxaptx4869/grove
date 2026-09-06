@@ -179,6 +179,7 @@ def _restore_decision(run: KnowledgeAgentRun) -> ContextDecisionResult | None:
         degraded=bool(meta_json.get("is_fallback") or meta_json.get("error")),
         history_message_ids=list(history_ids),
         referenced_entry_ids=meta_json.get("referenced_entry_ids", []),
+        statement_message_ids=meta_json.get("statement_message_ids"),
         meta=StageMeta(
             purpose=PURPOSE_CONTEXT_DECISION,
             provider=meta_json.get("provider", "server"),
@@ -199,8 +200,10 @@ def _persist_decision(
     run.standalone_query = decision.standalone_query
     run.topic_label = decision.topic_label
     run.history_message_ids_json = json.dumps(decision.history_message_ids)
+    previous_meta = json.loads(getattr(run, "context_meta_json", None) or "{}")
     run.context_meta_json = json.dumps(
         {
+            **previous_meta,
             "provider": decision.meta.provider,
             "model": decision.meta.model,
             "is_fallback": decision.meta.is_fallback,
@@ -209,6 +212,7 @@ def _persist_decision(
             "prompt_version": CONTEXT_DECISION_PROMPT_VERSION,
             "clarify_question": decision.clarify_question,
             "referenced_entry_ids": decision.referenced_entry_ids,
+            "statement_message_ids": decision.statement_message_ids,
         },
         ensure_ascii=False,
     )
@@ -782,13 +786,16 @@ async def execute_run(db: AsyncSession, run: KnowledgeAgentRun) -> None:
     decision = _restore_decision(run)
     if decision is None:
         from app.services.knowledge_agent.dialogue_context import load_dialogue_context
+        from app.services.knowledge_agent.task_state import load_task_dialogue, read_state
 
-        dialogue = await load_dialogue_context(
-            db,
-            run,
-            limit=settings.knowledge_agent_history_limit,
-            message_chars=settings.knowledge_agent_history_message_chars,
-        )
+        task_state = read_state(run)
+        if task_state is not None:
+            dialogue = await load_task_dialogue(db, run)
+        else:
+            dialogue = await load_dialogue_context(
+                db, run, limit=settings.knowledge_agent_history_limit,
+                message_chars=settings.knowledge_agent_history_message_chars,
+            )
         decision = await decide_context(
             db,
             workspace_id=run.workspace_id,
@@ -803,12 +810,13 @@ async def execute_run(db: AsyncSession, run: KnowledgeAgentRun) -> None:
             exclude_run_id=run.id,
             dialogue=dialogue,
             scope_label=scope,
+            **({"run": run} if task_state is not None else {}),
         )
         await record_model_invocation(
             db,
             run_id=run.id,
             meta=decision.meta,
-            prompt_version=CONTEXT_DECISION_PROMPT_VERSION,
+            prompt_version="task-v1" if task_state is not None else CONTEXT_DECISION_PROMPT_VERSION,
         )
         _persist_decision(run, decision)
         await db.commit()
@@ -834,13 +842,17 @@ async def execute_run(db: AsyncSession, run: KnowledgeAgentRun) -> None:
     await _check_cancelled(run.id)
     await update_run_step(run.id, STEP_RESULT_MODE_ROUTE)
     if run.actual_result_mode is None:
+        from app.services.knowledge_agent.task_state import task_input
+
+        task_context = task_input(run)
         resolution = await resolve_result_mode(
             db,
             workspace_id=run.workspace_id,
             request_mode=run.request_result_mode or RESULT_MODE_AUTO,
-            objective=decision.standalone_query or query,
+            objective=query if task_context else decision.standalone_query or query,
             scope_label=scope,
             topic_summary=decision.topic_label,
+            **({"task_context": task_context} if task_context else {}),
         )
         run.actual_result_mode = resolution.mode
         if resolution.meta is not None:
@@ -851,6 +863,13 @@ async def execute_run(db: AsyncSession, run: KnowledgeAgentRun) -> None:
                 prompt_version=RESULT_MODE_ROUTE_PROMPT_VERSION,
             )
         await db.commit()
+    from app.services.knowledge_agent.task_state import task_basis_text
+
+    basis_constraint = task_basis_text(run)
+    if basis_constraint:
+        decision.standalone_query = (
+            f"{decision.standalone_query}\n本任务依据限制：{basis_constraint}"
+        )
     no_grove = contains_no_grove_restriction(query, decision.standalone_query or "")
     if no_grove and (
         run.request_basis_mode == "knowledge_only"
@@ -932,7 +951,10 @@ async def execute_run(db: AsyncSession, run: KnowledgeAgentRun) -> None:
                 current_message_id=run.user_message_id,
                 exclude_run_id=run.id,
                 input_context_version_id=run.input_context_version_id,
-                history_message_ids=decision.history_message_ids,
+                history_message_ids=(
+                    decision.statement_message_ids if decision.statement_message_ids is not None
+                    else decision.history_message_ids
+                ),
                 limit=settings.knowledge_agent_statement_limit,
                 message_chars=settings.knowledge_agent_statement_message_chars,
             )
@@ -1166,7 +1188,10 @@ async def execute_run(db: AsyncSession, run: KnowledgeAgentRun) -> None:
             current_message_id=run.user_message_id,
             exclude_run_id=run.id,
             input_context_version_id=run.input_context_version_id,
-            history_message_ids=decision.history_message_ids,
+            history_message_ids=(
+                decision.statement_message_ids if decision.statement_message_ids is not None
+                else decision.history_message_ids
+            ),
             limit=getattr(settings, "knowledge_agent_statement_limit", 6),
             message_chars=getattr(settings, "knowledge_agent_statement_message_chars", 800),
         )

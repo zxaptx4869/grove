@@ -5,6 +5,7 @@
 规范化并注入 Run 固化范围；模型输出本身不具有授权或执行效力。
 """
 
+import json
 import logging
 from dataclasses import asdict
 from datetime import UTC, datetime
@@ -158,6 +159,7 @@ async def run_structured_query_planner(
     objective: str,
     scope_label: str,
     now: datetime | None = None,
+    task_context: dict | None = None,
 ) -> tuple[StructuredQueryPlanDraft | None, StageMeta]:
     """运行一次结构化查询规划，失败时返回显式 fallback，不伪造计划。"""
     started = perf_counter()
@@ -187,10 +189,16 @@ async def run_structured_query_planner(
             "请输出 StructuredQueryPlan v1。",
         ]
     )
+    from app.agents.dialogue_task import TASK_QUERY_PROMPT, QueryTaskDeltaDraft
+
+    if task_context is not None:
+        context += "\n原始请求与已选任务：" + json.dumps(task_context, ensure_ascii=False)
     agent = Agent(
         text_model,
-        output_type=StructuredQueryPlanDraft,
-        system_prompt=STRUCTURED_QUERY_PLAN_SYSTEM_PROMPT,
+        output_type=QueryTaskDeltaDraft if task_context is not None else StructuredQueryPlanDraft,
+        system_prompt=(
+            TASK_QUERY_PROMPT if task_context is not None else STRUCTURED_QUERY_PLAN_SYSTEM_PROMPT
+        ),
         retries=1,
         model_settings={
             "temperature": 0,

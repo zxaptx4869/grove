@@ -81,6 +81,12 @@ class Settings(BaseSettings):
     knowledge_agent_history_message_chars: int = Field(
         default=500, description="上下文决策单条历史消息截断长度"
     )
+    knowledge_agent_task_state_enabled: bool = Field(
+        default=True, description="新 Run 使用版本化对话任务状态，已开始 Run 的协议不变"
+    )
+    knowledge_agent_task_context_bytes: int = Field(
+        default=24000, ge=4000, le=64000, description="任务及原始消息上下文的 UTF-8 字节上限"
+    )
     knowledge_agent_working_set_limit: int = Field(
         default=15, description="工作集版本最多保存的 Entry 线索数"
     )

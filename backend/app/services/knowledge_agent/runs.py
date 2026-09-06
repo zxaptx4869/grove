@@ -10,6 +10,7 @@ from sqlalchemy import select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.config import get_settings
 from app.db.session import async_session_factory
 from app.models import (
     KnowledgeAgentRun,
@@ -301,6 +302,10 @@ async def submit_message(
         active_slot=ACTIVE_SLOT,
         max_retries=1,
     )
+    if get_settings().knowledge_agent_task_state_enabled:
+        from app.services.knowledge_agent.task_state import TaskState, write_state
+
+        write_state(run, TaskState())
     if source_run is not None:
         # 模式纠正复用来源 Run 已固化的独立问题与上下文决策，避免后续历史消息
         # 重新影响同一问题的解释；执行器会把这些字段视为可恢复决策而跳过分类模型。
@@ -558,6 +563,12 @@ async def finalize_run(
         assistant = await db.get(KnowledgeMessage, run.assistant_message_id)
         if assistant is not None:
             assistant.content = answer.answer
+    from app.services.knowledge_agent.task_state import finalize_task
+
+    finalize_task(
+        run, usable=status in {RUN_COMPLETED, RUN_PARTIAL} and answer.status != "clarification",
+        clarification=answer.answer if answer.status == "clarification" else None,
+    )
     await db.flush()
 
 
@@ -590,6 +601,12 @@ async def finalize_entry_run(
         assistant = await db.get(KnowledgeMessage, run.assistant_message_id)
         if assistant is not None:
             assistant.content = assistant_text
+    from app.services.knowledge_agent.task_state import finalize_task
+
+    usable = bool(entry_snapshot.items) or (
+        entry_snapshot.count is not None and entry_snapshot.count.status in {"completed", "limited"}
+    ) or any(g.status in {"completed", "limited"} for g in entry_snapshot.group_counts)
+    finalize_task(run, usable=usable)
     await db.flush()
 
 

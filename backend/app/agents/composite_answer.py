@@ -177,6 +177,7 @@ async def run_composite_answer_planner(
     user_statements: list[dict],
     knowledge_only: bool,
     now: datetime | None = None,
+    task_context: dict | None = None,
 ) -> tuple[CompositeAnswerPlanDraft | None, StageMeta]:
     """运行一次复合规划；失败返回 None 与真实 fallback 元数据。"""
     started = perf_counter()
@@ -212,6 +213,12 @@ async def run_composite_answer_planner(
             "请输出 CompositeAnswerPlan v1 候选。",
         ]
     )
+    if task_context is not None:
+        import json
+
+        context += "\n选定任务的查询定义（不是事实，不改变允许的用户陈述）：" + json.dumps(
+            task_context, ensure_ascii=False,
+        )
     agent = Agent(
         text_model,
         output_type=CompositeAnswerPlanDraft,

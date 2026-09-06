@@ -47,6 +47,7 @@ class ContextDecisionResult:
     history_message_ids: list[int]
     meta: StageMeta
     referenced_entry_ids: list[int] = field(default_factory=list)
+    statement_message_ids: list[int] | None = None
 
 
 def _server_meta(duration_ms: int = 0) -> StageMeta:
@@ -65,6 +66,52 @@ def _derive_topic_label(message: str) -> str:
     """从消息确定性生成主题标签（最多 30 字）。"""
     text = " ".join(message.split())
     return text[:30] + ("…" if len(text) > 30 else "")
+
+
+async def decide_task_context(db, run, current_message, dialogue, scope_label):
+    """新协议只选择任务；条件由后续查询规划根据原始消息解释。"""
+    from dataclasses import replace
+
+    from app.agents.dialogue_task import TaskDecisionDraft
+    from app.services.knowledge_agent.task_state import (
+        TaskStateError,
+        read_state,
+        select_task,
+        write_state,
+    )
+
+    draft, meta = await run_context_decision_agent(
+        db, run.workspace_id, current_message=current_message,
+        active_topic_label=dialogue.topic_label, working_set_titles=[],
+        history=dialogue.history, scope_label=scope_label, task_context=dialogue.task,
+    )
+    references = []
+    question = None
+    statement_ids = []
+    try:
+        if meta.is_fallback or not isinstance(draft, TaskDecisionDraft):
+            raise TaskStateError("暂时无法理解本轮任务，请重试；此前的查询条件仍保留")
+        state, references = await select_task(db, run, draft, current_message)
+        question = state.pending_question
+        decision = {"clarify": "clarify", "start": "new_topic"}.get(state.operation, "continue")
+        statement_ids = state.statement_message_ids
+        standalone = draft.standalone_query.strip() or current_message
+        label = draft.topic_label
+    except (TaskStateError, ValueError) as exc:
+        question = str(exc)
+        meta = replace(meta, is_fallback=True, error=question)
+        state = read_state(run)
+        state.phase = "pending"
+        state.pending_question = question
+        state.input["current_message"] = current_message
+        write_state(run, state)
+        decision, standalone, label = "clarify", current_message, dialogue.topic_label
+    return ContextDecisionResult(
+        decision=decision, standalone_query=standalone, topic_label=label,
+        clarify_question=question, degraded=meta.is_fallback,
+        history_message_ids=dialogue.message_ids, meta=meta,
+        referenced_entry_ids=references, statement_message_ids=statement_ids,
+    )
 
 
 async def select_decision_history(
@@ -140,8 +187,11 @@ async def decide_context(
     exclude_run_id: int | None = None,
     dialogue: DialogueContext | None = None,
     scope_label: str | None = None,
+    run=None,
 ) -> ContextDecisionResult:
     """执行上下文决策：显式覆盖优先，auto 走决策模型，均做归一化与安全降级。"""
+    if run is not None:
+        return await decide_task_context(db, run, current_message, dialogue, scope_label)
     if dialogue is None:
         history, history_ids = await select_decision_history(
             db,

@@ -266,7 +266,20 @@ async def plan_and_persist_structured_query(
 ) -> NormalizedStructuredQueryPlan | None:
     """复用已有计划或调用一次规划器，并在任何工具执行前提交合法快照。"""
     existing = restore_structured_query_plan(run.structured_query_plan_json)
+    from app.agents.dialogue_task import QueryTaskDeltaDraft
+    from app.services.knowledge_agent.task_state import (
+        TaskStateError,
+        merge_query_delta,
+        read_state,
+        task_input,
+        verify_task_project,
+        write_state,
+    )
+
+    context = task_input(run)
     if existing is not None:
+        if context is not None:
+            await verify_task_project(db, run, existing)
         return existing
 
     candidate, meta = await run_structured_query_planner(
@@ -274,17 +287,33 @@ async def plan_and_persist_structured_query(
         run.workspace_id,
         objective=objective,
         scope_label=scope_label,
+        **({"task_context": context} if context is not None else {}),
     )
     plan = None
     if candidate is not None:
         try:
-            plan = normalize_structured_query_plan(candidate)
-        except StructuredQueryPlanError as exc:
+            if context is not None:
+                if not isinstance(candidate, QueryTaskDeltaDraft):
+                    raise TaskStateError("查询规划未返回任务增量协议")
+                plan = merge_query_delta(run, candidate)
+                if plan is not None:
+                    await verify_task_project(db, run, plan)
+            else:
+                plan = normalize_structured_query_plan(candidate)
+        except (StructuredQueryPlanError, TaskStateError, ValueError) as exc:
+            plan = None
             meta = replace(
                 meta,
                 is_fallback=True,
                 error=f"结构化查询计划校验失败：{exc}",
             )
+    if context is not None and plan is None:
+        state = read_state(run)
+        state.phase = "pending"
+        state.pending_question = (
+            state.pending_question or meta.error or "查询规划暂时不可用，请重试"
+        )
+        write_state(run, state)
     # 规划期间若已取消，迟到计划与调用结果都不得提交
     if cancel_check is not None:
         await cancel_check()
@@ -292,7 +321,7 @@ async def plan_and_persist_structured_query(
         db,
         run_id=run.id,
         meta=meta,
-        prompt_version=STRUCTURED_QUERY_PLAN_PROMPT_VERSION,
+        prompt_version="task-v1" if context is not None else STRUCTURED_QUERY_PLAN_PROMPT_VERSION,
     )
     if plan is not None:
         persist_structured_query_plan(run, plan)

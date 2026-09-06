@@ -5,6 +5,7 @@
 应用层负责范围、权限与后续执行图选择。
 """
 
+import json
 import logging
 from time import perf_counter
 from typing import Literal
@@ -83,6 +84,7 @@ async def run_result_mode_router(
     objective: str,
     scope_label: str,
     topic_summary: str | None,
+    task_context: dict | None = None,
 ) -> tuple[ResultModeRouteDraft, StageMeta]:
     """运行结果形态路由 Agent，返回 (草稿, 阶段元数据)。"""
     started = perf_counter()
@@ -110,6 +112,10 @@ async def run_result_mode_router(
             "请输出结构化路由结果。",
         ]
     )
+    if task_context is not None:
+        context += "\n原始请求与选定任务（只判断展示方式，不修改条件）：" + json.dumps(
+            task_context, ensure_ascii=False,
+        )
     agent = Agent(
         text_model,
         output_type=ResultModeRouteDraft,

@@ -189,3 +189,97 @@ def build_cases(project_name: str, empty_name: str | None) -> list[Case]:
             ]
         )
     return cases
+
+
+def build_task_cases(project_name: str, other_name: str) -> list[Case]:
+    """任务状态对照集；首次真实执行前固定，保留集不用于调提示词。"""
+    return [
+        Case(
+            "task_original",
+            "用户五轮原话",
+            (
+                Turn("全部项目我一共有多少个知识"),
+                Turn(f"其中{project_name}项目有多少个呢", oracle_scope="project"),
+                Turn("按项目统计数量给我", "group", group_by="project"),
+                Turn(f"帮我统计{other_name}有多少条知识", oracle_scope="other"),
+                Turn("分项目统计数量", "group", group_by="project"),
+            ),
+            category="任务状态 / 用户反馈",
+            notes=["分项目两轮预期按用户反馈为全部项目；不自动接受澄清为通过。"],
+        ),
+        Case(
+            "task_restore",
+            "深入后恢复汇总",
+            (
+                Turn("统计全部项目的知识总数"),
+                Turn(f"其中{project_name}有多少条", oracle_scope="project"),
+                Turn("回到刚才全部项目的统计，分别列出各项目的数量", "group", group_by="project"),
+            ),
+            category="任务状态 / 调试",
+        ),
+        Case(
+            "task_replace_clear",
+            "替换与撤销条件",
+            (
+                Turn(
+                    f"统计{project_name}项目的方法类型记录数量",
+                    main_types=("method",),
+                    oracle_scope="project",
+                ),
+                Turn("类型换成参数，其他不变", main_types=("parameter",), oracle_scope="project"),
+                Turn("取消类型限制，统计这个项目全部类型", oracle_scope="project"),
+                Turn("再取消项目限制，统计整个工作区的总数"),
+            ),
+            category="任务状态 / 调试",
+        ),
+        Case(
+            "task_interrupt",
+            "通用讨论插话后恢复",
+            (
+                Turn(
+                    f"统计{project_name}项目的方法类型记录数量",
+                    main_types=("method",),
+                    oracle_scope="project",
+                ),
+                Turn(
+                    "插个问题：只用通用知识简单解释什么是番茄工作法，不查知识库",
+                    "discussion",
+                    review=True,
+                ),
+                Turn(
+                    "回到插话前的方法数量统计，按信息性质分组",
+                    "group",
+                    main_types=("method",),
+                    group_by="info_nature",
+                    oracle_scope="project",
+                ),
+            ),
+            category="任务状态 / 调试",
+        ),
+        Case(
+            "task_project_keep",
+            "更换项目后保留集合分组",
+            (
+                Turn(f"统计{project_name}有多少条知识", oracle_scope="project"),
+                Turn(f"换成{other_name}，仍然只统计这个项目", oracle_scope="other"),
+                Turn(
+                    "这个项目内按类型分别统计", "group", group_by="main_type", oracle_scope="other"
+                ),
+            ),
+            category="任务状态 / 保留集",
+        ),
+        Case(
+            "task_heldout_reset",
+            "自然表达解除条件与重置",
+            (
+                Turn(
+                    f"{project_name}里提醒类型的记录有几条",
+                    main_types=("reminder",),
+                    oracle_scope="project",
+                ),
+                Turn("别限定提醒了，其他类型也一起算进去", oracle_scope="project"),
+                Turn("重新开始：整个工作区有多少条正式记录", context_mode="new_topic"),
+            ),
+            category="任务状态 / 保留集",
+        ),
+    ]
