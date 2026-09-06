@@ -603,9 +603,10 @@ async def finalize_entry_run(
             assistant.content = assistant_text
     from app.services.knowledge_agent.task_state import finalize_task
 
-    usable = bool(entry_snapshot.items) or (
-        entry_snapshot.count is not None and entry_snapshot.count.status in {"completed", "limited"}
-    ) or any(g.status in {"completed", "limited"} for g in entry_snapshot.group_counts)
+    usable = status == RUN_COMPLETED or bool(entry_snapshot.items) or (
+        entry_snapshot.count is not None
+        and entry_snapshot.count.status in {"completed", "limited", "empty"}
+    ) or any(g.status in {"completed", "limited", "empty"} for g in entry_snapshot.group_counts)
     finalize_task(run, usable=usable)
     await db.flush()
 

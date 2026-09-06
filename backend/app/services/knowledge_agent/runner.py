@@ -209,7 +209,9 @@ def _persist_decision(
             "is_fallback": decision.meta.is_fallback,
             "error": decision.meta.error,
             "duration_ms": decision.meta.duration_ms,
-            "prompt_version": CONTEXT_DECISION_PROMPT_VERSION,
+            "prompt_version": (
+                "task-v1" if "dialogue_task" in previous_meta else CONTEXT_DECISION_PROMPT_VERSION
+            ),
             "clarify_question": decision.clarify_question,
             "referenced_entry_ids": decision.referenced_entry_ids,
             "statement_message_ids": decision.statement_message_ids,
@@ -821,6 +823,36 @@ async def execute_run(db: AsyncSession, run: KnowledgeAgentRun) -> None:
         _persist_decision(run, decision)
         await db.commit()
 
+    from app.services.knowledge_agent.task_state import read_state
+
+    selected_task = read_state(run)
+    if selected_task and selected_task.frame:
+        # 暂停任务的工作集不能成为当前任务的检索种子。
+        selected_version_id = selected_task.frame.context_version_id
+        input_version = (
+            await db.get(KnowledgeContextVersion, selected_version_id)
+            if selected_version_id is not None else None
+        )
+        if input_version is not None and (
+            input_version.workspace_id != run.workspace_id
+            or input_version.owner_user_id != run.owner_user_id
+            or input_version.conversation_id != run.conversation_id
+            or input_version.scope_type != run.scope_type
+            or input_version.project_id != run.project_id
+        ):
+            from app.services.knowledge_agent.task_state import TaskStateError
+
+            raise TaskStateError("恢复任务的工作集不属于当前对话范围")
+        if input_version is None:
+            selected_version_id = None
+        working_set = await load_validated_working_set(
+            db, workspace_id=run.workspace_id, owner_user_id=run.owner_user_id,
+            conversation_id=run.conversation_id, scope_type=run.scope_type,
+            project_id=run.project_id, context_version_id=selected_version_id,
+        )
+        run.input_context_version_id = selected_version_id
+        await db.commit()
+
     # 澄清分支：直接回复，不检索、不生成事实引用、不更新工作集
     if decision.decision == CONTEXT_DECISION_CLARIFY:
         await _check_cancelled(run.id)
@@ -860,7 +892,7 @@ async def execute_run(db: AsyncSession, run: KnowledgeAgentRun) -> None:
                 db,
                 run_id=run.id,
                 meta=resolution.meta,
-                prompt_version=RESULT_MODE_ROUTE_PROMPT_VERSION,
+                prompt_version="task-v1" if task_context else RESULT_MODE_ROUTE_PROMPT_VERSION,
             )
         await db.commit()
     from app.services.knowledge_agent.task_state import task_basis_text
@@ -972,6 +1004,9 @@ async def execute_run(db: AsyncSession, run: KnowledgeAgentRun) -> None:
                 cancel_check=lambda: _check_cancelled(run.id),
             )
             if composite_plan is not None:
+                from app.services.knowledge_agent.task_state import prepare_composite_task
+
+                await prepare_composite_task(db, run, composite_plan)
                 shared_graph_enabled = getattr(
                     settings, "knowledge_agent_shared_execution_graph_enabled", False
                 )

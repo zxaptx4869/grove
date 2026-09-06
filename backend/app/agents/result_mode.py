@@ -119,7 +119,13 @@ async def run_result_mode_router(
     agent = Agent(
         text_model,
         output_type=ResultModeRouteDraft,
-        system_prompt=RESULT_MODE_ROUTE_SYSTEM_PROMPT,
+        system_prompt=(RESULT_MODE_ROUTE_SYSTEM_PROMPT if task_context is None else (
+            "你是结果展示路由器，只根据本轮原始消息及选定任务判断 answer 或 entries。"
+            "纯计数、分组、筛选、排序、列表及其省略追问一律是 entries；"
+            "只有本轮还要求解释、分析、建议或理解对象内容时才是 answer。"
+            "任务中存在历史讨论不代表本轮也需要解释，不能把其他任务的要求带入。"
+            "不重新解释筛选条件，不生成数字。用户泛称知识不限制记录类型。"
+        )),
         retries=1,
         model_settings={
             "temperature": 0,

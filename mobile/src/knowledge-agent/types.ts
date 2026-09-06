@@ -360,7 +360,7 @@ export type KnowledgeStructuredOutput =
 
 export interface KnowledgeStructuredQueryPlan {
   schemaVersion: "v1";
-  promptVersion: "v1" | "v2" | "v3";
+  promptVersion: "v1" | "v2" | "v3" | "task-v1";
   entrySet: KnowledgeStructuredEntrySetPlan;
   outputs: KnowledgeStructuredOutput[];
 }

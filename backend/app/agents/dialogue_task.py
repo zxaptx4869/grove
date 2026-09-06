@@ -1,10 +1,15 @@
 """对话任务的模型候选协议；不包含数据库权限或任意表达式。"""
 
-from typing import Literal
+from typing import Annotated, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from app.agents.structured_query import StructuredQueryOutputDraft, UpdatedAtRangeDraft
+from app.agents.structured_query import (
+    InfoNature,
+    MainType,
+    StructuredQueryOutputDraft,
+    UpdatedAtRangeDraft,
+)
 
 TASK_PROMPT_VERSION = "task-v1"
 
@@ -35,8 +40,50 @@ class ConditionChange(TaskDraft):
     source_kind: Literal["explicit", "inferred"] = "explicit"
 
 
+class ProjectChange(ConditionChange):
+    field: Literal["project_name"]
+    value: str | None = Field(default=None, description="正式项目归属的精确名称，不是主题关键词")
+
+
+class SemanticChange(ConditionChange):
+    field: Literal["semantic_query"]
+    value: str | None = Field(
+        default=None, description="仅用户明确要求的内容主题，不含泛称知识/记录"
+    )
+
+
+class MainTypeChange(ConditionChange):
+    field: Literal["main_types"]
+    value: list[MainType] | None = Field(
+        default=None,
+        description=(
+            "仅用户明确指定的类型子集。泛称知识/知识记录/正式记录表示全部类型，"
+            "不得设置为 knowledge；只有明确限定知识类型才使用 knowledge。"
+        ),
+    )
+
+
+class InfoNatureChange(ConditionChange):
+    field: Literal["info_natures"]
+    value: list[InfoNature] | None = Field(
+        default=None,
+        description="仅用户明确指定的信息性质；正式/已确认不等于 fact，方法不等于 advice",
+    )
+
+
+class TimeChange(ConditionChange):
+    field: Literal["updated_at"]
+    value: UpdatedAtRangeDraft | None = None
+
+
+TypedChange = Annotated[
+    ProjectChange | SemanticChange | MainTypeChange | InfoNatureChange | TimeChange,
+    Field(discriminator="field"),
+]
+
+
 class QueryTaskDeltaDraft(TaskDraft):
-    changes: list[ConditionChange] = Field(default_factory=list, max_length=5)
+    changes: list[TypedChange] = Field(default_factory=list, max_length=5)
     outputs: list[StructuredQueryOutputDraft] | None = Field(
         default=None,
         min_length=1,

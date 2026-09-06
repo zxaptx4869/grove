@@ -42,6 +42,7 @@ class TaskFrame(StrictState):
     basis_source: dict | None = None
     message_ids: list[int] = Field(default_factory=list, max_length=16)
     result_run_id: int | None = None
+    context_version_id: int | None = None
     result_titles: list[str] = Field(default_factory=list, max_length=50)
     binding: ProjectBinding | None = None
     legacy: bool = False
@@ -79,7 +80,15 @@ def write_state(run, state: TaskState) -> None:
 
 
 def public_frame(frame: TaskFrame) -> dict:
-    return frame.model_dump(exclude={"binding", "origin_run_id", "result_run_id", "message_ids"})
+    return frame.model_dump(
+        exclude={
+            "binding",
+            "origin_run_id",
+            "result_run_id",
+            "message_ids",
+            "context_version_id",
+        }
+    )
 
 
 async def load_task_dialogue(db, run) -> DialogueContext:
@@ -214,7 +223,12 @@ async def load_task_dialogue(db, run) -> DialogueContext:
             pending = {
                 "question": last_state.pending_question,
                 "request": last_state.input.get("current_message"),
-                "task_handle": last_state.frame.handle if last_state.frame else None,
+                "task_handle": (
+                    last_state.frame.handle
+                    if last_state.frame
+                    and any(f.handle == last_state.frame.handle for f in state.pool)
+                    else None
+                ),
             }
     payload = {
         "protocol": PROTOCOL,
@@ -326,6 +340,17 @@ async def select_task(
             }
         )
     state.input["projects"] = matches
+    # 当前消息和选定基线加入后仍须满足预算，优先删除未选任务和较早历史。
+    while (
+        len(json.dumps(state.input, ensure_ascii=False).encode())
+        > get_settings().knowledge_agent_task_context_bytes
+    ):
+        if state.input.get("tasks"):
+            state.input["tasks"].pop()
+        elif state.input.get("history"):
+            state.input["history"].pop(0)
+        else:
+            raise TaskStateError("本轮任务上下文超过预算，请缩短请求或明确筛选条件")
     state.metadata_audit = {
         "names": names,
         "matches": matches,
@@ -350,6 +375,10 @@ async def select_task(
             run.project_id,
         ):
             raise TaskStateError("所选列表不属于当前任务范围")
+        if result_run.status not in {"completed", "partial"} or not (
+            state.epoch <= result_run.user_message_id < run.user_message_id
+        ):
+            raise TaskStateError("所选列表尚未完成或已经越过当前对话边界")
         items = json.loads(result_run.entry_result_json or "{}").get("items", [])
         if draft.result_position > len(items):
             raise TaskStateError("最近的展示列表中没有这个序号，请重新选择")
@@ -419,6 +448,7 @@ def merge_query_delta(run, delta: QueryTaskDeltaDraft):
         state.frame.sources["outputs"] = source
         outputs = [o.model_dump(mode="json", by_alias=True) for o in delta.outputs]
     plan = normalize_structured_query_plan({"entry_set": entry_set, "outputs": outputs})
+    plan.prompt_version = "task-v1"
     state.frame.plan = plan.model_dump(mode="json", by_alias=True)
     state.changes = delta.model_dump(mode="json", by_alias=True)
     state.phase = "planned"
@@ -447,6 +477,29 @@ async def verify_task_project(db, run, plan) -> None:
     write_state(run, state)
 
 
+async def prepare_composite_task(db, run, plan) -> None:
+    """复合回答只有单一结构化集合时保存其实际查询定义，避免继承未执行的基线。"""
+    state = read_state(run)
+    if not state or not state.frame:
+        return
+    requests = plan.structured_requests
+    if len(requests) == 1:
+        actual = requests[0].query_plan
+        old_set = (state.frame.plan or {}).get("entry_set", {})
+        if old_set.get("project_name") != actual.entry_set.project_name:
+            state.frame.binding = None
+        state.frame.plan = actual.model_dump(mode="json", by_alias=True)
+        state.frame.sources = {
+            "composite": {"message_id": run.user_message_id, "origin": "inferred"},
+        }
+        write_state(run, state)
+        await verify_task_project(db, run, actual)
+    else:
+        state.frame.plan = None
+        state.frame.binding = None
+        write_state(run, state)
+
+
 def finalize_task(run, *, usable: bool, clarification: str | None = None) -> None:
     state = read_state(run)
     if not state or not state.frame:
@@ -455,6 +508,9 @@ def finalize_task(run, *, usable: bool, clarification: str | None = None) -> Non
         state.phase, state.pending_question = "pending", clarification
     elif usable:
         state.phase = "committed"
+        state.frame.context_version_id = (
+            run.output_context_version_id or state.frame.context_version_id
+        )
         snapshot = json.loads(run.entry_result_json or "{}")
         if snapshot.get("items"):
             state.frame.result_run_id = run.id

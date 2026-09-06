@@ -277,6 +277,53 @@ async def test_project_replacement_same_name_cannot_hijack_restored_task():
 
 
 @pytest.mark.asyncio
+async def test_current_message_budget_is_checked_after_task_selection(monkeypatch):
+    async with async_session_factory() as db:
+        item, _ = await conversation(db)
+        run = await begin(db, item, "统计全部知识")
+        monkeypatch.setattr(get_settings(), "knowledge_agent_task_context_bytes", 4000)
+        with pytest.raises(TaskStateError, match="预算"):
+            await select_task(
+                db,
+                run,
+                TaskDecisionDraft(operation="start", topic_label="统计", standalone_query="统计"),
+                "统计" * 2000,
+            )
+
+
+@pytest.mark.asyncio
+async def test_scope_boundary_and_foreign_persisted_frame_are_excluded():
+    async with async_session_factory() as db:
+        item, _ = await conversation(db)
+        foreign_item, _ = await conversation(db)
+        foreign = await begin(db, foreign_item, "外部任务")
+        await select_frame(db, foreign)
+        await complete(db, foreign)
+        local = await begin(db, item, "本地任务")
+        await select_frame(db, local)
+        await complete(db, local)
+        state = read_state(local)
+        state.pool.append(read_state(foreign).frame)
+        write_state(local, state)
+        current = await begin(db, item, "继续本地")
+        assert [f.handle for f in read_state(current).pool] == [read_state(local).frame.handle]
+        await select_frame(db, current, "continue", read_state(local).frame.handle)
+        await complete(db, current)
+        db.add(
+            KnowledgeMessage(
+                conversation_id=item.id,
+                role="system",
+                message_type="scope_change",
+                content="切换范围",
+                scope_type="workspace",
+            )
+        )
+        await db.flush()
+        changed = await begin(db, item, "范围切换后继续")
+        assert read_state(changed).pool == []
+
+
+@pytest.mark.asyncio
 async def test_condition_source_and_conflicting_operations_rejected():
     async with async_session_factory() as db:
         item, _ = await conversation(db)
@@ -322,3 +369,79 @@ async def test_protocol_is_fixed_at_submission_and_invalid_version_not_downgrade
         run.context_meta_json = json.dumps(payload)
         with pytest.raises(TaskStateError, match="版本"):
             read_state(run)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("invalid", [False, True])
+async def test_runner_compiles_once_keeps_raw_request_and_never_falls_back_to_search(
+    monkeypatch, invalid
+):
+    from sqlalchemy import func, select
+
+    from app.models import KnowledgeAgentToolCall
+    from app.services.knowledge_agent.observability import StageMeta
+    from app.services.knowledge_agent.runner import execute_run
+
+    def meta(purpose):
+        return StageMeta(
+            purpose=purpose,
+            provider="test",
+            model="task-test",
+            is_fallback=False,
+            error=None,
+            duration_ms=1,
+        )
+
+    async def decide(db, workspace_id, **kwargs):
+        assert kwargs["current_message"] == "当前范围共有多少条知识"
+        return TaskDecisionDraft(
+            operation="start",
+            topic_label="统计",
+            standalone_query="故意不用于条件解析的摘要",
+        ), meta("context_decision")
+
+    calls = []
+
+    async def planner(db, workspace_id, **kwargs):
+        assert kwargs["task_context"]["current_message"] == "当前范围共有多少条知识"
+        calls.append(kwargs)
+        return delta(
+            "不存在的原文" if invalid else "当前范围共有多少条知识",
+            outputs=[{"kind": "count"}],
+        ), meta("structured_query_plan")
+
+    monkeypatch.setattr("app.services.knowledge_agent.follow_up.run_context_decision_agent", decide)
+    monkeypatch.setattr(
+        "app.services.knowledge_agent.structured_query.run_structured_query_planner", planner
+    )
+    monkeypatch.setattr(get_settings(), "knowledge_agent_structured_query_enabled", True)
+    async with async_session_factory() as db:
+        item, _ = await conversation(db)
+        run = await begin(db, item, "当前范围共有多少条知识")
+        run.request_result_mode = "entries"
+        run.status = "processing"
+        await db.commit()
+        await execute_run(db, run)
+        await db.commit()
+        count = (
+            await db.execute(
+                select(func.count())
+                .select_from(KnowledgeAgentToolCall)
+                .where(
+                    KnowledgeAgentToolCall.run_id == run.id,
+                )
+            )
+        ).scalar()
+        assert len(calls) == 1
+        if invalid:
+            assert count == 0
+            assert read_state(run).phase == "pending"
+            assert json.loads(run.answer_json)["status"] == "clarification"
+            assert run.structured_query_plan_json is None
+        else:
+            assert count == 1
+            assert read_state(run).phase == "committed"
+            assert json.loads(run.entry_result_json)["count"]["value"] == 0
+            assert json.loads(run.structured_query_plan_json)["prompt_version"] == "task-v1"
+            await execute_run(db, run)
+            assert len(calls) == 1
