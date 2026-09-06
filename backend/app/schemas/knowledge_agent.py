@@ -431,7 +431,7 @@ class KnowledgeStructuredQueryPlanOut(BaseModel):
     """服务端规范化计划摘要；不包含模型原始输出、reason 或 prompt。"""
 
     schema_version: Literal["v1"] = "v1"
-    prompt_version: Literal["v1", "v2"] = "v1"
+    prompt_version: Literal["v1", "v2", "v3"] = "v1"
     entry_set: KnowledgeStructuredEntrySetPlanOut
     outputs: list[KnowledgeStructuredOutputOut]
 

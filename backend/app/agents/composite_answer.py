@@ -22,7 +22,7 @@ from app.services.knowledge_agent.observability import StageMeta
 
 logger = logging.getLogger(__name__)
 
-COMPOSITE_ANSWER_PLAN_PROMPT_VERSION = "v2"
+COMPOSITE_ANSWER_PLAN_PROMPT_VERSION = "v3"
 
 CompositeRequirementKind = Literal[
     "explain",
@@ -119,6 +119,7 @@ class CompositeAnswerPlanDraft(StrictCompositeDraft):
 
 COMPOSITE_ANSWER_PLAN_SYSTEM_PROMPT = (
     "泛称知识/全部记录默认包含全部四种类型，不加 knowledge 单类型过滤。"
+    "正式/已确认是记录状态，不等于 fact 信息性质；没有要求性质筛选就留空。"
     "项目名称筛选用 EntrySetSpec.project_name；"
     "项目分组用 group_count(project)。"
     "继续追问时使用独立问题中的完整对象和条件，原始消息中的新要求与限制优先。"

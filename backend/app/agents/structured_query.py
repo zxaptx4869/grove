@@ -22,7 +22,7 @@ from app.services.knowledge_agent.observability import StageMeta
 
 logger = logging.getLogger(__name__)
 
-STRUCTURED_QUERY_PLAN_PROMPT_VERSION = "v2"
+STRUCTURED_QUERY_PLAN_PROMPT_VERSION = "v3"
 
 MainType = Literal["knowledge", "method", "parameter", "reminder"]
 InfoNature = Literal[
@@ -57,8 +57,17 @@ class EntrySetSpecDraft(StrictQueryModel):
     schema_version: Literal["v1"] = "v1"
     project_name: str | None = Field(default=None, min_length=1, max_length=64)
     semantic_query: str | None = Field(default=None, min_length=1, max_length=500)
-    main_types: list[MainType] = Field(default_factory=list, max_length=4)
-    info_natures: list[InfoNature] = Field(default_factory=list, max_length=6)
+    main_types: list[MainType] = Field(
+        default_factory=list, max_length=4,
+        description="仅用户明确指定的类型子集；泛称知识或正式记录时留空，表示全部类型。",
+    )
+    info_natures: list[InfoNature] = Field(
+        default_factory=list, max_length=6,
+        description=(
+            "仅用户明确指定的信息性质子集；未要求性质筛选时必须留空。"
+            "正式/已确认指记录状态，不等于 fact；方法类型也不等于 advice。"
+        ),
+    )
     updated_at: UpdatedAtRangeDraft | None = None
 
 
@@ -129,6 +138,8 @@ STRUCTURED_QUERY_PLAN_SYSTEM_PROMPT = (
     "项目名称条件使用 project_name，不要把项目名放入 semantic_query；"
     "project_name 是精确项目名称筛选，不改变授权范围；按项目计数使用 group_count(project)。"
     "没有限制类型或性质时对应数组留空，不需要枚举所有值。"
+    "正式/已确认描述记录状态，不是 fact 信息性质；所有工具原本就只查正式 Entry。"
+    "每个非空筛选条件必须对应问题中明确要求的限制，不能根据类型推断性质。"
 )
 
 

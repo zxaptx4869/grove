@@ -103,7 +103,7 @@ class NormalizedStructuredQueryPlan(StrictNormalizedModel):
     """持久化并执行的 StructuredQueryPlan v1；不保存原始模型输出。"""
 
     schema_version: Literal["v1"] = "v1"
-    prompt_version: Literal["v1", "v2"] = STRUCTURED_QUERY_PLAN_PROMPT_VERSION
+    prompt_version: Literal["v1", "v2", "v3"] = STRUCTURED_QUERY_PLAN_PROMPT_VERSION
     entry_set: NormalizedEntrySetSpec
     outputs: list[NormalizedStructuredQueryOutput]
 
