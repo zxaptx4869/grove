@@ -201,7 +201,10 @@ async def _dispatch(ctx: RunContext[LoopDeps], tool_name: str, params: dict, kin
             registry=KNOWLEDGE_AGENT_READ_TOOL_REGISTRY,
         )
         await db.commit()
-    handle = state.store_result(kind, result.payload, result.status, result.completeness)
+    payload = result.payload
+    if tool_name == "search_knowledge" and len(payload.get("items", [])) > 10:
+        payload = {**payload, "items": payload["items"][:10], "truncated_by_experiment": True}
+    handle = state.store_result(kind, payload, result.status, result.completeness)
     event = {
         "tool": tool_name,
         "result_handle": handle,
@@ -218,7 +221,9 @@ async def _dispatch(ctx: RunContext[LoopDeps], tool_name: str, params: dict, kin
             if evidence_handle and item.get("citable"):
                 state.evidence[evidence_handle] = item
                 state.current_evidence.add(evidence_handle)
-    return _public_result(result, handle)
+    public = _public_result(result, handle)
+    public["payload"] = payload
+    return public
 
 
 def build_agent(model) -> Agent[LoopDeps, DialogueAnswer]:
@@ -238,6 +243,10 @@ def build_agent(model) -> Agent[LoopDeps, DialogueAnswer]:
         """列出当前认证 Workspace 中可访问的项目；统计分桶仍应调用 aggregate_entries。"""
         from app.db.session import async_session_factory
         from app.models import Project
+        from app.services.knowledge_agent.observability import (
+            next_tool_sequence,
+            record_tool_call,
+        )
 
         state = ctx.deps.state
         await state.ledger.reserve_tool()
@@ -257,6 +266,15 @@ def build_agent(model) -> Agent[LoopDeps, DialogueAnswer]:
                     .order_by(Project.id)
                 )
             ).all()
+            await record_tool_call(
+                db,
+                run_id=state.run_id,
+                sequence=await next_tool_sequence(db, state.run_id),
+                tool_name="list_projects",
+                status="completed" if rows else "empty",
+                result_summary=json.dumps({"project_count": len(rows)}, ensure_ascii=False),
+            )
+            await db.commit()
         payload = {"projects": [{"name": row.name, "status": row.status} for row in rows]}
         handle = state.store_result(
             "projects", payload, "completed" if rows else "empty", "complete"

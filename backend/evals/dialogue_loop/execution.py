@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+from collections.abc import Callable
 from dataclasses import asdict
 from datetime import UTC, datetime
 from pathlib import Path
@@ -185,6 +186,7 @@ async def run_new_scenario(
     identity: dict,
     ledger: BudgetLedger,
     instrumentation: Instrumentation,
+    checkpoint: Callable[[dict], None] | None = None,
 ) -> dict:
     from app.db.session import async_session_factory
     from app.services.ai_models import get_text_model
@@ -221,12 +223,30 @@ async def run_new_scenario(
                     "model_calls": [],
                 }
             )
+            if checkpoint:
+                checkpoint(
+                    {
+                        "arm": "new",
+                        "scenario": scenario_id,
+                        "title": scenario.title,
+                        "turns": turns,
+                    }
+                )
             continue
         run_id = await _submit_turn(conversation_id, message, turn_number)
         state.begin_turn(run_id, message)
         turn, history = await run_turn(agent, state, message, history)
         await _finish_new_run(run_id, turn["answer"], turn["error"])
         turns.append(turn)
+        if checkpoint:
+            checkpoint(
+                {
+                    "arm": "new",
+                    "scenario": scenario_id,
+                    "title": scenario.title,
+                    "turns": turns,
+                }
+            )
         if scenario_id == "C" and turn_number == 1:
             list_ready = any(block.get("kind") == "list" for block in turn["blocks"])
     return {"arm": "new", "scenario": scenario_id, "title": scenario.title, "turns": turns}
@@ -325,6 +345,7 @@ async def run_old_scenario(
     identity: dict,
     ledger: BudgetLedger,
     instrumentation: Instrumentation,
+    checkpoint: Callable[[dict], None] | None = None,
 ) -> dict:
     scenario = next(item for item in SCENARIOS if item.id == scenario_id)
     conversation_id = await _create_conversation(identity["workspace_id"], identity["user_id"])
@@ -345,10 +366,28 @@ async def run_old_scenario(
                     "model_calls": [],
                 }
             )
+            if checkpoint:
+                checkpoint(
+                    {
+                        "arm": "old",
+                        "scenario": scenario_id,
+                        "title": scenario.title,
+                        "turns": turns,
+                    }
+                )
             continue
         ledger.start_turn()
         turn = await _old_turn(conversation_id, message, turn_number, instrumentation)
         turns.append(turn)
+        if checkpoint:
+            checkpoint(
+                {
+                    "arm": "old",
+                    "scenario": scenario_id,
+                    "title": scenario.title,
+                    "turns": turns,
+                }
+            )
         if scenario_id == "C" and turn_number == 1:
             snapshot = (turn.get("public_run") or {}).get("entry_result") or {}
             list_ready = bool(snapshot.get("items"))
@@ -363,6 +402,7 @@ async def child_run(
     scenario_id: str,
     text_used: int,
     embedding_used: int,
+    checkpoint_path: Path | None = None,
 ) -> dict:
     assert_isolated(db_path, original_path)
     identity = await authenticate_demo(password)
@@ -372,10 +412,26 @@ async def child_run(
     ledger = BudgetLedger(text_used, embedding_used)
     instrumentation = Instrumentation(ledger)
     coverage = install_instrumentation(instrumentation)
+
+    def checkpoint(partial: dict) -> None:
+        if checkpoint_path is None:
+            return
+        partial.update(
+            {
+                "partial": True,
+                "batch_text_requests": ledger.batch_text_requests,
+                "batch_embedding_requests": ledger.batch_embedding_requests,
+            }
+        )
+        checkpoint_path.write_text(
+            json.dumps(partial, ensure_ascii=False, indent=2), encoding="utf-8"
+        )
+        checkpoint_path.chmod(0o600)
+
     if arm == "new":
-        result = await run_new_scenario(scenario_id, identity, ledger, instrumentation)
+        result = await run_new_scenario(scenario_id, identity, ledger, instrumentation, checkpoint)
     else:
-        result = await run_old_scenario(scenario_id, identity, ledger, instrumentation)
+        result = await run_old_scenario(scenario_id, identity, ledger, instrumentation, checkpoint)
     after = domain_fingerprint(
         db_path, identity["workspace_id"], attachment_root=original_path.parent
     )

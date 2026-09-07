@@ -189,6 +189,15 @@ def test_report_redacts_credentials_and_keeps_unknown_usage() -> None:
     assert value["usage"] is None
 
 
+def test_budget_snapshot_is_json_serializable() -> None:
+    import json
+
+    state = _state()
+    state.ledger.reserve_entries([9, 3])
+    raw = json.dumps(state.ledger.snapshot())
+    assert '"entry_reads": [3, 9]' in raw
+
+
 @pytest.mark.asyncio
 async def test_structured_output_gets_only_one_bounded_correction() -> None:
     state = _state()
@@ -228,3 +237,20 @@ async def test_context_over_limit_stops_without_model_call() -> None:
     with pytest.raises(BudgetExceeded, match="上下文"):
         await run_turn(agent, state, "继续", ["x" * 50_000])
     assert calls == []
+
+
+@pytest.mark.asyncio
+async def test_cancellation_does_not_turn_into_normal_answer() -> None:
+    import asyncio
+
+    state = _state()
+
+    async def respond(messages, info):
+        del messages, info
+        await asyncio.sleep(10)
+
+    task = asyncio.create_task(run_turn(build_agent(FunctionModel(respond)), state, "等待", []))
+    await asyncio.sleep(0)
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task

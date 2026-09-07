@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import getpass
 import json
 import os
 import sys
@@ -31,7 +32,11 @@ def main() -> int:
             "KNOWLEDGE_AGENT_WORKER_ENABLED",
         ):
             os.environ[key] = "false"
-        password = sys.stdin.readline().rstrip("\n")
+        password = (
+            getpass.getpass("demo 密码：")
+            if sys.stdin.isatty()
+            else sys.stdin.readline().rstrip("\n")
+        )
         from evals.dialogue_loop.execution import child_preflight, child_run
 
         if args.internal_preflight:
@@ -46,6 +51,7 @@ def main() -> int:
                     args.scenario,
                     args.text_used,
                     args.embedding_used,
+                    args.result,
                 )
             )
         _write(args.result, value)

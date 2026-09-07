@@ -176,10 +176,13 @@ class BudgetLedger:
         turn.evidence_reads += count
 
     def snapshot(self) -> dict:
+        turn = asdict(self._require_turn()) if self.active else None
+        if turn is not None:
+            turn["entry_reads"] = sorted(turn["entry_reads"])
         return {
             "batch_text_requests": self.batch_text_requests,
             "batch_embedding_requests": self.batch_embedding_requests,
-            "turn": asdict(self._require_turn()) if self.active else None,
+            "turn": turn,
         }
 
     def _require_turn(self) -> TurnBudget:

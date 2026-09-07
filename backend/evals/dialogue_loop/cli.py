@@ -27,6 +27,18 @@ from evals.dialogue_loop.isolation import (
 from evals.dialogue_loop.report import evaluate, initial_payload, write_report
 
 
+class InfrastructureFailure(RuntimeError):
+    """保留子进程完整错误，并用末行而非公共 traceback 前缀判断同类。"""
+
+    def __init__(self, detail: str, returncode: int, partial: dict | None = None):
+        self.detail = detail
+        self.returncode = returncode
+        self.partial = partial
+        lines = [line.strip() for line in detail.splitlines() if line.strip()]
+        self.signature = lines[-1][:300] if lines else f"exit:{returncode}"
+        super().__init__(f"隔离子进程失败（{returncode}）：{self.signature}")
+
+
 def parser() -> argparse.ArgumentParser:
     value = argparse.ArgumentParser(description="知识 Agent 统一对话循环隔离实验")
     value.add_argument("--preflight", action="store_true", help="只执行无模型预检（默认）")
@@ -81,7 +93,13 @@ def _child(args: list[str], db_path: Path, password: str, result_path: Path) -> 
     )
     if completed.returncode != 0:
         detail = completed.stderr.strip() or completed.stdout.strip() or "子进程无错误输出"
-        raise RuntimeError(f"隔离子进程失败（{completed.returncode}）：{detail[-2000:]}")
+        partial = None
+        if result_path.is_file():
+            try:
+                partial = json.loads(result_path.read_text(encoding="utf-8"))
+            except (OSError, json.JSONDecodeError):
+                partial = None
+        raise InfrastructureFailure(detail[-8_000:], completed.returncode, partial)
     data = json.loads(result_path.read_text(encoding="utf-8"))
     result_path.unlink(missing_ok=True)
     return data
@@ -234,6 +252,7 @@ def run_parent(args: argparse.Namespace) -> int:
         embedding_used = 0
         messages = 0
         infrastructure = Counter()
+        infrastructure_errors = []
         if args.compare and args.live and not blockers:
             order = (
                 ("A", "new"),
@@ -263,12 +282,36 @@ def run_parent(args: argparse.Namespace) -> int:
                         password,
                         result_path,
                     )
-                except Exception as exc:
-                    signature = f"{type(exc).__name__}:{str(exc)[:160]}"
+                except InfrastructureFailure as exc:
+                    signature = exc.signature
                     infrastructure[signature] += 1
-                    payload["results"].append(
-                        {"arm": arm, "scenario": scenario, "title": "基础设施异常", "turns": []}
+                    infrastructure_errors.append(
+                        {
+                            "arm": arm,
+                            "scenario": scenario,
+                            "signature": signature,
+                            "error": exc.detail,
+                        }
                     )
+                    payload["results"].append(
+                        exc.partial
+                        or {
+                            "arm": arm,
+                            "scenario": scenario,
+                            "title": "基础设施异常",
+                            "turns": [],
+                        }
+                    )
+                    if exc.partial:
+                        text_used = max(
+                            text_used,
+                            int(exc.partial.get("batch_text_requests", text_used)),
+                        )
+                        embedding_used = max(
+                            embedding_used,
+                            int(exc.partial.get("batch_embedding_requests", embedding_used)),
+                        )
+                        messages += len(exc.partial.get("turns", []))
                     if infrastructure[signature] >= 2:
                         stopped = f"相同基础设施异常第二次发生：{signature}"
                         break
@@ -312,6 +355,7 @@ def run_parent(args: argparse.Namespace) -> int:
             ),
         }
         payload["stop_reason"] = stopped
+        payload["infrastructure_errors"] = infrastructure_errors
         payload["conclusion"] = _conclusion(payload["results"], payload["evaluation"], stopped)
         md_path, json_path = write_report(report_dir, payload)
     print(f"预检：{'通过' if not blockers else '失败'}")
