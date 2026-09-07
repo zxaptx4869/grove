@@ -181,4 +181,26 @@ describe('知识 Agent 实验工作台', () => {
     fireEvent.click(screen.getByRole('button', { name: '发送' }))
     expect(api.submitTurn).not.toHaveBeenCalled()
   })
+
+  it('刷新后优先选择当前运行并把离线历史明确放在后面', async () => {
+    const withHistory = structuredClone(state)
+    const oldSession = structuredClone(withHistory.sessions[0])
+    oldSession.id = 'old-session'
+    oldSession.active = false
+    oldSession.offline = true
+    oldSession.created_at = '2026-09-07T11:00:00Z'
+    oldSession.conversations[0].id = 'old-conversation'
+    oldSession.conversations[0].title = '旧离线对话'
+    oldSession.conversations[0].read_only = true
+    withHistory.sessions.unshift(oldSession)
+    vi.mocked(api.bootstrap).mockResolvedValue(withHistory)
+
+    render(<WorkbenchApp />)
+
+    expect(await screen.findByRole('heading', { name: '装修记录' })).toBeInTheDocument()
+    expect(screen.getByText(/离线验收/)).toBeInTheDocument()
+    const conversationButtons = screen.getByRole('navigation').querySelectorAll('button')
+    expect(conversationButtons[0]).toHaveTextContent('装修记录')
+    expect(conversationButtons[1]).toHaveTextContent('旧离线对话')
+  })
 })

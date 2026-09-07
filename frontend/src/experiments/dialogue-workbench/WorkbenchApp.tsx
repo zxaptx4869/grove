@@ -378,8 +378,21 @@ export function WorkbenchApp() {
     () => state?.sessions.flatMap((session) => session.conversations) ?? [],
     [state],
   )
+  const orderedSessions = useMemo(
+    () =>
+      [...(state?.sessions ?? [])]
+        .filter((session) => session.active || session.conversations.length > 0)
+        .sort((left, right) => {
+          if (left.active !== right.active) return left.active ? -1 : 1
+          return right.created_at.localeCompare(left.created_at)
+        }),
+    [state],
+  )
+  const currentConversation = state?.sessions.find((session) => session.active)?.conversations[0]
   const selected =
-    conversations.find((conversation) => conversation.id === selectedId) ?? conversations[0]
+    conversations.find((conversation) => conversation.id === selectedId) ??
+    currentConversation ??
+    conversations[0]
   const activeTurn = selected?.turns.find((turn) => turn.id === state?.active_turn_id)
 
   const refresh = useCallback(async () => {
@@ -524,33 +537,31 @@ export function WorkbenchApp() {
             新建对话
           </Button>
           <nav aria-label="实验对话">
-            {state.sessions
-              .filter((session) => session.active || session.conversations.length > 0)
-              .map((session) => (
-                <section key={session.id}>
-                  <h2>
-                    {session.active ? '本次运行' : formatDate(session.created_at)}
-                    {!session.active && session.offline ? ' · 离线验收' : ''}
-                  </h2>
-                  {session.conversations.map((conversation) => (
-                    <button
-                      type="button"
-                      className={
-                        selected?.id === conversation.id
-                          ? 'conversation-item selected'
-                          : 'conversation-item'
-                      }
-                      onClick={() => setSelectedId(conversation.id)}
-                      key={conversation.id}
-                    >
-                      <span>{conversation.title}</span>
-                      <small>
-                        {conversation.read_only ? '只读' : `${conversation.turns.length} 轮`}
-                      </small>
-                    </button>
-                  ))}
-                </section>
-              ))}
+            {orderedSessions.map((session) => (
+              <section key={session.id}>
+                <h2>
+                  {session.active ? '本次运行' : formatDate(session.created_at)}
+                  {!session.active && session.offline ? ' · 离线验收' : ''}
+                </h2>
+                {session.conversations.map((conversation) => (
+                  <button
+                    type="button"
+                    className={
+                      selected?.id === conversation.id
+                        ? 'conversation-item selected'
+                        : 'conversation-item'
+                    }
+                    onClick={() => setSelectedId(conversation.id)}
+                    key={conversation.id}
+                  >
+                    <span>{conversation.title}</span>
+                    <small>
+                      {conversation.read_only ? '只读' : `${conversation.turns.length} 轮`}
+                    </small>
+                  </button>
+                ))}
+              </section>
+            ))}
           </nav>
           <button
             type="button"
