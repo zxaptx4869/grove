@@ -16,7 +16,6 @@ from pathlib import Path
 
 from evals.dialogue_loop.core import SCENARIOS, frozen_budget
 from evals.dialogue_loop.isolation import (
-    assert_isolated,
     backup_database,
     domain_fingerprint,
     identity_snapshot,
@@ -182,8 +181,8 @@ def run_parent(args: argparse.Namespace) -> int:
         shutil.copy2(seed, new_db)
         secure_file(old_db)
         secure_file(new_db)
-        assert_isolated(old_db, original)
-        assert_isolated(new_db, original)
+        # 父进程只制作快照、不导入数据库引擎或执行 Run；Worker 环境门禁在每个
+        # 真正连接副本的子进程内执行，避免把父进程环境误判为执行环境。
         preflights = []
         for arm, db_path in (("old", old_db), ("new", new_db)):
             child_result = temp_dir / f"preflight-{arm}.json"

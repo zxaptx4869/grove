@@ -48,15 +48,16 @@ async def secret_preflight(workspace_id: int) -> dict:
         row = await get_settings_row(db, workspace_id)
         text_ready = bool(await get_text_secret(db, workspace_id))
         embedding_ready = bool(get_secret_store().get(secret_key(workspace_id, EMBEDDING_PROVIDER)))
+        summary = {
+            "text_secret_available": text_ready,
+            "embedding_secret_available": embedding_ready,
+            "text_provider": row.text_provider,
+            "text_model": row.text_model,
+            "embedding_provider": row.embedding_provider,
+            "embedding_model": row.embedding_model,
+        }
         await db.rollback()
-    return {
-        "text_secret_available": text_ready,
-        "embedding_secret_available": embedding_ready,
-        "text_provider": row.text_provider,
-        "text_model": row.text_model,
-        "embedding_provider": row.embedding_provider,
-        "embedding_model": row.embedding_model,
-    }
+    return summary
 
 
 async def child_preflight(db_path: Path, original_path: Path, password: str) -> dict:
