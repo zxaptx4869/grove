@@ -35,6 +35,58 @@ async def wait_for_turn(runtime: WorkbenchRuntime, conversation_id: str, turn_id
 
 
 @pytest.mark.asyncio
+async def test_real_engine_factory_reserves_last_request_for_finalization(monkeypatch):
+    from unittest.mock import AsyncMock
+
+    from pydantic_ai.messages import ModelResponse, ToolCallPart
+    from pydantic_ai.models.function import FunctionModel
+
+    from app.db import session
+    from app.services import ai_models
+    from evals.dialogue_loop.instrumentation import BudgetedModel
+    from evals.dialogue_loop.loop import LoopState
+    from evals.dialogue_workbench import engine as engine_module
+
+    installed = []
+    calls = []
+
+    def respond(messages, info):
+        calls.append(info)
+        return ModelResponse(
+            parts=[
+                ToolCallPart(
+                    info.output_tools[0].name,
+                    {"blocks": [{"kind": "insufficient", "text": "现有材料不足以回答。"}]},
+                )
+            ]
+        )
+
+    async def get_model(db, workspace_id):
+        return BudgetedModel(FunctionModel(respond), installed[0])
+
+    monkeypatch.setattr(engine_module, "install_instrumentation", installed.append)
+    monkeypatch.setattr(session, "async_session_factory", lambda: AsyncMock())
+    monkeypatch.setattr(ai_models, "get_text_model", get_model)
+    monkeypatch.setattr(engine_module, "_submit_turn", AsyncMock(return_value=4))
+    monkeypatch.setattr(engine_module, "_finish_new_run", AsyncMock())
+    engine = await engine_module.UnifiedLoopEngine.create({"workspace_id": 1, "user_id": 2})
+    context = engine_module.UnifiedConversationContext(
+        state=LoopState(1, 2, 3, engine.ledger, engine.instrumentation), history=[]
+    )
+    engine.ledger.batch_text_requests = BATCH_TEXT_REQUESTS - 1
+
+    turn = await engine.run_turn(context, "查询目录", 1, lambda stage: None)
+
+    assert turn["status"] == "completed"
+    assert turn["finalization"]["reason"] == "text_request_budget"
+    assert turn["finalization"]["status"] == "completed"
+    assert turn["finalization"]["attempted"] is True
+    assert len(calls) == 1
+    assert calls[0].function_tools == []
+    assert engine.ledger.batch_text_requests == BATCH_TEXT_REQUESTS
+
+
+@pytest.mark.asyncio
 async def test_continuous_turns_preserve_order_diagnostics_and_shared_budget(tmp_path: Path):
     runtime = make_runtime(tmp_path)
     conversation = await runtime.create_conversation()

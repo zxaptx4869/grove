@@ -50,7 +50,7 @@ class UnifiedLoopEngine:
         from app.services import ai_models
 
         ledger = BudgetLedger()
-        instrumentation = Instrumentation(ledger)
+        instrumentation = Instrumentation(ledger, context_policy_enabled=True)
         install_instrumentation(instrumentation)
         async with async_session_factory() as db:
             model = await ai_models.get_text_model(db, identity["workspace_id"])
