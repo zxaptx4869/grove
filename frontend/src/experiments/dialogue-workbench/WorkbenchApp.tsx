@@ -81,6 +81,31 @@ function statusTone(status: string) {
   return 'running'
 }
 
+function statisticTitle(block: AnswerBlock) {
+  const semantics = block.semantics
+  if (!semantics) return block.text || block.label || '统计结果'
+  const scope = semantics?.project_name ? `${semantics.project_name} · ` : '全部项目 · '
+  return semantics?.group_by_display_name
+    ? `${scope}按${semantics.group_by_display_name}统计`
+    : `${scope}正式记录总数`
+}
+
+function listTitle(block: AnswerBlock) {
+  const semantics = block.semantics
+  if (!semantics) return block.label || '知识列表'
+  if (semantics?.subject === 'directories') {
+    return `${semantics.project_name || '当前项目'} · ${semantics.display_name || '项目目录'}`
+  }
+  return `${semantics?.project_name ? `${semantics.project_name} · ` : '全部项目 · '}正式记录列表`
+}
+
+const MAIN_TYPE_LABELS: Record<string, string> = {
+  knowledge: '知识',
+  method: '方法',
+  parameter: '参数',
+  reminder: '提醒',
+}
+
 function AnswerBlockView({ block }: { block: AnswerBlock }) {
   if (block.kind === 'text') return block.text ? <p className="answer-copy">{block.text}</p> : null
   if (block.kind === 'insufficient') {
@@ -92,18 +117,27 @@ function AnswerBlockView({ block }: { block: AnswerBlock }) {
     )
   }
   if (block.kind === 'statistic') {
+    const semantics = block.semantics
     return (
       <section className="result-block statistic-block" aria-label="可信统计">
         <div>
           <span className="block-kicker">可信统计</span>
-          <strong>{block.text || block.label || '统计结果'}</strong>
+          <strong>{statisticTitle(block)}</strong>
+          <span>
+            查询对象：{semantics?.query_object || '正式记录'}
+            {semantics?.completeness ? ` · 完整性：${semantics.completeness}` : ''}
+          </span>
         </div>
         {block.value != null && <span className="stat-value">{String(block.value)}</span>}
         {block.buckets && block.buckets.length > 0 && (
           <div className="bucket-list">
             {block.buckets.map((bucket, index) => (
               <div key={`${bucket.key ?? bucket.label}-${index}`}>
-                <span>{bucket.label ?? bucket.key ?? '未命名'}</span>
+                <span>
+                  {semantics?.group_by === 'main_type'
+                    ? MAIN_TYPE_LABELS[bucket.key ?? ''] ?? bucket.key ?? '未命名'
+                    : bucket.label ?? bucket.key ?? '未命名'}
+                </span>
                 <strong>{bucket.count ?? 0}</strong>
               </div>
             ))}
@@ -113,27 +147,42 @@ function AnswerBlockView({ block }: { block: AnswerBlock }) {
     )
   }
   if (block.kind === 'list') {
+    const semantics = block.semantics
+    const isDirectoryList = semantics?.subject === 'directories'
+    const title = listTitle(block)
+    const countText = semantics?.total_count != null
+      ? `总数 ${semantics.total_count}，本次返回 ${semantics.returned_count ?? block.items?.length ?? 0}`
+      : `${block.items?.length ?? 0} 条`
     return (
-      <section className="result-block list-block" aria-label={block.label || '知识列表'}>
+      <section className="result-block list-block" aria-label={title}>
         <div className="block-heading">
           <ListOrdered aria-hidden="true" />
           <div>
-            <strong>{block.label || '知识列表'}</strong>
-            <span>{block.items?.length ?? 0} 条，保持工具返回顺序</span>
+            <strong>{title}</strong>
+            <span>{countText}，保持工具返回顺序{semantics?.completeness ? ` · 完整性：${semantics.completeness}` : ''}</span>
           </div>
         </div>
         <ol>
           {(block.items ?? []).map((item, index) => (
-            <li key={String(item.entry_id ?? index)}>
+            <li key={String(item.node_id ?? item.entry_id ?? index)}>
               <span className="item-index">{index + 1}</span>
               <div>
-                <strong>{String(item.title ?? `记录 ${item.entry_id ?? index + 1}`)}</strong>
-                <span>
-                  {[item.project_name, item.main_type, item.summary]
-                    .filter(Boolean)
-                    .map(String)
-                    .join(' · ')}
-                </span>
+                {isDirectoryList ? (
+                  <>
+                    <strong>{String(item.name ?? `目录 ${item.node_id ?? index + 1}`)}</strong>
+                    <span>{String(item.path ?? '')}</span>
+                  </>
+                ) : (
+                  <>
+                    <strong>{String(item.title ?? `记录 ${item.entry_id ?? index + 1}`)}</strong>
+                    <span>
+                      {[item.project_name, item.main_type, item.summary]
+                        .filter(Boolean)
+                        .map(String)
+                        .join(' · ')}
+                    </span>
+                  </>
+                )}
               </div>
             </li>
           ))}

@@ -59,6 +59,13 @@ SYSTEM_PROMPT = """你是 Grove 知识库的只读对话 Agent。你在一个持
 9. 只回答用户问题，不输出隐藏推理，不向用户提及预期答案。
 10. main_types 省略或 null 表示全部正式记录。用户泛称“知识”“知识库记录”时不得默认
     筛成内部 knowledge 类型；只有用户明确限定内部类型时才填写对应值。
+11. 项目（Project）是容器，项目目录是 Node 树，一级目录只指项目根下 parent_id 为空的直接子节点；
+    正式记录（Entry）、知识类型 main_type 和信息性质 info_nature 都不是目录。询问目录数量或名称时
+    必须调用 list_project_directories，不能从 Entry、搜索结果或类型统计推算。
+12. list_project_directories 返回真实 node_id、路径、父节点、total_count、returned_count 和完整性；
+    目录结果的第几个引用只能用 parent_result_handle 与 parent_position 追问，不能猜 Node id。
+13. 结构化结果的查询对象、范围、分组维度、数量和中文显示名称以工具元数据为准；不要用自定义 label
+    把“知识类型统计”称为“一级目录”，也不要把本页返回数写成完整总数。
 """.strip()
 
 NO_KNOWLEDGE_PATTERNS = (
@@ -79,6 +86,7 @@ class ResultRecord:
     status: str
     completeness: str
     turn_index: int
+    semantics: dict = field(default_factory=dict)
 
 
 @dataclass
@@ -110,11 +118,24 @@ class LoopState:
         self.ledger.start_turn()
         self.instrumentation.begin_turn()
 
-    def store_result(self, kind: str, payload: dict, status: str, completeness: str) -> str:
+    def store_result(
+        self,
+        kind: str,
+        payload: dict,
+        status: str,
+        completeness: str,
+        semantics: dict | None = None,
+    ) -> str:
         self._handle_sequence += 1
         handle = f"rs-{self.conversation_id}-{self._handle_sequence}"
         self.result_sets[handle] = ResultRecord(
-            handle, kind, payload, status, completeness, self.turn_index
+            handle,
+            kind,
+            payload,
+            status,
+            completeness,
+            self.turn_index,
+            semantics or {},
         )
         self.current_handles.add(handle)
         return handle
@@ -188,7 +209,7 @@ def _shorten(text: str | None, limit: int) -> str | None:
 
 def _model_payload(kind: str, payload: dict) -> dict:
     """保留本轮推理所需材料，完整正文只留在 result_sets。"""
-    if kind == "list":
+    if kind in {"list", "directories"}:
         items = []
         for item in payload.get("items", []):
             items.append(
@@ -198,6 +219,12 @@ def _model_payload(kind: str, payload: dict) -> dict:
                     if key
                     in {
                         "entry_id",
+                        "node_id",
+                        "parent_node_id",
+                        "name",
+                        "path",
+                        "position",
+                        "entry_count",
                         "title",
                         "project_id",
                         "project_name",
@@ -245,16 +272,16 @@ def _tool_result_summary(payload: dict) -> dict:
     """为实验诊断生成有界摘要，不复制正文或把列表当成精确总数。"""
     summary = {
         key: payload[key]
-        for key in ("count", "total", "returned_count", "matched_count")
+        for key in ("count", "total", "total_count", "returned_count", "matched_count")
         if key in payload and isinstance(payload[key], (int, float, str))
     }
     items = payload.get("items")
     if isinstance(items, list):
         summary["returned_items"] = len(items)
         titles = [
-            item.get("title")
+            item.get("title") or item.get("name")
             for item in items
-            if isinstance(item, dict) and item.get("title")
+            if isinstance(item, dict) and (item.get("title") or item.get("name"))
         ]
         if titles:
             summary["titles"] = titles[:5]
@@ -282,6 +309,7 @@ def _history_tool_summary(state: LoopState, event: dict) -> dict:
             for key in ("value", "group_by", "buckets", "truncated")
             if key in payload
         }
+        summary["semantics"] = record.semantics
     elif record.kind == "list":
         summary["ordered_items"] = [
             {
@@ -292,6 +320,26 @@ def _history_tool_summary(state: LoopState, event: dict) -> dict:
             }
             for index, item in enumerate(payload.get("items", []), 1)
         ]
+        summary["semantics"] = record.semantics
+    elif record.kind == "directories":
+        summary["directory_items"] = [
+            {
+                "position": index,
+                "node_id": item.get("node_id"),
+                "name": item.get("name"),
+                "parent_node_id": item.get("parent_node_id"),
+                "path": item.get("path"),
+            }
+            for index, item in enumerate(payload.get("items", []), 1)
+        ]
+        summary["semantics"] = record.semantics
+        summary["directory_total_count"] = payload.get(
+            "total_count", len(payload.get("items", []))
+        )
+        summary["directory_returned_count"] = payload.get(
+            "returned_count", len(payload.get("items", []))
+        )
+        summary["directory_has_more"] = payload.get("has_more", False)
     elif record.kind == "entries":
         summary["items"] = [
             {
@@ -362,6 +410,89 @@ def _public_result(result, handle: str) -> dict:
     }
 
 
+TYPE_DISPLAY_NAMES = {
+    "knowledge": "知识",
+    "method": "方法",
+    "parameter": "参数",
+    "reminder": "提醒",
+}
+DIMENSION_DISPLAY_NAMES = {
+    "project": "项目",
+    "main_type": "知识类型",
+    "info_nature": "信息性质",
+    "updated_month": "更新时间（月）",
+}
+
+
+def _result_semantics(tool_name: str, params: dict, payload: dict) -> dict:
+    """生成程序权威的查询对象、范围、维度与完整性语义。"""
+    if tool_name == "list_project_directories":
+        project = payload.get("project") or {}
+        parent = payload.get("parent")
+        return {
+            "subject": "directories",
+            "query_object": "项目目录",
+            "display_name": "一级目录" if parent is None else "直接子目录",
+            "project_id": project.get("id"),
+            "project_name": project.get("name"),
+            "parent_node_id": parent.get("node_id") if parent else None,
+            "parent_path": parent.get("path") if parent else None,
+            "total_count": payload.get("total_count", 0),
+            "returned_count": payload.get("returned_count", 0),
+            "has_more": payload.get("has_more", False),
+            "completeness": "complete",
+        }
+    if tool_name == "aggregate_entries":
+        entry_set = params.get("entry_set", {})
+        project_name = entry_set.get("project_name")
+        group_by = params.get("group_by")
+        return {
+            "subject": "entries",
+            "query_object": "正式记录",
+            "project_name": project_name,
+            "project_scope": "项目" if project_name else "全部项目",
+            "main_types": list(entry_set.get("main_types") or []),
+            "type_display_names": [
+                TYPE_DISPLAY_NAMES.get(value, value)
+                for value in entry_set.get("main_types") or []
+            ],
+            "group_by": group_by,
+            "group_by_display_name": DIMENSION_DISPLAY_NAMES.get(group_by)
+            if group_by
+            else None,
+            "total_count": payload.get("value")
+            if params.get("operation") == "count"
+            else payload.get(
+                "total_count",
+                sum(item.get("count", 0) for item in payload.get("buckets", [])),
+            ),
+            "returned_count": payload.get("returned_count", len(payload.get("buckets", [])))
+            if params.get("operation") != "count"
+            else payload.get("value"),
+            "bucket_count": len(payload.get("buckets", [])),
+            "has_more": payload.get("truncated", False),
+            "completeness": "unknown",
+        }
+    if tool_name in {"query_entries", "search_knowledge"}:
+        entry_set = params.get("entry_set", {})
+        project_name = entry_set.get("project_name") or params.get("project_name")
+        return {
+            "subject": "entries",
+            "query_object": "正式记录",
+            "project_name": project_name,
+            "project_scope": "项目" if project_name else "全部项目",
+            "main_types": list(entry_set.get("main_types") or []),
+            "type_display_names": [
+                TYPE_DISPLAY_NAMES.get(value, value)
+                for value in entry_set.get("main_types") or []
+            ],
+            "total_count": payload.get("total_count"),
+            "returned_count": payload.get("returned_count", len(payload.get("items", []))),
+            "completeness": payload.get("completeness"),
+        }
+    return {}
+
+
 def output_errors(answer: DialogueAnswer, state: LoopState) -> list[str]:
     """返回句柄边界错误；供一次模型纠正与无模型反例测试共用。"""
     errors = []
@@ -371,8 +502,10 @@ def output_errors(answer: DialogueAnswer, state: LoopState) -> list[str]:
             expected = block.kind
             if record is None or block.result_handle not in state.current_handles:
                 errors.append(f"{block.result_handle} 不是当前轮结果")
-            elif record.kind != expected:
-                errors.append(f"{block.result_handle} 不是 {expected} 结果")
+            elif expected == "list" and record.kind not in {"list", "directories"}:
+                errors.append(f"{block.result_handle} 不是列表结果")
+            elif expected == "statistic" and record.kind != expected:
+                errors.append(f"{block.result_handle} 不是 statistic 结果")
         elif block.kind == "evidence" and block.evidence_handle not in state.current_evidence:
             errors.append(f"{block.evidence_handle} 不是当前轮核验 Evidence")
     return errors
@@ -385,6 +518,17 @@ def list_position_entry_id(state: LoopState, result_set_handle: str, position: i
     if record is None or record.kind != "list" or not 1 <= position <= len(items):
         raise ValueError("结果集句柄无效、非列表或位置越界")
     return int(items[position - 1]["entry_id"])
+
+
+def list_directory_position_node_id(
+    state: LoopState, result_set_handle: str, position: int
+) -> int:
+    """将目录结果的实际 1-based 位置解析为真实 Node id。"""
+    record = state.result_sets.get(result_set_handle)
+    items = record.payload.get("items", []) if record and record.kind == "directories" else []
+    if record is None or record.kind != "directories" or not 1 <= position <= len(items):
+        raise ValueError("目录结果句柄无效、非目录结果或位置越界")
+    return int(items[position - 1]["node_id"])
 
 
 async def _dispatch(
@@ -408,6 +552,7 @@ async def _dispatch(
     state.instrumentation.emit_activity(
         {
             "aggregate_entries": "querying",
+            "list_project_directories": "querying",
             "query_entries": "querying",
             "search_knowledge": "querying",
             "read_entries": "reading_entries",
@@ -464,7 +609,11 @@ async def _dispatch(
     payload = result.payload
     if tool_name == "search_knowledge" and len(payload.get("items", [])) > 10:
         payload = {**payload, "items": payload["items"][:10], "truncated_by_experiment": True}
-    handle = state.store_result(kind, payload, result.status, result.completeness)
+    semantics = _result_semantics(tool_name, params, payload)
+    semantics["completeness"] = result.completeness
+    handle = state.store_result(
+        kind, payload, result.status, result.completeness, semantics=semantics
+    )
     event = {
         "tool": surface_tool or tool_name,
         "shared_tool": tool_name,
@@ -507,7 +656,7 @@ def build_agent(model) -> Agent[LoopDeps, DialogueAnswer]:
 
     @agent.tool
     async def list_projects(ctx: RunContext[LoopDeps]) -> dict:
-        """列出当前认证 Workspace 中可访问的项目；统计分桶仍应调用 group_entries。"""
+        """列出当前认证 Workspace 中可访问的 Project；这不是目录或 Entry 列表。"""
         from app.db.session import async_session_factory
         from app.models import Project
         from app.services.knowledge_agent.observability import (
@@ -544,7 +693,12 @@ def build_agent(model) -> Agent[LoopDeps, DialogueAnswer]:
                     result_summary=json.dumps({"project_count": len(rows)}, ensure_ascii=False),
                 )
                 await db.commit()
-        payload = {"projects": [{"name": row.name, "status": row.status} for row in rows]}
+        payload = {
+            "projects": [
+                {"id": row.id, "name": row.name, "status": row.status}
+                for row in rows
+            ]
+        }
         handle = state.store_result(
             "projects", payload, "completed" if rows else "empty", "complete"
         )
@@ -559,6 +713,50 @@ def build_agent(model) -> Agent[LoopDeps, DialogueAnswer]:
         }
         state.tool_events.append(event)
         return {**event, "payload": payload}
+
+    @agent.tool
+    async def list_project_directories(
+        ctx: RunContext[LoopDeps],
+        project_id: int | None = None,
+        project_name: str | None = None,
+        parent_node_id: int | None = None,
+        parent_result_handle: str | None = None,
+        parent_position: int | None = None,
+    ) -> dict:
+        """查询 Project 的真实 Node 目录。
+
+        不传父节点时返回项目根下的一级目录；传父节点时只返回直接子目录。
+        目录与 Entry、知识类型和信息性质完全不同。追问第几个目录时，必须
+        使用上一轮该工具返回的 parent_result_handle 与 1-based parent_position。
+        """
+        state = ctx.deps.state
+        if parent_result_handle is not None or parent_position is not None:
+            if parent_result_handle is None or parent_position is None:
+                raise ModelRetry("目录追问必须同时提供 parent_result_handle 和 parent_position")
+            try:
+                resolved_parent = list_directory_position_node_id(
+                    state, parent_result_handle, parent_position
+                )
+            except ValueError as exc:
+                raise ModelRetry(str(exc)) from exc
+            if parent_node_id is not None and parent_node_id != resolved_parent:
+                raise ModelRetry("parent_node_id 与实际目录结果位置不一致")
+            parent_node_id = resolved_parent
+            prior = state.result_sets.get(parent_result_handle)
+            prior_project = (prior.payload.get("project") or {}) if prior else {}
+            if project_id is None:
+                project_id = prior_project.get("id")
+            if project_name is None:
+                project_name = prior_project.get("name")
+        if project_id is None and project_name is None:
+            raise ModelRetry("查询目录必须提供 project_id 或 project_name")
+        params = {
+            "project_id": project_id,
+            "project_name": project_name,
+            "parent_node_id": parent_node_id,
+        }
+        result = await _dispatch(ctx, "list_project_directories", params, "directories")
+        return result
 
     @agent.tool
     async def count_entries(
@@ -774,15 +972,29 @@ def render_answer(answer: DialogueAnswer, state: LoopState) -> tuple[str, list[d
         elif block.kind == "statistic":
             record = state.result_sets[block.result_handle]
             payload = record.payload
+            semantics = record.semantics
+            group_display = semantics.get("group_by_display_name")
             if "value" in payload:
-                text = f"{block.label}：{payload['value']}"
+                # 保留现有回答文本兼容性；权威项目/查询对象随 rendered semantics 返回。
+                text = f"总数：{payload['value']}"
             else:
+                title = (
+                    f"{semantics.get('project_name')} · 按{group_display or '维度'}统计"
+                    if semantics.get("project_name")
+                    else f"全部项目 · 按{group_display or '维度'}统计"
+                )
                 buckets = payload.get("buckets", [])
                 values = "；".join(
-                    f"{item.get('label') or item.get('key')}：{item.get('count')}"
+                    f"{(
+                        TYPE_DISPLAY_NAMES.get(
+                            item.get('key'), item.get('label') or item.get('key')
+                        )
+                        if semantics.get('group_by') == 'main_type'
+                        else item.get('label') or item.get('key')
+                    )}：{item.get('count')}"
                     for item in buckets
                 )
-                text = f"{block.label}：{values or '无分组记录'}"
+                text = f"{title}：{values or '无分组记录'}"
             lines.append(text)
             rendered.append(
                 {
@@ -794,25 +1006,40 @@ def render_answer(answer: DialogueAnswer, state: LoopState) -> tuple[str, list[d
                     "buckets": payload.get("buckets", []),
                     "status": record.status,
                     "completeness": record.completeness,
+                    "semantics": semantics,
                 }
             )
         elif block.kind == "list":
             record = state.result_sets[block.result_handle]
-            lines.append(block.label)
+            semantics = record.semantics
+            if record.kind == "directories":
+                project_name = semantics.get("project_name") or "当前项目"
+                title = f"{project_name} · {semantics.get('display_name', '项目目录')}"
+            else:
+                title = (
+                    f"{semantics.get('project_name')} · 正式记录列表"
+                    if semantics.get("project_name")
+                    else "全部项目 · 正式记录列表"
+                )
+            lines.append(title)
             items = record.payload.get("items", [])
             for index, item in enumerate(items, 1):
-                lines.append(
-                    f"{index}. {item.get('title', '未命名')}"
-                    f"（{item.get('project_name', '未知项目')}）"
-                )
+                if record.kind == "directories":
+                    lines.append(f"{index}. {item.get('name', '未命名')}（{item.get('path', '')}）")
+                else:
+                    lines.append(
+                        f"{index}. {item.get('title', '未命名')}"
+                        f"（{item.get('project_name', '未知项目')}）"
+                    )
             rendered.append(
                 {
                     "kind": "list",
                     "handle": block.result_handle,
-                    "label": block.label,
+                    "label": title,
                     "items": items,
                     "status": record.status,
                     "completeness": record.completeness,
+                    "semantics": semantics,
                 }
             )
         else:
@@ -872,22 +1099,32 @@ def _verified_failure_output(state: LoopState) -> tuple[str, list[dict]]:
                     "completeness": record.completeness,
                 }
             )
-        elif record.kind == "list":
+        elif record.kind in {"list", "directories"}:
             items = record.payload.get("items", [])
-            lines.append("已验证列表：")
-            lines.extend(
-                f"{index}. {item.get('title', '未命名')}"
-                f"（{item.get('project_name', '未知项目')}）"
-                for index, item in enumerate(items, 1)
+            title = (
+                f"已验证目录：{record.semantics.get('project_name', '当前项目')} · "
+                f"{record.semantics.get('display_name', '项目目录')}"
+                if record.kind == "directories"
+                else "已验证列表："
             )
+            lines.append(title)
+            for index, item in enumerate(items, 1):
+                if record.kind == "directories":
+                    lines.append(f"{index}. {item.get('name', '未命名')}（{item.get('path', '')}）")
+                else:
+                    lines.append(
+                        f"{index}. {item.get('title', '未命名')}"
+                        f"（{item.get('project_name', '未知项目')}）"
+                    )
             blocks.append(
                 {
                     "kind": "list",
                     "handle": handle,
-                    "label": "已验证列表",
+                    "label": title,
                     "items": items,
                     "status": record.status,
                     "completeness": record.completeness,
+                    "semantics": record.semantics,
                 }
             )
     for handle, item in state.evidence.items():

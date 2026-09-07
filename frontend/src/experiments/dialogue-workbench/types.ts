@@ -44,6 +44,22 @@ export interface AnswerBlock {
   completeness?: string
   source_id?: number
   entry_id?: number
+  semantics?: {
+    subject?: 'entries' | 'directories'
+    query_object?: string
+    project_id?: number | null
+    project_name?: string | null
+    project_scope?: string
+    display_name?: string
+    group_by?: string | null
+    group_by_display_name?: string | null
+    type_display_names?: string[]
+    main_types?: string[]
+    total_count?: number | null
+    returned_count?: number | null
+    has_more?: boolean
+    completeness?: string
+  }
 }
 
 export interface Turn {

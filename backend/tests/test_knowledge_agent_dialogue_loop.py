@@ -68,6 +68,7 @@ from evals.dialogue_loop.loop import (
     _model_payload,
     build_agent,
     build_compact_history,
+    list_directory_position_node_id,
     list_position_entry_id,
     output_errors,
     render_answer,
@@ -419,6 +420,128 @@ def test_agent_exposes_split_statistics_without_composite_arguments() -> None:
     assert "operation" not in count_schema["properties"]
     assert "group_by" not in count_schema["properties"]
     assert group_schema["required"] == ["project_scope", "project_name", "group_by"]
+
+
+def test_agent_exposes_real_directory_tool_and_separate_position_handles() -> None:
+    agent = build_agent(FunctionModel(lambda _messages, _info: None))
+    tools = agent._function_toolset.tools
+    assert "list_project_directories" in tools
+    schema = tools["list_project_directories"].function_schema.json_schema
+    assert "parent_result_handle" in schema["properties"]
+    assert "parent_position" in schema["properties"]
+
+    state = _state()
+    handle = state.store_result(
+        "directories",
+        {
+            "project": {"id": 12, "name": "装修"},
+            "items": [
+                {"node_id": 90, "name": "空目录", "path": "空目录"},
+                {"node_id": 91, "name": "材料", "path": "材料"},
+            ],
+        },
+        "completed",
+        "complete",
+    )
+    assert list_directory_position_node_id(state, handle, 2) == 91
+    with pytest.raises(ValueError):
+        list_directory_position_node_id(state, "rs-forged", 1)
+
+
+def test_structured_rendering_uses_authoritative_dimension_and_directory_titles() -> None:
+    state = _state()
+    statistic = state.store_result(
+        "statistic",
+        {"buckets": [{"key": "method", "count": 2}]},
+        "completed",
+        "complete",
+        semantics={
+            "project_name": "装修",
+            "group_by": "main_type",
+            "group_by_display_name": "知识类型",
+            "subject": "entries",
+        },
+    )
+    directories = state.store_result(
+        "directories",
+        {
+            "project": {"id": 1, "name": "装修"},
+            "items": [{"node_id": 3, "name": "水电", "path": "水电"}],
+            "total_count": 1,
+            "returned_count": 1,
+            "has_more": False,
+        },
+        "completed",
+        "complete",
+        semantics={
+            "subject": "directories",
+            "project_name": "装修",
+            "display_name": "一级目录",
+        },
+    )
+    answer = DialogueAnswer.model_validate(
+        {
+            "blocks": [
+                {"kind": "statistic", "result_handle": statistic, "label": "一级目录"},
+                {"kind": "list", "result_handle": directories, "label": "知识列表"},
+            ]
+        }
+    )
+    text, blocks = render_answer(answer, state)
+    assert "按知识类型统计" in text
+    assert "一级目录" in text
+    assert "方法：2" in text
+    assert blocks[0]["semantics"]["subject"] == "entries"
+    assert blocks[1]["items"][0]["node_id"] == 3
+
+
+def test_directory_history_keeps_only_ordered_node_metadata() -> None:
+    state = _state()
+    handle = state.store_result(
+        "directories",
+        {
+            "project": {"id": 8, "name": "装修"},
+            "parent": None,
+            "items": [
+                {"node_id": 11, "name": "水电", "parent_node_id": None, "path": "水电"},
+                {"node_id": 12, "name": "木工", "parent_node_id": None, "path": "木工"},
+            ],
+            "total_count": 2,
+            "returned_count": 2,
+            "has_more": False,
+        },
+        "completed",
+        "complete",
+        semantics={
+            "subject": "directories",
+            "project_id": 8,
+            "project_name": "装修",
+            "display_name": "一级目录",
+            "total_count": 2,
+            "returned_count": 2,
+            "completeness": "complete",
+        },
+    )
+    state.remember_turn(
+        "列出一级目录",
+        "1. 水电\n2. 木工",
+        [
+            {
+                "tool": "list_project_directories",
+                "shared_tool": "list_project_directories",
+                "result_handle": handle,
+                "params": {"project_id": 8, "parent_node_id": None},
+                "status": "completed",
+                "completeness": "complete",
+                "error": None,
+            }
+        ],
+    )
+    history = build_compact_history(state)
+    returned = history[2].parts[0].content
+    assert returned["directory_items"][1]["node_id"] == 12
+    assert returned["directory_total_count"] == 2
+    assert "content" not in str(returned)
 
 
 def test_snapshot_rejects_original_target_and_uses_private_file(tmp_path: Path) -> None:
