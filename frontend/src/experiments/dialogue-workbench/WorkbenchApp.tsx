@@ -285,6 +285,9 @@ function AssistantTurn({
   onRefresh: () => void
 }) {
   const running = turn.status === 'queued' || turn.status === 'running'
+  const toolCount = turn.tool_calls == null ? '工具记录未知' : `${turn.tool_calls.length} 个工具`
+  const modelCount =
+    turn.model_calls == null ? '模型调用记录未知' : `${turn.model_calls.length} 次模型调用`
   const blocks = turn.blocks?.length
     ? turn.blocks
     : turn.answer
@@ -315,10 +318,22 @@ function AssistantTurn({
               {STAGES[turn.stage] || '执行中'}
             </div>
           )}
+          {turn.solve_error && (
+            <div className="notice-block warning-block">
+              <AlertTriangle aria-hidden="true" />
+              <span>求解提前停止：{turn.solve_error}</span>
+            </div>
+          )}
           {turn.error && (
             <div className="turn-error">
-              <AlertTriangle />
+              <AlertTriangle aria-hidden="true" />
               {turn.error}
+            </div>
+          )}
+          {turn.isolation_check?.status === 'failed' && (
+            <div className="turn-error">
+              <AlertTriangle aria-hidden="true" />
+              隔离检查失败，无法核验业务数据是否变化；已停止后续数据库操作。
             </div>
           )}
           {!running && (
@@ -326,15 +341,15 @@ function AssistantTurn({
               <summary>
                 <FileSearch aria-hidden="true" />
                 <span>执行记录</span>
-                <small>
-                  {turn.tool_calls?.length ?? 0} 个工具 · {turn.model_calls?.length ?? 0} 次模型调用
-                </small>
+                <small>{toolCount} · {modelCount}</small>
                 <ChevronRight className="detail-chevron" aria-hidden="true" />
               </summary>
               <div className="trace-body">
                 <div className="trace-summary">
                   <span>总耗时 {formatDuration(turn.duration_ms)}</span>
                   <span>收尾：{String(turn.finalization?.status ?? '未发生')}</span>
+                  <span>运行结果保存：{String(turn.persistence?.status ?? '未知')}</span>
+                  <span>隔离检查：{String(turn.isolation_check?.status ?? '未知')}</span>
                   <span>材料：{turn.blocks?.length ?? 0} 个公开块</span>
                 </div>
                 {(turn.tool_calls ?? []).map((call, index) => (
@@ -343,9 +358,19 @@ function AssistantTurn({
                 {(turn.model_calls ?? []).map((call, index) => (
                   <ModelRow call={call} index={index} key={index} />
                 ))}
-                {(turn.error_details || turn.solve_error) && (
+                {(turn.error_details ||
+                  turn.solve_error ||
+                  turn.solve_failure ||
+                  turn.persistence ||
+                  turn.isolation_check) && (
                   <pre className="diagnostic-json">
-                    {pretty(turn.error_details || turn.solve_error)}
+                    {pretty({
+                      solve_error: turn.solve_error,
+                      solve_failure: turn.solve_failure,
+                      error_details: turn.error_details,
+                      persistence: turn.persistence,
+                      isolation_check: turn.isolation_check,
+                    })}
                   </pre>
                 )}
               </div>

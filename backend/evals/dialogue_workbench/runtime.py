@@ -3,8 +3,9 @@
 from __future__ import annotations
 
 import asyncio
+import inspect
 import secrets
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime
 from time import perf_counter
 from typing import Any, Protocol
@@ -58,7 +59,7 @@ class WorkbenchRuntime:
         store: WorkbenchStore,
         snapshot_at: str,
         snapshot_fingerprint: str,
-        isolation_unchanged: Callable[[], bool],
+        isolation_unchanged: Callable[[], bool | Awaitable[bool]],
     ):
         self.engine = engine
         self.store = store
@@ -170,6 +171,8 @@ class WorkbenchRuntime:
         return sanitize(conversation)
 
     async def submit_turn(self, conversation_id: str, message: str, request_id: str) -> dict:
+        if self.unsafe_reason:
+            raise RuntimeError(self.unsafe_reason)
         conversation = self._current_conversation(conversation_id)
         normalized = message.strip()
         if not normalized:
@@ -200,11 +203,13 @@ class WorkbenchRuntime:
             "error_details": None,
             "solve_error": None,
             "duration_ms": 0,
-            "tool_calls": [],
-            "model_calls": [],
+            "tool_calls": None,
+            "model_calls": None,
             "budget": None,
             "context": None,
             "finalization": None,
+            "persistence": None,
+            "isolation_check": None,
             "feedback": None,
         }
         if conversation["title"] == "新对话":
@@ -252,6 +257,10 @@ class WorkbenchRuntime:
             turn["status"] = "failed"
             turn["stage"] = "failed"
             turn["error"] = f"{type(exc).__name__}: {str(exc)[:2000]}"
+            turn["error_details"] = {
+                "category": "runtime",
+                "message": str(exc)[:4_000],
+            }
         else:
             turn.update(sanitize(result))
             turn["stage"] = turn.get("status", "completed")
@@ -263,8 +272,28 @@ class WorkbenchRuntime:
             self.tasks.pop(turn_id, None)
             if self.active_turn_id == turn_id:
                 self.active_turn_id = None
-            if not self.isolation_unchanged():
-                self.unsafe_reason = "业务数据隔离指纹发生变化，实验已停止"
+            try:
+                unchanged = self.isolation_unchanged()
+                if inspect.isawaitable(unchanged):
+                    unchanged = await unchanged
+            except Exception as exc:  # noqa: BLE001
+                message = f"{type(exc).__name__}: {str(exc)[:2_000]}"
+                turn["isolation_check"] = {
+                    "status": "failed",
+                    "message": "隔离指纹无法核验，未判定业务数据已被修改。",
+                    "error": message,
+                }
+                self.unsafe_reason = "隔离指纹无法核验，实验已停止后续数据库操作"
+            else:
+                if unchanged:
+                    turn["isolation_check"] = {"status": "unchanged", "error": None}
+                else:
+                    turn["isolation_check"] = {
+                        "status": "changed",
+                        "message": "业务数据隔离指纹发生变化。",
+                        "error": None,
+                    }
+                    self.unsafe_reason = "业务数据隔离指纹发生变化，实验已停止"
             await self.persist()
 
     def _set_stage(self, turn: dict, stage: str) -> None:

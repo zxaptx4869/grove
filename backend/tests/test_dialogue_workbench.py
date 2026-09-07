@@ -9,7 +9,7 @@ from pathlib import Path
 import httpx
 import pytest
 
-from evals.dialogue_loop.core import BATCH_TEXT_REQUESTS
+from evals.dialogue_loop.core import BATCH_TEXT_REQUESTS, BudgetLedger
 from evals.dialogue_workbench.runtime import OfflineFixtureEngine, WorkbenchRuntime
 from evals.dialogue_workbench.server import create_app
 from evals.dialogue_workbench.store import WorkbenchStore
@@ -84,6 +84,148 @@ async def test_real_engine_factory_reserves_last_request_for_finalization(monkey
     assert len(calls) == 1
     assert calls[0].function_tools == []
     assert engine.ledger.batch_text_requests == BATCH_TEXT_REQUESTS
+
+
+@pytest.mark.asyncio
+async def test_real_engine_keeps_result_when_run_finalization_write_fails(monkeypatch):
+    from unittest.mock import AsyncMock
+
+    from pydantic_ai.messages import ModelResponse, ToolCallPart
+    from pydantic_ai.models.function import FunctionModel
+
+    from evals.dialogue_loop.instrumentation import BudgetedModel, Instrumentation
+    from evals.dialogue_loop.loop import LoopState
+    from evals.dialogue_workbench import engine as engine_module
+
+    def respond(_messages, info):
+        return ModelResponse(
+            parts=[
+                ToolCallPart(
+                    info.output_tools[0].name,
+                    {"blocks": [{"kind": "text", "text": "已有公开回答"}]},
+                )
+            ]
+        )
+
+    ledger = BudgetLedger()
+    instrumentation = Instrumentation(ledger, context_policy_enabled=True)
+    model = BudgetedModel(FunctionModel(respond), instrumentation)
+    engine = engine_module.UnifiedLoopEngine(
+        {"workspace_id": 1, "user_id": 2}, model, instrumentation
+    )
+    context = engine_module.UnifiedConversationContext(
+        state=LoopState(
+            1,
+            2,
+            3,
+            ledger,
+            instrumentation,
+            database_lock=engine.database_lock,
+        ),
+        history=[],
+    )
+    monkeypatch.setattr(engine_module, "_submit_turn", AsyncMock(side_effect=[4, 5]))
+    monkeypatch.setattr(
+        engine_module,
+        "_finish_new_run",
+        AsyncMock(side_effect=[RuntimeError("database is locked"), None]),
+    )
+
+    turn = await engine.run_turn(context, "请回答", 1, lambda _stage: None)
+
+    assert turn["status"] == "failed"
+    assert turn["solve_status"] == "completed"
+    assert turn["answer"] == "已有公开回答"
+    assert len(turn["model_calls"]) == 1
+    assert turn["usage"]["requests"] == 1
+    assert turn["persistence"]["category"] == "run_persistence"
+    assert "database is locked" in turn["persistence"]["message"]
+
+    following = await engine.run_turn(context, "下一轮", 2, lambda _stage: None)
+    assert following["status"] == "completed"
+    assert following["persistence"]["status"] == "completed"
+    assert len(context.state.history_turns) == 2
+
+
+@pytest.mark.asyncio
+async def test_parallel_real_tools_use_serial_database_transactions_on_sqlite_copy(
+    tmp_path: Path, monkeypatch
+):
+    import sqlite3
+
+    from pydantic_ai.messages import ModelResponse, ToolCallPart, ToolReturnPart
+    from pydantic_ai.models.function import FunctionModel
+    from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
+
+    from app.db import session
+    from evals.dialogue_loop.instrumentation import BudgetedModel, Instrumentation
+    from evals.dialogue_loop.isolation import backup_database, domain_fingerprint
+    from evals.dialogue_workbench.engine import UnifiedLoopEngine
+    from tests._knowledge_agent_fixtures import create_project, create_user, create_workspace
+
+    async with session.async_session_factory() as db:
+        user = await create_user(db, "并行事务")
+        workspace = await create_workspace(db, user)
+        await create_project(db, workspace, "临时副本项目")
+        await db.commit()
+        identity = {"workspace_id": workspace.id, "user_id": user.id}
+
+    original = await asyncio.to_thread(Path(session.engine.url.database).resolve)
+    original_before = domain_fingerprint(original, workspace.id)
+    copied = tmp_path / "workbench-copy.db"
+    backup_database(original, copied)
+    copied_before = domain_fingerprint(copied, workspace.id)
+    copied_engine = create_async_engine(f"sqlite+aiosqlite:///{copied}")
+    copied_factory = async_sessionmaker(copied_engine, expire_on_commit=False)
+    monkeypatch.setattr(session, "async_session_factory", copied_factory)
+    calls = 0
+
+    def respond(messages, info):
+        nonlocal calls
+        calls += 1
+        has_tool_result = any(
+            isinstance(part, ToolReturnPart) for message in messages for part in message.parts
+        )
+        if not has_tool_result:
+            return ModelResponse(
+                parts=[
+                    ToolCallPart("list_projects", {}, tool_call_id="parallel-projects"),
+                    ToolCallPart(
+                        "count_entries",
+                        {"project_scope": "all", "project_name": None, "main_types": None},
+                        tool_call_id="parallel-count",
+                    ),
+                ]
+            )
+        return ModelResponse(
+            parts=[
+                ToolCallPart(
+                    info.output_tools[0].name,
+                    {"blocks": [{"kind": "text", "text": "并行工具已完成"}]},
+                )
+            ]
+        )
+
+    ledger = BudgetLedger()
+    instrumentation = Instrumentation(ledger, context_policy_enabled=True)
+    model = BudgetedModel(FunctionModel(respond), instrumentation)
+    engine = UnifiedLoopEngine(identity, model, instrumentation)
+    context = await engine.create_context()
+    try:
+        turn = await engine.run_turn(context, "并行读取项目与总数", 1, lambda _stage: None)
+    finally:
+        await copied_engine.dispose()
+
+    assert turn["status"] == "completed"
+    assert {item["tool"] for item in turn["tool_calls"]} == {
+        "list_projects",
+        "count_entries",
+    }
+    assert calls == 2
+    assert domain_fingerprint(original, workspace.id) == original_before
+    assert domain_fingerprint(copied, workspace.id) == copied_before
+    with sqlite3.connect(copied.resolve().as_uri() + "?mode=ro", uri=True) as check:
+        assert check.execute("SELECT COUNT(*) FROM knowledge_agent_tool_calls").fetchone()[0] >= 2
 
 
 @pytest.mark.asyncio
@@ -226,3 +368,42 @@ async def test_isolation_change_stops_further_conversations(tmp_path: Path):
     assert runtime.public_state()["metadata"]["status"] == "unsafe"
     with pytest.raises(RuntimeError, match="隔离指纹"):
         await runtime.create_conversation()
+
+
+class RuntimeFailureEngine(OfflineFixtureEngine):
+    async def run_turn(self, context, message, turn_number, stage):
+        del context, message, turn_number, stage
+        self.ledger.start_turn()
+        raise RuntimeError("执行层意外失败")
+
+
+@pytest.mark.asyncio
+async def test_isolation_check_failure_keeps_local_terminal_state_and_stops_next_turn(
+    tmp_path: Path,
+):
+    def failed_check() -> bool:
+        raise RuntimeError("database is locked")
+
+    runtime = WorkbenchRuntime(
+        engine=RuntimeFailureEngine(),
+        store=WorkbenchStore(tmp_path / "records"),
+        snapshot_at="2026-09-07T12:00:00+00:00",
+        snapshot_fingerprint="abc123",
+        isolation_unchanged=failed_check,
+    )
+    conversation = await runtime.create_conversation()
+    created = await runtime.submit_turn(conversation["id"], "触发异常", "request-5101")
+    turn = await wait_for_turn(runtime, conversation["id"], created["id"])
+
+    assert turn["status"] == "failed"
+    assert turn["tool_calls"] is None
+    assert turn["model_calls"] is None
+    assert turn["isolation_check"]["status"] == "failed"
+    assert "未判定业务数据已被修改" in turn["isolation_check"]["message"]
+    persisted = json.loads(runtime.store.path.read_text(encoding="utf-8"))
+    saved = persisted["sessions"][-1]["conversations"][0]["turns"][0]
+    assert saved["status"] == "failed"
+    assert saved["isolation_check"]["status"] == "failed"
+    assert "停止后续数据库操作" in runtime.unsafe_reason
+    with pytest.raises(RuntimeError, match="隔离指纹无法核验"):
+        await runtime.submit_turn(conversation["id"], "不得继续", "request-5102")

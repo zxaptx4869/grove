@@ -222,6 +222,10 @@ class BudgetLedger:
     def active_text_requests(self) -> int:
         return self._require_turn().text_requests
 
+    @property
+    def active_tool_calls(self) -> int:
+        return self._require_turn().tool_calls
+
     def _require_turn(self) -> TurnBudget:
         if self.active is None:
             raise RuntimeError("尚未开始评测轮次")

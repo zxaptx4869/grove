@@ -21,6 +21,18 @@
 - [x] 4.2 增加前端组件测试并通过相关 Vitest、ESLint、TypeScript/Vite build、后端 pytest/ruff/compile 和全库 OpenSpec 严格校验。
 - [x] 4.3 使用显式离线桩启动完整服务并完成桌面浏览器交互与截图验收；随后启动真实本地服务但不主动发送消息，交付 URL、数据说明、反馈路径、已知限制和停止方式，等待用户试用。
 
+## 5. 第一批稳定性修复
+
+- [x] 5.1 串行化实验副本中会写审计／Evidence 的 SQLite 事务，覆盖并发工具、回滚、取消、Run 终态写入失败及下一轮继续。
+- [x] 5.2 保留求解结果、公开调用、usage、Run 保存失败和隔离检查失败诊断；页面对未知调用数不显示为零，无法核验隔离时停止后续数据库操作。
+- [ ] 5.3 执行相关后端与前端测试、ruff、构建、严格 OpenSpec 校验和原库指纹核对，本地提交后重启真实工作台但不主动重发消息。
+
+### 第一批稳定性自动化验证（2026-09-07）
+
+- 真实 `FunctionModel` 在临时 SQLite 副本上同轮提出 `list_projects` 与 `count_entries`，统一循环完成两个真实工具事务及审计写入；副本与原库业务表指纹前后不变，副本后续只读查询可继续。
+- Run 终态写入注入 `database is locked` 后，本地轮次仍保留公开回答、一次模型调用、完整 usage 与独立 `run_persistence` 异常链；下一轮保存恢复后可继续完成。运行时异常且隔离检查失败时，未知工具／模型记录保持 `null`，本地 JSON 保存失败终态，后续提交被阻止。
+- 后端相关 102 项测试、前端全量 134 项 Vitest 通过；ruff、Python compileall、前端生产构建、`git diff --check` 及全库 58 项 OpenSpec 严格校验通过。ESLint 为 0 error，仅保留两条既有 `DirectoryDraftDialog.tsx` Hook dependency warning。
+
 ## 验证记录（2026-09-07）
 
 - 后端无模型回归：`tests/test_dialogue_workbench.py` 与

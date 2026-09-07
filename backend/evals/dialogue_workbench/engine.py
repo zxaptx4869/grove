@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 from dataclasses import asdict, dataclass
+from time import perf_counter
 from typing import Any
 
 from pydantic_ai.messages import ModelMessage
@@ -17,8 +18,10 @@ from evals.dialogue_loop.instrumentation import (
 )
 from evals.dialogue_loop.loop import (
     LoopState,
+    _aggregate_text_usage,
     _verified_failure_output,
     build_agent,
+    build_compact_history,
     run_turn,
 )
 
@@ -29,6 +32,8 @@ class UnifiedConversationContext:
     history: list[ModelMessage]
     event_start: int = 0
     log_start: int = 0
+    run_id: int | None = None
+    persistence: dict | None = None
 
 
 class UnifiedLoopEngine:
@@ -43,6 +48,7 @@ class UnifiedLoopEngine:
         self.agent = build_agent(model)
         self.provider = str(model.system)
         self.model = model.model_name
+        self.database_lock = asyncio.Lock()
 
     @classmethod
     async def create(cls, identity: dict[str, Any]) -> UnifiedLoopEngine:
@@ -63,15 +69,17 @@ class UnifiedLoopEngine:
         return cls(identity, model, instrumentation)
 
     async def create_context(self) -> UnifiedConversationContext:
-        conversation_id = await _create_conversation(
-            self.identity["workspace_id"], self.identity["user_id"]
-        )
+        async with self.database_lock:
+            conversation_id = await _create_conversation(
+                self.identity["workspace_id"], self.identity["user_id"]
+            )
         state = LoopState(
             workspace_id=self.identity["workspace_id"],
             user_id=self.identity["user_id"],
             conversation_id=conversation_id,
             ledger=self.ledger,
             instrumentation=self.instrumentation,
+            database_lock=self.database_lock,
         )
         return UnifiedConversationContext(state=state, history=[])
 
@@ -82,9 +90,13 @@ class UnifiedLoopEngine:
         turn_number: int,
         stage,
     ) -> dict:
-        run_id = await _submit_turn(context.state.conversation_id, message, turn_number)
         context.event_start = len(context.state.tool_events)
         context.log_start = len(self.instrumentation.logs)
+        context.persistence = None
+        started = perf_counter()
+        async with self.database_lock:
+            run_id = await _submit_turn(context.state.conversation_id, message, turn_number)
+        context.run_id = run_id
         context.state.begin_turn(run_id, message)
         self.instrumentation.activity_callback = stage
         try:
@@ -92,12 +104,69 @@ class UnifiedLoopEngine:
                 self.agent, context.state, message, context.history
             )
         except asyncio.CancelledError:
-            await _finish_new_run(run_id, "", "用户取消")
+            try:
+                async with self.database_lock:
+                    await _finish_new_run(run_id, "", "用户取消")
+            except Exception as exc:  # noqa: BLE001
+                context.persistence = _persistence_failure(exc)
             raise
+        except Exception as exc:  # noqa: BLE001
+            turn = self._recover_failed_turn(context, message, exc, started)
         finally:
             self.instrumentation.activity_callback = None
-        await _finish_new_run(run_id, turn["answer"], turn["error"])
+        try:
+            async with self.database_lock:
+                await _finish_new_run(run_id, turn["answer"], turn["error"])
+        except Exception as exc:  # noqa: BLE001
+            persistence = _persistence_failure(exc)
+            context.persistence = persistence
+            turn["solve_status"] = turn["status"]
+            turn["status"] = "failed"
+            turn["persistence"] = persistence
+            notice = f"运行结果保存失败：{persistence['message']}"
+            turn["error"] = f"{turn['error']}；{notice}" if turn.get("error") else notice
+        else:
+            context.persistence = {"status": "completed", "error": None}
+            turn["persistence"] = context.persistence
         return turn
+
+    def _recover_failed_turn(
+        self,
+        context: UnifiedConversationContext,
+        message: str,
+        exc: Exception,
+        started: float,
+    ) -> dict:
+        """统一循环意外逸出时，从内存态恢复真实公开诊断。"""
+        state = context.state
+        text, blocks = _verified_failure_output(state)
+        logs = self.instrumentation.logs[context.log_start :]
+        events = state.tool_events[context.event_start :]
+        failure = self.instrumentation.describe_failure(exc, context.log_start)
+        if not state.history_turns or state.history_turns[-1].get("turn") != state.turn_index:
+            state.remember_turn(message, text, events)
+        context.history = build_compact_history(state)
+        return {
+            "message": message,
+            "status": "failed",
+            "answer": text,
+            "blocks": blocks,
+            "error": f"{type(exc).__name__}: {exc}",
+            "error_details": failure,
+            "solve_error": f"{type(exc).__name__}: {exc}",
+            "solve_failure": failure,
+            "duration_ms": int((perf_counter() - started) * 1000),
+            "usage": _aggregate_text_usage(
+                logs,
+                state.ledger.active_text_requests,
+                state.ledger.active_tool_calls,
+            ),
+            "budget": state.ledger.snapshot(),
+            "tool_calls": events,
+            "model_calls": [asdict(item) for item in logs],
+            "context": {"history_turns": len(state.history_turns)},
+            "finalization": self.instrumentation.finalization_snapshot(),
+        }
 
     async def cancel_turn(self, context: UnifiedConversationContext) -> dict:
         state = context.state
@@ -114,4 +183,19 @@ class UnifiedLoopEngine:
             "budget": state.ledger.snapshot(),
             "context": {"history_turns": len(state.history_turns)},
             "finalization": state.instrumentation.finalization_snapshot(),
+            "persistence": context.persistence,
         }
+
+
+def _persistence_failure(exc: Exception) -> dict:
+    chain = []
+    current: BaseException | None = exc
+    while current is not None and len(chain) < 4:
+        chain.append({"type": type(current).__name__, "message": str(current)[:4_000]})
+        current = current.__cause__ or current.__context__
+    return {
+        "status": "failed",
+        "category": "run_persistence",
+        "message": str(exc)[:4_000],
+        "exception_chain": chain,
+    }

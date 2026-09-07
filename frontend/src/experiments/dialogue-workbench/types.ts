@@ -59,12 +59,16 @@ export interface Turn {
   error?: string | null
   error_details?: Record<string, unknown> | null
   solve_error?: string | null
+  solve_failure?: Record<string, unknown> | null
+  solve_status?: TurnStatus
   duration_ms: number
-  tool_calls: ToolCall[]
-  model_calls: ModelCall[]
+  tool_calls: ToolCall[] | null
+  model_calls: ModelCall[] | null
   budget?: Record<string, unknown> | null
   context?: Record<string, unknown> | null
   finalization?: Record<string, unknown> | null
+  persistence?: Record<string, unknown> | null
+  isolation_check?: Record<string, unknown> | null
   feedback?: Feedback | null
 }
 

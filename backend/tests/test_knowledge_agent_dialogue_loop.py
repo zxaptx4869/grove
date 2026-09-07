@@ -7,7 +7,7 @@ from math import ceil
 from pathlib import Path
 
 import pytest
-from pydantic_ai import ModelRetry
+from pydantic_ai import Agent, ModelRetry, RunContext
 from pydantic_ai.messages import (
     ModelRequest,
     ModelResponse,
@@ -59,6 +59,7 @@ from evals.dialogue_loop.instrumentation import (
 from evals.dialogue_loop.isolation import assert_isolated, backup_database
 from evals.dialogue_loop.loop import (
     SYSTEM_PROMPT,
+    LoopDeps,
     LoopState,
     _count_params,
     _current_material_history,
@@ -956,6 +957,116 @@ async def test_last_batch_text_request_is_reserved_for_finalize() -> None:
 
 
 @pytest.mark.asyncio
+async def test_tool_action_budget_stop_uses_one_tool_free_finalize() -> None:
+    from evals.dialogue_loop.core import PER_TURN_TOOL_CALLS
+
+    state = _state()
+    state.instrumentation.context_policy_enabled = True
+    for _ in range(PER_TURN_TOOL_CALLS):
+        await state.ledger.reserve_tool()
+    calls = []
+
+    def respond(messages, info):
+        calls.append((messages, info))
+        if len(calls) == 1:
+            return ModelResponse(parts=[ToolCallPart("list_projects", {})])
+        return ModelResponse(
+            parts=[
+                ToolCallPart(
+                    info.output_tools[0].name,
+                    {"blocks": [{"kind": "insufficient", "text": "工具额度已用完。"}]},
+                )
+            ]
+        )
+
+    model = BudgetedModel(FunctionModel(respond), state.instrumentation)
+    turn, _ = await run_turn(build_agent(model), state, "继续查询", [])
+
+    assert turn["status"] == "completed"
+    assert turn["solve_error"] == "BudgetExceeded: 本轮工具动作预算已耗尽"
+    assert turn["finalization"]["reason"] == "tool_action_budget"
+    assert turn["finalization"]["attempted"] is True
+    assert len(calls) == 2
+    assert calls[1][1].function_tools == []
+    assert turn["budget"]["turn"]["tool_calls"] == PER_TURN_TOOL_CALLS
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("message", "reason"),
+    [
+        ("本轮向量请求预算已耗尽", "embedding_request_budget"),
+        ("整批向量请求预算已耗尽", "embedding_request_budget"),
+        ("本轮不同 Entry 读取预算已耗尽", "entry_read_budget"),
+        ("本轮 Evidence 读取预算已耗尽", "evidence_read_budget"),
+    ],
+)
+async def test_material_budget_stops_share_the_single_finalize_path(
+    message: str, reason: str
+) -> None:
+    state = _state()
+    state.instrumentation.context_policy_enabled = True
+    calls = []
+
+    def respond(_messages, info):
+        calls.append(info)
+        if len(calls) == 1:
+            return ModelResponse(parts=[ToolCallPart("stop_for_budget", {})])
+        return ModelResponse(
+            parts=[
+                ToolCallPart(
+                    info.output_tools[0].name,
+                    {"blocks": [{"kind": "insufficient", "text": "已按现有材料收尾。"}]},
+                )
+            ]
+        )
+
+    model = BudgetedModel(FunctionModel(respond), state.instrumentation)
+    agent = Agent(
+        model,
+        deps_type=LoopDeps,
+        output_type=DialogueAnswer,
+        instructions=SYSTEM_PROMPT,
+        retries=0,
+    )
+
+    @agent.tool
+    async def stop_for_budget(_ctx: RunContext[LoopDeps]) -> dict:
+        raise BudgetExceeded(message)
+
+    turn, _ = await run_turn(agent, state, "继续", [])
+
+    assert turn["status"] == "completed"
+    assert turn["solve_error"] == f"BudgetExceeded: {message}"
+    assert turn["finalization"]["reason"] == reason
+    assert turn["finalization"]["attempted"] is True
+    assert len(calls) == 2
+    assert calls[1].function_tools == []
+
+
+@pytest.mark.asyncio
+async def test_hard_input_limit_does_not_dispatch_finalize_when_input_still_cannot_fit() -> None:
+    state = _state()
+    state.instrumentation.context_policy_enabled = True
+    calls = []
+
+    def respond(_messages, _info):
+        calls.append(True)
+        raise AssertionError("输入无法容纳时不应派发")
+
+    model = BudgetedModel(FunctionModel(respond), state.instrumentation)
+    history = [ModelRequest(parts=[UserPromptPart(content="甲" * 50_000)])]
+    turn, _ = await run_turn(build_agent(model), state, "继续", history)
+
+    assert turn["status"] == "failed"
+    assert turn["solve_error"].startswith("BudgetExceeded: 压缩后对话上下文")
+    assert turn["finalization"]["reason"] == "input_hard_limit"
+    assert turn["finalization"]["status"] == "not_dispatched"
+    assert turn["finalization"]["attempted"] is False
+    assert calls == []
+
+
+@pytest.mark.asyncio
 async def test_finalize_provider_failure_is_not_retried_and_keeps_verified_results() -> None:
     state = _state()
     state.instrumentation.context_policy_enabled = True
@@ -978,6 +1089,9 @@ async def test_finalize_provider_failure_is_not_retried_and_keeps_verified_resul
     assert turn["finalization"]["attempted"] is True
     assert len(calls) == 1
     assert turn["budget"]["turn"]["text_requests"] == 1
+    assert turn["usage"]["requests"] == 1
+    assert turn["usage"]["input_tokens"] is None
+    assert turn["usage"]["usage_complete"] is False
     assert any(block.get("handle") == handle for block in turn["blocks"])
     assert "provider unavailable" in turn["error"]
     assert turn["error_details"]["category"] == "provider"

@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import json
 from dataclasses import asdict, dataclass, field, replace
+from decimal import Decimal, InvalidOperation
 from time import perf_counter
 from typing import Literal
 
@@ -98,6 +99,7 @@ class LoopState:
     run_id: int = 0
     tools_allowed: bool = True
     _handle_sequence: int = 0
+    database_lock: asyncio.Lock = field(default_factory=asyncio.Lock, repr=False)
 
     def begin_turn(self, run_id: int, message: str) -> None:
         self.turn_index += 1
@@ -434,27 +436,31 @@ async def _dispatch(
         return None
 
     started = perf_counter()
-    async with async_session_factory() as db:
-        tool_ctx = RunToolContext(
-            run_id=state.run_id,
-            workspace_id=state.workspace_id,
-            owner_user_id=state.user_id,
-            scope_type="workspace",
-            project_id=None,
-            project_name=None,
-            discovered_entry_ids=state.discovered_entry_ids,
-        )
-        result = await dispatch_read_tool(
-            db,
-            tool_ctx,
-            tool_name=tool_name,
-            tool_version="v1",
-            params=params,
-            budget=tool_budget,
-            cancel_check=not_cancelled,
-            registry=KNOWLEDGE_AGENT_READ_TOOL_REGISTRY,
-        )
-        await db.commit()
+    # 真实只读工具仍会写审计或 Evidence。SQLite 延迟事务若在并行读取后同时
+    # 升级为写事务，会形成升级竞争；实验层只串行这段数据库事务，不改变模型
+    # 调用、预算或共享领域工具的行为。
+    async with state.database_lock:
+        async with async_session_factory() as db:
+            tool_ctx = RunToolContext(
+                run_id=state.run_id,
+                workspace_id=state.workspace_id,
+                owner_user_id=state.user_id,
+                scope_type="workspace",
+                project_id=None,
+                project_name=None,
+                discovered_entry_ids=state.discovered_entry_ids,
+            )
+            result = await dispatch_read_tool(
+                db,
+                tool_ctx,
+                tool_name=tool_name,
+                tool_version="v1",
+                params=params,
+                budget=tool_budget,
+                cancel_check=not_cancelled,
+                registry=KNOWLEDGE_AGENT_READ_TOOL_REGISTRY,
+            )
+            await db.commit()
     payload = result.payload
     if tool_name == "search_knowledge" and len(payload.get("items", [])) > 10:
         payload = {**payload, "items": payload["items"][:10], "truncated_by_experiment": True}
@@ -478,6 +484,10 @@ async def _dispatch(
             if evidence_handle and item.get("citable"):
                 state.evidence[evidence_handle] = item
                 state.current_evidence.add(evidence_handle)
+    if result.status == "error" and result.error and "预算已耗尽" in result.error:
+        # 共享只读工具会把内部向量/文本预算异常保留为工具错误；实验循环需在
+        # 已提交审计后恢复成统一停止信号，禁止 Agent 再发求解动作。
+        raise BudgetExceeded(result.error.removeprefix("只读工具执行失败："))
     public = _public_result(result, handle)
     public["payload"] = _model_payload(kind, payload)
     return public
@@ -516,23 +526,24 @@ def build_agent(model) -> Agent[LoopDeps, DialogueAnswer]:
             }
             state.tool_events.append(event)
             return event
-        async with async_session_factory() as db:
-            rows = (
-                await db.execute(
-                    select(Project.id, Project.name, Project.status)
-                    .where(Project.workspace_id == state.workspace_id)
-                    .order_by(Project.id)
+        async with state.database_lock:
+            async with async_session_factory() as db:
+                rows = (
+                    await db.execute(
+                        select(Project.id, Project.name, Project.status)
+                        .where(Project.workspace_id == state.workspace_id)
+                        .order_by(Project.id)
+                    )
+                ).all()
+                await record_tool_call(
+                    db,
+                    run_id=state.run_id,
+                    sequence=await next_tool_sequence(db, state.run_id),
+                    tool_name="list_projects",
+                    status="completed" if rows else "empty",
+                    result_summary=json.dumps({"project_count": len(rows)}, ensure_ascii=False),
                 )
-            ).all()
-            await record_tool_call(
-                db,
-                run_id=state.run_id,
-                sequence=await next_tool_sequence(db, state.run_id),
-                tool_name="list_projects",
-                status="completed" if rows else "empty",
-                result_summary=json.dumps({"project_count": len(rows)}, ensure_ascii=False),
-            )
-            await db.commit()
+                await db.commit()
         payload = {"projects": [{"name": row.name, "status": row.status} for row in rows]}
         handle = state.store_result(
             "projects", payload, "completed" if rows else "empty", "complete"
@@ -697,29 +708,30 @@ def build_agent(model) -> Agent[LoopDeps, DialogueAnswer]:
             state.tool_events.append(event)
             return event
         state.ledger.reserve_entries([entry_id])
-        async with async_session_factory() as db:
-            tool_ctx = RunToolContext(
-                run_id=state.run_id,
-                workspace_id=state.workspace_id,
-                owner_user_id=state.user_id,
-                scope_type="workspace",
-                project_id=None,
-                project_name=None,
-                discovered_entry_ids=state.discovered_entry_ids,
-            )
-            refreshed = await resolve_recent_result_entries(db, tool_ctx, [entry_id])
-            if not refreshed.items:
-                event = {
-                    "tool": "open_list_item",
-                    "status": "error",
-                    "params": {"result_set_handle": result_set_handle, "position": position},
-                    "error": "对象已删除或移出当前范围",
-                    "duration_ms": 0,
-                }
-                state.tool_events.append(event)
-                return event
-            output = await read_entries(db, tool_ctx, [entry_id])
-            await db.commit()
+        async with state.database_lock:
+            async with async_session_factory() as db:
+                tool_ctx = RunToolContext(
+                    run_id=state.run_id,
+                    workspace_id=state.workspace_id,
+                    owner_user_id=state.user_id,
+                    scope_type="workspace",
+                    project_id=None,
+                    project_name=None,
+                    discovered_entry_ids=state.discovered_entry_ids,
+                )
+                refreshed = await resolve_recent_result_entries(db, tool_ctx, [entry_id])
+                if not refreshed.items:
+                    event = {
+                        "tool": "open_list_item",
+                        "status": "error",
+                        "params": {"result_set_handle": result_set_handle, "position": position},
+                        "error": "对象已删除或移出当前范围",
+                        "duration_ms": 0,
+                    }
+                    state.tool_events.append(event)
+                    return event
+                output = await read_entries(db, tool_ctx, [entry_id])
+                await db.commit()
         payload = output.model_dump(mode="json")
         handle = state.store_result(
             "entries", payload, "completed" if output.items else "error", "limited"
@@ -905,6 +917,67 @@ def _usage_limits(request_limit: int) -> UsageLimits:
     )
 
 
+def _budget_stop_reason(exc: BudgetExceeded) -> str:
+    """把可恢复的预算停止映射成稳定、可展示的收尾原因。"""
+    message = str(exc)
+    if "工具动作" in message:
+        return "tool_action_budget"
+    if "向量" in message:
+        return "embedding_request_budget"
+    if "Entry" in message:
+        return "entry_read_budget"
+    if "Evidence" in message:
+        return "evidence_read_budget"
+    if "输入长度" in message or "上下文" in message:
+        return "input_hard_limit"
+    return "text_request_budget"
+
+
+def _aggregate_text_usage(logs: list, text_requests: int, tool_calls: int) -> dict | None:
+    """从已完成调用日志恢复整轮 usage；未知费用保持未知。"""
+    token_keys = (
+        "input_tokens",
+        "cache_write_tokens",
+        "cache_read_tokens",
+        "output_tokens",
+        "input_audio_tokens",
+        "cache_audio_read_tokens",
+        "output_audio_tokens",
+    )
+    totals = {key: 0 for key in token_keys}
+    text_logs = [item for item in logs if item.kind == "text"]
+    if not text_logs:
+        return None
+    text_usages = [item.usage for item in text_logs if item.usage]
+    cost_total = Decimal("0")
+    cost_available = bool(text_usages)
+    for usage in text_usages:
+        for key in token_keys:
+            value = usage.get(key)
+            if isinstance(value, int):
+                totals[key] += value
+        cost = usage.get("cost")
+        if cost is None:
+            cost_available = False
+        else:
+            try:
+                cost_total += Decimal(str(cost))
+            except InvalidOperation:
+                cost_available = False
+    if len(text_usages) != len(text_logs):
+        cost_available = False
+    usage_complete = len(text_usages) == len(text_logs)
+    return {
+        **{key: totals[key] if usage_complete else None for key in token_keys},
+        "cost": str(cost_total) if cost_available else None,
+        "requests": text_requests,
+        "tool_calls": tool_calls,
+        "usage_complete": usage_complete,
+        "known_requests": len(text_usages),
+        "known_tokens": totals,
+    }
+
+
 def _current_material_history(
     state: LoopState,
     message: str,
@@ -1041,6 +1114,40 @@ async def run_turn(
             status = "completed"
             error = None
             usage = asdict(result.usage) if result.usage is not None else None
+    except BudgetExceeded as exc:
+        solve_error = f"{type(exc).__name__}: {exc}"
+        solve_failure = state.instrumentation.describe_failure(exc, before_logs)
+        if not state.instrumentation.context_policy_enabled:
+            text = "本轮未完成。"
+            blocks = [{"kind": "insufficient", "text": text}]
+            status = "failed"
+            error = solve_error
+            error_details = solve_failure
+            usage = None
+        else:
+            try:
+                result = await _finalize_once(
+                    agent,
+                    state,
+                    message,
+                    history,
+                    state.tool_events[before_events:],
+                    _budget_stop_reason(exc),
+                )
+            except Exception as finalize_exc:
+                text, blocks = _verified_failure_output(state)
+                status = "failed"
+                error_details = state.instrumentation.finalize_failure
+                error = state.instrumentation.finalize_error or (
+                    f"{type(finalize_exc).__name__}: {finalize_exc}"
+                )
+                usage = None
+            else:
+                text, blocks = render_answer(result.output, state)
+                state.instrumentation.complete_finalize()
+                status = "completed"
+                error = None
+                usage = asdict(result.usage) if result.usage is not None else None
     except TimeoutError as exc:
         if state.instrumentation.finalize_attempted:
             text, blocks = _verified_failure_output(state)
@@ -1109,6 +1216,13 @@ async def run_turn(
         for item in state.instrumentation.logs[before_logs:]
         if item.kind in {"text", "text_not_dispatched"}
     ]
+    recovered_usage = _aggregate_text_usage(
+        state.instrumentation.logs[before_logs:],
+        state.ledger.active_text_requests,
+        state.ledger.active_tool_calls,
+    )
+    if recovered_usage is not None:
+        usage = recovered_usage
     return {
         "message": message,
         "status": status,

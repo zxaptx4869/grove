@@ -294,7 +294,11 @@ async def run_new_scenario(
     from evals.dialogue_loop.loop import LoopState, build_agent, run_turn
 
     scenario = next(item for item in ALL_SCENARIOS if item.id == scenario_id)
-    conversation_id = await _create_conversation(identity["workspace_id"], identity["user_id"])
+    database_lock = asyncio.Lock()
+    async with database_lock:
+        conversation_id = await _create_conversation(
+            identity["workspace_id"], identity["user_id"]
+        )
     async with async_session_factory() as db:
         model = await get_text_model(db, identity["workspace_id"])
     if isinstance(model, BudgetedModel):
@@ -305,6 +309,7 @@ async def run_new_scenario(
         conversation_id=conversation_id,
         ledger=ledger,
         instrumentation=instrumentation,
+        database_lock=database_lock,
     )
     agent = build_agent(model)
     history = []
@@ -336,10 +341,12 @@ async def run_new_scenario(
                     }
                 )
             continue
-        run_id = await _submit_turn(conversation_id, message, turn_number)
+        async with database_lock:
+            run_id = await _submit_turn(conversation_id, message, turn_number)
         state.begin_turn(run_id, message)
         turn, history = await run_turn(agent, state, message, history)
-        await _finish_new_run(run_id, turn["answer"], turn["error"])
+        async with database_lock:
+            await _finish_new_run(run_id, turn["answer"], turn["error"])
         turns.append(turn)
         if checkpoint:
             checkpoint(

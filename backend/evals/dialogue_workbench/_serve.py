@@ -50,11 +50,14 @@ async def build_runtime(args, password: str):
     snapshot_raw = json.dumps(snapshot, ensure_ascii=False, sort_keys=True).encode("utf-8")
     engine = OfflineFixtureEngine() if args.offline else await UnifiedLoopEngine.create(identity)
 
-    def isolation_unchanged() -> bool:
-        return (
-            domain_fingerprint(args.original, identity["workspace_id"]) == original_before
-            and domain_fingerprint(args.db, identity["workspace_id"]) == snapshot
+    async def isolation_unchanged() -> bool:
+        """在线程中执行同步 SQLite 指纹，避免锁等待阻塞异步连接清理。"""
+
+        original_after, snapshot_after = await asyncio.gather(
+            asyncio.to_thread(domain_fingerprint, args.original, identity["workspace_id"]),
+            asyncio.to_thread(domain_fingerprint, args.db, identity["workspace_id"]),
         )
+        return original_after == original_before and snapshot_after == snapshot
 
     return WorkbenchRuntime(
         engine=engine,

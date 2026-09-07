@@ -203,4 +203,25 @@ describe('知识 Agent 实验工作台', () => {
     expect(conversationButtons[0]).toHaveTextContent('装修记录')
     expect(conversationButtons[1]).toHaveTextContent('旧离线对话')
   })
+
+  it('诊断缺失时显示未知，并区分隔离检查失败', async () => {
+    const failed = structuredClone(state)
+    const turn = failed.sessions[0].conversations[0].turns[0]
+    turn.status = 'failed'
+    turn.stage = 'failed'
+    turn.error = 'RuntimeError: 执行层意外失败'
+    turn.solve_error = 'BudgetExceeded: 本轮工具动作预算已耗尽'
+    turn.tool_calls = null
+    turn.model_calls = null
+    turn.persistence = { status: 'failed', category: 'run_persistence' }
+    turn.isolation_check = { status: 'failed' }
+    vi.mocked(api.bootstrap).mockResolvedValue(failed)
+
+    render(<WorkbenchApp />)
+
+    expect(await screen.findByText(/隔离检查失败，无法核验业务数据是否变化/)).toBeInTheDocument()
+    expect(screen.getByText(/求解提前停止：BudgetExceeded/)).toBeInTheDocument()
+    expect(screen.getByText(/工具记录未知 · 模型调用记录未知/)).toBeInTheDocument()
+    expect(screen.queryByText(/0 个工具 · 0 次模型调用/)).not.toBeInTheDocument()
+  })
 })
