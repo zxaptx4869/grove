@@ -5,7 +5,13 @@ from pathlib import Path
 
 import pytest
 from pydantic_ai import ModelRetry
-from pydantic_ai.messages import ModelResponse, ToolCallPart
+from pydantic_ai.messages import (
+    ModelRequest,
+    ModelResponse,
+    ToolCallPart,
+    ToolReturnPart,
+    UserPromptPart,
+)
 from pydantic_ai.models.function import FunctionModel
 
 from evals.dialogue_loop.__main__ import _write
@@ -20,23 +26,29 @@ from evals.dialogue_loop.core import (
     BATCH_TEXT_REQUESTS,
     PER_TURN_EMBEDDING_REQUESTS,
     PER_TURN_TEXT_REQUESTS,
+    VARIANT_SCENARIOS,
     BudgetExceeded,
     BudgetLedger,
     DialogueAnswer,
 )
 from evals.dialogue_loop.execution import _rehearsal_scenario
-from evals.dialogue_loop.instrumentation import Instrumentation
+from evals.dialogue_loop.instrumentation import BudgetedModel, Instrumentation
 from evals.dialogue_loop.isolation import assert_isolated, backup_database
 from evals.dialogue_loop.loop import (
+    SYSTEM_PROMPT,
     LoopState,
+    _count_params,
     _entry_set,
+    _group_params,
+    _model_payload,
     build_agent,
+    build_compact_history,
     list_position_entry_id,
     output_errors,
     render_answer,
     run_turn,
 )
-from evals.dialogue_loop.report import _visible_answer, evaluate, sanitize
+from evals.dialogue_loop.report import _visible_answer, evaluate, evaluation_plan, sanitize
 
 
 def _state() -> LoopState:
@@ -96,6 +108,28 @@ def test_explicit_project_filter_can_be_replaced_and_cleared() -> None:
         _entry_set("all", "房子装修", None, [])
 
 
+def test_main_types_default_to_all_and_explicit_filter_is_preserved() -> None:
+    assert _entry_set("all", None, None, None)["main_types"] == []
+    assert _entry_set("all", None, None, ["method"])["main_types"] == ["method"]
+
+
+def test_statistic_adapters_build_unambiguous_shared_tool_params() -> None:
+    count = _count_params("all", None, None)
+    assert count["operation"] == "count"
+    assert count["group_by"] is None
+    assert count["entry_set"]["main_types"] == []
+
+    grouped = _group_params("project", "房子装修", "project", ["knowledge"])
+    assert grouped["operation"] == "group_count"
+    assert grouped["group_by"] == "project"
+    assert grouped["entry_set"]["main_types"] == ["knowledge"]
+
+
+def test_project_validation_names_the_invalid_field() -> None:
+    with pytest.raises(ModelRetry, match="字段 project_name"):
+        _entry_set("project", None, None, None)
+
+
 def test_list_position_uses_actual_order_and_rejects_forgery() -> None:
     state = _state()
     handle = state.store_result(
@@ -109,6 +143,65 @@ def test_list_position_uses_actual_order_and_rejects_forgery() -> None:
         list_position_entry_id(state, "forged", 1)
     with pytest.raises(ValueError):
         list_position_entry_id(state, handle, 4)
+
+
+def test_compact_history_keeps_order_and_protocol_without_large_body() -> None:
+    state = _state()
+    handle = state.store_result(
+        "list",
+        {
+            "items": [
+                {"entry_id": 91, "title": "甲", "project_name": "装修", "content": "正文" * 3000},
+                {"entry_id": 17, "title": "乙", "project_name": "装修", "content": "原文" * 3000},
+            ]
+        },
+        "completed",
+        "complete",
+    )
+    state.remember_turn(
+        "列出两条",
+        "1. 甲\n2. 乙",
+        [
+            {
+                "tool": "query_entries",
+                "shared_tool": "query_entries",
+                "result_handle": handle,
+                "params": {"entry_set": _entry_set("all", None, None, None)},
+                "status": "completed",
+                "completeness": "complete",
+                "error": None,
+            }
+        ],
+    )
+    history = build_compact_history(state)
+    assert isinstance(history[0].parts[0], UserPromptPart)
+    assert history[0].parts[0].content == "列出两条"
+    call = history[1].parts[0]
+    returned = history[2].parts[0]
+    assert isinstance(call, ToolCallPart)
+    assert isinstance(returned, ToolReturnPart)
+    assert call.tool_call_id == returned.tool_call_id
+    assert [item["entry_id"] for item in returned.content["ordered_items"]] == [91, 17]
+    assert "正文正文" not in str(returned.content)
+    assert list_position_entry_id(state, handle, 2) == 17
+
+
+def test_current_material_is_bounded_but_full_body_stays_program_side() -> None:
+    content = "甲" * 4_000
+    payload = {
+        "items": [
+            {
+                "entry_id": 1,
+                "title": "标题",
+                "content": content,
+                "sources": [{"source_id": 2, "source_title": "来源", "quote": "原文" * 2_000}],
+            }
+        ]
+    }
+    model_payload = _model_payload("entries", payload)
+    assert "实验材料已缩减" in model_payload["items"][0]["content"]
+    assert "quote" not in model_payload["items"][0]["sources"][0]
+    assert payload["items"][0]["content"] == content
 
 
 def test_output_rejects_old_or_forged_handles_and_renders_real_values() -> None:
@@ -276,6 +369,62 @@ def test_old_structured_results_are_evaluated_as_public_output() -> None:
     assert [item["status"] for item in result["turns"]] == ["pass"] * 4
 
 
+def test_new_total_cannot_pass_by_summing_category_buckets() -> None:
+    oracle = {"projects": [{"id": 1, "name": "项目甲", "entry_count": 5}], "entries": []}
+    grouped_only = {
+        "answer": "knowledge：2；method：3",
+        "status": "completed",
+        "blocks": [
+            {
+                "kind": "statistic",
+                "group_by": "main_type",
+                "buckets": [
+                    {"key": "knowledge", "count": 2},
+                    {"key": "method", "count": 3},
+                ],
+                "text": "knowledge：2；method：3",
+            }
+        ],
+    }
+    turns = [grouped_only, grouped_only, grouped_only, grouped_only]
+    result = evaluate([{"arm": "new", "scenario": "A", "turns": turns}], oracle)
+    assert result["turns"][0]["status"] == "fail"
+    assert result["turns"][0]["reasons"] == ["公开结果未展示期望精确值 5"]
+    assert result["dialogues"][0]["status"] == "fail"
+
+
+def test_project_bucket_scoring_checks_name_count_pairs() -> None:
+    oracle = {
+        "projects": [
+            {"id": 1, "name": "甲", "entry_count": 2},
+            {"id": 2, "name": "乙", "entry_count": 3},
+        ],
+        "entries": [],
+    }
+    count = {
+        "answer": "总数：5",
+        "status": "completed",
+        "blocks": [{"kind": "statistic", "value": 5, "text": "总数：5"}],
+    }
+    swapped = {
+        "answer": "甲：3；乙：2",
+        "status": "completed",
+        "blocks": [
+            {
+                "kind": "statistic",
+                "group_by": "project",
+                "buckets": [{"label": "甲", "count": 3}, {"label": "乙", "count": 2}],
+            }
+        ],
+    }
+    result = evaluate(
+        [{"arm": "new", "scenario": "A", "turns": [count, swapped, count, swapped]}],
+        oracle,
+    )
+    assert result["turns"][1]["status"] == "fail"
+    assert set(result["turns"][1]["reasons"][0]) >= {"甲", "乙"}
+
+
 def test_old_record_list_does_not_require_evidence_before_grove_only_turn() -> None:
     oracle = {"projects": [], "entries": []}
     visible_list = {
@@ -402,6 +551,18 @@ def test_rehearsal_writes_four_json_safe_checkpoints() -> None:
     assert result["turns"][0]["model_calls"][0]["kind"] == "pipeline_fixture"
     assert checkpoints[0]["turns"][0]["usage"]["cost"] == "0.000000"
     assert checkpoints[0]["turns"][0]["budget"]["turn"]["entry_reads"] == [1]
+    assert checkpoints[0]["turns"][0]["context"]["experiment_version"] == "prototype-v2"
+
+
+def test_next_batch_variants_are_frozen_outside_system_prompt() -> None:
+    plan = evaluation_plan()
+    assert [item.id for item in VARIANT_SCENARIOS] == ["D", "E"]
+    assert plan["maximum_user_messages"] == 40
+    assert plan["status"] == "awaiting_user_approval"
+    assert all(
+        turn not in SYSTEM_PROMPT for scenario in VARIANT_SCENARIOS for turn in scenario.turns
+    )
+    assert parser().parse_args(["--rehearsal", "--suite", "v2"]).suite == "v2"
 
 
 def test_budget_snapshot_is_json_serializable() -> None:
@@ -449,9 +610,38 @@ async def test_context_over_limit_stops_without_model_call() -> None:
         )
 
     agent = build_agent(FunctionModel(respond))
-    with pytest.raises(BudgetExceeded, match="上下文"):
-        await run_turn(agent, state, "继续", ["x" * 50_000])
+    turn, _ = await run_turn(agent, state, "继续", ["x" * 50_000])
+    assert turn["status"] == "failed"
+    assert "上下文" in turn["error"]
     assert calls == []
+
+
+@pytest.mark.asyncio
+async def test_soft_input_limit_forces_one_budgeted_finalize_request() -> None:
+    state = _state()
+    state.instrumentation.context_policy_enabled = True
+    calls = []
+
+    def respond(messages, info):
+        calls.append((messages, info))
+        return ModelResponse(
+            parts=[
+                ToolCallPart(
+                    info.output_tools[0].name,
+                    {"blocks": [{"kind": "text", "text": "在预算内收尾"}]},
+                )
+            ]
+        )
+
+    wrapped = BudgetedModel(FunctionModel(respond), state.instrumentation)
+    agent = build_agent(wrapped)
+    history = [ModelRequest(parts=[UserPromptPart(content="甲" * 9_500)])]
+    turn, _ = await run_turn(agent, state, "请总结", history)
+    assert turn["status"] == "completed"
+    assert len(calls) == 1
+    assert calls[0][1].function_tools == []
+    assert turn["budget"]["turn"]["text_requests"] == 1
+    assert turn["context"]["input_estimates"][0]["finalize_only"] is True
 
 
 @pytest.mark.asyncio

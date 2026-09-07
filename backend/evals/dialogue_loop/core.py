@@ -8,8 +8,12 @@ from typing import Annotated, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
-PROMPT_VERSION = "dialogue-loop-v1"
+PROMPT_VERSION = "dialogue-loop-v2"
+EXPERIMENT_VERSION = "prototype-v2"
 INPUT_BYTES_LIMIT = 48_000
+MODEL_INPUT_TOKENS_LIMIT = 12_000
+INPUT_ESTIMATE_SOFT_LIMIT = 9_000
+INPUT_ESTIMATE_METHOD = "结构化消息及工具/输出 schema JSON UTF-8 字节数除以 3 向上取整"
 OUTPUT_TOKENS_LIMIT = 2_000
 PER_TURN_TEXT_REQUESTS = 12
 PER_TURN_EMBEDDING_REQUESTS = 4
@@ -62,6 +66,31 @@ SCENARIOS = (
         ),
     ),
 )
+
+# 变体不加入 Agent 提示词；只有显式选择第二版套件时才进入彩排或对照。
+VARIANT_SCENARIOS = (
+    Scenario(
+        "D",
+        "项目切换与明确类型",
+        (
+            "先告诉我房子装修项目一共有多少条正式记录",
+            "换成新疆旅行项目呢",
+            "这个项目里只算 method 类型",
+            "取消类型限制，回到这个项目的全部正式记录",
+        ),
+    ),
+    Scenario(
+        "E",
+        "话题切换后的列表引用变体",
+        (
+            "把房子装修项目最近更新的五条记录列给我",
+            "展开第二项",
+            "先别查库，聊聊怎样安排间隔复习",
+            "回到前面的列表，第二项来自哪份材料",
+        ),
+    ),
+)
+ALL_SCENARIOS = (*SCENARIOS, *VARIANT_SCENARIOS)
 
 
 class StrictModel(BaseModel):
@@ -185,15 +214,24 @@ class BudgetLedger:
             "turn": turn,
         }
 
+    @property
+    def active_text_requests(self) -> int:
+        return self._require_turn().text_requests
+
     def _require_turn(self) -> TurnBudget:
         if self.active is None:
             raise RuntimeError("尚未开始评测轮次")
         return self.active
 
 
-def frozen_budget() -> dict:
+def frozen_budget(messages_per_batch: int = 24) -> dict:
     return {
+        "experiment_version": EXPERIMENT_VERSION,
         "input_bytes_per_turn": INPUT_BYTES_LIMIT,
+        "model_input_tokens_per_request": MODEL_INPUT_TOKENS_LIMIT,
+        "input_estimate_soft_limit": INPUT_ESTIMATE_SOFT_LIMIT,
+        "input_estimate_method": INPUT_ESTIMATE_METHOD,
+        "finalize_request_reserved": 1,
         "output_tokens_per_request": OUTPUT_TOKENS_LIMIT,
         "text_requests_per_turn": PER_TURN_TEXT_REQUESTS,
         "embedding_requests_per_turn": PER_TURN_EMBEDDING_REQUESTS,
@@ -205,5 +243,5 @@ def frozen_budget() -> dict:
         "text_requests_per_batch": BATCH_TEXT_REQUESTS,
         "embedding_requests_per_batch": BATCH_EMBEDDING_REQUESTS,
         "tool_concurrency": MAX_TOOL_CONCURRENCY,
-        "messages_per_batch": 24,
+        "messages_per_batch": messages_per_batch,
     }

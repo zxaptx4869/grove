@@ -13,7 +13,13 @@ from time import perf_counter
 
 from sqlalchemy import select
 
-from evals.dialogue_loop.core import PER_TURN_SECONDS, SCENARIOS, BudgetLedger
+from evals.dialogue_loop.core import (
+    ALL_SCENARIOS,
+    EXPERIMENT_VERSION,
+    PER_TURN_SECONDS,
+    PROMPT_VERSION,
+    BudgetLedger,
+)
 from evals.dialogue_loop.instrumentation import Instrumentation, install_instrumentation
 from evals.dialogue_loop.isolation import assert_isolated, domain_fingerprint, provider_snapshot
 from evals.dialogue_loop.report import sanitize
@@ -71,6 +77,7 @@ async def child_preflight(db_path: Path, original_path: Path, password: str) -> 
     registry = _registry_preflight()
     state = Instrumentation(BudgetLedger())
     coverage = install_instrumentation(state)
+    v2_controls = _v2_control_preflight()
     blockers = []
     if not secrets["text_secret_available"]:
         blockers.append("文本模型密钥不可用")
@@ -89,6 +96,8 @@ async def child_preflight(db_path: Path, original_path: Path, password: str) -> 
         blockers.append("旧流程文本模型调用无法完整纳入实验计数")
     if "app.services.vector_search" not in coverage["embedding_modules"]:
         blockers.append("向量调用无法纳入实验计数")
+    if not all(v2_controls.values()):
+        blockers.append("第二版确定性上下文控制预检失败")
     return {
         "ok": not blockers,
         "blockers": blockers,
@@ -96,7 +105,75 @@ async def child_preflight(db_path: Path, original_path: Path, password: str) -> 
         "provider": secrets,
         "registry": registry,
         "instrumentation": coverage,
+        "v2_controls": v2_controls,
+        "experiment_version": EXPERIMENT_VERSION,
+        "prompt_version": PROMPT_VERSION,
         "model_calls": 0,
+    }
+
+
+def _v2_control_preflight() -> dict[str, bool]:
+    """不导入模型，用代表值核对历史缩减、顺序和类型口径。"""
+    from pydantic_ai.messages import ModelRequest, ModelResponse, ToolCallPart, ToolReturnPart
+
+    from evals.dialogue_loop.loop import (
+        LoopState,
+        _entry_set,
+        _model_payload,
+        build_compact_history,
+    )
+
+    ledger = BudgetLedger()
+    instrumentation = Instrumentation(ledger, context_policy_enabled=True)
+    state = LoopState(1, 2, 3, ledger, instrumentation)
+    state.begin_turn(4, "列出最近两条")
+    full_payload = {
+        "items": [
+            {"entry_id": 9, "title": "九", "project_name": "项目", "content": "甲" * 4_000},
+            {"entry_id": 3, "title": "三", "project_name": "项目", "content": "乙" * 4_000},
+        ]
+    }
+    handle = state.store_result("list", full_payload, "completed", "complete")
+    event = {
+        "tool": "query_entries",
+        "shared_tool": "query_entries",
+        "result_handle": handle,
+        "status": "completed",
+        "completeness": "complete",
+        "params": {"entry_set": _entry_set("all", None, None, None)},
+        "error": None,
+    }
+    state.remember_turn("列出最近两条", "1. 九\n2. 三", [event])
+    history = build_compact_history(state)
+    calls = {
+        part.tool_call_id
+        for message in history
+        if isinstance(message, ModelResponse)
+        for part in message.parts
+        if isinstance(part, ToolCallPart)
+    }
+    returns = {
+        part.tool_call_id
+        for message in history
+        if isinstance(message, ModelRequest)
+        for part in message.parts
+        if isinstance(part, ToolReturnPart)
+    }
+    summary = state.history_turns[0]["tools"][0]
+    model_payload = _model_payload(
+        "entries", {"items": [{"entry_id": 9, "title": "九", "content": "甲" * 4_000}]}
+    )
+    return {
+        "message_protocol_paired": bool(calls) and calls == returns,
+        "ordered_list_preserved": [
+            item["entry_id"] for item in summary.get("ordered_items", [])
+        ]
+        == [9, 3],
+        "history_body_removed": "content" not in json.dumps(summary, ensure_ascii=False),
+        "current_body_bounded": len(model_payload["items"][0]["content"]) < 4_000,
+        "all_types_default_empty": _entry_set("all", None, None, None)["main_types"] == [],
+        "explicit_type_preserved": _entry_set("all", None, None, ["method"])["main_types"]
+        == ["method"],
     }
 
 
@@ -194,7 +271,7 @@ async def run_new_scenario(
     from app.services.ai_models import get_text_model
     from evals.dialogue_loop.loop import LoopState, build_agent, run_turn
 
-    scenario = next(item for item in SCENARIOS if item.id == scenario_id)
+    scenario = next(item for item in ALL_SCENARIOS if item.id == scenario_id)
     conversation_id = await _create_conversation(identity["workspace_id"], identity["user_id"])
     async with async_session_factory() as db:
         model = await get_text_model(db, identity["workspace_id"])
@@ -210,7 +287,7 @@ async def run_new_scenario(
     turns = []
     list_ready = True
     for turn_number, message in enumerate(scenario.turns, 1):
-        dependency = scenario_id == "C" and turn_number in {2, 4}
+        dependency = scenario_id in {"C", "E"} and turn_number in {2, 4}
         if dependency and not list_ready:
             turns.append(
                 {
@@ -249,7 +326,7 @@ async def run_new_scenario(
                     "turns": turns,
                 }
             )
-        if scenario_id == "C" and turn_number == 1:
+        if scenario_id in {"C", "E"} and turn_number == 1:
             list_ready = any(block.get("kind") == "list" for block in turn["blocks"])
     return {"arm": "new", "scenario": scenario_id, "title": scenario.title, "turns": turns}
 
@@ -349,12 +426,12 @@ async def run_old_scenario(
     instrumentation: Instrumentation,
     checkpoint: Callable[[dict], None] | None = None,
 ) -> dict:
-    scenario = next(item for item in SCENARIOS if item.id == scenario_id)
+    scenario = next(item for item in ALL_SCENARIOS if item.id == scenario_id)
     conversation_id = await _create_conversation(identity["workspace_id"], identity["user_id"])
     turns = []
     list_ready = True
     for turn_number, message in enumerate(scenario.turns, 1):
-        dependency = scenario_id == "C" and turn_number in {2, 4}
+        dependency = scenario_id in {"C", "E"} and turn_number in {2, 4}
         if dependency and not list_ready:
             turns.append(
                 {
@@ -390,7 +467,7 @@ async def run_old_scenario(
                     "turns": turns,
                 }
             )
-        if scenario_id == "C" and turn_number == 1:
+        if scenario_id in {"C", "E"} and turn_number == 1:
             snapshot = (turn.get("public_run") or {}).get("entry_result") or {}
             list_ready = bool(snapshot.get("items"))
     return {"arm": "old", "scenario": scenario_id, "title": scenario.title, "turns": turns}
@@ -412,7 +489,7 @@ async def child_run(
         db_path, identity["workspace_id"], attachment_root=original_path.parent
     )
     ledger = BudgetLedger(text_used, embedding_used)
-    instrumentation = Instrumentation(ledger)
+    instrumentation = Instrumentation(ledger, context_policy_enabled=arm == "new")
     coverage = install_instrumentation(instrumentation)
 
     def checkpoint(partial: dict) -> None:
@@ -457,7 +534,7 @@ def _rehearsal_scenario(
     checkpoint: Callable[[dict], None],
 ) -> dict:
     """用真实结果形状走完序列化链路，不伪装模型或工具输出。"""
-    scenario = next(item for item in SCENARIOS if item.id == scenario_id)
+    scenario = next(item for item in ALL_SCENARIOS if item.id == scenario_id)
     turns = []
     for turn_number, message in enumerate(scenario.turns, 1):
         turns.append(
@@ -470,6 +547,11 @@ def _rehearsal_scenario(
                 "error": None,
                 "duration_ms": 0,
                 "usage": {"cost": Decimal("0.000000"), "available": True},
+                "context": {
+                    "experiment_version": EXPERIMENT_VERSION,
+                    "history_summary": "deterministic_fixture",
+                    "input_estimates": [],
+                },
                 "budget": {
                     "batch_text_requests": 0,
                     "batch_embedding_requests": 0,
@@ -544,7 +626,13 @@ async def child_rehearsal(
     result.update(
         {
             "identity": identity,
-            "instrumentation": {"mode": "rehearsal", "model_calls": 0},
+            "instrumentation": {
+                "mode": "rehearsal",
+                "model_calls": 0,
+                "experiment_version": EXPERIMENT_VERSION,
+                "prompt_version": PROMPT_VERSION,
+                "v2_controls": _v2_control_preflight(),
+            },
             "business_data_unchanged": before == after,
             "business_fingerprint_before": before,
             "business_fingerprint_after": after,

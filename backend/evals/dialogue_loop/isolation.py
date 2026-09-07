@@ -177,7 +177,7 @@ def oracle_snapshot(path: Path, workspace_id: int) -> dict:
         entries = [
             dict(row)
             for row in db.execute(
-                "SELECT e.id,e.project_id,e.title,e.content,e.updated_at "
+                "SELECT e.id,e.project_id,e.title,e.content,e.main_type,e.updated_at "
                 "FROM entries e JOIN projects p ON p.id=e.project_id "
                 "WHERE p.workspace_id=? ORDER BY e.updated_at DESC,e.id DESC",
                 (workspace_id,),

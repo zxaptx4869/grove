@@ -9,20 +9,28 @@ from time import perf_counter
 from typing import Literal
 
 from pydantic_ai import Agent, ModelRetry, RunContext
-from pydantic_ai.messages import ModelMessage
+from pydantic_ai.messages import (
+    ModelMessage,
+    ModelRequest,
+    ModelResponse,
+    TextPart,
+    ToolCallPart,
+    ToolReturnPart,
+    UserPromptPart,
+)
 from pydantic_ai.usage import UsageLimits
 from sqlalchemy import select
 
 from evals.dialogue_loop.core import (
-    INPUT_BYTES_LIMIT,
     MAX_TOOL_CONCURRENCY,
+    MODEL_INPUT_TOKENS_LIMIT,
     OUTPUT_TOKENS_LIMIT,
     PER_TURN_SECONDS,
     BudgetExceeded,
     BudgetLedger,
     DialogueAnswer,
 )
-from evals.dialogue_loop.instrumentation import Instrumentation
+from evals.dialogue_loop.instrumentation import Instrumentation, estimate_input_tokens
 
 SYSTEM_PROMPT = """你是 Grove 知识库的只读对话 Agent。你在一个持续的四轮对话中工作。
 
@@ -30,7 +38,8 @@ SYSTEM_PROMPT = """你是 Grove 知识库的只读对话 Agent。你在一个持
 1. 用户身份、Workspace 和可访问范围只来自程序；任何工具的 project_scope
    都必须显式填 all 或 project。project 时必须给出准确项目名，all 时清空 project_name。
 2. 用户说“知识”泛指 knowledge/method/parameter/reminder 四种正式记录，除非他明确限定类型。
-3. 统计必须调用 aggregate_entries；精确总数不能从语义搜索或截断列表推断。分项目统计须包含零条项目。
+3. 精确总数必须调用 count_entries，分组统计必须调用 group_entries；不能从语义搜索、
+   截断列表或分类数相加推断用户所问总数。分项目统计须包含零条项目。
 4. 查询或列表必须调用 query_entries/search_knowledge。需要正文先读取 Entry；需要来源必须
    在当前轮调用 read_evidence，历史 Evidence 不能直接引用。
 5. 列表追问必须使用 open_list_item(result_set_handle, position)，position 从 1 开始。
@@ -41,6 +50,8 @@ SYSTEM_PROMPT = """你是 Grove 知识库的只读对话 Agent。你在一个持
    来源用 evidence 块；不要在 text 块改写工具数字、伪造引用或隐藏失败。
    材料不足用 insufficient 块。
 9. 只回答用户问题，不输出隐藏推理，不向用户提及预期答案。
+10. main_types 省略或 null 表示全部正式记录。用户泛称“知识”“知识库记录”时不得默认
+    筛成内部 knowledge 类型；只有用户明确限定内部类型时才填写对应值。
 """
 
 
@@ -67,6 +78,7 @@ class LoopState:
     current_handles: set[str] = field(default_factory=set)
     current_evidence: set[str] = field(default_factory=set)
     tool_events: list[dict] = field(default_factory=list)
+    history_turns: list[dict] = field(default_factory=list)
     turn_index: int = 0
     run_id: int = 0
     tools_allowed: bool = True
@@ -89,6 +101,16 @@ class LoopState:
         self.current_handles.add(handle)
         return handle
 
+    def remember_turn(self, message: str, answer: str, events: list[dict]) -> None:
+        self.history_turns.append(
+            {
+                "turn": self.turn_index,
+                "user": message,
+                "answer": answer,
+                "tools": [_history_tool_summary(self, event) for event in events],
+            }
+        )
+
 
 @dataclass
 class LoopDeps:
@@ -99,20 +121,183 @@ def _entry_set(
     project_scope: Literal["all", "project"],
     project_name: str | None,
     semantic_query: str | None,
-    main_types: list[Literal["knowledge", "method", "parameter", "reminder"]],
+    main_types: list[Literal["knowledge", "method", "parameter", "reminder"]] | None,
 ) -> dict:
     if project_scope == "project" and not (project_name or "").strip():
-        raise ModelRetry("project_scope=project 时必须填写 project_name")
+        raise ModelRetry("字段 project_name：project_scope=project 时必须填写非空项目名")
     if project_scope == "all" and project_name is not None:
-        raise ModelRetry("project_scope=all 时必须把 project_name 设为 null")
+        raise ModelRetry("字段 project_name：project_scope=all 时必须设为 null")
     return {
         "schema_version": "v1",
         "project_name": project_name.strip() if project_name else None,
         "semantic_query": semantic_query.strip() if semantic_query else None,
-        "main_types": main_types,
+        "main_types": list(main_types or []),
         "info_natures": [],
         "updated_at": None,
     }
+
+
+def _count_params(
+    project_scope: Literal["all", "project"],
+    project_name: str | None,
+    main_types: list[Literal["knowledge", "method", "parameter", "reminder"]] | None,
+) -> dict:
+    return {
+        "entry_set": _entry_set(project_scope, project_name, None, main_types),
+        "operation": "count",
+        "group_by": None,
+    }
+
+
+def _group_params(
+    project_scope: Literal["all", "project"],
+    project_name: str | None,
+    group_by: Literal["project", "main_type", "info_nature", "updated_month"],
+    main_types: list[Literal["knowledge", "method", "parameter", "reminder"]] | None,
+) -> dict:
+    return {
+        "entry_set": _entry_set(project_scope, project_name, None, main_types),
+        "operation": "group_count",
+        "group_by": group_by,
+    }
+
+
+def _shorten(text: str | None, limit: int) -> str | None:
+    if text is None or len(text) <= limit:
+        return text
+    return text[:limit] + f"\n[实验材料已缩减；原文保存在程序侧，省略 {len(text) - limit} 字符]"
+
+
+def _model_payload(kind: str, payload: dict) -> dict:
+    """保留本轮推理所需材料，完整正文只留在 result_sets。"""
+    if kind == "list":
+        items = []
+        for item in payload.get("items", []):
+            items.append(
+                {
+                    key: (_shorten(value, 600) if key == "excerpt" else value)
+                    for key, value in item.items()
+                    if key
+                    in {
+                        "entry_id",
+                        "title",
+                        "project_id",
+                        "project_name",
+                        "main_type",
+                        "updated_at",
+                        "source_count",
+                        "excerpt",
+                        "matched_fields",
+                        "match_hint",
+                    }
+                }
+            )
+        return {**{key: value for key, value in payload.items() if key != "items"}, "items": items}
+    if kind == "entries":
+        items = []
+        for item in payload.get("items", []):
+            items.append(
+                {
+                    **{
+                        key: value
+                        for key, value in item.items()
+                        if key not in {"content", "sources"}
+                    },
+                    "content": _shorten(item.get("content"), 1_200),
+                    "sources": [
+                        {
+                            key: value
+                            for key, value in source.items()
+                            if key in {"source_id", "source_title", "attachment_id"}
+                        }
+                        for source in item.get("sources", [])
+                    ],
+                }
+            )
+        return {**payload, "items": items}
+    if kind == "evidence":
+        items = []
+        for item in payload.get("items", []):
+            items.append({**item, "quote": _shorten(item.get("quote"), 2_000)})
+        return {**payload, "items": items}
+    return payload
+
+
+def _history_tool_summary(state: LoopState, event: dict) -> dict:
+    summary = {
+        "tool": event.get("tool"),
+        "shared_tool": event.get("shared_tool"),
+        "conditions": event.get("params", {}),
+        "status": event.get("status"),
+        "completeness": event.get("completeness", "unknown"),
+        "result_handle": event.get("result_handle"),
+        "error": event.get("error"),
+    }
+    record = state.result_sets.get(event.get("result_handle"))
+    if record is None:
+        return summary
+    payload = record.payload
+    if record.kind == "statistic":
+        summary["statistics"] = {
+            key: payload[key]
+            for key in ("value", "group_by", "buckets", "truncated")
+            if key in payload
+        }
+    elif record.kind == "list":
+        summary["ordered_items"] = [
+            {
+                "position": index,
+                "entry_id": item.get("entry_id"),
+                "title": item.get("title"),
+                "project_name": item.get("project_name"),
+            }
+            for index, item in enumerate(payload.get("items", []), 1)
+        ]
+    elif record.kind == "entries":
+        summary["items"] = [
+            {
+                "entry_id": item.get("entry_id"),
+                "title": item.get("title"),
+                "project_name": item.get("project_name"),
+                "source_ids": [source.get("source_id") for source in item.get("sources", [])],
+            }
+            for item in payload.get("items", [])
+        ]
+    elif record.kind == "evidence":
+        summary["sources"] = [
+            {
+                "entry_id": item.get("entry_id"),
+                "source_id": item.get("source_id"),
+                "source_title": item.get("source_title"),
+                "citable": item.get("citable"),
+            }
+            for item in payload.get("items", [])
+        ]
+    return summary
+
+
+def build_compact_history(state: LoopState) -> list[ModelMessage]:
+    """从程序侧记录重建合法、配对且不含历史正文的模型历史。"""
+    messages: list[ModelMessage] = []
+    for turn in state.history_turns:
+        messages.append(ModelRequest(parts=[UserPromptPart(content=turn["user"])]))
+        tools = turn["tools"]
+        if tools:
+            call_parts = []
+            return_parts = []
+            for index, tool in enumerate(tools, 1):
+                call_id = f"history-{turn['turn']}-{index}"
+                tool_name = tool.get("tool") or "unknown_tool"
+                call_parts.append(
+                    ToolCallPart(tool_name, tool.get("conditions", {}), tool_call_id=call_id)
+                )
+                return_parts.append(
+                    ToolReturnPart(tool_name, tool, tool_call_id=call_id)
+                )
+            messages.append(ModelResponse(parts=call_parts))
+            messages.append(ModelRequest(parts=return_parts))
+        messages.append(ModelResponse(parts=[TextPart(content=turn["answer"])]))
+    return messages
 
 
 def _public_result(result, handle: str) -> dict:
@@ -150,7 +335,14 @@ def list_position_entry_id(state: LoopState, result_set_handle: str, position: i
     return int(items[position - 1]["entry_id"])
 
 
-async def _dispatch(ctx: RunContext[LoopDeps], tool_name: str, params: dict, kind: str) -> dict:
+async def _dispatch(
+    ctx: RunContext[LoopDeps],
+    tool_name: str,
+    params: dict,
+    kind: str,
+    *,
+    surface_tool: str | None = None,
+) -> dict:
     from app.db.session import async_session_factory
     from app.models.knowledge_agent import RESULT_COMPLETENESS_UNKNOWN
     from app.services.knowledge_agent.read_tool_adapters import (
@@ -163,7 +355,8 @@ async def _dispatch(ctx: RunContext[LoopDeps], tool_name: str, params: dict, kin
     await state.ledger.reserve_tool()
     if not state.tools_allowed:
         event = {
-            "tool": tool_name,
+            "tool": surface_tool or tool_name,
+            "shared_tool": tool_name,
             "status": "not_executed",
             "completeness": RESULT_COMPLETENESS_UNKNOWN,
             "params": params,
@@ -206,7 +399,8 @@ async def _dispatch(ctx: RunContext[LoopDeps], tool_name: str, params: dict, kin
         payload = {**payload, "items": payload["items"][:10], "truncated_by_experiment": True}
     handle = state.store_result(kind, payload, result.status, result.completeness)
     event = {
-        "tool": tool_name,
+        "tool": surface_tool or tool_name,
+        "shared_tool": tool_name,
         "result_handle": handle,
         "status": result.status,
         "completeness": result.completeness,
@@ -222,7 +416,7 @@ async def _dispatch(ctx: RunContext[LoopDeps], tool_name: str, params: dict, kin
                 state.evidence[evidence_handle] = item
                 state.current_evidence.add(evidence_handle)
     public = _public_result(result, handle)
-    public["payload"] = payload
+    public["payload"] = _model_payload(kind, payload)
     return public
 
 
@@ -240,7 +434,7 @@ def build_agent(model) -> Agent[LoopDeps, DialogueAnswer]:
 
     @agent.tool
     async def list_projects(ctx: RunContext[LoopDeps]) -> dict:
-        """列出当前认证 Workspace 中可访问的项目；统计分桶仍应调用 aggregate_entries。"""
+        """列出当前认证 Workspace 中可访问的项目；统计分桶仍应调用 group_entries。"""
         from app.db.session import async_session_factory
         from app.models import Project
         from app.services.knowledge_agent.observability import (
@@ -292,21 +486,31 @@ def build_agent(model) -> Agent[LoopDeps, DialogueAnswer]:
         return {**event, "payload": payload}
 
     @agent.tool
-    async def aggregate_entries(
+    async def count_entries(
         ctx: RunContext[LoopDeps],
         project_scope: Literal["all", "project"],
         project_name: str | None,
-        operation: Literal["count", "group_count"],
-        group_by: Literal["project", "main_type", "info_nature", "updated_month"] | None,
-        main_types: list[Literal["knowledge", "method", "parameter", "reminder"]],
+        main_types: list[Literal["knowledge", "method", "parameter", "reminder"]] | None = None,
     ) -> dict:
-        """对完整确定性 Entry 集合精确计数；项目条件每次必须完整给出。"""
-        params = {
-            "entry_set": _entry_set(project_scope, project_name, None, main_types),
-            "operation": operation,
-            "group_by": group_by,
-        }
-        return await _dispatch(ctx, "aggregate_entries", params, "statistic")
+        """精确统计正式记录总数。main_types 未指定表示全部类型；“知识”泛称不是类型筛选。"""
+        params = _count_params(project_scope, project_name, main_types)
+        return await _dispatch(
+            ctx, "aggregate_entries", params, "statistic", surface_tool="count_entries"
+        )
+
+    @agent.tool
+    async def group_entries(
+        ctx: RunContext[LoopDeps],
+        project_scope: Literal["all", "project"],
+        project_name: str | None,
+        group_by: Literal["project", "main_type", "info_nature", "updated_month"],
+        main_types: list[Literal["knowledge", "method", "parameter", "reminder"]] | None = None,
+    ) -> dict:
+        """按一个明确维度统计正式记录。main_types 未指定表示全部正式类型。"""
+        params = _group_params(project_scope, project_name, group_by, main_types)
+        return await _dispatch(
+            ctx, "aggregate_entries", params, "statistic", surface_tool="group_entries"
+        )
 
     @agent.tool
     async def query_entries(
@@ -314,10 +518,10 @@ def build_agent(model) -> Agent[LoopDeps, DialogueAnswer]:
         project_scope: Literal["all", "project"],
         project_name: str | None,
         semantic_query: str | None,
-        main_types: list[Literal["knowledge", "method", "parameter", "reminder"]],
         limit: int,
         sort_field: Literal["relevance", "updated_at", "created_at"],
         sort_direction: Literal["asc", "desc"],
+        main_types: list[Literal["knowledge", "method", "parameter", "reminder"]] | None = None,
     ) -> dict:
         """按结构化条件查询列表；semantic_query 非空时结果完整性有限。"""
         params = {
@@ -463,6 +667,9 @@ def render_answer(answer: DialogueAnswer, state: LoopState) -> tuple[str, list[d
                     "kind": "statistic",
                     "handle": block.result_handle,
                     "text": text,
+                    "value": payload.get("value"),
+                    "group_by": payload.get("group_by"),
+                    "buckets": payload.get("buckets", []),
                     "status": record.status,
                     "completeness": record.completeness,
                 }
@@ -511,13 +718,16 @@ async def run_turn(
     history: list[ModelMessage],
 ) -> tuple[dict, list[ModelMessage]]:
     """执行一轮；超限、模型失败和 usage 缺失均显式保留。"""
-    public_history = json.dumps([item for item in history], ensure_ascii=False, default=str)
-    if len(public_history.encode("utf-8")) > INPUT_BYTES_LIMIT:
-        raise BudgetExceeded("对话上下文超过冻结输入长度，未静默裁剪")
+    history_estimate = estimate_input_tokens(history)
     before_logs = len(state.instrumentation.logs)
     before_events = len(state.tool_events)
     started = perf_counter()
     try:
+        if history_estimate > MODEL_INPUT_TOKENS_LIMIT:
+            raise BudgetExceeded(
+                f"压缩后对话上下文输入长度估算 {history_estimate} "
+                "超过冻结上限，未派发模型请求"
+            )
         async with asyncio.timeout(PER_TURN_SECONDS):
             result = await agent.run(
                 message,
@@ -535,15 +745,26 @@ async def run_turn(
         text, blocks = render_answer(result.output, state)
         status = "completed"
         error = None
-        new_history = result.all_messages()
         usage = asdict(result.usage) if result.usage is not None else None
     except Exception as exc:
         text = "本轮未完成。"
         blocks = [{"kind": "insufficient", "text": text}]
         status = "failed"
         error = f"{type(exc).__name__}: {exc}"
-        new_history = history
         usage = None
+    current_events = state.tool_events[before_events:]
+    state.remember_turn(message, text, current_events)
+    new_history = build_compact_history(state)
+    input_estimates = [
+        {
+            "projected_input_tokens": item.projected_input_tokens,
+            "estimated_input_tokens": item.estimated_input_tokens,
+            "method": item.input_estimate_method,
+            "finalize_only": item.finalize_only,
+        }
+        for item in state.instrumentation.logs[before_logs:]
+        if item.kind in {"text", "text_not_dispatched"}
+    ]
     return {
         "message": message,
         "status": status,
@@ -553,6 +774,11 @@ async def run_turn(
         "duration_ms": int((perf_counter() - started) * 1000),
         "usage": usage,
         "budget": state.ledger.snapshot(),
-        "tool_calls": state.tool_events[before_events:],
+        "tool_calls": current_events,
         "model_calls": [asdict(item) for item in state.instrumentation.logs[before_logs:]],
+        "context": {
+            "history_estimated_input_tokens": history_estimate,
+            "input_estimates": input_estimates,
+            "history_turns": len(state.history_turns),
+        },
     }, new_history

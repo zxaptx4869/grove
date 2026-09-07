@@ -3,14 +3,30 @@
 from __future__ import annotations
 
 import importlib
+import json
 import sys
-from dataclasses import asdict, dataclass, field, is_dataclass
+from dataclasses import asdict, dataclass, field, is_dataclass, replace
+from math import ceil
 from time import perf_counter
 from typing import Any
 
+from pydantic_ai.messages import ModelRequest, SystemPromptPart
 from pydantic_ai.models import Model
+from pydantic_core import to_jsonable_python
 
-from evals.dialogue_loop.core import BudgetLedger
+from evals.dialogue_loop.core import (
+    INPUT_ESTIMATE_METHOD,
+    INPUT_ESTIMATE_SOFT_LIMIT,
+    MODEL_INPUT_TOKENS_LIMIT,
+    PER_TURN_TEXT_REQUESTS,
+    BudgetExceeded,
+    BudgetLedger,
+)
+
+FINALIZE_INSTRUCTION = (
+    "实验输入预算已接近资料阶段阈值。不得再调用资料工具；请仅使用已取得的材料，"
+    "在本次预留请求内给出完整回答。无法完成的部分必须明确说明限制。"
+)
 
 
 @dataclass
@@ -21,12 +37,33 @@ class InvocationLog:
     duration_ms: int
     usage: dict | None
     error: str | None
+    projected_input_tokens: int | None = None
+    estimated_input_tokens: int | None = None
+    input_estimate_method: str | None = None
+    finalize_only: bool = False
 
 
 @dataclass
 class Instrumentation:
     ledger: BudgetLedger
     logs: list[InvocationLog] = field(default_factory=list)
+    context_policy_enabled: bool = False
+
+
+def estimate_input_tokens(messages, model_request_parameters=None) -> int:
+    """提供可复现的保守长度门禁；它不是 Provider tokenizer。"""
+    value = {"messages": messages}
+    if model_request_parameters is not None:
+        value["request_parameters"] = model_request_parameters
+    raw = json.dumps(to_jsonable_python(value), ensure_ascii=False, separators=(",", ":"))
+    return ceil(len(raw.encode("utf-8")) / 3)
+
+
+def _finalize_messages(messages):
+    return [
+        *messages,
+        ModelRequest(parts=[SystemPromptPart(content=FINALIZE_INSTRUCTION)]),
+    ]
 
 
 def _usage_dict(value: Any) -> dict | None:
@@ -60,11 +97,43 @@ class BudgetedModel(Model):
         return self.wrapped.base_url
 
     async def request(self, messages, model_settings, model_request_parameters):
+        estimate = estimate_input_tokens(messages, model_request_parameters)
+        finalize_only = self.state.context_policy_enabled and (
+            estimate >= INPUT_ESTIMATE_SOFT_LIMIT
+            or self.state.ledger.active_text_requests >= PER_TURN_TEXT_REQUESTS - 1
+        )
+        dispatched_messages = _finalize_messages(messages) if finalize_only else messages
+        dispatched_parameters = (
+            replace(model_request_parameters, function_tools=[])
+            if finalize_only
+            else model_request_parameters
+        )
+        dispatched_estimate = estimate_input_tokens(dispatched_messages, dispatched_parameters)
+        if self.state.context_policy_enabled and dispatched_estimate > MODEL_INPUT_TOKENS_LIMIT:
+            error = (
+                f"预算收尾输入长度估算 {dispatched_estimate} 超过 "
+                f"{MODEL_INPUT_TOKENS_LIMIT}，未派发请求"
+            )
+            self.state.logs.append(
+                InvocationLog(
+                    kind="text_not_dispatched",
+                    provider=str(self.wrapped.system),
+                    model=self.wrapped.model_name,
+                    duration_ms=0,
+                    usage=None,
+                    error=error,
+                    projected_input_tokens=estimate,
+                    estimated_input_tokens=dispatched_estimate,
+                    input_estimate_method=INPUT_ESTIMATE_METHOD,
+                    finalize_only=finalize_only,
+                )
+            )
+            raise BudgetExceeded(error)
         await self.state.ledger.reserve_text()
         started = perf_counter()
         try:
             response = await self.wrapped.request(
-                messages, model_settings, model_request_parameters
+                dispatched_messages, model_settings, dispatched_parameters
             )
         except Exception as exc:
             self.state.logs.append(
@@ -75,6 +144,10 @@ class BudgetedModel(Model):
                     duration_ms=int((perf_counter() - started) * 1000),
                     usage=None,
                     error=f"{type(exc).__name__}: {exc}",
+                    projected_input_tokens=estimate,
+                    estimated_input_tokens=dispatched_estimate,
+                    input_estimate_method=INPUT_ESTIMATE_METHOD,
+                    finalize_only=finalize_only,
                 )
             )
             raise
@@ -86,6 +159,10 @@ class BudgetedModel(Model):
                 duration_ms=int((perf_counter() - started) * 1000),
                 usage=_usage_dict(getattr(response, "usage", None)),
                 error=None,
+                projected_input_tokens=estimate,
+                estimated_input_tokens=dispatched_estimate,
+                input_estimate_method=INPUT_ESTIMATE_METHOD,
+                finalize_only=finalize_only,
             )
         )
         return response
@@ -170,4 +247,6 @@ def install_instrumentation(state: Instrumentation) -> dict:
         "text_dispatch_counted": True,
         "embedding_dispatch_counted": True,
         "framework_retries_counted": True,
+        "input_estimates_recorded": True,
+        "v2_context_policy_enabled": state.context_policy_enabled,
     }

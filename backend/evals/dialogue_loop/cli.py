@@ -15,7 +15,13 @@ from collections import Counter
 from datetime import datetime
 from pathlib import Path
 
-from evals.dialogue_loop.core import SCENARIOS, frozen_budget
+from evals.dialogue_loop.core import (
+    ALL_SCENARIOS,
+    EXPERIMENT_VERSION,
+    SCENARIOS,
+    VARIANT_SCENARIOS,
+    frozen_budget,
+)
 from evals.dialogue_loop.isolation import (
     backup_database,
     domain_fingerprint,
@@ -56,10 +62,16 @@ def parser() -> argparse.ArgumentParser:
         "--regrade", type=Path, metavar="REPORT_JSON", help="只重评已保存报告，不调用模型"
     )
     value.add_argument("--live", action="store_true", help="显式允许真实模型请求")
+    value.add_argument(
+        "--suite",
+        choices=("base", "v2"),
+        default="base",
+        help="base 为原三组；v2 另含两组未写入提示词的表达变体",
+    )
     value.add_argument("--internal-preflight", action="store_true", help=argparse.SUPPRESS)
     value.add_argument("--internal-arm", choices=("old", "new"), help=argparse.SUPPRESS)
     value.add_argument(
-        "--scenario", choices=tuple(item.id for item in SCENARIOS), help=argparse.SUPPRESS
+        "--scenario", choices=tuple(item.id for item in ALL_SCENARIOS), help=argparse.SUPPRESS
     )
     value.add_argument("--db", type=Path, help=argparse.SUPPRESS)
     value.add_argument("--original", type=Path, help=argparse.SUPPRESS)
@@ -262,9 +274,10 @@ def run_parent(args: argparse.Namespace) -> int:
     identity = identity_snapshot(original)
     original_before = domain_fingerprint(original, identity["workspace_id"])
     password = getpass.getpass("demo 密码（仅内存传递，不写入报告）：")
-    batch_id = datetime.now().strftime("%Y%m%d-%H%M%S")
+    timestamp = datetime.now().strftime("%Y%m%d-%H%M%S")
+    batch_id = f"{EXPERIMENT_VERSION}-{timestamp}"
     if args.rehearsal:
-        batch_id = f"rehearsal-{batch_id}"
+        batch_id = f"{EXPERIMENT_VERSION}-rehearsal-{timestamp}"
     report_dir = backend_dir / "data" / "knowledge-agent-evals" / "dialogue-loop" / batch_id
     secure_dir(report_dir)
     with tempfile.TemporaryDirectory(prefix="grove-dialogue-loop-") as temp_name:
@@ -296,9 +309,15 @@ def run_parent(args: argparse.Namespace) -> int:
         if not provider_equal:
             blockers.append("两臂模型配置不一致")
         oracle = oracle_snapshot(seed, identity["workspace_id"])
+        selected_scenarios = SCENARIOS if args.suite == "base" else ALL_SCENARIOS
         required_projects = {"房子装修"}
+        if args.suite == "v2":
+            required_projects.add("新疆旅行")
         if not required_projects <= {item["name"] for item in oracle["projects"]}:
-            blockers.append("固定用例所需的房子装修项目不存在")
+            missing_projects = sorted(
+                required_projects - {item["name"] for item in oracle["projects"]}
+            )
+            blockers.append(f"固定用例所需项目不存在：{missing_projects}")
         if (
             len(
                 [
@@ -311,12 +330,12 @@ def run_parent(args: argparse.Namespace) -> int:
             < 5
         ):
             blockers.append("房子装修项目不足五条正式记录")
-        payload = initial_payload(batch_id)
+        payload = initial_payload(batch_id, selected_scenarios)
         payload.update(
             {
                 "code": _git_state(repo_root),
                 "mode": "rehearsal" if args.rehearsal else "live" if args.compare else "preflight",
-                "budget": frozen_budget(),
+                "budget": frozen_budget(len(selected_scenarios) * 4 * 2),
                 "preflight": {
                     "ok": not blockers,
                     "blockers": blockers,
@@ -334,14 +353,23 @@ def run_parent(args: argparse.Namespace) -> int:
         infrastructure = Counter()
         infrastructure_errors = []
         if (args.rehearsal or (args.compare and args.live)) and not blockers:
-            order = (
+            order = [
                 ("A", "new"),
                 ("A", "old"),
                 ("B", "old"),
                 ("B", "new"),
                 ("C", "new"),
                 ("C", "old"),
-            )
+            ]
+            if args.suite == "v2":
+                order.extend(
+                    [
+                        (VARIANT_SCENARIOS[0].id, "old"),
+                        (VARIANT_SCENARIOS[0].id, "new"),
+                        (VARIANT_SCENARIOS[1].id, "new"),
+                        (VARIANT_SCENARIOS[1].id, "old"),
+                    ]
+                )
             for scenario, arm in order:
                 result_path = temp_dir / f"{scenario}-{arm}.json"
                 try:
@@ -482,7 +510,8 @@ def run_parent(args: argparse.Namespace) -> int:
     if args.compare or args.rehearsal:
         qualifier = "已记录下界" if infrastructure_errors else "实际"
         print(
-            f"已记录消息：{messages}/24，{qualifier}文本请求：{text_used}/192，"
+            f"已记录消息：{messages}/{len(selected_scenarios) * 4 * 2}，"
+            f"{qualifier}文本请求：{text_used}/192，"
             f"{qualifier}向量请求：{embedding_used}/64"
         )
     evaluation_failed = args.compare and any(
