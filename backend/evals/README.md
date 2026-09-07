@@ -15,6 +15,9 @@
 
 # 仅在预检通过后运行一批三组 × 四轮 × 两臂，最多 24 条用户消息
 .venv/bin/python -m evals.dialogue_loop --compare --live
+
+# 修正评分器后只重评已保存结果，不再登录或调用模型
+.venv/bin/python -m evals.dialogue_loop --regrade data/knowledge-agent-evals/dialogue-loop/<批次>/report.json
 ```
 
 `--rehearsal` 仍使用真实 demo 认证、一致快照和两臂隔离副本，但用显式标记为

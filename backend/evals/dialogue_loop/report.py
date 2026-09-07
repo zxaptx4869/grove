@@ -71,6 +71,41 @@ def _has_current_evidence(turn: dict, arm: str) -> bool:
     )
 
 
+def _old_entry_result(turn: dict) -> dict:
+    return (turn.get("public_run") or {}).get("entry_result") or {}
+
+
+def _old_has_visible_result(turn: dict) -> bool:
+    result = _old_entry_result(turn)
+    return bool(result.get("items") or result.get("count") or result.get("group_counts"))
+
+
+def _old_count(turn: dict) -> int | None:
+    count = _old_entry_result(turn).get("count") or {}
+    return count.get("value")
+
+
+def _old_project_buckets(turn: dict) -> dict[str, int]:
+    groups = _old_entry_result(turn).get("group_counts") or []
+    project = next((item for item in groups if item.get("group_by") == "project"), None)
+    return {
+        item.get("label"): item.get("count")
+        for item in (project or {}).get("buckets", [])
+        if item.get("label") is not None
+    }
+
+
+def _visible_answer(turn: dict, arm: str) -> str:
+    answer = turn.get("answer") or ""
+    if answer:
+        return answer
+    if arm == "old" and _old_has_visible_result(turn):
+        return "公开结构化结果：\n\n```json\n" + json.dumps(
+            _old_entry_result(turn), ensure_ascii=False, indent=2
+        ) + "\n```"
+    return f"未产生回答：{turn.get('error') or '未知原因'}"
+
+
 def evaluate(results: list[dict], oracle: dict) -> dict:
     """只评价程序可证明边界；自然语言内容保持 review。"""
     projects = {item["name"]: item for item in oracle["projects"]}
@@ -94,29 +129,46 @@ def evaluate(results: list[dict], oracle: dict) -> dict:
                 answer = turn.get("answer", "")
                 if scenario == "A":
                     expected = room["entry_count"] if index == 3 and room else total
-                    if index in {1, 3} and str(expected) not in answer:
-                        status = "fail"
-                        reasons.append(f"公开回答未展示期望精确值 {expected}")
+                    if index in {1, 3}:
+                        matched = (
+                            _old_count(turn) == expected
+                            if arm == "old"
+                            else str(expected) in answer
+                        )
+                        if not matched:
+                            status = "fail"
+                            reasons.append(f"公开结果未展示期望精确值 {expected}")
+                        else:
+                            status = "pass"
                     elif index in {2, 4}:
-                        missing = [
-                            item["name"]
-                            for item in oracle["projects"]
-                            if item["name"] not in answer or str(item["entry_count"]) not in answer
-                        ]
+                        if arm == "old":
+                            buckets = _old_project_buckets(turn)
+                            missing = [
+                                item["name"]
+                                for item in oracle["projects"]
+                                if buckets.get(item["name"]) != item["entry_count"]
+                            ]
+                        else:
+                            missing = [
+                                item["name"]
+                                for item in oracle["projects"]
+                                if item["name"] not in answer
+                                or str(item["entry_count"]) not in answer
+                            ]
                         if missing:
                             status = "fail"
                             reasons.append(f"分项目桶缺失或数值不符：{missing}")
                         else:
                             status = "pass"
-                    else:
-                        status = "pass"
                 elif scenario == "B":
-                    if index in {3, 4} and not _has_current_evidence(turn, arm):
+                    if index == 4 and not _has_current_evidence(turn, arm):
                         status = "fail"
                         reasons.append("要求只依据知识库的回答没有当前轮 Evidence")
-                    elif not answer.strip():
+                    elif not answer.strip() and not (
+                        arm == "old" and _old_has_visible_result(turn)
+                    ):
                         status = "fail"
-                        reasons.append("回答为空")
+                        reasons.append("公开文字和结构化结果均为空")
                 elif scenario == "C":
                     if index == 1:
                         actual = _new_list_ids(turn) if arm == "new" else _old_list_ids(turn)
@@ -126,7 +178,12 @@ def evaluate(results: list[dict], oracle: dict) -> dict:
                         else:
                             status = "pass"
                     elif index == 2:
-                        expected_id = recent_room[2] if len(recent_room) >= 3 else None
+                        shown = (
+                            _new_list_ids(turns[0])
+                            if arm == "new"
+                            else _old_list_ids(turns[0])
+                        )
+                        expected_id = shown[2] if len(shown) >= 3 else None
                         if expected_id is None or str(expected_id) not in json.dumps(
                             turn, ensure_ascii=False
                         ):
@@ -137,7 +194,12 @@ def evaluate(results: list[dict], oracle: dict) -> dict:
                             status = "fail"
                             reasons.append("明确不查知识库时仍发生工具调用")
                     elif index == 4:
-                        expected_id = recent_room[2] if len(recent_room) >= 3 else None
+                        shown = (
+                            _new_list_ids(turns[0])
+                            if arm == "new"
+                            else _old_list_ids(turns[0])
+                        )
+                        expected_id = shown[2] if len(shown) >= 3 else None
                         if not _has_current_evidence(turn, arm) or str(
                             expected_id
                         ) not in json.dumps(turn, ensure_ascii=False):
@@ -180,7 +242,7 @@ def write_report(report_dir: Path, payload: dict) -> tuple[Path, Path]:
         (
             "# 知识 Agent 统一对话循环全链路彩排"
             if clean.get("mode") == "rehearsal"
-            else "# 知识 Agent 统一对话循环首批真实对照"
+            else "# 知识 Agent 统一对话循环固定真实对照"
         ),
         "",
         f"- 批次：`{clean['batch_id']}`",
@@ -202,6 +264,12 @@ def write_report(report_dir: Path, payload: dict) -> tuple[Path, Path]:
             ensure_ascii=False,
             indent=2,
         ),
+        "```",
+        "",
+        "## 新旧路径资源汇总",
+        "",
+        "```json",
+        json.dumps(usage.get("by_arm", {}), ensure_ascii=False, indent=2),
         "```",
         "",
         "## 逐组逐轮结果",
@@ -230,7 +298,7 @@ def write_report(report_dir: Path, payload: dict) -> tuple[Path, Path]:
                         "",
                         f"> 用户：{turn['message']}",
                         "",
-                        turn.get("answer") or f"未产生回答：{turn.get('error') or '未知原因'}",
+                        _visible_answer(turn, arm),
                         "",
                     ]
                 )
@@ -260,6 +328,12 @@ def write_report(report_dir: Path, payload: dict) -> tuple[Path, Path]:
                         "",
                     ]
                 )
+    human_review = clean.get("human_review")
+    if human_review:
+        lines.extend(["## 人工语义审阅", ""])
+        for key, label in (("A", "A：统计和范围"), ("B", "B：混合问答"), ("C", "C：列表与话题")):
+            lines.extend([f"### {label}", "", human_review[key], ""])
+        lines.extend(["### 总体判断", "", human_review["overall"], ""])
     lines.extend(
         [
             "## 分层结论",

@@ -9,7 +9,7 @@ import os
 import sys
 from pathlib import Path
 
-from evals.dialogue_loop.cli import parser, run_parent
+from evals.dialogue_loop.cli import parser, regrade_report, run_parent
 from evals.dialogue_loop.report import sanitize
 
 
@@ -20,6 +20,8 @@ def _write(path: Path, value: dict) -> None:
 
 def main() -> int:
     args = parser().parse_args()
+    if args.regrade:
+        return regrade_report(args.regrade)
     if args.internal_preflight or args.internal_arm:
         if not args.db or not args.original or not args.result:
             raise ValueError("内部隔离进程缺少路径参数")
@@ -70,7 +72,7 @@ def main() -> int:
             )
         _write(args.result, value)
         return 0
-    if not args.preflight and not args.rehearsal and not args.compare:
+    if not args.preflight and not args.rehearsal and not args.compare and not args.regrade:
         args.preflight = True
     return run_parent(args)
 

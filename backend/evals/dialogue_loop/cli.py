@@ -52,6 +52,9 @@ def parser() -> argparse.ArgumentParser:
         "--rehearsal", action="store_true", help="无模型走完两臂编排、检查点与报告"
     )
     mode.add_argument("--compare", action="store_true", help="执行固定两臂对照")
+    mode.add_argument(
+        "--regrade", type=Path, metavar="REPORT_JSON", help="只重评已保存报告，不调用模型"
+    )
     value.add_argument("--live", action="store_true", help="显式允许真实模型请求")
     value.add_argument("--internal-preflight", action="store_true", help=argparse.SUPPRESS)
     value.add_argument("--internal-arm", choices=("old", "new"), help=argparse.SUPPRESS)
@@ -148,11 +151,17 @@ def _conclusion(results: list[dict], evaluation: dict, stopped: str | None) -> d
         item for item in evaluation["turns"] if item["status"] not in {"blocked", "pending"}
     ]
     tool_errors = []
+    boundary_rejections = []
     old_db_errors = []
     for result in results:
         for turn in result["turns"]:
             for call in turn.get("tool_calls", []):
-                if call.get("status") in {"error", "denied", "partial"}:
+                if call.get("status") == "denied":
+                    boundary_rejections.append(
+                        f"{result['arm']}/{result['scenario']}：{call.get('tool')} "
+                        f"{call.get('error') or 'denied'}"
+                    )
+                elif call.get("status") in {"error", "partial"}:
                     tool_errors.append(
                         f"{result['arm']}/{result['scenario']}：{call.get('tool')} "
                         f"{call.get('error') or call.get('status')}"
@@ -174,6 +183,12 @@ def _conclusion(results: list[dict], evaluation: dict, stopped: str | None) -> d
         "architecture": (
             f"自动评价汇总：{dict(statuses)}。"
             "旧流程与新循环的差异必须只在两臂均完成的可比轮次解释。"
+            + (
+                f"程序边界拒绝 {len(boundary_rejections)} 次非法或越权工具请求；"
+                "这反映 Agent 请求行为，不归类为共享工具故障。"
+                if boundary_rejections
+                else ""
+            )
         ),
         "shared_tools": "；".join(tool_errors)
         if tool_errors
@@ -183,6 +198,57 @@ def _conclusion(results: list[dict], evaluation: dict, stopped: str | None) -> d
         else "本批未观察到可明确归类的旧流程数据库错误。",
         "recommendation": recommendation,
     }
+
+
+def _resource_by_arm(results: list[dict]) -> dict:
+    summary = {}
+    for arm in ("old", "new"):
+        turns = [
+            turn for result in results if result["arm"] == arm for turn in result["turns"]
+        ]
+        text_calls = [
+            call
+            for turn in turns
+            for call in turn.get("model_calls", [])
+            if call.get("kind") == "text"
+        ]
+        usages = [call["usage"] for call in text_calls if call.get("usage") is not None]
+        summary[arm] = {
+            "user_messages": len(turns),
+            "text_requests": sum(
+                (turn.get("budget") or {}).get("turn", {}).get("text_requests", 0)
+                for turn in turns
+            ),
+            "embedding_requests": sum(
+                (turn.get("budget") or {}).get("turn", {}).get("embedding_requests", 0)
+                for turn in turns
+            ),
+            "duration_ms": sum(turn.get("duration_ms", 0) for turn in turns),
+            "input_tokens": sum(item.get("input_tokens", 0) for item in usages),
+            "output_tokens": sum(item.get("output_tokens", 0) for item in usages),
+            "cache_read_tokens": sum(item.get("cache_read_tokens", 0) for item in usages),
+            "token_usage_complete": len(usages) == len(text_calls),
+            "cost_available": bool(usages) and all(item.get("cost") is not None for item in usages),
+        }
+    return summary
+
+
+def regrade_report(path: Path) -> int:
+    """仅使用已保存的原始结果重评，不登录或调用模型。"""
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    payload["evaluation"] = evaluate(payload["results"], payload["oracle"])
+    payload["conclusion"] = _conclusion(
+        payload["results"], payload["evaluation"], payload.get("stop_reason")
+    )
+    payload["resource_usage"]["by_arm"] = _resource_by_arm(payload["results"])
+    payload["regraded_at"] = datetime.now().astimezone().isoformat()
+    md_path, json_path = write_report(path.parent, payload)
+    print(f"已离线重评：{md_path}")
+    print(f"原始记录：{json_path}")
+    failed = any(
+        item["status"] in {"fail", "blocked"} for item in payload["evaluation"]["turns"]
+    )
+    return 1 if failed else 0
 
 
 def run_parent(args: argparse.Namespace) -> int:
@@ -389,6 +455,7 @@ def run_parent(args: argparse.Namespace) -> int:
                 for call in turn.get("model_calls", [])
                 if call.get("kind") == "text"
             ),
+            "by_arm": _resource_by_arm(payload["results"]),
         }
         payload["stop_reason"] = stopped
         payload["infrastructure_errors"] = infrastructure_errors
@@ -418,4 +485,7 @@ def run_parent(args: argparse.Namespace) -> int:
             f"已记录消息：{messages}/24，{qualifier}文本请求：{text_used}/192，"
             f"{qualifier}向量请求：{embedding_used}/64"
         )
-    return 1 if blockers or stopped else 0
+    evaluation_failed = args.compare and any(
+        item["status"] in {"fail", "blocked"} for item in payload["evaluation"]["turns"]
+    )
+    return 1 if blockers or stopped or evaluation_failed else 0

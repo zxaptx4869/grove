@@ -9,7 +9,12 @@ from pydantic_ai.messages import ModelResponse, ToolCallPart
 from pydantic_ai.models.function import FunctionModel
 
 from evals.dialogue_loop.__main__ import _write
-from evals.dialogue_loop.cli import InfrastructureFailure, parser
+from evals.dialogue_loop.cli import (
+    InfrastructureFailure,
+    _conclusion,
+    _resource_by_arm,
+    parser,
+)
 from evals.dialogue_loop.core import (
     BATCH_EMBEDDING_REQUESTS,
     BATCH_TEXT_REQUESTS,
@@ -31,7 +36,7 @@ from evals.dialogue_loop.loop import (
     render_answer,
     run_turn,
 )
-from evals.dialogue_loop.report import sanitize
+from evals.dialogue_loop.report import _visible_answer, evaluate, sanitize
 
 
 def _state() -> LoopState:
@@ -232,6 +237,155 @@ def test_rehearsal_mode_is_separate_from_live_comparison() -> None:
     assert parser().parse_args(["--rehearsal"]).rehearsal is True
     with pytest.raises(SystemExit):
         parser().parse_args(["--rehearsal", "--compare", "--live"])
+
+
+def test_old_structured_results_are_evaluated_as_public_output() -> None:
+    oracle = {
+        "projects": [
+            {"id": 1, "name": "项目甲", "entry_count": 2},
+            {"id": 2, "name": "项目乙", "entry_count": 0},
+        ],
+        "entries": [],
+    }
+    count = {
+        "answer": "",
+        "status": "completed",
+        "public_run": {"entry_result": {"count": {"value": 2}}},
+    }
+    groups = {
+        "answer": "",
+        "status": "completed",
+        "public_run": {
+            "entry_result": {
+                "group_counts": [
+                    {
+                        "group_by": "project",
+                        "buckets": [
+                            {"label": "项目甲", "count": 2},
+                            {"label": "项目乙", "count": 0},
+                        ],
+                    }
+                ]
+            }
+        },
+    }
+    result = evaluate(
+        [{"arm": "old", "scenario": "A", "turns": [count, groups, count, groups]}],
+        oracle,
+    )
+    assert [item["status"] for item in result["turns"]] == ["pass"] * 4
+
+
+def test_old_record_list_does_not_require_evidence_before_grove_only_turn() -> None:
+    oracle = {"projects": [], "entries": []}
+    visible_list = {
+        "answer": "",
+        "status": "completed",
+        "public_run": {"entry_result": {"items": [{"entry_id": 1}]}},
+    }
+    result = evaluate(
+        [{"arm": "old", "scenario": "B", "turns": [visible_list] * 4}],
+        oracle,
+    )
+    assert result["turns"][2]["status"] == "review"
+    assert result["turns"][3]["status"] == "fail"
+
+
+def test_old_structured_result_is_rendered_as_public_answer() -> None:
+    turn = {
+        "answer": "",
+        "public_run": {"entry_result": {"count": {"value": 102}}},
+    }
+    rendered = _visible_answer(turn, "old")
+    assert "公开结构化结果" in rendered
+    assert '"value": 102' in rendered
+
+
+def test_list_reference_uses_each_arm_actual_displayed_third_item() -> None:
+    oracle = {
+        "projects": [{"id": 1, "name": "房子装修", "entry_count": 5}],
+        "entries": [
+            {"id": entry_id, "project_id": 1} for entry_id in (14, 64, 7, 92, 91)
+        ],
+    }
+    turns = [
+        {
+            "answer": "",
+            "status": "completed",
+            "blocks": [
+                {
+                    "kind": "list",
+                    "items": [{"entry_id": value} for value in (14, 7, 92, 91, 90)],
+                }
+            ],
+        },
+        {"answer": "已复验 Entry 92", "status": "completed", "blocks": []},
+        {"answer": "通用回答", "status": "completed", "blocks": [], "tool_calls": []},
+        {
+            "answer": "再次核对 Entry 92",
+            "status": "completed",
+            "blocks": [{"kind": "evidence", "items": [{"entry_id": 92}]}],
+        },
+    ]
+    result = evaluate([{"arm": "new", "scenario": "C", "turns": turns}], oracle)
+    assert result["turns"][0]["status"] == "fail"
+    assert result["turns"][1]["status"] == "review"
+    assert result["turns"][3]["status"] == "review"
+
+
+def test_denied_tool_request_is_not_reported_as_shared_tool_failure() -> None:
+    results = [
+        {
+            "arm": "new",
+            "scenario": "A",
+            "turns": [
+                {
+                    "error": None,
+                    "tool_calls": [
+                        {"tool": "aggregate_entries", "status": "denied", "error": "参数非法"}
+                    ],
+                }
+            ],
+        }
+    ]
+    conclusion = _conclusion(
+        results,
+        {"turns": [{"arm": "new", "scenario": "A", "status": "pass"}]},
+        None,
+    )
+    assert "未识别到" in conclusion["shared_tools"]
+    assert "边界拒绝 1 次" in conclusion["architecture"]
+
+
+def test_resource_summary_separates_arms_and_keeps_unknown_cost() -> None:
+    results = [
+        {
+            "arm": "new",
+            "scenario": "A",
+            "turns": [
+                {
+                    "duration_ms": 25,
+                    "budget": {"turn": {"text_requests": 1, "embedding_requests": 0}},
+                    "model_calls": [
+                        {
+                            "kind": "text",
+                            "usage": {
+                                "input_tokens": 10,
+                                "output_tokens": 2,
+                                "cache_read_tokens": 4,
+                                "cost": None,
+                            },
+                        }
+                    ],
+                }
+            ],
+        }
+    ]
+    summary = _resource_by_arm(results)
+    assert summary["new"]["text_requests"] == 1
+    assert summary["new"]["input_tokens"] == 10
+    assert summary["new"]["cost_available"] is False
+    assert summary["old"]["user_messages"] == 0
 
 
 def test_rehearsal_writes_four_json_safe_checkpoints() -> None:

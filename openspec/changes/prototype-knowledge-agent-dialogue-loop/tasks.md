@@ -40,6 +40,9 @@ git diff --check
 .venv/bin/python -m evals.dialogue_loop --preflight
 .venv/bin/python -m evals.dialogue_loop --rehearsal
 
+# 评分器修正后复用原始记录，不调用模型
+.venv/bin/python -m evals.dialogue_loop --regrade data/knowledge-agent-evals/dialogue-loop/<批次>/report.json
+
 # backend 目录：仅在真实评测范围获批且预检通过后执行一次
 .venv/bin/python -m evals.dialogue_loop --compare --live
 ```
@@ -73,3 +76,20 @@ git diff --check
   无停止原因或基础设施异常，原库与两臂业务指纹不变，报告文件权限为 600。彩排报告：
   `backend/data/knowledge-agent-evals/dialogue-loop/rehearsal-20260907-141119/report.md`。彩排只证明基础设施可执行，
   不作为新循环语义、共享工具或旧流程效果证据；未再启动真实模型。
+- 用户随后明确要求先跑通流程、处理问题后再跑实验。最终只执行一批真实固定对照，三组、
+  两臂、24/24 条用户消息全部完成；文本请求 84/192、向量请求 9/64，无停止原因或基础设施异常，
+  原库及两臂副本业务指纹均不变。两臂使用相同的 `deepseek/deepseek-chat`，API key 仍只从应用配置读取。
+  真实报告：`backend/data/knowledge-agent-evals/dialogue-loop/20260907-141328/report.md`。
+- 真实批次完成后只对已保存原始记录离线重评，没有登录或调用模型。修正了旧流程结构化公开结果、
+  C 组相对于各臂实际列表的对象引用，以及边界拒绝与共享工具错误的归因。自动结果为通过 8、失败 5、
+  待人工审阅 11；新循环 A 为 3 通过 1 失败，B 为 2 失败 2 待审阅，C 为 1 失败 3 待审阅；
+  旧流程 A 为 4 通过，B 为 4 待审阅，C 为 1 通过 1 失败 2 待审阅。
+- 新循环共 38 次文本、5 次向量请求，逐轮耗时合计 62,760 ms，输入／输出／缓存读取 token 为
+  192,223／6,918／169,088；旧流程为 46 次文本、4 次向量请求，108,825 ms，token 为
+  86,729／8,297／54,016。文本 usage 均可得，费用不可得并保留为未知。
+- 人工语义审阅确认：新循环证明了精确结果直接渲染、列表对象引用和当前 Evidence 复验，但 B 组完整
+  工具历史使后两轮超过 12,000 输入 token 硬上限，C 组把泛称“知识”错误收窄，A 组一轮漏答总数；
+  本批未识别共享只读工具的确定性故障。旧流程 C 组另有 SQLite `database is locked`，不得归为新架构优势。
+  当前不值得正式接入；局限是单一 demo 快照、单一固定批次，且不证明 App 或生产环境行为。
+- 最终相关无模型回归共 83 项通过，实验代码 ruff 与 Python 编译通过；离线重评因真实语义失败按设计
+  返回非零，不表示报告流程中止。报告与原始 JSON 权限均为 600，敏感信息扫描未发现密码或密钥。
