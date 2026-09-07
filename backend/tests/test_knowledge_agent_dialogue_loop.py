@@ -1,6 +1,9 @@
 """统一对话循环实验的无模型边界与停止条件测试。"""
 
+import hashlib
+import json
 from decimal import Decimal
+from math import ceil
 from pathlib import Path
 
 import pytest
@@ -8,23 +11,29 @@ from pydantic_ai import ModelRetry
 from pydantic_ai.messages import (
     ModelRequest,
     ModelResponse,
+    SystemPromptPart,
+    ThinkingPart,
     ToolCallPart,
     ToolReturnPart,
     UserPromptPart,
 )
 from pydantic_ai.models.function import FunctionModel
+from pydantic_ai.usage import RequestUsage
+from pydantic_core import to_jsonable_python
 
 from evals.dialogue_loop import loop as loop_module
 from evals.dialogue_loop.__main__ import _write
 from evals.dialogue_loop.cli import (
     InfrastructureFailure,
     _conclusion,
+    _input_estimation_by_scope,
     _resource_by_arm,
     parser,
 )
 from evals.dialogue_loop.core import (
     BATCH_EMBEDDING_REQUESTS,
     BATCH_TEXT_REQUESTS,
+    INPUT_ESTIMATE_VERSION,
     PER_TURN_EMBEDDING_REQUESTS,
     PER_TURN_TEXT_REQUESTS,
     VARIANT_SCENARIOS,
@@ -33,7 +42,11 @@ from evals.dialogue_loop.core import (
     DialogueAnswer,
 )
 from evals.dialogue_loop.execution import _rehearsal_scenario, _v2_control_preflight
-from evals.dialogue_loop.instrumentation import BudgetedModel, Instrumentation
+from evals.dialogue_loop.instrumentation import (
+    FINALIZE_INSTRUCTION,
+    BudgetedModel,
+    Instrumentation,
+)
 from evals.dialogue_loop.isolation import assert_isolated, backup_database
 from evals.dialogue_loop.loop import (
     SYSTEM_PROMPT,
@@ -232,11 +245,12 @@ async def test_pydantic_ai_accepts_rebuilt_paired_history() -> None:
         ],
     )
     history = build_compact_history(state)
+    history.insert(0, ModelRequest(parts=[SystemPromptPart(content="过期 Grove 规则")]))
     state.begin_turn(5, "继续")
     calls = []
 
     def respond(messages, info):
-        calls.append(messages)
+        calls.append((messages, info))
         return ModelResponse(
             parts=[
                 ToolCallPart(
@@ -249,9 +263,13 @@ async def test_pydantic_ai_accepts_rebuilt_paired_history() -> None:
     turn, _ = await run_turn(build_agent(FunctionModel(respond)), state, "继续", history)
     assert turn["status"] == "completed"
     assert calls
+    messages, info = calls[0]
+    assert info.instructions == SYSTEM_PROMPT
+    assert "过期 Grove 规则" not in str(messages)
+    assert SYSTEM_PROMPT not in str(messages)
     assert any(
         isinstance(part, ToolReturnPart)
-        for message in calls[0]
+        for message in messages
         if isinstance(message, ModelRequest)
         for part in message.parts
     )
@@ -351,11 +369,16 @@ def test_report_redacts_credentials_and_keeps_unknown_usage() -> None:
             "api_key": "also-bad",
             "usage": None,
             "nested": {"authorization": "Bearer bad"},
+            "error": (
+                "Authorization: Bearer abcdefghijklmnopqrst and "
+                "sk-abcdefghijklmnopqrst"
+            ),
         }
     )
     assert value["password"] == "<redacted>"
     assert value["api_key"] == "<redacted>"
     assert value["nested"]["authorization"] == "<redacted>"
+    assert value["error"] == "Authorization: <redacted> and <redacted>"
     assert value["usage"] is None
 
 
@@ -605,6 +628,31 @@ def test_resource_summary_separates_arms_and_keeps_unknown_cost() -> None:
     assert summary["old"]["user_messages"] == 0
 
 
+def test_estimate_summary_separates_dispatched_usage_from_unknown_blocked_request() -> None:
+    summary = _input_estimation_by_scope(
+        [
+            {
+                "kind": "text",
+                "request_scope": "dialogue_agent",
+                "estimated_input_tokens": 1_200,
+                "actual_input_tokens": 1_000,
+            },
+            {
+                "kind": "text_not_dispatched",
+                "request_scope": "dialogue_agent",
+                "estimated_input_tokens": 9_500,
+                "actual_input_tokens": None,
+            },
+        ]
+    )["dialogue_agent"]
+    assert summary["dispatched_with_usage"] == 1
+    assert summary["not_dispatched"] == 1
+    assert summary["actual_unknown"] == 1
+    assert summary["estimated_tokens"] == 10_700
+    assert summary["estimated_tokens_with_usage"] == 1_200
+    assert summary["aggregate_ratio"] == 1.2
+
+
 def test_rehearsal_writes_four_json_safe_checkpoints() -> None:
     import json
 
@@ -676,7 +724,7 @@ async def test_structured_output_gets_only_one_bounded_correction() -> None:
     calls = []
 
     def respond(messages, info):
-        calls.append(messages)
+        calls.append((messages, info))
         selected = "forged" if len(calls) == 1 else handle
         output = {"blocks": [{"kind": "statistic", "result_handle": selected, "label": "总数"}]}
         return ModelResponse(parts=[ToolCallPart(info.output_tools[0].name, output)])
@@ -686,6 +734,8 @@ async def test_structured_output_gets_only_one_bounded_correction() -> None:
     assert turn["status"] == "completed"
     assert turn["answer"] == "总数：7"
     assert len(calls) == 2
+    assert all(info.instructions == SYSTEM_PROMPT for _, info in calls)
+    assert all(SYSTEM_PROMPT not in str(messages) for messages, _ in calls)
 
 
 @pytest.mark.asyncio
@@ -735,6 +785,9 @@ async def test_soft_input_limit_forces_one_budgeted_finalize_request() -> None:
     assert turn["status"] == "completed"
     assert len(calls) == 1
     assert calls[0][1].function_tools == []
+    assert calls[0][1].instructions == SYSTEM_PROMPT
+    assert SYSTEM_PROMPT not in str(calls[0][0])
+    assert FINALIZE_INSTRUCTION in str(calls[0][0])
     assert turn["budget"]["turn"]["text_requests"] == 1
     assert turn["context"]["input_estimates"][0]["finalize_only"] is True
     assert turn["finalization"]["status"] == "completed"
@@ -814,7 +867,10 @@ async def test_finalize_provider_failure_is_not_retried_and_keeps_verified_resul
 
     def respond(messages, info):
         calls.append((messages, info))
-        raise RuntimeError("provider unavailable")
+        try:
+            raise ConnectionError("provider connection refused")
+        except ConnectionError as exc:
+            raise RuntimeError("provider unavailable") from exc
 
     agent = build_agent(BudgetedModel(FunctionModel(respond), state.instrumentation))
     history = [ModelRequest(parts=[UserPromptPart(content="甲" * 9_500)])]
@@ -827,6 +883,15 @@ async def test_finalize_provider_failure_is_not_retried_and_keeps_verified_resul
     assert turn["budget"]["turn"]["text_requests"] == 1
     assert any(block.get("handle") == handle for block in turn["blocks"])
     assert "provider unavailable" in turn["error"]
+    assert turn["error_details"]["category"] == "provider"
+    assert turn["error_details"]["exception_chain"][0] == {
+        "type": "RuntimeError",
+        "message": "provider unavailable",
+    }
+    assert turn["error_details"]["exception_chain"][1] == {
+        "type": "ConnectionError",
+        "message": "provider connection refused",
+    }
 
 
 @pytest.mark.asyncio
@@ -854,6 +919,7 @@ async def test_finalize_timeout_is_not_retried_and_has_real_deadline(monkeypatch
     assert turn["budget"]["turn"]["text_requests"] == 1
     assert turn["duration_ms"] < 500
     assert "已验证统计：5" in turn["answer"]
+    assert turn["error_details"]["category"] == "timeout"
 
 
 @pytest.mark.asyncio
@@ -888,6 +954,136 @@ async def test_invalid_finalize_output_does_not_trigger_model_retry() -> None:
     assert turn["budget"]["turn"]["text_requests"] == 1
     assert any(block.get("handle") == handle for block in turn["blocks"])
     assert "未重试模型请求" in turn["error"]
+    assert turn["error_details"]["category"] == "reference_validation"
+    assert "forged 不是当前轮结果" in turn["error_details"]["message"]
+    assert turn["finalization"]["failure"]["category"] == "reference_validation"
+    text_call = next(item for item in turn["model_calls"] if item["kind"] == "text")
+    output_call = text_call["public_response"]["parts"][0]
+    assert output_call["arguments"]["blocks"][0]["result_handle"] == "forged"
+
+
+@pytest.mark.asyncio
+async def test_missing_required_output_field_keeps_schema_diagnostic() -> None:
+    state = _state()
+    state.instrumentation.context_policy_enabled = True
+    calls = []
+
+    def respond(messages, info):
+        calls.append((messages, info))
+        return ModelResponse(
+            parts=[ToolCallPart(info.output_tools[0].name, {"needs_clarification": False})]
+        )
+
+    model = BudgetedModel(
+        FunctionModel(respond), state.instrumentation, request_scope="dialogue_agent"
+    )
+    history = [ModelRequest(parts=[UserPromptPart(content="甲" * 9_500)])]
+    turn, _ = await run_turn(build_agent(model), state, "请总结", history)
+
+    assert turn["status"] == "failed"
+    assert len(calls) == 1
+    assert turn["error_details"]["category"] == "schema_validation"
+    errors = turn["error_details"]["validation"]["errors"]
+    assert any(item["location"] == ["blocks"] and item["type"] == "missing" for item in errors)
+    assert turn["finalization"]["failure"]["category"] == "schema_validation"
+    assert turn["model_calls"][-1]["public_response"]["parts"][0]["arguments"] == {
+        "needs_clarification": False
+    }
+
+
+@pytest.mark.asyncio
+async def test_length_finish_reason_is_distinct_from_schema_failure() -> None:
+    state = _state()
+    state.instrumentation.context_policy_enabled = True
+
+    def respond(_messages, info):
+        return ModelResponse(
+            parts=[ToolCallPart(info.output_tools[0].name, {"needs_clarification": False})],
+            finish_reason="length",
+        )
+
+    model = BudgetedModel(
+        FunctionModel(respond), state.instrumentation, request_scope="dialogue_agent"
+    )
+    history = [ModelRequest(parts=[UserPromptPart(content="甲" * 9_500)])]
+    turn, _ = await run_turn(build_agent(model), state, "请总结", history)
+
+    assert turn["status"] == "failed"
+    assert turn["error_details"]["category"] == "truncated"
+    assert turn["model_calls"][-1]["finish_reason"] == "length"
+
+
+@pytest.mark.asyncio
+async def test_public_response_diagnostic_excludes_hidden_thinking() -> None:
+    state = _state()
+
+    def respond(_messages, info):
+        return ModelResponse(
+            parts=[
+                ThinkingPart("不得进入报告的隐藏推理"),
+                ToolCallPart(
+                    info.output_tools[0].name,
+                    {"blocks": [{"kind": "text", "text": "公开回答"}]},
+                ),
+            ]
+        )
+
+    model = BudgetedModel(
+        FunctionModel(respond), state.instrumentation, request_scope="dialogue_agent"
+    )
+    turn, _ = await run_turn(build_agent(model), state, "回答", [])
+
+    assert turn["status"] == "completed"
+    recorded = json.dumps(turn["model_calls"], ensure_ascii=False)
+    assert "公开回答" in recorded
+    assert "不得进入报告的隐藏推理" not in recorded
+
+
+@pytest.mark.asyncio
+async def test_provider_shaped_estimate_records_components_scope_and_usage_error() -> None:
+    state = _state()
+    calls = []
+
+    def respond(messages, info):
+        calls.append((messages, info))
+        return ModelResponse(
+            parts=[
+                ToolCallPart(
+                    info.output_tools[0].name,
+                    {"blocks": [{"kind": "text", "text": "完成"}]},
+                )
+            ],
+            usage=RequestUsage(input_tokens=1_000, output_tokens=10),
+        )
+
+    model = BudgetedModel(
+        FunctionModel(respond), state.instrumentation, request_scope="dialogue_agent"
+    )
+    turn, _ = await run_turn(build_agent(model), state, "统计一下", [])
+
+    log = next(item for item in turn["model_calls"] if item["kind"] == "text")
+    messages, info = calls[0]
+    legacy_raw = json.dumps(
+        to_jsonable_python(
+            {"messages": messages, "request_parameters": info.model_request_parameters}
+        ),
+        ensure_ascii=False,
+        separators=(",", ":"),
+    )
+    legacy_estimate = ceil(len(legacy_raw.encode("utf-8")) / 3)
+    assert log["estimated_input_tokens"] < legacy_estimate
+    assert log["estimate_components"]["version"] == INPUT_ESTIMATE_VERSION
+    assert log["estimate_components"]["instruction_utf8_bytes"] == len(
+        SYSTEM_PROMPT.encode("utf-8")
+    )
+    assert log["estimate_components"]["instruction_count"] == 1
+    assert log["estimate_components"]["historical_system_count"] == 0
+    assert log["estimate_components"]["instruction_sha256"] == hashlib.sha256(
+        SYSTEM_PROMPT.encode("utf-8")
+    ).hexdigest()
+    assert log["request_scope"] == "dialogue_agent"
+    assert log["actual_input_tokens"] == 1_000
+    assert log["estimate_ratio"] == round(log["estimated_input_tokens"] / 1_000, 6)
 
 
 @pytest.mark.asyncio
@@ -912,6 +1108,7 @@ async def test_no_remaining_budget_does_not_dispatch_or_claim_finalize() -> None
     assert calls == []
     assert "未派发模型收尾" in turn["answer"]
     assert any(item["kind"] == "text_not_dispatched" for item in turn["model_calls"])
+    assert turn["error_details"]["category"] == "budget"
 
 
 @pytest.mark.asyncio

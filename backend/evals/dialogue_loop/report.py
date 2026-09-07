@@ -21,6 +21,16 @@ from evals.dialogue_loop.core import (
 )
 
 SENSITIVE_KEYS = {"password", "secret", "api_key", "token", "authorization"}
+SENSITIVE_TEXT_PATTERNS = (
+    re.compile(r"(?i)\bBearer\s+[A-Za-z0-9._~+/=-]{12,}"),
+    re.compile(r"\bsk-[A-Za-z0-9_-]{16,}"),
+)
+
+
+def _sanitize_text(value: str) -> str:
+    for pattern in SENSITIVE_TEXT_PATTERNS:
+        value = pattern.sub("<redacted>", value)
+    return value
 
 
 def sanitize(value):
@@ -46,6 +56,8 @@ def sanitize(value):
         return sanitize(value.value)
     if isinstance(value, Path):
         return str(value)
+    if isinstance(value, str):
+        return _sanitize_text(value)
     return value
 
 
@@ -460,7 +472,9 @@ def write_report(report_dir: Path, payload: dict) -> tuple[Path, Path]:
                             {
                                 "status": turn["status"],
                                 "error": turn.get("error"),
+                                "error_details": turn.get("error_details"),
                                 "solve_error": turn.get("solve_error"),
+                                "solve_failure": turn.get("solve_failure"),
                                 "finalization": turn.get("finalization"),
                                 "usage": turn.get("usage"),
                                 "budget": turn.get("budget"),

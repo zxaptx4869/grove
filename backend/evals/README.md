@@ -19,7 +19,7 @@
 # 仅在预检通过后运行一批三组 × 四轮 × 两臂，最多 24 条用户消息
 .venv/bin/python -m evals.dialogue_loop --compare --live
 
-# 第二版真实套件尚需单独批准；获批后的明确入口如下
+# 第二版真实套件已执行一批；没有新的明确批准不得再次运行
 .venv/bin/python -m evals.dialogue_loop --compare --live --suite v2
 
 # 修正评分器后只重评已保存结果，不再登录或调用模型
@@ -36,16 +36,25 @@
 原文完整保存在程序侧结果仓，模型视图只保留有界的本轮材料；后续引用仍须重新读取并
 执行当前权限与 Evidence 核验。历史缩减不调用摘要或分类模型。
 
-第二版对完整消息、工具 schema 和输出 schema 做可复现长度估算，资料软阈值为 9000，
+完整 Grove 规则通过 Pydantic AI 的当前 `instructions` 进入每次首轮、续聊、纠正和
+独立收尾请求；历史中的旧 system 会被清除，收尾指令只作追加约束。无模型测试直接
+检查底层 FunctionModel 收到的 messages 和 instructions，而非只检查 Agent 配置。
+
+第二版按 OpenAI 兼容 Provider 请求形状投影当前 instructions、实际消息及可见工具 schema，
+并用 UTF-8 字节与显式协议余量做可复现长度估算。资料软阈值为 9000，
 Provider 的真实单请求输入上限仍为 12000 token。达到软阈值或只剩最后一次文本请求时，
 实验先退出最多 120 秒的求解阶段，再在独立的最多 15 秒窗口内派发至多一次无工具收尾；
 收尾仍计入单轮和整批预算。估算值与 Provider usage
-分开记录，估算不是精确 tokenizer 结果，也不保证真实 token 一定低于上限。
+分开记录，报告按主 Agent、工具内部模型和旧链路汇总误差；未派发请求的实际 token 保持未知。
+估算不是 DeepSeek tokenizer 结果，也不保证真实 token 一定低于上限。
 
 统计在实验层拆为 `count_entries` 与 `group_entries`，二者都复用共享
 `aggregate_entries` 实现。`main_types` 未指定表示全部正式记录，用户泛称“知识”不再
 默认映射为内部 `knowledge` 类型。第二版真实套件和冻结预算见
 [`dialogue-loop-v2-evaluation-plan.md`](dialogue-loop-v2-evaluation-plan.md)。
+下一次只诊断请求组装和估算的最小清单见
+[`dialogue-loop-v2-minimal-diagnostic-plan.md`](dialogue-loop-v2-minimal-diagnostic-plan.md)，
+该清单仍需另行批准。
 
 两种模式都通过终端隐藏读取 demo 密码，只在父进程内存和子进程标准输入中短暂传递；
 密码不接受命令参数或环境变量，也不写入文件。Provider 与 API key 继续由应用现有配置
@@ -65,7 +74,9 @@ Message、Run、Evidence 与审计，原业务库不得写入。
 报告写入忽略目录
 `backend/data/knowledge-agent-evals/dialogue-loop/<batch>/report.{md,json}`，目录权限 700、
 文件权限 600。报告保留实际回答、工具状态与原始错误、模型调用、usage 可得性和耗时；
-缺少 usage 标记未知。自动检查只证明确定性边界，解释质量和引用是否充分仍须逐轮人工审阅。
+结构化失败还保留有界公开响应、工具调用参数、finish reason、错误类别和异常链，明确排除
+隐藏推理并统一脱敏。缺少 usage 标记未知。自动检查只证明确定性边界，解释质量和引用是否充分
+仍须逐轮人工审阅。
 
 本工具通过运行中的 Grove HTTP API 登录既有 demo 账号、创建 Conversation、逐轮提交
 消息并轮询 Worker 的实际结果。模型和密钥继续使用后端已有配置。脚本不注册账号、

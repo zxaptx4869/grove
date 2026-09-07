@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import json
-from dataclasses import asdict, dataclass, field
+from dataclasses import asdict, dataclass, field, replace
 from time import perf_counter
 from typing import Literal
 
@@ -13,6 +13,7 @@ from pydantic_ai.messages import (
     ModelMessage,
     ModelRequest,
     ModelResponse,
+    SystemPromptPart,
     TextPart,
     ToolCallPart,
     ToolReturnPart,
@@ -57,7 +58,7 @@ SYSTEM_PROMPT = """你是 Grove 知识库的只读对话 Agent。你在一个持
 9. 只回答用户问题，不输出隐藏推理，不向用户提及预期答案。
 10. main_types 省略或 null 表示全部正式记录。用户泛称“知识”“知识库记录”时不得默认
     筛成内部 knowledge 类型；只有用户明确限定内部类型时才填写对应值。
-"""
+""".strip()
 
 NO_KNOWLEDGE_PATTERNS = (
     "不查知识库",
@@ -316,6 +317,19 @@ def build_compact_history(state: LoopState) -> list[ModelMessage]:
     return messages
 
 
+def _without_historical_system_prompts(history: list[ModelMessage]) -> list[ModelMessage]:
+    """当前规则由 instructions 注入；历史中的旧 system 不得继续生效。"""
+    cleaned: list[ModelMessage] = []
+    for message in history:
+        if not isinstance(message, ModelRequest):
+            cleaned.append(message)
+            continue
+        parts = [part for part in message.parts if not isinstance(part, SystemPromptPart)]
+        if parts:
+            cleaned.append(replace(message, parts=parts))
+    return cleaned
+
+
 def _public_result(result, handle: str) -> dict:
     return {
         "result_handle": handle,
@@ -444,7 +458,7 @@ def build_agent(model) -> Agent[LoopDeps, DialogueAnswer]:
         model,
         deps_type=LoopDeps,
         output_type=DialogueAnswer,
-        system_prompt=SYSTEM_PROMPT,
+        instructions=SYSTEM_PROMPT,
         retries=1,
         model_settings={"temperature": 0, "max_tokens": OUTPUT_TOKENS_LIMIT},
         max_concurrency=MAX_TOOL_CONCURRENCY,
@@ -694,7 +708,11 @@ def build_agent(model) -> Agent[LoopDeps, DialogueAnswer]:
     async def validate_output(ctx: RunContext[LoopDeps], answer: DialogueAnswer) -> DialogueAnswer:
         errors = output_errors(answer, ctx.deps.state)
         if errors:
-            raise ModelRetry("；".join(errors))
+            message = "；".join(errors)
+            ctx.deps.state.instrumentation.record_validation_failure(
+                "reference_validation", message, answer.model_dump(mode="json")
+            )
+            raise ModelRetry(message)
         return answer
 
     return agent
@@ -862,7 +880,10 @@ def _current_material_history(
     current_events: list[dict],
 ) -> list[ModelMessage]:
     """把求解阶段已取得的当前轮材料重建为合法配对消息。"""
-    messages = [*history, ModelRequest(parts=[UserPromptPart(content=message)])]
+    messages = [
+        *_without_historical_system_prompts(history),
+        ModelRequest(parts=[UserPromptPart(content=message)]),
+    ]
     for index, event in enumerate(current_events, 1):
         handle = event.get("result_handle")
         if handle not in state.current_handles and event.get("status") not in {
@@ -900,6 +921,7 @@ async def _finalize_once(
 ) -> object:
     """在独立时间窗内用当前轮已核验材料做唯一一次无工具收尾。"""
     state.instrumentation.begin_finalize(reason)
+    before_logs = len(state.instrumentation.logs)
     material_history = _current_material_history(state, message, history, current_events)
     try:
         async with asyncio.timeout(FINALIZE_SECONDS):
@@ -914,12 +936,23 @@ async def _finalize_once(
         error = f"{type(exc).__name__}: 收尾超过 {FINALIZE_SECONDS:g} 秒"
         state.instrumentation.finalize_status = "timed_out"
         state.instrumentation.finalize_error = error
+        state.instrumentation.finalize_failure = state.instrumentation.describe_failure(
+            exc, before_logs
+        )
         raise
     except Exception as exc:
+        failure = state.instrumentation.describe_failure(exc, before_logs)
+        state.instrumentation.finalize_failure = failure
         if state.instrumentation.finalize_response_received:
             state.instrumentation.finalize_status = "invalid_output"
             state.instrumentation.finalize_error = (
-                f"收尾输出非法，未重试模型请求：{type(exc).__name__}: {exc}"
+                "收尾输出非法，未重试模型请求："
+                f"{failure['category']}: {failure['message']}"
+            )
+        elif state.instrumentation.finalize_error is None:
+            state.instrumentation.finalize_status = "failed"
+            state.instrumentation.finalize_error = (
+                f"{failure['category']}: {failure['message']}"
             )
         raise
 
@@ -931,11 +964,14 @@ async def run_turn(
     history: list[ModelMessage],
 ) -> tuple[dict, list[ModelMessage]]:
     """执行一轮；超限、模型失败和 usage 缺失均显式保留。"""
+    history = _without_historical_system_prompts(history)
     history_estimate = estimate_input_tokens(history)
     before_logs = len(state.instrumentation.logs)
     before_events = len(state.tool_events)
     started = perf_counter()
     solve_error = None
+    solve_failure = None
+    error_details = None
     try:
         if history_estimate > MODEL_INPUT_TOKENS_LIMIT:
             raise BudgetExceeded(
@@ -962,6 +998,7 @@ async def run_turn(
         except Exception as finalize_exc:
             text, blocks = _verified_failure_output(state)
             status = "failed"
+            error_details = state.instrumentation.finalize_failure
             error = state.instrumentation.finalize_error or (
                 f"{type(finalize_exc).__name__}: {finalize_exc}"
             )
@@ -976,10 +1013,12 @@ async def run_turn(
         if state.instrumentation.finalize_attempted:
             text, blocks = _verified_failure_output(state)
             status = "failed"
+            error_details = state.instrumentation.finalize_failure
             error = state.instrumentation.finalize_error or f"{type(exc).__name__}: {exc}"
             usage = None
         else:
             solve_error = f"{type(exc).__name__}: 求解超过 {PER_TURN_SECONDS:g} 秒"
+            solve_failure = state.instrumentation.describe_failure(exc, before_logs)
             try:
                 result = await _finalize_once(
                     agent,
@@ -992,6 +1031,7 @@ async def run_turn(
             except Exception as finalize_exc:
                 text, blocks = _verified_failure_output(state)
                 status = "failed"
+                error_details = state.instrumentation.finalize_failure
                 error = state.instrumentation.finalize_error or (
                     f"{type(finalize_exc).__name__}: {finalize_exc}"
                 )
@@ -1003,6 +1043,7 @@ async def run_turn(
                 error = None
                 usage = asdict(result.usage) if result.usage is not None else None
     except Exception as exc:
+        error_details = state.instrumentation.describe_failure(exc, before_logs)
         if state.instrumentation.finalize_reason is not None:
             text, blocks = _verified_failure_output(state)
             error = state.instrumentation.finalize_error or f"{type(exc).__name__}: {exc}"
@@ -1026,6 +1067,10 @@ async def run_turn(
             "projected_input_tokens": item.projected_input_tokens,
             "estimated_input_tokens": item.estimated_input_tokens,
             "method": item.input_estimate_method,
+            "components": item.estimate_components,
+            "request_scope": item.request_scope,
+            "actual_input_tokens": item.actual_input_tokens,
+            "estimate_ratio": item.estimate_ratio,
             "finalize_only": item.finalize_only,
             "finalize_reason": item.finalize_reason,
         }
@@ -1038,7 +1083,9 @@ async def run_turn(
         "answer": text,
         "blocks": blocks,
         "error": error,
+        "error_details": error_details,
         "solve_error": solve_error,
+        "solve_failure": solve_failure,
         "duration_ms": int((perf_counter() - started) * 1000),
         "usage": usage,
         "budget": state.ledger.snapshot(),

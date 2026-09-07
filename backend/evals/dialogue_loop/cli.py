@@ -218,12 +218,12 @@ def _resource_by_arm(results: list[dict]) -> dict:
         turns = [
             turn for result in results if result["arm"] == arm for turn in result["turns"]
         ]
-        text_calls = [
+        model_calls = [
             call
             for turn in turns
             for call in turn.get("model_calls", [])
-            if call.get("kind") == "text"
         ]
+        text_calls = [call for call in model_calls if call.get("kind") == "text"]
         usages = [call["usage"] for call in text_calls if call.get("usage") is not None]
         summary[arm] = {
             "user_messages": len(turns),
@@ -241,8 +241,60 @@ def _resource_by_arm(results: list[dict]) -> dict:
             "cache_read_tokens": sum(item.get("cache_read_tokens", 0) for item in usages),
             "token_usage_complete": len(usages) == len(text_calls),
             "cost_available": bool(usages) and all(item.get("cost") is not None for item in usages),
+            "input_estimation": _input_estimation_by_scope(model_calls),
         }
     return summary
+
+
+def _input_estimation_by_scope(model_calls: list[dict]) -> dict:
+    """汇总已派发误差，并明确保留未派发请求的真实 token 未知。"""
+    scopes: dict[str, dict] = {}
+    for call in model_calls:
+        estimate = call.get("estimated_input_tokens")
+        if estimate is None or call.get("kind") not in {"text", "text_not_dispatched"}:
+            continue
+        scope = call.get("request_scope") or "unknown"
+        row = scopes.setdefault(
+            scope,
+            {
+                "dispatched_with_usage": 0,
+                "actual_unknown": 0,
+                "not_dispatched": 0,
+                "estimated_tokens": 0,
+                "estimated_tokens_with_usage": 0,
+                "actual_tokens": 0,
+                "min_ratio": None,
+                "max_ratio": None,
+            },
+        )
+        row["estimated_tokens"] += estimate
+        actual = call.get("actual_input_tokens")
+        if actual is None:
+            usage = call.get("usage") or {}
+            actual = usage.get("input_tokens")
+        if call.get("kind") == "text_not_dispatched":
+            row["not_dispatched"] += 1
+            row["actual_unknown"] += 1
+            continue
+        if not isinstance(actual, int | float) or actual <= 0:
+            row["actual_unknown"] += 1
+            continue
+        row["dispatched_with_usage"] += 1
+        row["estimated_tokens_with_usage"] += estimate
+        row["actual_tokens"] += actual
+        ratio = estimate / actual
+        row["min_ratio"] = ratio if row["min_ratio"] is None else min(row["min_ratio"], ratio)
+        row["max_ratio"] = ratio if row["max_ratio"] is None else max(row["max_ratio"], ratio)
+    for row in scopes.values():
+        row["aggregate_ratio"] = (
+            round(row["estimated_tokens_with_usage"] / row["actual_tokens"], 6)
+            if row["actual_tokens"]
+            else None
+        )
+        if row["min_ratio"] is not None:
+            row["min_ratio"] = round(row["min_ratio"], 6)
+            row["max_ratio"] = round(row["max_ratio"], 6)
+    return scopes
 
 
 def regrade_report(path: Path) -> int:

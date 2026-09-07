@@ -13,7 +13,11 @@ EXPERIMENT_VERSION = "prototype-v2"
 INPUT_BYTES_LIMIT = 48_000
 MODEL_INPUT_TOKENS_LIMIT = 12_000
 INPUT_ESTIMATE_SOFT_LIMIT = 9_000
-INPUT_ESTIMATE_METHOD = "结构化消息及工具/输出 schema JSON UTF-8 字节数除以 3 向上取整"
+INPUT_ESTIMATE_VERSION = "openai-chat-projection-v1"
+INPUT_ESTIMATE_METHOD = (
+    "OpenAI 兼容请求投影的 JSON UTF-8 字节数除以 3 向上取整，"
+    "另加消息、工具和固定协议安全余量"
+)
 OUTPUT_TOKENS_LIMIT = 2_000
 PER_TURN_TEXT_REQUESTS = 12
 PER_TURN_EMBEDDING_REQUESTS = 4
@@ -230,6 +234,7 @@ def frozen_budget(messages_per_batch: int = 24) -> dict:
         "input_bytes_per_turn": INPUT_BYTES_LIMIT,
         "model_input_tokens_per_request": MODEL_INPUT_TOKENS_LIMIT,
         "input_estimate_soft_limit": INPUT_ESTIMATE_SOFT_LIMIT,
+        "input_estimate_version": INPUT_ESTIMATE_VERSION,
         "input_estimate_method": INPUT_ESTIMATE_METHOD,
         "finalize_request_reserved": 1,
         "output_tokens_per_request": OUTPUT_TOKENS_LIMIT,

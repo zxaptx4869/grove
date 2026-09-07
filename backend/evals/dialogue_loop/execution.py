@@ -20,7 +20,11 @@ from evals.dialogue_loop.core import (
     PROMPT_VERSION,
     BudgetLedger,
 )
-from evals.dialogue_loop.instrumentation import Instrumentation, install_instrumentation
+from evals.dialogue_loop.instrumentation import (
+    BudgetedModel,
+    Instrumentation,
+    install_instrumentation,
+)
 from evals.dialogue_loop.isolation import assert_isolated, domain_fingerprint, provider_snapshot
 from evals.dialogue_loop.report import sanitize
 
@@ -114,12 +118,19 @@ async def child_preflight(db_path: Path, original_path: Path, password: str) -> 
 
 def _v2_control_preflight() -> dict[str, bool]:
     """不导入模型，用代表值核对历史缩减、顺序和类型口径。"""
-    from pydantic_ai.messages import ModelRequest, ModelResponse, ToolCallPart, ToolReturnPart
+    from pydantic_ai.messages import (
+        ModelRequest,
+        ModelResponse,
+        SystemPromptPart,
+        ToolCallPart,
+        ToolReturnPart,
+    )
 
     from evals.dialogue_loop.loop import (
         LoopState,
         _entry_set,
         _model_payload,
+        _without_historical_system_prompts,
         build_compact_history,
     )
 
@@ -145,6 +156,11 @@ def _v2_control_preflight() -> dict[str, bool]:
     }
     state.remember_turn("列出最近两条", "1. 九\n2. 三", [event])
     history = build_compact_history(state)
+    dirty_history = [
+        ModelRequest(parts=[SystemPromptPart(content="旧规则不得保留")]),
+        *history,
+    ]
+    cleaned_history = _without_historical_system_prompts(dirty_history)
     calls = {
         part.tool_call_id
         for message in history
@@ -174,6 +190,12 @@ def _v2_control_preflight() -> dict[str, bool]:
         "all_types_default_empty": _entry_set("all", None, None, None)["main_types"] == [],
         "explicit_type_preserved": _entry_set("all", None, None, ["method"])["main_types"]
         == ["method"],
+        "historical_system_removed": not any(
+            isinstance(part, SystemPromptPart)
+            for message in cleaned_history
+            if isinstance(message, ModelRequest)
+            for part in message.parts
+        ),
     }
 
 
@@ -275,6 +297,8 @@ async def run_new_scenario(
     conversation_id = await _create_conversation(identity["workspace_id"], identity["user_id"])
     async with async_session_factory() as db:
         model = await get_text_model(db, identity["workspace_id"])
+    if isinstance(model, BudgetedModel):
+        model.request_scope = "dialogue_agent"
     state = LoopState(
         workspace_id=identity["workspace_id"],
         user_id=identity["user_id"],
