@@ -31,8 +31,8 @@
 - [x] 5.2 实现确定性结构化历史摘要与程序侧正文仓，保持模型消息及工具调用／返回协议配对；在每次请求前估算含本轮新增材料的输入长度，实现资料软停止和预算内收尾，并分别记录估算与真实 usage。
 - [x] 5.3 在实验适配层拆分精确总数与分组统计工具，复用共享底层统计实现；将记录类型改为可选且默认全部正式记录，完善具体字段错误和实际执行条件记录。
 - [x] 5.4 加强确定性评分，核对明确总数、项目与数量对应、列表准确顺序和整段任务完成状态；准备原三组及换项目、明确类型限制、话题切换对象引用的未提示表达变体。
-- [ ] 5.5 增加并运行第二版相关无模型测试及零模型全链路彩排，确认真实模型请求为零、第一版报告未改动、隔离和脱敏继续通过；更新 README 与脱敏验证记录并及时本地提交。
-- [ ] 5.6 输出下一批冻结评测清单，包括独立第二版标识、模型与快照条件、消息数、文本／向量／工具／时间预算及停止条件，等待用户确认；本任务不启动真实评测。
+- [x] 5.5 增加并运行第二版相关无模型测试及零模型全链路彩排，确认真实模型请求为零、第一版报告未改动、隔离和脱敏继续通过；更新 README 与脱敏验证记录并及时本地提交。
+- [x] 5.6 输出下一批冻结评测清单，包括独立第二版标识、模型与快照条件、消息数、文本／向量／工具／时间预算及停止条件，等待用户确认；本任务不启动真实评测。
 
 ## 6. 验证入口
 
@@ -48,17 +48,19 @@ git diff --check
 .venv/bin/ruff check evals/dialogue_loop tests/test_knowledge_agent_dialogue_loop*.py
 .venv/bin/python -m evals.dialogue_loop --preflight
 .venv/bin/python -m evals.dialogue_loop --rehearsal
+.venv/bin/python -m evals.dialogue_loop --rehearsal --suite v2
 
 # 评分器修正后复用原始记录，不调用模型
 .venv/bin/python -m evals.dialogue_loop --regrade data/knowledge-agent-evals/dialogue-loop/<批次>/report.json
 
 # backend 目录：仅在真实评测范围获批且预检通过后执行一次
 .venv/bin/python -m evals.dialogue_loop --compare --live
+.venv/bin/python -m evals.dialogue_loop --compare --live --suite v2
 ```
 
 复用共享代码若发现实际修改必要，须先明确范围和基线影响，再选择对应回归测试；不将扩大共享修改视为实验默认授权。
 
-## 6. 实施与验证记录（2026-09-07）
+## 7. 实施与验证记录（2026-09-07）
 
 - 无模型预检通过，确认 demo 身份、两臂同一 `deepseek/deepseek-chat` 配置、密钥可用、
   只读工具 v1 白名单完整，文本／向量底层派发及框架重试可计数；预检模型调用为 0。
@@ -102,3 +104,21 @@ git diff --check
   当前不值得正式接入；局限是单一 demo 快照、单一固定批次，且不证明 App 或生产环境行为。
 - 最终相关无模型回归共 83 项通过，实验代码 ruff 与 Python 编译通过；离线重评因真实语义失败按设计
   返回非零，不表示报告流程中止。报告与原始 JSON 权限均为 600，敏感信息扫描未发现密码或密钥。
+
+### 原型第二版
+
+- 第一版完整报告 `20260907-141328/report.json` 在第二版实施前后 SHA-256 均为
+  `85b46a5af9c7671550b311c05a156bbc72e79602d257bf0c0ca19a9578801024`，原结论未覆盖。
+- 第二版相关无模型回归 95 项通过；实验代码 ruff、Python 编译、`git diff --check` 通过；
+  全库 OpenSpec 严格校验 57 项通过、0 项失败。
+- 第二版全链路彩排使用 `--rehearsal --suite v2`，完成 A-E 五组、两臂十个隔离子进程和
+  40/40 个逐轮检查点；文本模型请求 0/192、向量请求 0/64，无停止原因或基础设施异常。
+- 彩排确认两臂 Provider 配置一致，历史工具调用／返回配对、列表准确顺序、程序侧正文保留、
+  当前材料缩减、全部类型默认值及明确类型筛选检查均通过；原库和两臂业务指纹均不变。
+- 彩排报告：
+  `backend/data/knowledge-agent-evals/dialogue-loop/prototype-v2-rehearsal-20260907-152716/report.md`；
+  目录权限 700、报告及 JSON 权限 600，敏感模式扫描无命中。该结果只证明基础设施和确定性边界，
+  不作为第二版语义理解通过的证据。
+- 下一批冻结清单：`backend/evals/dialogue-loop-v2-evaluation-plan.md`。拟保持第一版文本／向量模型、
+  12,000 token 真实输入上限、每轮预算和整批 192/64 请求硬上限，执行 A-E 最多 40 条消息；
+  第二版真实评测仍待用户批准，本次未启动。

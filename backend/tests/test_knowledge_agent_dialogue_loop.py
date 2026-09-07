@@ -31,7 +31,7 @@ from evals.dialogue_loop.core import (
     BudgetLedger,
     DialogueAnswer,
 )
-from evals.dialogue_loop.execution import _rehearsal_scenario
+from evals.dialogue_loop.execution import _rehearsal_scenario, _v2_control_preflight
 from evals.dialogue_loop.instrumentation import BudgetedModel, Instrumentation
 from evals.dialogue_loop.isolation import assert_isolated, backup_database
 from evals.dialogue_loop.loop import (
@@ -204,6 +204,57 @@ def test_current_material_is_bounded_but_full_body_stays_program_side() -> None:
     assert payload["items"][0]["content"] == content
 
 
+@pytest.mark.asyncio
+async def test_pydantic_ai_accepts_rebuilt_paired_history() -> None:
+    state = _state()
+    handle = state.store_result(
+        "list",
+        {"items": [{"entry_id": 7, "title": "七", "project_name": "装修"}]},
+        "completed",
+        "complete",
+    )
+    state.remember_turn(
+        "列一条",
+        "1. 七",
+        [
+            {
+                "tool": "query_entries",
+                "shared_tool": "query_entries",
+                "result_handle": handle,
+                "params": {"project_scope": "all"},
+                "shared_params": {"entry_set": _entry_set("all", None, None, None)},
+                "status": "completed",
+                "completeness": "complete",
+                "error": None,
+            }
+        ],
+    )
+    history = build_compact_history(state)
+    state.begin_turn(5, "继续")
+    calls = []
+
+    def respond(messages, info):
+        calls.append(messages)
+        return ModelResponse(
+            parts=[
+                ToolCallPart(
+                    info.output_tools[0].name,
+                    {"blocks": [{"kind": "text", "text": "已接续"}]},
+                )
+            ]
+        )
+
+    turn, _ = await run_turn(build_agent(FunctionModel(respond)), state, "继续", history)
+    assert turn["status"] == "completed"
+    assert calls
+    assert any(
+        isinstance(part, ToolReturnPart)
+        for message in calls[0]
+        if isinstance(message, ModelRequest)
+        for part in message.parts
+    )
+
+
 def test_output_rejects_old_or_forged_handles_and_renders_real_values() -> None:
     state = _state()
     statistic = state.store_result("statistic", {"value": 102}, "completed", "complete")
@@ -235,6 +286,21 @@ def test_no_knowledge_instruction_is_programmatically_recorded() -> None:
     state = _state()
     state.begin_turn(5, "先不查知识库，聊聊怎样记笔记")
     assert state.tools_allowed is False
+    state.begin_turn(6, "先别查库，聊聊怎样安排间隔复习")
+    assert state.tools_allowed is False
+
+
+def test_agent_exposes_split_statistics_without_composite_arguments() -> None:
+    agent = build_agent(FunctionModel(lambda _messages, _info: None))
+    tools = agent._function_toolset.tools
+    assert "count_entries" in tools
+    assert "group_entries" in tools
+    assert "aggregate_entries" not in tools
+    count_schema = tools["count_entries"].function_schema.json_schema
+    group_schema = tools["group_entries"].function_schema.json_schema
+    assert "operation" not in count_schema["properties"]
+    assert "group_by" not in count_schema["properties"]
+    assert group_schema["required"] == ["project_scope", "project_name", "group_by"]
 
 
 def test_snapshot_rejects_original_target_and_uses_private_file(tmp_path: Path) -> None:
@@ -552,6 +618,10 @@ def test_rehearsal_writes_four_json_safe_checkpoints() -> None:
     assert checkpoints[0]["turns"][0]["usage"]["cost"] == "0.000000"
     assert checkpoints[0]["turns"][0]["budget"]["turn"]["entry_reads"] == [1]
     assert checkpoints[0]["turns"][0]["context"]["experiment_version"] == "prototype-v2"
+
+
+def test_v2_control_preflight_is_entirely_deterministic_and_passes() -> None:
+    assert all(_v2_control_preflight().values())
 
 
 def test_next_batch_variants_are_frozen_outside_system_prompt() -> None:

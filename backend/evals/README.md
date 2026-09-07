@@ -13,8 +13,14 @@
 # 零模型全链路彩排：走完 6 个子进程、24 个检查点与最终报告
 .venv/bin/python -m evals.dialogue_loop --rehearsal
 
+# 第二版零模型彩排：原三组加两组表达变体，共 10 个子进程、40 个检查点
+.venv/bin/python -m evals.dialogue_loop --rehearsal --suite v2
+
 # 仅在预检通过后运行一批三组 × 四轮 × 两臂，最多 24 条用户消息
 .venv/bin/python -m evals.dialogue_loop --compare --live
+
+# 第二版真实套件尚需单独批准；获批后的明确入口如下
+.venv/bin/python -m evals.dialogue_loop --compare --live --suite v2
 
 # 修正评分器后只重评已保存结果，不再登录或调用模型
 .venv/bin/python -m evals.dialogue_loop --regrade data/knowledge-agent-evals/dialogue-loop/<批次>/report.json
@@ -24,6 +30,21 @@
 `pipeline_fixture` 的本地代表值替代模型与工具执行。代表值包含 `Decimal`、集合和元组，
 用于在付费评测前检查子进程传输、逐轮落盘、资源汇总、脱敏和报告生成。它的模型请求必须为 0，
 不评价对话语义、共享工具效果或旧流程业务链。
+
+`dialogue-loop-v2` 保留用户原话和已展示回答，把历史工具结果重建为配对的结构化
+消息，保留实际条件、状态、完整性、可信统计及列表句柄和顺序。Entry 正文和 Source
+原文完整保存在程序侧结果仓，模型视图只保留有界的本轮材料；后续引用仍须重新读取并
+执行当前权限与 Evidence 核验。历史缩减不调用摘要或分类模型。
+
+第二版对完整消息、工具 schema 和输出 schema 做可复现长度估算，资料软阈值为 9000，
+Provider 的真实单请求输入上限仍为 12000 token。达到软阈值或只剩最后一次文本请求时，
+实验移除资料工具并要求在预留请求内收尾；收尾仍计入预算。估算值与 Provider usage
+分开记录，估算不是精确 tokenizer 结果，也不保证真实 token 一定低于上限。
+
+统计在实验层拆为 `count_entries` 与 `group_entries`，二者都复用共享
+`aggregate_entries` 实现。`main_types` 未指定表示全部正式记录，用户泛称“知识”不再
+默认映射为内部 `knowledge` 类型。第二版真实套件和冻结预算见
+[`dialogue-loop-v2-evaluation-plan.md`](dialogue-loop-v2-evaluation-plan.md)。
 
 两种模式都通过终端隐藏读取 demo 密码，只在父进程内存和子进程标准输入中短暂传递；
 密码不接受命令参数或环境变量，也不写入文件。Provider 与 API key 继续由应用现有配置
@@ -38,6 +59,7 @@ Message、Run、Evidence 与审计，原业务库不得写入。
 求解 120 秒及收尾 15 秒；整批文本请求 192、向量请求 64。模型请求和框架重试在底层
 派发前计数，工具并发最多 2 且使用独立 AsyncSession。输入最多 48 KiB，每次输出最多
 2000 token。达到上限、业务数据变化或相同基础设施异常第二次发生即停止，不补跑。
+选择 `--suite v2` 时消息上限增至 40，但整批文本 192、向量 64 的硬预算不增加。
 
 报告写入忽略目录
 `backend/data/knowledge-agent-evals/dialogue-loop/<batch>/report.{md,json}`，目录权限 700、

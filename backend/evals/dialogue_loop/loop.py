@@ -54,6 +54,15 @@ SYSTEM_PROMPT = """你是 Grove 知识库的只读对话 Agent。你在一个持
     筛成内部 knowledge 类型；只有用户明确限定内部类型时才填写对应值。
 """
 
+NO_KNOWLEDGE_PATTERNS = (
+    "不查知识库",
+    "不查库",
+    "别查知识库",
+    "别查库",
+    "不用查知识库",
+    "不要查知识库",
+)
+
 
 @dataclass
 class ResultRecord:
@@ -89,7 +98,7 @@ class LoopState:
         self.run_id = run_id
         self.current_handles.clear()
         self.current_evidence.clear()
-        self.tools_allowed = "不查知识库" not in message
+        self.tools_allowed = not any(pattern in message for pattern in NO_KNOWLEDGE_PATTERNS)
         self.ledger.start_turn()
 
     def store_result(self, kind: str, payload: dict, status: str, completeness: str) -> str:
@@ -228,6 +237,7 @@ def _history_tool_summary(state: LoopState, event: dict) -> dict:
         "tool": event.get("tool"),
         "shared_tool": event.get("shared_tool"),
         "conditions": event.get("params", {}),
+        "executed_conditions": event.get("shared_params", event.get("params", {})),
         "status": event.get("status"),
         "completeness": event.get("completeness", "unknown"),
         "result_handle": event.get("result_handle"),
@@ -342,6 +352,7 @@ async def _dispatch(
     kind: str,
     *,
     surface_tool: str | None = None,
+    audit_params: dict | None = None,
 ) -> dict:
     from app.db.session import async_session_factory
     from app.models.knowledge_agent import RESULT_COMPLETENESS_UNKNOWN
@@ -359,7 +370,8 @@ async def _dispatch(
             "shared_tool": tool_name,
             "status": "not_executed",
             "completeness": RESULT_COMPLETENESS_UNKNOWN,
-            "params": params,
+            "params": audit_params or params,
+            "shared_params": params,
             "error": "用户明确要求本轮不查知识库",
             "duration_ms": 0,
         }
@@ -404,7 +416,8 @@ async def _dispatch(
         "result_handle": handle,
         "status": result.status,
         "completeness": result.completeness,
-        "params": params,
+        "params": audit_params or params,
+        "shared_params": params,
         "error": result.error,
         "duration_ms": int((perf_counter() - started) * 1000),
     }
@@ -495,7 +508,16 @@ def build_agent(model) -> Agent[LoopDeps, DialogueAnswer]:
         """精确统计正式记录总数。main_types 未指定表示全部类型；“知识”泛称不是类型筛选。"""
         params = _count_params(project_scope, project_name, main_types)
         return await _dispatch(
-            ctx, "aggregate_entries", params, "statistic", surface_tool="count_entries"
+            ctx,
+            "aggregate_entries",
+            params,
+            "statistic",
+            surface_tool="count_entries",
+            audit_params={
+                "project_scope": project_scope,
+                "project_name": project_name,
+                "main_types": list(main_types or []),
+            },
         )
 
     @agent.tool
@@ -509,7 +531,17 @@ def build_agent(model) -> Agent[LoopDeps, DialogueAnswer]:
         """按一个明确维度统计正式记录。main_types 未指定表示全部正式类型。"""
         params = _group_params(project_scope, project_name, group_by, main_types)
         return await _dispatch(
-            ctx, "aggregate_entries", params, "statistic", surface_tool="group_entries"
+            ctx,
+            "aggregate_entries",
+            params,
+            "statistic",
+            surface_tool="group_entries",
+            audit_params={
+                "project_scope": project_scope,
+                "project_name": project_name,
+                "group_by": group_by,
+                "main_types": list(main_types or []),
+            },
         )
 
     @agent.tool
@@ -529,7 +561,20 @@ def build_agent(model) -> Agent[LoopDeps, DialogueAnswer]:
             "limit": min(max(limit, 1), 10),
             "sort": {"field": sort_field, "direction": sort_direction},
         }
-        result = await _dispatch(ctx, "query_entries", params, "list")
+        result = await _dispatch(
+            ctx,
+            "query_entries",
+            params,
+            "list",
+            audit_params={
+                "project_scope": project_scope,
+                "project_name": project_name,
+                "semantic_query": semantic_query,
+                "main_types": list(main_types or []),
+                "limit": params["limit"],
+                "sort": params["sort"],
+            },
+        )
         ids = [item["entry_id"] for item in result.get("payload", {}).get("items", [])]
         ctx.deps.state.ledger.reserve_entries(ids)
         return result
@@ -542,8 +587,17 @@ def build_agent(model) -> Agent[LoopDeps, DialogueAnswer]:
         query: str,
     ) -> dict:
         """在授权 Workspace 全部项目中复用真实混合语义搜索；结果不能用于精确计数。"""
-        del project_scope, project_name
-        result = await _dispatch(ctx, "search_knowledge", {"query": query}, "list")
+        result = await _dispatch(
+            ctx,
+            "search_knowledge",
+            {"query": query},
+            "list",
+            audit_params={
+                "project_scope": project_scope,
+                "project_name": project_name,
+                "query": query,
+            },
+        )
         ids = [item["entry_id"] for item in result.get("payload", {}).get("items", [])]
         ctx.deps.state.ledger.reserve_entries(ids)
         return result
