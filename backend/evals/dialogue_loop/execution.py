@@ -207,6 +207,7 @@ def _registry_preflight() -> dict:
     required = {
         "query_entries",
         "aggregate_entries",
+        "list_project_directories",
         "search_knowledge",
         "read_entries",
         "read_evidence",
