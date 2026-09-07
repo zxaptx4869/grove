@@ -239,6 +239,26 @@ def _model_payload(kind: str, payload: dict) -> dict:
     return payload
 
 
+def _tool_result_summary(payload: dict) -> dict:
+    """为实验诊断生成有界摘要，不复制正文或把列表当成精确总数。"""
+    summary = {
+        key: payload[key]
+        for key in ("count", "total", "returned_count", "matched_count")
+        if key in payload and isinstance(payload[key], (int, float, str))
+    }
+    items = payload.get("items")
+    if isinstance(items, list):
+        summary["returned_items"] = len(items)
+        titles = [
+            item.get("title")
+            for item in items
+            if isinstance(item, dict) and item.get("title")
+        ]
+        if titles:
+            summary["titles"] = titles[:5]
+    return summary
+
+
 def _history_tool_summary(state: LoopState, event: dict) -> dict:
     summary = {
         "tool": event.get("tool"),
@@ -383,6 +403,15 @@ async def _dispatch(
     from app.services.knowledge_agent.tools import RunToolContext
 
     state = ctx.deps.state
+    state.instrumentation.emit_activity(
+        {
+            "aggregate_entries": "querying",
+            "query_entries": "querying",
+            "search_knowledge": "querying",
+            "read_entries": "reading_entries",
+            "read_evidence": "reading_sources",
+        }.get(tool_name, "querying")
+    )
     await state.ledger.reserve_tool()
     if not state.tools_allowed:
         event = {
@@ -438,6 +467,7 @@ async def _dispatch(
         "completeness": result.completeness,
         "params": audit_params or params,
         "shared_params": params,
+        "result_summary": _tool_result_summary(payload),
         "error": result.error,
         "duration_ms": int((perf_counter() - started) * 1000),
     }
@@ -476,6 +506,7 @@ def build_agent(model) -> Agent[LoopDeps, DialogueAnswer]:
         )
 
         state = ctx.deps.state
+        state.instrumentation.emit_activity("querying")
         await state.ledger.reserve_tool()
         if not state.tools_allowed:
             event = {
@@ -651,6 +682,7 @@ def build_agent(model) -> Agent[LoopDeps, DialogueAnswer]:
         )
 
         state = ctx.deps.state
+        state.instrumentation.emit_activity("reading_entries")
         await state.ledger.reserve_tool()
         try:
             entry_id = list_position_entry_id(state, result_set_handle, position)

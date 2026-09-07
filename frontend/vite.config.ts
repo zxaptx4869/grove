@@ -17,6 +17,14 @@ export default defineConfig({
       '/api': process.env.VITE_API_PROXY_TARGET ?? 'http://127.0.0.1:8000',
     },
   },
+  build: {
+    rollupOptions: {
+      input: {
+        main: path.join(import.meta.dirname, 'index.html'),
+        workbench: path.join(import.meta.dirname, 'workbench.html'),
+      },
+    },
+  },
   test: {
     environment: 'jsdom',
     globals: true,

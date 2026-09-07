@@ -7,6 +7,7 @@ import hashlib
 import importlib
 import json
 import sys
+from collections.abc import Callable
 from dataclasses import asdict, dataclass, field, is_dataclass, replace
 from math import ceil
 from time import perf_counter
@@ -92,6 +93,12 @@ class Instrumentation:
     finalize_error: str | None = None
     finalize_failure: dict | None = None
     validation_failures: list[dict] = field(default_factory=list)
+    activity_callback: Callable[[str], None] | None = field(default=None, repr=False)
+
+    def emit_activity(self, stage: str) -> None:
+        """发布可验证的执行阶段，不包含模型思考内容。"""
+        if self.activity_callback is not None:
+            self.activity_callback(stage)
 
     def begin_turn(self) -> None:
         self.phase = "solve"
@@ -626,6 +633,7 @@ class BudgetedModel(Model):
         if finalize_only:
             self.state.finalize_attempted = True
             self.state.finalize_status = "dispatched"
+        self.state.emit_activity("finalizing" if finalize_only else "organizing")
         started = perf_counter()
         try:
             response = await self.wrapped.request(
