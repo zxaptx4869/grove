@@ -10,9 +10,17 @@
 # 无模型：身份、快照、Worker、工具白名单、模型配置与预算可控性检查
 .venv/bin/python -m evals.dialogue_loop --preflight
 
+# 零模型全链路彩排：走完 6 个子进程、24 个检查点与最终报告
+.venv/bin/python -m evals.dialogue_loop --rehearsal
+
 # 仅在预检通过后运行一批三组 × 四轮 × 两臂，最多 24 条用户消息
 .venv/bin/python -m evals.dialogue_loop --compare --live
 ```
+
+`--rehearsal` 仍使用真实 demo 认证、一致快照和两臂隔离副本，但用显式标记为
+`pipeline_fixture` 的本地代表值替代模型与工具执行。代表值包含 `Decimal`、集合和元组，
+用于在付费评测前检查子进程传输、逐轮落盘、资源汇总、脱敏和报告生成。它的模型请求必须为 0，
+不评价对话语义、共享工具效果或旧流程业务链。
 
 两种模式都通过终端隐藏读取 demo 密码，只在父进程内存和子进程标准输入中短暂传递；
 密码不接受命令参数或环境变量，也不写入文件。Provider 与 API key 继续由应用现有配置

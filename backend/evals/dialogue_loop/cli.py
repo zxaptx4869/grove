@@ -46,8 +46,12 @@ class InfrastructureFailure(RuntimeError):
 
 def parser() -> argparse.ArgumentParser:
     value = argparse.ArgumentParser(description="知识 Agent 统一对话循环隔离实验")
-    value.add_argument("--preflight", action="store_true", help="只执行无模型预检（默认）")
-    value.add_argument("--compare", action="store_true", help="执行固定两臂对照")
+    mode = value.add_mutually_exclusive_group()
+    mode.add_argument("--preflight", action="store_true", help="只执行无模型预检（默认）")
+    mode.add_argument(
+        "--rehearsal", action="store_true", help="无模型走完两臂编排、检查点与报告"
+    )
+    mode.add_argument("--compare", action="store_true", help="执行固定两臂对照")
     value.add_argument("--live", action="store_true", help="显式允许真实模型请求")
     value.add_argument("--internal-preflight", action="store_true", help=argparse.SUPPRESS)
     value.add_argument("--internal-arm", choices=("old", "new"), help=argparse.SUPPRESS)
@@ -184,6 +188,8 @@ def _conclusion(results: list[dict], evaluation: dict, stopped: str | None) -> d
 def run_parent(args: argparse.Namespace) -> int:
     if args.compare and not args.live:
         raise ValueError("真实对照必须同时显式传入 --compare --live")
+    if args.live and not args.compare:
+        raise ValueError("--live 只能与 --compare 一起使用")
     repo_root = Path(__file__).resolve().parents[3]
     backend_dir = repo_root / "backend"
     original = _source_database(backend_dir)
@@ -191,6 +197,8 @@ def run_parent(args: argparse.Namespace) -> int:
     original_before = domain_fingerprint(original, identity["workspace_id"])
     password = getpass.getpass("demo 密码（仅内存传递，不写入报告）：")
     batch_id = datetime.now().strftime("%Y%m%d-%H%M%S")
+    if args.rehearsal:
+        batch_id = f"rehearsal-{batch_id}"
     report_dir = backend_dir / "data" / "knowledge-agent-evals" / "dialogue-loop" / batch_id
     secure_dir(report_dir)
     with tempfile.TemporaryDirectory(prefix="grove-dialogue-loop-") as temp_name:
@@ -241,6 +249,7 @@ def run_parent(args: argparse.Namespace) -> int:
         payload.update(
             {
                 "code": _git_state(repo_root),
+                "mode": "rehearsal" if args.rehearsal else "live" if args.compare else "preflight",
                 "budget": frozen_budget(),
                 "preflight": {
                     "ok": not blockers,
@@ -258,7 +267,7 @@ def run_parent(args: argparse.Namespace) -> int:
         messages = 0
         infrastructure = Counter()
         infrastructure_errors = []
-        if args.compare and args.live and not blockers:
+        if (args.rehearsal or (args.compare and args.live)) and not blockers:
             order = (
                 ("A", "new"),
                 ("A", "old"),
@@ -270,8 +279,7 @@ def run_parent(args: argparse.Namespace) -> int:
             for scenario, arm in order:
                 result_path = temp_dir / f"{scenario}-{arm}.json"
                 try:
-                    result = _child(
-                        [
+                    child_args = [
                             "--internal-arm",
                             arm,
                             "--scenario",
@@ -282,7 +290,11 @@ def run_parent(args: argparse.Namespace) -> int:
                             str(text_used),
                             "--embedding-used",
                             str(embedding_used),
-                        ],
+                        ]
+                    if args.rehearsal:
+                        child_args.append("--rehearsal")
+                    result = _child(
+                        child_args,
                         old_db if arm == "old" else new_db,
                         password,
                         result_path,
@@ -328,12 +340,27 @@ def run_parent(args: argparse.Namespace) -> int:
                 if not result["business_data_unchanged"]:
                     stopped = f"{arm}/{scenario} 业务表或附件指纹变化"
                     break
-        elif args.compare and blockers:
-            stopped = "预检失败，未启动真实评测"
+        elif (args.compare or args.rehearsal) and blockers:
+            stopped = "预检失败，未启动彩排或真实评测"
         original_after = domain_fingerprint(original, identity["workspace_id"])
         if original_after != original_before:
             stopped = "原业务库业务表或附件指纹发生变化"
-        payload["evaluation"] = evaluate(payload["results"], oracle)
+        if args.rehearsal:
+            payload["evaluation"] = {
+                "turns": [
+                    {
+                        "arm": item["arm"],
+                        "scenario": item["scenario"],
+                        "turn": index,
+                        "status": "pass",
+                        "reasons": ["仅验证基础设施全链路，不评价语义"],
+                    }
+                    for item in payload["results"]
+                    for index, _turn in enumerate(item["turns"], 1)
+                ]
+            }
+        else:
+            payload["evaluation"] = evaluate(payload["results"], oracle)
         payload["isolation"] = {
             "original_unchanged": original_before == original_after,
             "old_copy_business_unchanged": all(
@@ -365,14 +392,27 @@ def run_parent(args: argparse.Namespace) -> int:
         }
         payload["stop_reason"] = stopped
         payload["infrastructure_errors"] = infrastructure_errors
-        payload["conclusion"] = _conclusion(payload["results"], payload["evaluation"], stopped)
+        if args.rehearsal:
+            payload["conclusion"] = {
+                "architecture": "彩排不调用模型，不产生架构效果结论。",
+                "shared_tools": "彩排使用本地代表值，不验收共享工具语义。",
+                "old_database": "仅校验隔离副本和指纹，不执行旧流程业务链。",
+                "recommendation": (
+                    "六个子进程、二十四个检查点和最终报告全部完成时，"
+                    "只证明基础设施可进入真实实验决策。"
+                ),
+            }
+        else:
+            payload["conclusion"] = _conclusion(
+                payload["results"], payload["evaluation"], stopped
+            )
         md_path, json_path = write_report(report_dir, payload)
     print(f"预检：{'通过' if not blockers else '失败'}")
     for blocker in blockers:
         print(f"- {blocker}")
     print(f"报告：{md_path}")
     print(f"原始记录：{json_path}")
-    if args.compare:
+    if args.compare or args.rehearsal:
         qualifier = "已记录下界" if infrastructure_errors else "实际"
         print(
             f"已记录消息：{messages}/24，{qualifier}文本请求：{text_used}/192，"

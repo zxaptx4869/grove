@@ -15,6 +15,7 @@
 
 - [x] 3.1 实现旧流程隔离执行适配、design 第 7 节三组固定四轮输入和独立 SQL／来源真值；冻结输入摘要，不向 Agent 暴露预期，不硬编码数据 ID 或条数。
 - [x] 3.2 实现逐轮本地报告与整段评价，覆盖原始错误保留、usage 未知、依赖失败 blocked、材料变化及可比性不足；检查报告不泄露密码、密钥和隐藏推理。
+- [ ] 3.2a 实现并执行零模型全链路彩排，以真实结果类型的本地代表值走完两臂六个子进程、24 个检查点、资源汇总和报告；确认模型请求为 0。
 - [x] 3.3 运行相关无模型测试与 ruff，确认预检通过后，在真实评测获批的范围内只执行一批最多 24 条消息；若触发停止条件，保留未完成状态，不自动补跑。
 - [x] 3.4 逐轮审阅回答、对象和证据，输出继续／停止／证据不足的结论及实际资源消耗；明确实验不证明 App、旧工作集或生产恢复已通过。
 
@@ -37,6 +38,7 @@ git diff --check
 .venv/bin/pytest -q tests/test_knowledge_agent_dialogue_loop*.py
 .venv/bin/ruff check evals/dialogue_loop tests/test_knowledge_agent_dialogue_loop*.py
 .venv/bin/python -m evals.dialogue_loop --preflight
+.venv/bin/python -m evals.dialogue_loop --rehearsal
 
 # backend 目录：仅在真实评测范围获批且预检通过后执行一次
 .venv/bin/python -m evals.dialogue_loop --compare --live

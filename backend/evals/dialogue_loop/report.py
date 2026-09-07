@@ -177,11 +177,16 @@ def write_report(report_dir: Path, payload: dict) -> tuple[Path, Path]:
             f"未知（已记录下界 {usage['recorded_embedding_requests']} / 64）"
         )
     lines = [
-        "# 知识 Agent 统一对话循环首批真实对照",
+        (
+            "# 知识 Agent 统一对话循环全链路彩排"
+            if clean.get("mode") == "rehearsal"
+            else "# 知识 Agent 统一对话循环首批真实对照"
+        ),
         "",
         f"- 批次：`{clean['batch_id']}`",
         f"- 时间：{clean['created_at']}",
         f"- 代码提交：`{clean['code']['commit']}`",
+        f"- 运行模式：`{clean.get('mode', 'live')}`",
         f"- 固定用例摘要：`{clean['cases_sha256']}`",
         f"- 原业务库保持不变：{clean['isolation']['original_unchanged']}",
         f"- 已完整记录的用户消息：{usage['user_messages']} / 24",

@@ -38,10 +38,23 @@ def main() -> int:
             if sys.stdin.isatty()
             else sys.stdin.readline().rstrip("\n")
         )
-        from evals.dialogue_loop.execution import child_preflight, child_run
+        from evals.dialogue_loop.execution import child_preflight, child_rehearsal, child_run
 
         if args.internal_preflight:
             value = asyncio.run(child_preflight(args.db, args.original, password))
+        elif args.rehearsal:
+            value = asyncio.run(
+                child_rehearsal(
+                    args.db,
+                    args.original,
+                    password,
+                    args.internal_arm,
+                    args.scenario,
+                    args.text_used,
+                    args.embedding_used,
+                    args.result,
+                )
+            )
         else:
             value = asyncio.run(
                 child_run(
@@ -57,7 +70,7 @@ def main() -> int:
             )
         _write(args.result, value)
         return 0
-    if not args.preflight and not args.compare:
+    if not args.preflight and not args.rehearsal and not args.compare:
         args.preflight = True
     return run_parent(args)
 

@@ -7,6 +7,7 @@ import json
 from collections.abc import Callable
 from dataclasses import asdict
 from datetime import UTC, datetime
+from decimal import Decimal
 from pathlib import Path
 from time import perf_counter
 
@@ -445,6 +446,110 @@ async def child_run(
             "business_fingerprint_after": after,
             "batch_text_requests": ledger.batch_text_requests,
             "batch_embedding_requests": ledger.batch_embedding_requests,
+        }
+    )
+    return result
+
+
+def _rehearsal_scenario(
+    arm: str,
+    scenario_id: str,
+    checkpoint: Callable[[dict], None],
+) -> dict:
+    """用真实结果形状走完序列化链路，不伪装模型或工具输出。"""
+    scenario = next(item for item in SCENARIOS if item.id == scenario_id)
+    turns = []
+    for turn_number, message in enumerate(scenario.turns, 1):
+        turns.append(
+            {
+                "message": message,
+                "status": "completed",
+                "answer": "基础设施彩排占位结果，不参与语义评价。",
+                "blocks": [{"kind": "text", "text": "pipeline_fixture"}],
+                "public_run": {"status": "completed", "entry_result": None},
+                "error": None,
+                "duration_ms": 0,
+                "usage": {"cost": Decimal("0.000000"), "available": True},
+                "budget": {
+                    "batch_text_requests": 0,
+                    "batch_embedding_requests": 0,
+                    "turn": {"entry_reads": {turn_number}, "history": (arm, scenario_id)},
+                },
+                "tool_calls": [
+                    {
+                        "tool": "pipeline_fixture",
+                        "status": "completed",
+                        "result_summary": "本地代表值，未执行共享工具",
+                        "error": None,
+                        "duration_ms": 0,
+                    }
+                ],
+                "model_calls": [
+                    {
+                        "kind": "pipeline_fixture",
+                        "provider": "offline",
+                        "model": None,
+                        "duration_ms": 0,
+                        "usage": {"cost": Decimal("0.000000")},
+                        "error": None,
+                    }
+                ],
+            }
+        )
+        checkpoint(
+            {
+                "arm": arm,
+                "scenario": scenario_id,
+                "title": scenario.title,
+                "turns": turns,
+            }
+        )
+    return {"arm": arm, "scenario": scenario_id, "title": scenario.title, "turns": turns}
+
+
+async def child_rehearsal(
+    db_path: Path,
+    original_path: Path,
+    password: str,
+    arm: str,
+    scenario_id: str,
+    text_used: int,
+    embedding_used: int,
+    checkpoint_path: Path,
+) -> dict:
+    """认证并用隔离副本执行零模型的全链路基础设施彩排。"""
+    assert_isolated(db_path, original_path)
+    identity = await authenticate_demo(password)
+    before = domain_fingerprint(
+        db_path, identity["workspace_id"], attachment_root=original_path.parent
+    )
+
+    def checkpoint(partial: dict) -> None:
+        partial.update(
+            {
+                "partial": True,
+                "batch_text_requests": text_used,
+                "batch_embedding_requests": embedding_used,
+            }
+        )
+        checkpoint_path.write_text(
+            json.dumps(sanitize(partial), ensure_ascii=False, indent=2), encoding="utf-8"
+        )
+        checkpoint_path.chmod(0o600)
+
+    result = _rehearsal_scenario(arm, scenario_id, checkpoint)
+    after = domain_fingerprint(
+        db_path, identity["workspace_id"], attachment_root=original_path.parent
+    )
+    result.update(
+        {
+            "identity": identity,
+            "instrumentation": {"mode": "rehearsal", "model_calls": 0},
+            "business_data_unchanged": before == after,
+            "business_fingerprint_before": before,
+            "business_fingerprint_after": after,
+            "batch_text_requests": text_used,
+            "batch_embedding_requests": embedding_used,
         }
     )
     return result

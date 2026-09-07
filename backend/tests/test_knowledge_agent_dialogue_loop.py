@@ -9,7 +9,7 @@ from pydantic_ai.messages import ModelResponse, ToolCallPart
 from pydantic_ai.models.function import FunctionModel
 
 from evals.dialogue_loop.__main__ import _write
-from evals.dialogue_loop.cli import InfrastructureFailure
+from evals.dialogue_loop.cli import InfrastructureFailure, parser
 from evals.dialogue_loop.core import (
     BATCH_EMBEDDING_REQUESTS,
     BATCH_TEXT_REQUESTS,
@@ -19,6 +19,7 @@ from evals.dialogue_loop.core import (
     BudgetLedger,
     DialogueAnswer,
 )
+from evals.dialogue_loop.execution import _rehearsal_scenario
 from evals.dialogue_loop.instrumentation import Instrumentation
 from evals.dialogue_loop.isolation import assert_isolated, backup_database
 from evals.dialogue_loop.loop import (
@@ -225,6 +226,28 @@ def test_child_result_writer_serializes_decimal(tmp_path: Path) -> None:
     _write(result_path, {"usage": {"cost": Decimal("0.25")}})
     assert json.loads(result_path.read_text())["usage"]["cost"] == "0.25"
     assert result_path.stat().st_mode & 0o777 == 0o600
+
+
+def test_rehearsal_mode_is_separate_from_live_comparison() -> None:
+    assert parser().parse_args(["--rehearsal"]).rehearsal is True
+    with pytest.raises(SystemExit):
+        parser().parse_args(["--rehearsal", "--compare", "--live"])
+
+
+def test_rehearsal_writes_four_json_safe_checkpoints() -> None:
+    import json
+
+    checkpoints = []
+
+    def checkpoint(value: dict) -> None:
+        checkpoints.append(json.loads(json.dumps(sanitize(value))))
+
+    result = _rehearsal_scenario("new", "A", checkpoint)
+    assert len(checkpoints) == 4
+    assert [len(item["turns"]) for item in checkpoints] == [1, 2, 3, 4]
+    assert result["turns"][0]["model_calls"][0]["kind"] == "pipeline_fixture"
+    assert checkpoints[0]["turns"][0]["usage"]["cost"] == "0.000000"
+    assert checkpoints[0]["turns"][0]["budget"]["turn"]["entry_reads"] == [1]
 
 
 def test_budget_snapshot_is_json_serializable() -> None:
