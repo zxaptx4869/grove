@@ -24,6 +24,11 @@ from app.services.knowledge_agent.read_tools import (
 from app.services.knowledge_agent.structured_query_tools import (
     STRUCTURED_QUERY_TOOL_REGISTRY,
 )
+from app.services.knowledge_agent.directory_tools import (
+    DIRECTORY_TOOL_VERSION,
+    ListProjectDirectoriesParams,
+    list_project_directories_handler,
+)
 from app.services.knowledge_agent.tools import (
     RunToolContext,
     read_entries,
@@ -149,6 +154,12 @@ async def read_evidence_handler(
 
 KNOWLEDGE_AGENT_READ_TOOL_REGISTRY: dict[str, ReadToolSpec] = {
     **STRUCTURED_QUERY_TOOL_REGISTRY,
+    "list_project_directories": ReadToolSpec(
+        "list_project_directories",
+        DIRECTORY_TOOL_VERSION,
+        ListProjectDirectoriesParams,
+        list_project_directories_handler,
+    ),
     "search_knowledge": ReadToolSpec(
         "search_knowledge", READ_TOOL_VERSION, SearchKnowledgeParams, search_knowledge_handler
     ),

@@ -61,7 +61,7 @@ def _build_tree(nodes: list[Node], counts: dict[int, int] | None = None) -> list
     for node in nodes:
         by_parent.setdefault(node.parent_id, []).append(node)
     for siblings in by_parent.values():
-        siblings.sort(key=lambda item: item.position)
+        siblings.sort(key=lambda item: (item.position, item.id))
 
     def _children(parent_id: int | None) -> list[NodeOut]:
         result: list[NodeOut] = []

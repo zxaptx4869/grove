@@ -7,7 +7,13 @@ from pydantic import Field
 from sqlalchemy import select
 
 from app.db.session import async_session_factory
-from app.models import KnowledgeAgentRun, KnowledgeAgentToolCall, KnowledgeConversation
+from app.models import (
+    KnowledgeAgentRun,
+    KnowledgeAgentToolCall,
+    KnowledgeConversation,
+    Node,
+    Project,
+)
 from app.models.knowledge_agent import (
     ACTIVE_SLOT,
     RESULT_COMPLETENESS_COMPLETE,
@@ -19,6 +25,7 @@ from app.models.knowledge_agent import (
 from app.services.knowledge_agent.read_tool_adapters import (
     KNOWLEDGE_AGENT_READ_TOOL_REGISTRY,
 )
+from app.services.knowledge_agent.directory_tools import ListProjectDirectoriesParams
 from app.services.knowledge_agent.read_tools import (
     ReadToolBudget,
     ReadToolExecution,
@@ -229,10 +236,109 @@ def test_dispatcher_registry_contains_structured_and_existing_read_tools() -> No
     assert set(KNOWLEDGE_AGENT_READ_TOOL_REGISTRY) == {
         "query_entries",
         "aggregate_entries",
+        "list_project_directories",
         "search_knowledge",
         "read_entries",
         "read_evidence",
     }
+
+
+@pytest.mark.asyncio
+async def test_directory_tool_returns_real_order_empty_nodes_and_direct_children() -> None:
+    """目录查询只读真实 Node，空目录计入且后代不冒充一级目录。"""
+    async with async_session_factory() as db:
+        run, ctx = await _run_context(db)
+        project = (
+            await db.execute(select(Project).where(Project.id == ctx.project_id))
+        ).scalar_one()
+        root = Node(project_id=project.id, parent_id=None, name="根目录", position=0)
+        first = Node(project_id=project.id, parent_id=None, name="一号", position=1)
+        second = Node(project_id=project.id, parent_id=None, name="二号空目录", position=2)
+        db.add_all([root, first, second])
+        await db.flush()
+        child = Node(project_id=project.id, parent_id=first.id, name="子目录", position=0)
+        db.add(child)
+        await db.flush()
+        result = await dispatch_read_tool(
+            db,
+            ctx,
+            tool_name="list_project_directories",
+            tool_version="v1",
+            params={"project_id": project.id},
+            budget=ReadToolBudget(1, 1, 10_000),
+            cancel_check=_noop_cancel,
+            registry=KNOWLEDGE_AGENT_READ_TOOL_REGISTRY,
+        )
+        nested = await dispatch_read_tool(
+            db,
+            ctx,
+            tool_name="list_project_directories",
+            tool_version="v1",
+            params={"project_id": project.id, "parent_node_id": first.id},
+            budget=ReadToolBudget(1, 1, 10_000),
+            cancel_check=_noop_cancel,
+            registry=KNOWLEDGE_AGENT_READ_TOOL_REGISTRY,
+        )
+
+    assert result.status == TOOL_COMPLETED
+    assert result.completeness == RESULT_COMPLETENESS_COMPLETE
+    assert result.payload["total_count"] == 4
+    assert [item["name"] for item in result.payload["items"]] == [
+        "根",
+        "根目录",
+        "一号",
+        "二号空目录",
+    ]
+    assert result.payload["items"][3]["entry_count"] == 0
+    assert nested.payload["total_count"] == 1
+    assert nested.payload["items"][0]["name"] == "子目录"
+
+
+@pytest.mark.asyncio
+async def test_directory_tool_rejects_foreign_workspace_and_parent() -> None:
+    """项目与父节点归属错误都拒绝且不回退到根目录。"""
+    async with async_session_factory() as db:
+        run, ctx = await _run_context(db)
+        foreign_user = await create_user(db, "foreign-directory")
+        foreign_workspace = await create_workspace(db, foreign_user)
+        foreign_project = await create_project(db, foreign_workspace, "同名项目")
+        local_project = (
+            await db.execute(select(Project).where(Project.id == ctx.project_id))
+        ).scalar_one()
+        foreign_node = Node(project_id=foreign_project.id, parent_id=None, name="不可见", position=0)
+        db.add(foreign_node)
+        await db.flush()
+
+        foreign_result = await dispatch_read_tool(
+            db,
+            ctx,
+            tool_name="list_project_directories",
+            tool_version="v1",
+            params={"project_name": "同名项目"},
+            budget=ReadToolBudget(1, 1, 10_000),
+            cancel_check=_noop_cancel,
+            registry=KNOWLEDGE_AGENT_READ_TOOL_REGISTRY,
+        )
+        wrong_parent = await dispatch_read_tool(
+            db,
+            ctx,
+            tool_name="list_project_directories",
+            tool_version="v1",
+            params={"project_id": local_project.id, "parent_node_id": foreign_node.id},
+            budget=ReadToolBudget(1, 1, 10_000),
+            cancel_check=_noop_cancel,
+            registry=KNOWLEDGE_AGENT_READ_TOOL_REGISTRY,
+        )
+
+    assert foreign_result.status == TOOL_DENIED
+    assert "项目不存在" in (foreign_result.error or "")
+    assert wrong_parent.status == TOOL_DENIED
+    assert "父节点不属于指定项目" in (wrong_parent.error or "")
+
+
+def test_directory_params_require_explicit_project_reference() -> None:
+    with pytest.raises(ValueError, match="project_id 或 project_name"):
+        ListProjectDirectoriesParams()
 
 
 @pytest.mark.asyncio
