@@ -524,28 +524,33 @@ export function WorkbenchApp() {
             新建对话
           </Button>
           <nav aria-label="实验对话">
-            {state.sessions.map((session) => (
-              <section key={session.id}>
-                <h2>{session.active ? '本次运行' : formatDate(session.created_at)}</h2>
-                {session.conversations.map((conversation) => (
-                  <button
-                    type="button"
-                    className={
-                      selected?.id === conversation.id
-                        ? 'conversation-item selected'
-                        : 'conversation-item'
-                    }
-                    onClick={() => setSelectedId(conversation.id)}
-                    key={conversation.id}
-                  >
-                    <span>{conversation.title}</span>
-                    <small>
-                      {conversation.read_only ? '只读' : `${conversation.turns.length} 轮`}
-                    </small>
-                  </button>
-                ))}
-              </section>
-            ))}
+            {state.sessions
+              .filter((session) => session.active || session.conversations.length > 0)
+              .map((session) => (
+                <section key={session.id}>
+                  <h2>
+                    {session.active ? '本次运行' : formatDate(session.created_at)}
+                    {!session.active && session.offline ? ' · 离线验收' : ''}
+                  </h2>
+                  {session.conversations.map((conversation) => (
+                    <button
+                      type="button"
+                      className={
+                        selected?.id === conversation.id
+                          ? 'conversation-item selected'
+                          : 'conversation-item'
+                      }
+                      onClick={() => setSelectedId(conversation.id)}
+                      key={conversation.id}
+                    >
+                      <span>{conversation.title}</span>
+                      <small>
+                        {conversation.read_only ? '只读' : `${conversation.turns.length} 轮`}
+                      </small>
+                    </button>
+                  ))}
+                </section>
+              ))}
           </nav>
           <button
             type="button"
