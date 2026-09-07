@@ -159,4 +159,26 @@ git diff --check
 - [x] 8.1 将完整 Grove 规则改为每次 run 的当前 instructions，并清除历史旧 system；用实际 FunctionModel 请求覆盖首轮、续聊、结构化纠正和独立收尾，确认不重复注入。
 - [x] 8.2 为文本调用记录有界公开响应、结构化调用参数、finish reason、错误类别和异常链；区分 schema、引用、截断、预算和 Provider 错误，不记录隐藏推理或敏感配置。
 - [x] 8.3 将输入估算改为实际 Provider 请求形状投影，记录组件、估算版本、调用来源和已派发请求误差；保持 9000／12000 token 边界及一次收尾预算。
-- [ ] 8.4 完成相关无模型回归、ruff、编译、严格 OpenSpec 校验和最新代码全链路彩排；保留第一、第二版原始 JSON，不调用真实模型，并提交下一次最小真实诊断计划。
+- [x] 8.4 完成相关无模型回归、ruff、编译、严格 OpenSpec 校验和最新代码全链路彩排；保留第一、第二版原始 JSON，不调用真实模型，并提交下一次最小真实诊断计划。
+
+### 请求规则、诊断与估算修复验证
+
+- 在提交 `b224d5b` 上执行 48 项聚焦无模型回归，实际检查 `FunctionModel` 收到的
+  instructions 和消息：首轮、续聊、结构化纠正及独立收尾均带当前完整规则，历史 system
+  被清除且没有重复；schema、引用、截断、预算、超时和 Provider 错误可区分，隐藏思考不落报告。
+- 最新无模型预检报告：
+  `backend/data/knowledge-agent-evals/dialogue-loop/prototype-v2-20260907-171749/report.md`。
+  两臂身份、Provider、工具注册、请求计数、当前规则和报告诊断控制均通过，无阻断，模型请求为 0。
+- 最新 v2 全链路彩排报告：
+  `backend/data/knowledge-agent-evals/dialogue-loop/prototype-v2-rehearsal-20260907-171842/report.md`。
+  A-E 两臂 40/40 条消息完成，文本／向量请求均为 0，无停止原因或基础设施异常；原库及两臂副本
+  业务指纹不变。报告目录权限为 700、文件权限为 600，敏感模式扫描无命中。
+- 第一版 `20260907-141328/report.json` SHA-256 仍为
+  `85b46a5af9c7671550b311c05a156bbc72e79602d257bf0c0ca19a9578801024`；第二版既有真实报告
+  `prototype-v2-20260907-160103/report.json` 仍为
+  `811e43e2490b6e6c1d9d2a70145a2720592517be5f414e33501d9d95c7163929`，均未补写或覆盖。
+- 新估算只投影当前 Provider 请求表示并区分 `dialogue_agent`、`tool_internal` 和旧流程；9000／12000
+  边界及请求预算未变。既有真实报告没有保存完整请求表示，不能离线可靠计算新估算误差，被拦截请求
+  的真实 usage 继续标记未知。C 组首轮类型误解不在本轮修复范围，未宣称已解决。
+- 最小真实诊断清单：`backend/evals/dialogue-loop-v2-minimal-diagnostic-plan.md`。清单状态为待另行批准，
+  只建议新循环 A1-A2、B1-B2 共最多 4 条用户消息、20 次文本和 8 次向量请求；本轮未调用真实模型。
