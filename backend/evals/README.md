@@ -1,5 +1,38 @@
 # 知识 Agent 真实多轮评测
 
+## 统一对话循环隔离实验
+
+`evals.dialogue_loop` 是 `prototype-knowledge-agent-dialogue-loop` 的项目内命令行
+实验入口，不被正式 App、API 或 Worker 导入。默认只执行无模型预检；真实固定对照
+必须显式同时传入 `--compare --live`：
+
+```bash
+# 无模型：身份、快照、Worker、工具白名单、模型配置与预算可控性检查
+.venv/bin/python -m evals.dialogue_loop --preflight
+
+# 仅在预检通过后运行一批三组 × 四轮 × 两臂，最多 24 条用户消息
+.venv/bin/python -m evals.dialogue_loop --compare --live
+```
+
+两种模式都通过终端隐藏读取 demo 密码，只在父进程内存和子进程标准输入中短暂传递；
+密码不接受命令参数或环境变量，也不写入文件。Provider 与 API key 继续由应用现有配置
+和密钥存储读取；报告只保存 provider/model 与密钥是否可用，不保存密钥值。
+
+入口先用 SQLite backup 创建一致 seed，再为旧流程、新循环建立各自的 600 权限临时
+数据库。子进程在导入应用数据库模块前绑定副本，并关闭全部后台 Worker；退出时临时目录
+整体清理。运行前后核对九张业务表和附件文件指纹，副本只允许新增实验 Conversation、
+Message、Run、Evidence 与审计，原业务库不得写入。
+
+冻结边界为每轮文本请求 12、向量请求 4、新循环工具动作 8、不同 Entry 30、Evidence 20，
+求解 120 秒及收尾 15 秒；整批文本请求 192、向量请求 64。模型请求和框架重试在底层
+派发前计数，工具并发最多 2 且使用独立 AsyncSession。输入最多 48 KiB，每次输出最多
+2000 token。达到上限、业务数据变化或相同基础设施异常第二次发生即停止，不补跑。
+
+报告写入忽略目录
+`backend/data/knowledge-agent-evals/dialogue-loop/<batch>/report.{md,json}`，目录权限 700、
+文件权限 600。报告保留实际回答、工具状态与原始错误、模型调用、usage 可得性和耗时；
+缺少 usage 标记未知。自动检查只证明确定性边界，解释质量和引用是否充分仍须逐轮人工审阅。
+
 本工具通过运行中的 Grove HTTP API 登录既有 demo 账号、创建 Conversation、逐轮提交
 消息并轮询 Worker 的实际结果。模型和密钥继续使用后端已有配置。脚本不注册账号、
 不修改业务实现、不创建测试 Entry、不直接调用模型，也不把预期答案发送给 Agent。
