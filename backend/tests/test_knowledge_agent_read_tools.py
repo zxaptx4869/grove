@@ -22,10 +22,10 @@ from app.models.knowledge_agent import (
     TOOL_COMPLETED,
     TOOL_DENIED,
 )
+from app.services.knowledge_agent.directory_tools import ListProjectDirectoriesParams
 from app.services.knowledge_agent.read_tool_adapters import (
     KNOWLEDGE_AGENT_READ_TOOL_REGISTRY,
 )
-from app.services.knowledge_agent.directory_tools import ListProjectDirectoriesParams
 from app.services.knowledge_agent.read_tools import (
     ReadToolBudget,
     ReadToolExecution,
@@ -305,7 +305,9 @@ async def test_directory_tool_rejects_foreign_workspace_and_parent() -> None:
         local_project = (
             await db.execute(select(Project).where(Project.id == ctx.project_id))
         ).scalar_one()
-        foreign_node = Node(project_id=foreign_project.id, parent_id=None, name="不可见", position=0)
+        foreign_node = Node(
+            project_id=foreign_project.id, parent_id=None, name="不可见", position=0
+        )
         db.add(foreign_node)
         await db.flush()
 

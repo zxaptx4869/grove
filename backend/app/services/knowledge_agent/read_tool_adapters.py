@@ -16,6 +16,11 @@ from app.models.knowledge_agent import (
     TOOL_EMPTY,
     TOOL_PARTIAL,
 )
+from app.services.knowledge_agent.directory_tools import (
+    DIRECTORY_TOOL_VERSION,
+    ListProjectDirectoriesParams,
+    list_project_directories_handler,
+)
 from app.services.knowledge_agent.read_tools import (
     ReadToolExecution,
     ReadToolParams,
@@ -23,11 +28,6 @@ from app.services.knowledge_agent.read_tools import (
 )
 from app.services.knowledge_agent.structured_query_tools import (
     STRUCTURED_QUERY_TOOL_REGISTRY,
-)
-from app.services.knowledge_agent.directory_tools import (
-    DIRECTORY_TOOL_VERSION,
-    ListProjectDirectoriesParams,
-    list_project_directories_handler,
 )
 from app.services.knowledge_agent.tools import (
     RunToolContext,

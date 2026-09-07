@@ -10,13 +10,12 @@ from app.models import Entry, Node, Project, WorkspaceMember
 from app.models.knowledge_agent import (
     RESULT_COMPLETENESS_COMPLETE,
     RESULT_COMPLETENESS_UNKNOWN,
+    TOOL_COMPLETED,
     TOOL_DENIED,
     TOOL_EMPTY,
-    TOOL_COMPLETED,
 )
 from app.services.knowledge_agent.read_tools import ReadToolExecution, ReadToolParams
 from app.services.knowledge_agent.tools import RunToolContext
-
 
 DIRECTORY_TOOL_VERSION = "v1"
 
@@ -29,7 +28,7 @@ class ListProjectDirectoriesParams(ReadToolParams):
     parent_node_id: int | None = Field(default=None, ge=1)
 
     @model_validator(mode="after")
-    def require_project_reference(self) -> "ListProjectDirectoriesParams":
+    def require_project_reference(self) -> ListProjectDirectoriesParams:
         if self.project_id is None and not (self.project_name or "").strip():
             raise ValueError("必须提供 project_id 或 project_name")
         if self.project_name is not None:
