@@ -27,7 +27,8 @@
   `tests/test_knowledge_agent_dialogue_loop.py` 合计 60 项通过；覆盖连续轮次、请求去重、列表顺序、
   来源、公开诊断、反馈、导出、Cookie、身份字段拒绝、同源限制、取消、Provider 失败、预算耗尽、
   隔离指纹异常和重启只读。取消用例确认没有文本请求和独立收尾。
-- 前端组件：工作台 4 项 Vitest 通过；TypeScript/Vite 生产构建通过；全库 ESLint 0 error，保留
+- 前端组件：工作台 5 项、前端全量 133 项 Vitest 通过；TypeScript/Vite 生产构建通过；全库
+  ESLint 0 error，保留
   两项既有 `DirectoryDraftDialog.tsx` Hook dependency warning，本 change 未修改该文件。
 - Python：相关 ruff 与 compileall 通过；`git diff --check` 通过。
 - 完整离线服务通过浏览器验收：实际发送连续消息，渲染可信统计、两个有序 Entry、可展开 Evidence、
