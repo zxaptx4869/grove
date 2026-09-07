@@ -72,7 +72,16 @@ def main() -> int:
             )
         _write(args.result, value)
         return 0
-    if not args.preflight and not args.rehearsal and not args.compare and not args.regrade:
+    if not any(
+        (
+            args.preflight,
+            args.rehearsal,
+            args.compare,
+            args.regrade,
+            args.save_demo_password,
+            args.forget_demo_password,
+        )
+    ):
         args.preflight = True
     return run_parent(args)
 

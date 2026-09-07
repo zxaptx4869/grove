@@ -7,6 +7,12 @@
 必须显式同时传入 `--compare --live`：
 
 ```bash
+# 首次隐藏输入并校验后，将 demo 密码保存到当前 Workspace 的系统钥匙串
+.venv/bin/python -m evals.dialogue_loop --save-demo-password
+
+# 不再需要保存的实验密码时显式删除
+.venv/bin/python -m evals.dialogue_loop --forget-demo-password
+
 # 无模型：身份、快照、Worker、工具白名单、模型配置与预算可控性检查
 .venv/bin/python -m evals.dialogue_loop --preflight
 
@@ -56,8 +62,10 @@ Provider 的真实单请求输入上限仍为 12000 token。达到软阈值或�
 [`dialogue-loop-v2-minimal-diagnostic-plan.md`](dialogue-loop-v2-minimal-diagnostic-plan.md)，
 该清单仍需另行批准。
 
-两种模式都通过终端隐藏读取 demo 密码，只在父进程内存和子进程标准输入中短暂传递；
-密码不接受命令参数或环境变量，也不写入文件。Provider 与 API key 继续由应用现有配置
+实验运行优先从按 Workspace 隔离的系统钥匙串项读取 demo 密码；没有保存或钥匙串读取失败时
+才通过终端隐藏询问。保存必须使用显式命令，并在隔离副本认证成功后写入；删除也必须显式执行。
+密码只在父进程内存和子进程标准输入中短暂传递，不接受命令参数或环境变量，也不写入仓库、
+临时数据库或报告。Provider 与 API key 继续由应用现有配置
 和密钥存储读取；报告只保存 provider/model 与密钥是否可用，不保存密钥值。
 
 入口先用 SQLite backup 创建一致 seed，再为旧流程、新循环建立各自的 600 权限临时

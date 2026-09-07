@@ -21,6 +21,8 @@ from pydantic_ai.models.function import FunctionModel
 from pydantic_ai.usage import RequestUsage
 from pydantic_core import to_jsonable_python
 
+from app.services.secret_store import MemorySecretStore
+from evals.dialogue_loop import cli as cli_module
 from evals.dialogue_loop import loop as loop_module
 from evals.dialogue_loop.__main__ import _write
 from evals.dialogue_loop.cli import (
@@ -40,6 +42,13 @@ from evals.dialogue_loop.core import (
     BudgetExceeded,
     BudgetLedger,
     DialogueAnswer,
+)
+from evals.dialogue_loop.credentials import (
+    DEMO_PASSWORD_PROVIDER,
+    delete_demo_password,
+    load_demo_password,
+    password_for_run,
+    save_demo_password,
 )
 from evals.dialogue_loop.execution import _rehearsal_scenario, _v2_control_preflight
 from evals.dialogue_loop.instrumentation import (
@@ -78,6 +87,94 @@ def _state() -> LoopState:
     )
     state.begin_turn(4, "测试")
     return state
+
+
+class BrokenSecretStore(MemorySecretStore):
+    def get(self, key: str) -> str | None:
+        raise RuntimeError("不得进入输出的敏感异常详情")
+
+
+def test_demo_password_uses_workspace_keychain_without_prompt() -> None:
+    store = MemorySecretStore()
+    save_demo_password(79, "demo-secret", store=store)
+
+    password, from_keychain, error = password_for_run(
+        79,
+        store=store,
+        prompt=lambda _message: pytest.fail("已有钥匙串密码时不应询问"),
+    )
+
+    assert password == "demo-secret"
+    assert from_keychain is True
+    assert error is None
+    assert store.get(f"79:{DEMO_PASSWORD_PROVIDER}") == "demo-secret"
+
+
+def test_demo_password_missing_falls_back_to_hidden_prompt() -> None:
+    password, from_keychain, error = password_for_run(
+        79,
+        store=MemorySecretStore(),
+        prompt=lambda message: "prompt-secret" if "不写入报告" in message else "",
+    )
+
+    assert password == "prompt-secret"
+    assert from_keychain is False
+    assert error is None
+
+
+def test_demo_password_keychain_error_is_safe_and_falls_back() -> None:
+    password, from_keychain, error = password_for_run(
+        79,
+        store=BrokenSecretStore(),
+        prompt=lambda _message: "prompt-secret",
+    )
+
+    assert password == "prompt-secret"
+    assert from_keychain is False
+    assert error == "系统钥匙串读取失败（RuntimeError）"
+    assert "敏感异常详情" not in error
+
+
+def test_demo_password_can_be_deleted_and_empty_value_is_rejected() -> None:
+    store = MemorySecretStore()
+    save_demo_password(79, "demo-secret", store=store)
+    delete_demo_password(79, store=store)
+    password, error = load_demo_password(79, store=store)
+
+    assert password is None
+    assert error is None
+    with pytest.raises(ValueError, match="不能为空"):
+        save_demo_password(79, "", store=store)
+
+
+def test_password_management_modes_are_mutually_exclusive() -> None:
+    args = parser().parse_args(["--save-demo-password"])
+    assert args.save_demo_password is True
+    with pytest.raises(SystemExit):
+        parser().parse_args(["--save-demo-password", "--preflight"])
+
+
+def test_save_mode_does_not_write_keychain_before_isolated_authentication(monkeypatch) -> None:
+    identity = {"user_id": 79, "workspace_id": 79, "role": "owner"}
+    monkeypatch.setattr(cli_module, "_source_database", lambda _backend: Path("original.db"))
+    monkeypatch.setattr(cli_module, "identity_snapshot", lambda _path: identity)
+    monkeypatch.setattr(cli_module, "backup_database", lambda _source, _target: None)
+    monkeypatch.setattr(cli_module.getpass, "getpass", lambda _message: "demo-secret")
+    monkeypatch.setattr(
+        cli_module,
+        "_child",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            InfrastructureFailure("ValueError: demo 账号或密码错误", 1)
+        ),
+    )
+    monkeypatch.setattr(
+        cli_module,
+        "save_demo_password",
+        lambda *_args, **_kwargs: pytest.fail("认证失败时不得写入钥匙串"),
+    )
+
+    with pytest.raises(InfrastructureFailure, match="demo 账号或密码错误"):
+        cli_module.run_parent(parser().parse_args(["--save-demo-password"]))
 
 
 @pytest.mark.asyncio

@@ -22,6 +22,11 @@ from evals.dialogue_loop.core import (
     VARIANT_SCENARIOS,
     frozen_budget,
 )
+from evals.dialogue_loop.credentials import (
+    delete_demo_password,
+    password_for_run,
+    save_demo_password,
+)
 from evals.dialogue_loop.isolation import (
     backup_database,
     domain_fingerprint,
@@ -58,6 +63,16 @@ def parser() -> argparse.ArgumentParser:
         "--rehearsal", action="store_true", help="无模型走完两臂编排、检查点与报告"
     )
     mode.add_argument("--compare", action="store_true", help="执行固定两臂对照")
+    mode.add_argument(
+        "--save-demo-password",
+        action="store_true",
+        help="隐藏读取并校验后保存 demo 密码到系统钥匙串",
+    )
+    mode.add_argument(
+        "--forget-demo-password",
+        action="store_true",
+        help="删除当前 demo Workspace 的实验密码钥匙串项",
+    )
     mode.add_argument(
         "--regrade", type=Path, metavar="REPORT_JSON", help="只重评已保存报告，不调用模型"
     )
@@ -324,8 +339,44 @@ def run_parent(args: argparse.Namespace) -> int:
     backend_dir = repo_root / "backend"
     original = _source_database(backend_dir)
     identity = identity_snapshot(original)
+    workspace_id = identity["workspace_id"]
+    if args.forget_demo_password:
+        try:
+            delete_demo_password(workspace_id)
+        except Exception as exc:
+            raise RuntimeError(f"系统钥匙串删除失败（{type(exc).__name__}）") from None
+        print("已删除当前 demo Workspace 的实验密码钥匙串项。")
+        return 0
+    if args.save_demo_password:
+        password = getpass.getpass("demo 密码（验证后保存到系统钥匙串）：")
+        with tempfile.TemporaryDirectory(prefix="grove-dialogue-loop-credential-") as temp_name:
+            temp_dir = Path(temp_name)
+            temp_dir.chmod(0o700)
+            copy_db = temp_dir / "credential-check.db"
+            result_path = temp_dir / "credential-check.json"
+            backup_database(original, copy_db)
+            verified = _child(
+                ["--internal-preflight", "--original", str(original)],
+                copy_db,
+                password,
+                result_path,
+            )
+        if verified["identity"] != identity:
+            raise RuntimeError("隔离身份校验结果与原库身份快照不一致")
+        try:
+            save_demo_password(workspace_id, password)
+        except Exception as exc:
+            raise RuntimeError(f"系统钥匙串保存失败（{type(exc).__name__}）") from None
+        print("demo 密码已验证并保存到当前 Workspace 的系统钥匙串。")
+        return 0
     original_before = domain_fingerprint(original, identity["workspace_id"])
-    password = getpass.getpass("demo 密码（仅内存传递，不写入报告）：")
+    password, from_keychain, keychain_error = password_for_run(
+        workspace_id, prompt=getpass.getpass
+    )
+    if keychain_error:
+        print(f"{keychain_error}，已回退到隐藏输入。", file=sys.stderr)
+    elif from_keychain:
+        print("已从系统钥匙串读取 demo 密码。")
     timestamp = datetime.now().strftime("%Y%m%d-%H%M%S")
     batch_id = f"{EXPERIMENT_VERSION}-{timestamp}"
     if args.rehearsal:
