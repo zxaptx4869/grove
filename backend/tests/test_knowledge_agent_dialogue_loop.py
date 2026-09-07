@@ -14,6 +14,7 @@ from pydantic_ai.messages import (
 )
 from pydantic_ai.models.function import FunctionModel
 
+from evals.dialogue_loop import loop as loop_module
 from evals.dialogue_loop.__main__ import _write
 from evals.dialogue_loop.cli import (
     InfrastructureFailure,
@@ -38,6 +39,7 @@ from evals.dialogue_loop.loop import (
     SYSTEM_PROMPT,
     LoopState,
     _count_params,
+    _current_material_history,
     _entry_set,
     _group_params,
     _model_payload,
@@ -644,6 +646,29 @@ def test_budget_snapshot_is_json_serializable() -> None:
     assert '"entry_reads": [3, 9]' in raw
 
 
+def test_timeout_finalize_history_pairs_all_current_verified_materials() -> None:
+    state = _state()
+    handle = state.store_result("statistic", {"value": 6}, "completed", "complete")
+    state.tool_events.append(
+        {
+            "tool": "count_entries",
+            "result_handle": handle,
+            "status": "completed",
+            "completeness": "complete",
+            "params": {"project_scope": "all"},
+        }
+    )
+
+    messages = _current_material_history(state, "一共多少条", [], state.tool_events)
+    call = messages[1].parts[0]
+    returned = messages[2].parts[0]
+
+    assert isinstance(call, ToolCallPart)
+    assert isinstance(returned, ToolReturnPart)
+    assert call.tool_call_id == returned.tool_call_id
+    assert returned.content["payload"]["value"] == 6
+
+
 @pytest.mark.asyncio
 async def test_structured_output_gets_only_one_bounded_correction() -> None:
     state = _state()
@@ -712,6 +737,181 @@ async def test_soft_input_limit_forces_one_budgeted_finalize_request() -> None:
     assert calls[0][1].function_tools == []
     assert turn["budget"]["turn"]["text_requests"] == 1
     assert turn["context"]["input_estimates"][0]["finalize_only"] is True
+    assert turn["finalization"]["status"] == "completed"
+    assert turn["finalization"]["reason"] == "input_soft_limit"
+
+
+@pytest.mark.asyncio
+async def test_solve_timeout_uses_at_most_one_separate_finalize_request(monkeypatch) -> None:
+    import asyncio
+
+    monkeypatch.setattr(loop_module, "PER_TURN_SECONDS", 0.01)
+    state = _state()
+    state.instrumentation.context_policy_enabled = True
+    calls = []
+
+    async def respond(messages, info):
+        calls.append((messages, info))
+        if len(calls) == 1:
+            await asyncio.sleep(1)
+        await asyncio.sleep(0.03)
+        return ModelResponse(
+            parts=[
+                ToolCallPart(
+                    info.output_tools[0].name,
+                    {"blocks": [{"kind": "text", "text": "使用已有材料完成收尾"}]},
+                )
+            ]
+        )
+
+    agent = build_agent(BudgetedModel(FunctionModel(respond), state.instrumentation))
+    turn, _ = await run_turn(agent, state, "请查询后回答", [])
+
+    assert turn["status"] == "completed"
+    assert turn["solve_error"] == "TimeoutError: 求解超过 0.01 秒"
+    assert turn["finalization"]["reason"] == "solve_timeout"
+    assert turn["finalization"]["status"] == "completed"
+    assert turn["budget"]["turn"]["text_requests"] == 2
+    assert len(calls) == 2
+    assert calls[1][1].function_tools == []
+
+
+@pytest.mark.asyncio
+async def test_last_batch_text_request_is_reserved_for_finalize() -> None:
+    state = _state()
+    state.instrumentation.context_policy_enabled = True
+    state.ledger.batch_text_requests = BATCH_TEXT_REQUESTS - 1
+    calls = []
+
+    def respond(messages, info):
+        calls.append((messages, info))
+        return ModelResponse(
+            parts=[
+                ToolCallPart(
+                    info.output_tools[0].name,
+                    {"blocks": [{"kind": "text", "text": "最后一次请求用于收尾"}]},
+                )
+            ]
+        )
+
+    agent = build_agent(BudgetedModel(FunctionModel(respond), state.instrumentation))
+    turn, _ = await run_turn(agent, state, "请回答", [])
+
+    assert turn["status"] == "completed"
+    assert turn["finalization"]["reason"] == "text_request_budget"
+    assert turn["finalization"]["attempted"] is True
+    assert turn["budget"]["batch_text_requests"] == BATCH_TEXT_REQUESTS
+    assert turn["budget"]["turn"]["text_requests"] == 1
+    assert len(calls) == 1
+
+
+@pytest.mark.asyncio
+async def test_finalize_provider_failure_is_not_retried_and_keeps_verified_results() -> None:
+    state = _state()
+    state.instrumentation.context_policy_enabled = True
+    handle = state.store_result("statistic", {"value": 7}, "completed", "complete")
+    calls = []
+
+    def respond(messages, info):
+        calls.append((messages, info))
+        raise RuntimeError("provider unavailable")
+
+    agent = build_agent(BudgetedModel(FunctionModel(respond), state.instrumentation))
+    history = [ModelRequest(parts=[UserPromptPart(content="甲" * 9_500)])]
+    turn, _ = await run_turn(agent, state, "请总结", history)
+
+    assert turn["status"] == "failed"
+    assert turn["finalization"]["status"] == "failed"
+    assert turn["finalization"]["attempted"] is True
+    assert len(calls) == 1
+    assert turn["budget"]["turn"]["text_requests"] == 1
+    assert any(block.get("handle") == handle for block in turn["blocks"])
+    assert "provider unavailable" in turn["error"]
+
+
+@pytest.mark.asyncio
+async def test_finalize_timeout_is_not_retried_and_has_real_deadline(monkeypatch) -> None:
+    import asyncio
+
+    monkeypatch.setattr(loop_module, "FINALIZE_SECONDS", 0.01)
+    state = _state()
+    state.instrumentation.context_policy_enabled = True
+    state.store_result("statistic", {"value": 5}, "completed", "complete")
+    calls = []
+
+    async def respond(messages, info):
+        calls.append((messages, info))
+        await asyncio.sleep(1)
+
+    agent = build_agent(BudgetedModel(FunctionModel(respond), state.instrumentation))
+    history = [ModelRequest(parts=[UserPromptPart(content="甲" * 9_500)])]
+    turn, _ = await run_turn(agent, state, "请总结", history)
+
+    assert turn["status"] == "failed"
+    assert turn["solve_error"] is None
+    assert turn["finalization"]["status"] == "timed_out"
+    assert len(calls) == 1
+    assert turn["budget"]["turn"]["text_requests"] == 1
+    assert turn["duration_ms"] < 500
+    assert "已验证统计：5" in turn["answer"]
+
+
+@pytest.mark.asyncio
+async def test_invalid_finalize_output_does_not_trigger_model_retry() -> None:
+    state = _state()
+    state.instrumentation.context_policy_enabled = True
+    handle = state.store_result("statistic", {"value": 9}, "completed", "complete")
+    calls = []
+
+    def respond(messages, info):
+        calls.append((messages, info))
+        return ModelResponse(
+            parts=[
+                ToolCallPart(
+                    info.output_tools[0].name,
+                    {
+                        "blocks": [
+                            {"kind": "statistic", "result_handle": "forged", "label": "总数"}
+                        ]
+                    },
+                )
+            ]
+        )
+
+    agent = build_agent(BudgetedModel(FunctionModel(respond), state.instrumentation))
+    history = [ModelRequest(parts=[UserPromptPart(content="甲" * 9_500)])]
+    turn, _ = await run_turn(agent, state, "请总结", history)
+
+    assert turn["status"] == "failed"
+    assert turn["finalization"]["status"] == "invalid_output"
+    assert len(calls) == 1
+    assert turn["budget"]["turn"]["text_requests"] == 1
+    assert any(block.get("handle") == handle for block in turn["blocks"])
+    assert "未重试模型请求" in turn["error"]
+
+
+@pytest.mark.asyncio
+async def test_no_remaining_budget_does_not_dispatch_or_claim_finalize() -> None:
+    state = _state()
+    state.instrumentation.context_policy_enabled = True
+    state.ledger.batch_text_requests = BATCH_TEXT_REQUESTS
+    state.store_result("statistic", {"value": 3}, "completed", "complete")
+    calls = []
+
+    def respond(messages, info):
+        calls.append((messages, info))
+        raise AssertionError("没有预算时不应派发")
+
+    agent = build_agent(BudgetedModel(FunctionModel(respond), state.instrumentation))
+    turn, _ = await run_turn(agent, state, "请总结", [])
+
+    assert turn["status"] == "failed"
+    assert turn["finalization"]["status"] == "not_dispatched"
+    assert turn["finalization"]["attempted"] is False
+    assert turn["budget"]["batch_text_requests"] == BATCH_TEXT_REQUESTS
+    assert calls == []
+    assert "未派发模型收尾" in turn["answer"]
+    assert any(item["kind"] == "text_not_dispatched" for item in turn["model_calls"])
 
 
 @pytest.mark.asyncio
@@ -719,13 +919,21 @@ async def test_cancellation_does_not_turn_into_normal_answer() -> None:
     import asyncio
 
     state = _state()
+    state.instrumentation.context_policy_enabled = True
+    calls = 0
 
     async def respond(messages, info):
+        nonlocal calls
         del messages, info
+        calls += 1
         await asyncio.sleep(10)
 
-    task = asyncio.create_task(run_turn(build_agent(FunctionModel(respond)), state, "等待", []))
+    model = BudgetedModel(FunctionModel(respond), state.instrumentation)
+    task = asyncio.create_task(run_turn(build_agent(model), state, "等待", []))
     await asyncio.sleep(0)
     task.cancel()
     with pytest.raises(asyncio.CancelledError):
         await task
+    assert calls <= 1
+    assert state.instrumentation.finalize_attempted is False
+    assert state.instrumentation.finalize_reason is None

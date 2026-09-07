@@ -460,8 +460,11 @@ def write_report(report_dir: Path, payload: dict) -> tuple[Path, Path]:
                             {
                                 "status": turn["status"],
                                 "error": turn.get("error"),
+                                "solve_error": turn.get("solve_error"),
+                                "finalization": turn.get("finalization"),
                                 "usage": turn.get("usage"),
                                 "budget": turn.get("budget"),
+                                "context": turn.get("context"),
                                 "tool_calls": turn.get("tool_calls", []),
                                 "model_calls": turn.get("model_calls", []),
                             },

@@ -22,6 +22,7 @@ from pydantic_ai.usage import UsageLimits
 from sqlalchemy import select
 
 from evals.dialogue_loop.core import (
+    FINALIZE_SECONDS,
     MAX_TOOL_CONCURRENCY,
     MODEL_INPUT_TOKENS_LIMIT,
     OUTPUT_TOKENS_LIMIT,
@@ -30,7 +31,11 @@ from evals.dialogue_loop.core import (
     BudgetLedger,
     DialogueAnswer,
 )
-from evals.dialogue_loop.instrumentation import Instrumentation, estimate_input_tokens
+from evals.dialogue_loop.instrumentation import (
+    FinalizeRequired,
+    Instrumentation,
+    estimate_input_tokens,
+)
 
 SYSTEM_PROMPT = """你是 Grove 知识库的只读对话 Agent。你在一个持续的四轮对话中工作。
 
@@ -100,6 +105,7 @@ class LoopState:
         self.current_evidence.clear()
         self.tools_allowed = not any(pattern in message for pattern in NO_KNOWLEDGE_PATTERNS)
         self.ledger.start_turn()
+        self.instrumentation.begin_turn()
 
     def store_result(self, kind: str, payload: dict, status: str, completeness: str) -> str:
         self._handle_sequence += 1
@@ -765,6 +771,159 @@ def render_answer(answer: DialogueAnswer, state: LoopState) -> tuple[str, list[d
     return "\n".join(lines), rendered
 
 
+def _verified_failure_output(state: LoopState) -> tuple[str, list[dict]]:
+    """收尾失败时只展示程序已核验的当前轮结构化结果。"""
+    status = state.instrumentation.finalize_status
+    notices = {
+        "timed_out": "收尾请求超时，本轮未完成。",
+        "invalid_output": "收尾输出未通过结构校验，本轮未完成。",
+        "not_dispatched": "没有可用请求预算，未派发模型收尾，本轮未完成。",
+        "failed": "收尾模型请求失败，本轮未完成。",
+        "cancelled": "收尾请求被取消，本轮未完成。",
+    }
+    notice = notices.get(status, "本轮未完成。")
+    lines = [notice]
+    blocks: list[dict] = [{"kind": "insufficient", "text": notice}]
+    for handle, record in state.result_sets.items():
+        if handle not in state.current_handles or record.status not in {"completed", "ok"}:
+            continue
+        if record.kind == "statistic":
+            payload = record.payload
+            if "value" in payload:
+                text = f"已验证统计：{payload['value']}"
+            else:
+                values = "；".join(
+                    f"{item.get('label') or item.get('key')}：{item.get('count')}"
+                    for item in payload.get("buckets", [])
+                )
+                text = f"已验证分组统计：{values or '无分组记录'}"
+            lines.append(text)
+            blocks.append(
+                {
+                    "kind": "statistic",
+                    "handle": handle,
+                    "text": text,
+                    "value": payload.get("value"),
+                    "group_by": payload.get("group_by"),
+                    "buckets": payload.get("buckets", []),
+                    "status": record.status,
+                    "completeness": record.completeness,
+                }
+            )
+        elif record.kind == "list":
+            items = record.payload.get("items", [])
+            lines.append("已验证列表：")
+            lines.extend(
+                f"{index}. {item.get('title', '未命名')}"
+                f"（{item.get('project_name', '未知项目')}）"
+                for index, item in enumerate(items, 1)
+            )
+            blocks.append(
+                {
+                    "kind": "list",
+                    "handle": handle,
+                    "label": "已验证列表",
+                    "items": items,
+                    "status": record.status,
+                    "completeness": record.completeness,
+                }
+            )
+    for handle, item in state.evidence.items():
+        if handle not in state.current_evidence:
+            continue
+        text = f"已验证来源《{item.get('source_title', '')}》：{item.get('quote', '')}"
+        lines.append(text)
+        blocks.append(
+            {
+                "kind": "evidence",
+                "handle": handle,
+                "text": text,
+                "entry_id": item.get("entry_id"),
+                "source_id": item.get("source_id"),
+            }
+        )
+    return "\n".join(lines), blocks
+
+
+def _usage_limits(request_limit: int) -> UsageLimits:
+    return UsageLimits(
+        request_limit=request_limit,
+        per_request_input_tokens_limit=12_000,
+        output_tokens_limit=24_000,
+        # 输入在派发前另按确定性估算门禁；部分既有模型包装不实现 count_tokens。
+        count_tokens_before_request=False,
+    )
+
+
+def _current_material_history(
+    state: LoopState,
+    message: str,
+    history: list[ModelMessage],
+    current_events: list[dict],
+) -> list[ModelMessage]:
+    """把求解阶段已取得的当前轮材料重建为合法配对消息。"""
+    messages = [*history, ModelRequest(parts=[UserPromptPart(content=message)])]
+    for index, event in enumerate(current_events, 1):
+        handle = event.get("result_handle")
+        if handle not in state.current_handles and event.get("status") not in {
+            "denied",
+            "error",
+            "not_executed",
+        }:
+            continue
+        tool_name = event.get("tool") or "unknown_tool"
+        call_id = f"finalize-{state.turn_index}-{index}"
+        content = _history_tool_summary(state, event)
+        record = state.result_sets.get(handle)
+        if record is not None:
+            content["payload"] = _model_payload(record.kind, record.payload)
+        messages.append(
+            ModelResponse(
+                parts=[
+                    ToolCallPart(tool_name, event.get("params", {}), tool_call_id=call_id)
+                ]
+            )
+        )
+        messages.append(
+            ModelRequest(parts=[ToolReturnPart(tool_name, content, tool_call_id=call_id)])
+        )
+    return messages
+
+
+async def _finalize_once(
+    agent: Agent[LoopDeps, DialogueAnswer],
+    state: LoopState,
+    message: str,
+    history: list[ModelMessage],
+    current_events: list[dict],
+    reason: str,
+) -> object:
+    """在独立时间窗内用当前轮已核验材料做唯一一次无工具收尾。"""
+    state.instrumentation.begin_finalize(reason)
+    material_history = _current_material_history(state, message, history, current_events)
+    try:
+        async with asyncio.timeout(FINALIZE_SECONDS):
+            return await agent.run(
+                "求解阶段已停止。请只根据本轮已获得并核验的材料收尾。",
+                deps=LoopDeps(state),
+                message_history=material_history,
+                usage_limits=_usage_limits(1),
+                retries=0,
+            )
+    except TimeoutError as exc:
+        error = f"{type(exc).__name__}: 收尾超过 {FINALIZE_SECONDS:g} 秒"
+        state.instrumentation.finalize_status = "timed_out"
+        state.instrumentation.finalize_error = error
+        raise
+    except Exception as exc:
+        if state.instrumentation.finalize_response_received:
+            state.instrumentation.finalize_status = "invalid_output"
+            state.instrumentation.finalize_error = (
+                f"收尾输出非法，未重试模型请求：{type(exc).__name__}: {exc}"
+            )
+        raise
+
+
 async def run_turn(
     agent: Agent[LoopDeps, DialogueAnswer],
     state: LoopState,
@@ -776,6 +935,7 @@ async def run_turn(
     before_logs = len(state.instrumentation.logs)
     before_events = len(state.tool_events)
     started = perf_counter()
+    solve_error = None
     try:
         if history_estimate > MODEL_INPUT_TOKENS_LIMIT:
             raise BudgetExceeded(
@@ -787,25 +947,77 @@ async def run_turn(
                 message,
                 deps=LoopDeps(state),
                 message_history=history,
-                usage_limits=UsageLimits(
-                    request_limit=12,
-                    per_request_input_tokens_limit=12_000,
-                    output_tokens_limit=24_000,
-                    # 输入在派发前另按 48 KiB 硬限制；部分既有模型包装不实现
-                    # count_tokens，不能因此把可用的真实配置误判为不可执行。
-                    count_tokens_before_request=False,
-                ),
+                usage_limits=_usage_limits(12),
             )
+    except FinalizeRequired:
+        try:
+            result = await _finalize_once(
+                agent,
+                state,
+                message,
+                history,
+                state.tool_events[before_events:],
+                state.instrumentation.finalize_reason or "budget_boundary",
+            )
+        except Exception as finalize_exc:
+            text, blocks = _verified_failure_output(state)
+            status = "failed"
+            error = state.instrumentation.finalize_error or (
+                f"{type(finalize_exc).__name__}: {finalize_exc}"
+            )
+            usage = None
+        else:
+            text, blocks = render_answer(result.output, state)
+            state.instrumentation.complete_finalize()
+            status = "completed"
+            error = None
+            usage = asdict(result.usage) if result.usage is not None else None
+    except TimeoutError as exc:
+        if state.instrumentation.finalize_attempted:
+            text, blocks = _verified_failure_output(state)
+            status = "failed"
+            error = state.instrumentation.finalize_error or f"{type(exc).__name__}: {exc}"
+            usage = None
+        else:
+            solve_error = f"{type(exc).__name__}: 求解超过 {PER_TURN_SECONDS:g} 秒"
+            try:
+                result = await _finalize_once(
+                    agent,
+                    state,
+                    message,
+                    history,
+                    state.tool_events[before_events:],
+                    "solve_timeout",
+                )
+            except Exception as finalize_exc:
+                text, blocks = _verified_failure_output(state)
+                status = "failed"
+                error = state.instrumentation.finalize_error or (
+                    f"{type(finalize_exc).__name__}: {finalize_exc}"
+                )
+                usage = None
+            else:
+                text, blocks = render_answer(result.output, state)
+                state.instrumentation.complete_finalize()
+                status = "completed"
+                error = None
+                usage = asdict(result.usage) if result.usage is not None else None
+    except Exception as exc:
+        if state.instrumentation.finalize_reason is not None:
+            text, blocks = _verified_failure_output(state)
+            error = state.instrumentation.finalize_error or f"{type(exc).__name__}: {exc}"
+        else:
+            text = "本轮未完成。"
+            blocks = [{"kind": "insufficient", "text": text}]
+            error = f"{type(exc).__name__}: {exc}"
+        status = "failed"
+        usage = None
+    else:
         text, blocks = render_answer(result.output, state)
+        state.instrumentation.complete_finalize()
         status = "completed"
         error = None
         usage = asdict(result.usage) if result.usage is not None else None
-    except Exception as exc:
-        text = "本轮未完成。"
-        blocks = [{"kind": "insufficient", "text": text}]
-        status = "failed"
-        error = f"{type(exc).__name__}: {exc}"
-        usage = None
     current_events = state.tool_events[before_events:]
     state.remember_turn(message, text, current_events)
     new_history = build_compact_history(state)
@@ -815,6 +1027,7 @@ async def run_turn(
             "estimated_input_tokens": item.estimated_input_tokens,
             "method": item.input_estimate_method,
             "finalize_only": item.finalize_only,
+            "finalize_reason": item.finalize_reason,
         }
         for item in state.instrumentation.logs[before_logs:]
         if item.kind in {"text", "text_not_dispatched"}
@@ -825,6 +1038,7 @@ async def run_turn(
         "answer": text,
         "blocks": blocks,
         "error": error,
+        "solve_error": solve_error,
         "duration_ms": int((perf_counter() - started) * 1000),
         "usage": usage,
         "budget": state.ledger.snapshot(),
@@ -834,5 +1048,8 @@ async def run_turn(
             "history_estimated_input_tokens": history_estimate,
             "input_estimates": input_estimates,
             "history_turns": len(state.history_turns),
+            "solve_seconds_limit": PER_TURN_SECONDS,
+            "finalize_seconds_limit": FINALIZE_SECONDS,
         },
+        "finalization": state.instrumentation.finalization_snapshot(),
     }, new_history
