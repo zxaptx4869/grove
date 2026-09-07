@@ -6,6 +6,7 @@ import argparse
 import getpass
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -35,7 +36,11 @@ class InfrastructureFailure(RuntimeError):
         self.returncode = returncode
         self.partial = partial
         lines = [line.strip() for line in detail.splitlines() if line.strip()]
-        self.signature = lines[-1][:300] if lines else f"exit:{returncode}"
+        exception_lines = [
+            line for line in lines if re.match(r"^[\w.]+(?:Error|Exception):", line)
+        ]
+        signature_line = exception_lines[-1] if exception_lines else (lines[-1] if lines else "")
+        self.signature = signature_line[:300] if signature_line else f"exit:{returncode}"
         super().__init__(f"隔离子进程失败（{returncode}）：{self.signature}")
 
 
@@ -344,9 +349,13 @@ def run_parent(args: argparse.Namespace) -> int:
         }
         payload["resource_usage"] = {
             "user_messages": messages,
-            "text_requests": text_used,
-            "embedding_requests": embedding_used,
-            "tokens_complete": all(
+            "text_requests": text_used if not infrastructure_errors else None,
+            "embedding_requests": embedding_used if not infrastructure_errors else None,
+            "recorded_text_requests": text_used,
+            "recorded_embedding_requests": embedding_used,
+            "complete": not infrastructure_errors,
+            "tokens_complete": not infrastructure_errors
+            and all(
                 call.get("usage") is not None
                 for item in payload["results"]
                 for turn in item["turns"]
@@ -364,5 +373,9 @@ def run_parent(args: argparse.Namespace) -> int:
     print(f"报告：{md_path}")
     print(f"原始记录：{json_path}")
     if args.compare:
-        print(f"实际消息：{messages}/24，文本请求：{text_used}/192，向量请求：{embedding_used}/64")
+        qualifier = "已记录下界" if infrastructure_errors else "实际"
+        print(
+            f"已记录消息：{messages}/24，{qualifier}文本请求：{text_used}/192，"
+            f"{qualifier}向量请求：{embedding_used}/64"
+        )
     return 1 if blockers or stopped else 0

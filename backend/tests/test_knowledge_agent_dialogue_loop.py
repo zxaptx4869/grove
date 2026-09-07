@@ -1,5 +1,6 @@
 """统一对话循环实验的无模型边界与停止条件测试。"""
 
+from decimal import Decimal
 from pathlib import Path
 
 import pytest
@@ -7,6 +8,8 @@ from pydantic_ai import ModelRetry
 from pydantic_ai.messages import ModelResponse, ToolCallPart
 from pydantic_ai.models.function import FunctionModel
 
+from evals.dialogue_loop.__main__ import _write
+from evals.dialogue_loop.cli import InfrastructureFailure
 from evals.dialogue_loop.core import (
     BATCH_EMBEDDING_REQUESTS,
     BATCH_TEXT_REQUESTS,
@@ -187,6 +190,41 @@ def test_report_redacts_credentials_and_keeps_unknown_usage() -> None:
     assert value["api_key"] == "<redacted>"
     assert value["nested"]["authorization"] == "<redacted>"
     assert value["usage"] is None
+
+
+def test_report_normalizes_decimal_and_collections_for_checkpoints() -> None:
+    import json
+
+    value = sanitize(
+        {
+            "usage": {"cost": Decimal("0.0000123")},
+            "entry_reads": {9, 3},
+            "history": ("a", "b"),
+        }
+    )
+    assert value["usage"]["cost"] == "0.0000123"
+    assert value["entry_reads"] == [3, 9]
+    assert value["history"] == ["a", "b"]
+    json.dumps(value)
+
+
+def test_infrastructure_signature_uses_root_exception_on_python_314() -> None:
+    failure = InfrastructureFailure(
+        "TypeError: Object of type Decimal is not JSON serializable\n"
+        "when serializing dict item 'cost'\n"
+        "when serializing dict item 'turns'",
+        1,
+    )
+    assert failure.signature == "TypeError: Object of type Decimal is not JSON serializable"
+
+
+def test_child_result_writer_serializes_decimal(tmp_path: Path) -> None:
+    import json
+
+    result_path = tmp_path / "result.json"
+    _write(result_path, {"usage": {"cost": Decimal("0.25")}})
+    assert json.loads(result_path.read_text())["usage"]["cost"] == "0.25"
+    assert result_path.stat().st_mode & 0o777 == 0o600
 
 
 def test_budget_snapshot_is_json_serializable() -> None:

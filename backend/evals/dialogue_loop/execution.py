@@ -15,6 +15,7 @@ from sqlalchemy import select
 from evals.dialogue_loop.core import PER_TURN_SECONDS, SCENARIOS, BudgetLedger
 from evals.dialogue_loop.instrumentation import Instrumentation, install_instrumentation
 from evals.dialogue_loop.isolation import assert_isolated, domain_fingerprint, provider_snapshot
+from evals.dialogue_loop.report import sanitize
 
 
 async def authenticate_demo(password: str) -> dict:
@@ -424,7 +425,7 @@ async def child_run(
             }
         )
         checkpoint_path.write_text(
-            json.dumps(partial, ensure_ascii=False, indent=2), encoding="utf-8"
+            json.dumps(sanitize(partial), ensure_ascii=False, indent=2), encoding="utf-8"
         )
         checkpoint_path.chmod(0o600)
 

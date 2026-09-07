@@ -59,3 +59,10 @@ git diff --check
 - 真实报告：`backend/data/knowledge-agent-evals/dialogue-loop/20260907-131934/report.md`
   （本地忽略目录，已更正为证据不足与资源未知）。本实验不证明 App、旧工作集生命周期、
   生产恢复或总体成功率；结论为不值得依据本批结果正式接入。
+- 用户批准后只补跑一批。旧路径完成 A/B 共八轮；新循环 A/B 均在首轮返回后因
+  usage 的 `Decimal cost` 无法写入 JSON 检查点，第二次同类基础设施异常后停止，C 未执行。
+  完整记录的请求为文本 32、向量 4；两个新循环首轮的请求日志丢失，因此实际数量和
+  token 不能完整确定；已记录 token 下界为输入 63,738、输出 5,372、缓存读取 40,448。
+  补跑报告：
+  `backend/data/knowledge-agent-evals/dialogue-loop/20260907-134219/report.md`。已将检查点改为统一 JSON
+  安全序列化并添加 `Decimal`、集合及根异常签名回归测试；不再付费重跑。

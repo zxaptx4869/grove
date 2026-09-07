@@ -4,7 +4,10 @@ from __future__ import annotations
 
 import hashlib
 import json
-from datetime import UTC, datetime
+from dataclasses import asdict, is_dataclass
+from datetime import UTC, date, datetime, time
+from decimal import Decimal
+from enum import Enum
 from pathlib import Path
 
 from evals.dialogue_loop.core import SCENARIOS, frozen_budget
@@ -13,13 +16,28 @@ SENSITIVE_KEYS = {"password", "secret", "api_key", "token", "authorization"}
 
 
 def sanitize(value):
+    """同时完成敏感字段脱敏和 JSON 值规范化。"""
+    if is_dataclass(value) and not isinstance(value, type):
+        return sanitize(asdict(value))
+    if hasattr(value, "model_dump"):
+        return sanitize(value.model_dump(mode="json"))
     if isinstance(value, dict):
         return {
             key: ("<redacted>" if key.lower() in SENSITIVE_KEYS else sanitize(item))
             for key, item in value.items()
         }
-    if isinstance(value, list):
+    if isinstance(value, (list, tuple)):
         return [sanitize(item) for item in value]
+    if isinstance(value, (set, frozenset)):
+        return sorted((sanitize(item) for item in value), key=str)
+    if isinstance(value, Decimal):
+        return str(value)
+    if isinstance(value, (datetime, date, time)):
+        return value.isoformat()
+    if isinstance(value, Enum):
+        return sanitize(value.value)
+    if isinstance(value, Path):
+        return str(value)
     return value
 
 
@@ -149,6 +167,15 @@ def write_report(report_dir: Path, payload: dict) -> tuple[Path, Path]:
         (item["arm"], item["scenario"], item["turn"]): item
         for item in clean.get("evaluation", {}).get("turns", [])
     }
+    usage = clean["resource_usage"]
+    if usage.get("complete", True):
+        text_usage = f"{usage['text_requests']} / 192"
+        embedding_usage = f"{usage['embedding_requests']} / 64"
+    else:
+        text_usage = f"未知（已记录下界 {usage['recorded_text_requests']} / 192）"
+        embedding_usage = (
+            f"未知（已记录下界 {usage['recorded_embedding_requests']} / 64）"
+        )
     lines = [
         "# 知识 Agent 统一对话循环首批真实对照",
         "",
@@ -157,9 +184,9 @@ def write_report(report_dir: Path, payload: dict) -> tuple[Path, Path]:
         f"- 代码提交：`{clean['code']['commit']}`",
         f"- 固定用例摘要：`{clean['cases_sha256']}`",
         f"- 原业务库保持不变：{clean['isolation']['original_unchanged']}",
-        f"- 实际用户消息：{clean['resource_usage']['user_messages']} / 24",
-        f"- 文本请求：{clean['resource_usage']['text_requests']} / 192",
-        f"- 向量请求：{clean['resource_usage']['embedding_requests']} / 64",
+        f"- 已完整记录的用户消息：{usage['user_messages']} / 24",
+        f"- 文本请求：{text_usage}",
+        f"- 向量请求：{embedding_usage}",
         "- token：逐调用记录；缺失即为未知，不折算为零",
         "",
         "## 冻结配置与预检",
