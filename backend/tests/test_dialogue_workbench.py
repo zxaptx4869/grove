@@ -408,3 +408,26 @@ async def test_isolation_check_failure_keeps_local_terminal_state_and_stops_next
     assert "停止后续数据库操作" in runtime.unsafe_reason
     with pytest.raises(RuntimeError, match="隔离指纹无法核验"):
         await runtime.submit_turn(conversation["id"], "不得继续", "request-5102")
+
+
+def test_isolation_fingerprint_retries_transient_sqlite_lock(monkeypatch, tmp_path: Path):
+    import sqlite3
+
+    from evals.dialogue_loop import isolation
+    from evals.dialogue_workbench import _serve
+
+    calls = 0
+
+    def flaky(_path, _workspace_id):
+        nonlocal calls
+        calls += 1
+        if calls < 3:
+            raise sqlite3.OperationalError("database is locked")
+        return {"projects": {"rows": 1}}
+
+    monkeypatch.setattr(isolation, "domain_fingerprint", flaky)
+
+    assert _serve._fingerprint_with_retry(tmp_path / "copy.db", 1) == {
+        "projects": {"rows": 1}
+    }
+    assert calls == 3

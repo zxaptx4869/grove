@@ -268,19 +268,36 @@ async def _finish_new_run(run_id: int, answer: str, failed: str | None) -> None:
     from app.schemas.knowledge_agent import KnowledgeAnswerOut
     from app.services.knowledge_agent.runs import finalize_run, mark_run_failed
 
-    async with async_session_factory() as db:
-        run = await db.get(KnowledgeAgentRun, run_id)
-        if failed:
-            await mark_run_failed(db, run, failed)
-        else:
-            await finalize_run(
-                db,
-                run,
-                answer=KnowledgeAnswerOut(answer=answer, status="completed"),
-                status=RUN_COMPLETED,
-                fallback_summary={"has_fallback": False, "stages": []},
-            )
-        await db.commit()
+    for attempt in range(4):
+        try:
+            async with async_session_factory() as db:
+                run = await db.get(KnowledgeAgentRun, run_id)
+                if run is None:
+                    raise RuntimeError(f"运行记录不存在：{run_id}")
+                if failed:
+                    await mark_run_failed(db, run, failed)
+                else:
+                    await finalize_run(
+                        db,
+                        run,
+                        answer=KnowledgeAnswerOut(answer=answer, status="completed"),
+                        status=RUN_COMPLETED,
+                        fallback_summary={"has_fallback": False, "stages": []},
+                    )
+                await db.commit()
+            return
+        except Exception as exc:  # noqa: BLE001
+            if not _is_sqlite_lock(exc) or attempt >= 3:
+                raise
+            # SQLite 写事务释放存在短暂窗口；让前一笔审计事务完成后再重试。
+            await asyncio.sleep(0.08 * (2**attempt))
+
+
+def _is_sqlite_lock(exc: BaseException) -> bool:
+    """识别可恢复的 SQLite 锁，不吞掉其他数据库故障。"""
+
+    message = str(exc).casefold()
+    return "database is locked" in message or "database table is locked" in message
 
 
 async def run_new_scenario(

@@ -6,7 +6,9 @@ import argparse
 import asyncio
 import hashlib
 import json
+import sqlite3
 import sys
+import time
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -54,8 +56,8 @@ async def build_runtime(args, password: str):
         """在线程中执行同步 SQLite 指纹，避免锁等待阻塞异步连接清理。"""
 
         original_after, snapshot_after = await asyncio.gather(
-            asyncio.to_thread(domain_fingerprint, args.original, identity["workspace_id"]),
-            asyncio.to_thread(domain_fingerprint, args.db, identity["workspace_id"]),
+            asyncio.to_thread(_fingerprint_with_retry, args.original, identity["workspace_id"]),
+            asyncio.to_thread(_fingerprint_with_retry, args.db, identity["workspace_id"]),
         )
         return original_after == original_before and snapshot_after == snapshot
 
@@ -66,6 +68,26 @@ async def build_runtime(args, password: str):
         snapshot_fingerprint=hashlib.sha256(snapshot_raw).hexdigest()[:12],
         isolation_unchanged=isolation_unchanged,
     )
+
+
+def _fingerprint_with_retry(path: Path, workspace_id: int) -> dict:
+    """隔离检查遇到短暂 SQLite 锁时重试，其他异常继续上抛。"""
+
+    from evals.dialogue_loop.isolation import domain_fingerprint
+
+    for attempt in range(4):
+        try:
+            return domain_fingerprint(path, workspace_id)
+        except sqlite3.OperationalError as exc:
+            message = str(exc).casefold()
+            if (
+                "database is locked" not in message
+                and "database table is locked" not in message
+            ) or attempt >= 3:
+                raise
+            time_to_wait = 0.08 * (2**attempt)
+            time.sleep(time_to_wait)
+    raise RuntimeError("隔离指纹重试未返回")
 
 
 def main() -> int:
