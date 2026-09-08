@@ -30,6 +30,8 @@
 
 对话表面工具不增加新的定位模型。用户明确提及目录名时直接调用 `find`，定位句柄与普通目录句柄同属 `directories` 类型；后续可以直接复用句柄中的唯一 Node，也可在歧义结果中按用户选定的实际位置解析。
 
+完整 `not_found` 已经是指定项目范围内的确定性定位结论。循环保留该空结果句柄；若模型随后尝试从根级 `children` 回退遍历，程序不再派发重复目录查询，而是把既有句柄作为已解析结果返回。确定性目录渲染会明确显示名称或路径不存在，避免模型的冗余非法参数把真实空结果错误升级为权限拒绝。
+
 ### 0.1 Entry 查询只接受程序解析的 Node 范围
 
 现有 `query_entries` 表面工具增加 `directory_result_handle` 与 `directory_position`、`directory_scope=direct|subtree`。程序从当前会话目录结果解析真实 Node ID 和项目身份，再向共享 `query_entries` 传递内部 Node 范围；共享处理器重新校验 Node 属于可信 Workspace 和指定项目，并用现有子树辅助得到节点集合。模型不能直接提交 Node ID，也不能用目录名称作为 Entry 语义相关性条件。此增量复用现有 Entry 装配、排序、预算、审计和结果句柄，不创建第二套 Entry 查询。

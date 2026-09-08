@@ -84,6 +84,8 @@ SYSTEM_PROMPT = """你是 Grove 知识库的只读对话 Agent。你在一个持
 18. is_leaf 只以目录工具服务端返回值为准；它来自完整 Node 集合对子节点的确认。后续“这个目录”
     优先复用上一轮 directory_result_handle 和真实 node_id，不重复 find。用户专门追问是否为叶子时，
     仍按该句柄查询 children；只有直接子目录完整返回为空，才回答它是叶子节点。
+19. find 完整返回 not_found 后，直接说明指定目录不存在；必要时最多改用 contains 查找相近名称，
+    不得再从项目根调用 children 逐层遍历，也不得把定位空结果改写成权限错误。
 """.strip()
 
 NO_KNOWLEDGE_PATTERNS = (
@@ -907,6 +909,34 @@ def directory_reference_item(
     return items[position - 1]
 
 
+def completed_directory_not_found(
+    state: LoopState,
+    *,
+    project_id: int | None,
+    project_name: str | None,
+) -> tuple[str, ResultRecord] | None:
+    """返回当前轮同项目已完整确认的目录未命中结果。"""
+
+    for handle, record in state.result_sets.items():
+        if handle not in state.current_handles or record.kind != "directories":
+            continue
+        payload = record.payload
+        project = payload.get("project") or {}
+        if (
+            payload.get("operation") != "find"
+            or payload.get("match_status") != "not_found"
+            or record.status != "empty"
+            or record.completeness != "complete"
+        ):
+            continue
+        if project_id is not None and project.get("id") != project_id:
+            continue
+        if project_name is not None and project.get("name") != project_name:
+            continue
+        return handle, record
+    return None
+
+
 def _entry_directory_scope(
     state: LoopState,
     *,
@@ -1275,6 +1305,33 @@ def build_agent(model) -> Agent[LoopDeps, DialogueAnswer]:
             "match": match,
             "limit": limit,
         }
+        prior_not_found = (
+            completed_directory_not_found(
+                state,
+                project_id=project_id,
+                project_name=project_name,
+            )
+            if operation == "children"
+            and parent_node_id is None
+            and parent_result_handle is None
+            else None
+        )
+        if prior_not_found is not None:
+            result_handle, record = prior_not_found
+            event = {
+                "tool": "list_project_directories",
+                "shared_tool": "list_project_directories",
+                "result_handle": result_handle,
+                "status": "not_executed",
+                "completeness": "complete",
+                "params": params,
+                "reason_code": "directory_lookup_already_resolved",
+                "error": None,
+                "duration_ms": 0,
+                "turn_index": state.turn_index,
+            }
+            state.tool_events.append(event)
+            return {**event, "payload": _model_payload(record.kind, record.payload)}
         if operation == "children" and parent_node_id in state.queried_directory_parents:
             event = {
                 "tool": "list_project_directories",
@@ -1641,7 +1698,16 @@ def render_answer(answer: DialogueAnswer, state: LoopState) -> tuple[str, list[d
             semantics = record.semantics
             if record.kind == "directories":
                 project_name = semantics.get("project_name") or "当前项目"
-                title = f"{project_name} · {semantics.get('display_name', '项目目录')}"
+                query = record.payload.get("query") or {}
+                if record.payload.get("match_status") == "not_found":
+                    if query.get("path"):
+                        title = (
+                            f"{project_name} · 未找到完整路径「{query['path']}」对应的目录。"
+                        )
+                    else:
+                        title = f"{project_name} · 未找到名为「{query.get('name')}」的目录。"
+                else:
+                    title = f"{project_name} · {semantics.get('display_name', '项目目录')}"
             else:
                 title = (
                     f"{semantics.get('project_name')} · 正式记录列表"

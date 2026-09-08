@@ -656,6 +656,107 @@ async def test_known_directory_name_uses_find_without_root_walk(monkeypatch) -> 
 
 
 @pytest.mark.asyncio
+async def test_missing_directory_does_not_fall_back_to_root_walk(monkeypatch) -> None:
+    """完整未命中后即使模型请求根级 children，也复用结果并明确回答不存在。"""
+
+    state = _state()
+    dispatched = []
+
+    async def fake_dispatch(ctx, tool_name, params, kind, **_kwargs):
+        dispatched.append((tool_name, params, kind))
+        assert params["operation"] == "find"
+        payload = {
+            "project": {"id": 8, "name": "房子装修"},
+            "operation": "find",
+            "query": {
+                "name": "墙纸施工",
+                "path": None,
+                "requested_match": "exact",
+                "applied_match": "exact",
+            },
+            "match_status": "not_found",
+            "items": [],
+            "total_count": 0,
+            "returned_count": 0,
+            "has_more": False,
+        }
+        handle = ctx.deps.state.store_result(
+            kind,
+            payload,
+            "empty",
+            "complete",
+            semantics=loop_module._result_semantics(tool_name, params, payload),
+        )
+        event = {
+            "tool": "list_project_directories",
+            "shared_tool": tool_name,
+            "result_handle": handle,
+            "status": "empty",
+            "completeness": "complete",
+            "params": params,
+            "reason_code": "directory_not_found",
+            "error": None,
+            "turn_index": state.turn_index,
+        }
+        state.tool_events.append(event)
+        return {**event, "payload": payload}
+
+    monkeypatch.setattr(loop_module, "_dispatch", fake_dispatch)
+    calls = 0
+
+    def respond(_messages, info):
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            return ModelResponse(
+                parts=[
+                    ToolCallPart(
+                        "list_project_directories",
+                        {
+                            "project_name": "房子装修",
+                            "operation": "find",
+                            "name": "墙纸施工",
+                            "match": "exact",
+                        },
+                    )
+                ]
+            )
+        if calls == 2:
+            return ModelResponse(
+                parts=[
+                    ToolCallPart(
+                        "list_project_directories",
+                        {
+                            "project_name": "房子装修",
+                            "operation": "children",
+                            "name": "null",
+                        },
+                    )
+                ]
+            )
+        handle = next(iter(state.current_handles))
+        return ModelResponse(
+            parts=[
+                ToolCallPart(
+                    info.output_tools[0].name,
+                    {"blocks": [{"kind": "list", "result_handle": handle, "label": "定位"}]},
+                )
+            ]
+        )
+
+    turn, _ = await run_turn(
+        build_agent(FunctionModel(respond)), state, "墙纸施工目录在哪里？", []
+    )
+
+    assert turn["status"] == "completed"
+    assert len(dispatched) == 1
+    assert [item["status"] for item in turn["tool_calls"]] == ["empty", "not_executed"]
+    assert turn["tool_calls"][-1]["reason_code"] == "directory_lookup_already_resolved"
+    assert turn["answer"] == "房子装修 · 未找到名为「墙纸施工」的目录。"
+    assert "权限" not in turn["answer"]
+
+
+@pytest.mark.asyncio
 async def test_follow_up_reuses_unique_directory_handle_for_node_scope(monkeypatch) -> None:
     """后续计数从历史定位句柄解析 Node，不重复按名称查找。"""
 
