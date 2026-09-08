@@ -13,6 +13,7 @@ from app.models import (
     KnowledgeConversation,
     Node,
     Project,
+    Workspace,
 )
 from app.models.knowledge_agent import (
     ACTIVE_SLOT,
@@ -21,6 +22,7 @@ from app.models.knowledge_agent import (
     SCOPE_PROJECT,
     TOOL_COMPLETED,
     TOOL_DENIED,
+    TOOL_EMPTY,
 )
 from app.services.knowledge_agent.directory_tools import ListProjectDirectoriesParams
 from app.services.knowledge_agent.read_tool_adapters import (
@@ -34,7 +36,13 @@ from app.services.knowledge_agent.read_tools import (
     dispatch_read_tool,
 )
 from app.services.knowledge_agent.tools import RunToolContext
-from tests._knowledge_agent_fixtures import create_project, create_user, create_workspace
+from tests._knowledge_agent_fixtures import (
+    create_entry_with_evidence,
+    create_project,
+    create_source_attachment,
+    create_user,
+    create_workspace,
+)
 
 
 class _FakeParams(ReadToolParams):
@@ -333,7 +341,6 @@ async def test_directory_tool_aggregates_real_leaf_nodes_in_one_call() -> None:
             cancel_check=_noop_cancel,
             registry=KNOWLEDGE_AGENT_READ_TOOL_REGISTRY,
         )
-
     assert result.status == TOOL_COMPLETED
     assert result.completeness == RESULT_COMPLETENESS_COMPLETE
     assert result.payload["value"] == expected_leaf_count
@@ -382,8 +389,8 @@ async def test_directory_tool_rejects_foreign_workspace_and_parent() -> None:
         )
 
     assert foreign_result.status == TOOL_DENIED
-    assert foreign_result.audit_summary["reason_code"] == "project_access_denied"
-    assert "无权" in (foreign_result.error or "")
+    assert foreign_result.audit_summary["reason_code"] == "project_not_found"
+    assert "不存在" in (foreign_result.error or "")
     assert wrong_parent.status == TOOL_DENIED
     assert "父节点不属于指定项目" in (wrong_parent.error or "")
 
@@ -391,6 +398,328 @@ async def test_directory_tool_rejects_foreign_workspace_and_parent() -> None:
 def test_directory_params_require_explicit_project_reference() -> None:
     with pytest.raises(ValueError, match="project_id 或 project_name"):
         ListProjectDirectoriesParams()
+
+
+@pytest.mark.asyncio
+async def test_directory_find_exact_name_returns_real_deep_path_and_leaf_state() -> None:
+    """已知深层名称可一次定位，路径、深度和叶子状态都来自真实 Node 树。"""
+
+    async with async_session_factory() as db:
+        _run, ctx = await _run_context(db)
+        project = (
+            await db.execute(select(Project).where(Project.id == ctx.project_id))
+        ).scalar_one()
+        planning = Node(project_id=project.id, name="设计规划", position=1)
+        db.add(planning)
+        await db.flush()
+        style = Node(project_id=project.id, parent_id=planning.id, name="风格设计", position=0)
+        db.add(style)
+        await db.flush()
+        material = Node(project_id=project.id, parent_id=style.id, name="材质选择", position=0)
+        db.add(material)
+        await db.flush()
+        tile = Node(project_id=project.id, parent_id=material.id, name="瓷砖地材", position=0)
+        db.add(tile)
+        await db.flush()
+
+        result = await dispatch_read_tool(
+            db,
+            ctx,
+            tool_name="list_project_directories",
+            tool_version="v1",
+            params={
+                "project_name": project.name,
+                "operation": "find",
+                "name": "瓷砖地材",
+                "match": "exact",
+            },
+            budget=ReadToolBudget(1, 1, 10_000),
+            cancel_check=_noop_cancel,
+            registry=KNOWLEDGE_AGENT_READ_TOOL_REGISTRY,
+        )
+        contains_with_exact = await dispatch_read_tool(
+            db,
+            ctx,
+            tool_name="list_project_directories",
+            tool_version="v1",
+            params={
+                "project_name": project.name,
+                "operation": "find",
+                "name": "瓷砖地材",
+                "match": "contains",
+            },
+            budget=ReadToolBudget(1, 1, 10_000),
+            cancel_check=_noop_cancel,
+            registry=KNOWLEDGE_AGENT_READ_TOOL_REGISTRY,
+        )
+        contains_only = await dispatch_read_tool(
+            db,
+            ctx,
+            tool_name="list_project_directories",
+            tool_version="v1",
+            params={
+                "project_name": project.name,
+                "operation": "find",
+                "name": "地材",
+                "match": "contains",
+            },
+            budget=ReadToolBudget(1, 1, 10_000),
+            cancel_check=_noop_cancel,
+            registry=KNOWLEDGE_AGENT_READ_TOOL_REGISTRY,
+        )
+
+    assert result.status == TOOL_COMPLETED
+    assert result.completeness == RESULT_COMPLETENESS_COMPLETE
+    assert result.payload["match_status"] == "unique"
+    assert result.payload["total_count"] == result.payload["returned_count"] == 1
+    assert result.payload["has_more"] is False
+    assert result.payload["items"] == [
+        {
+            "node_id": tile.id,
+            "name": "瓷砖地材",
+            "project_id": project.id,
+            "project_name": project.name,
+            "parent_node_id": material.id,
+            "path": "设计规划 / 风格设计 / 材质选择 / 瓷砖地材",
+            "depth": 3,
+            "is_leaf": True,
+            "position": 0,
+        }
+    ]
+    assert contains_with_exact.payload["query"]["applied_match"] == "exact"
+    assert contains_with_exact.payload["total_count"] == 1
+    assert contains_only.status == "partial"
+    assert contains_only.payload["match_status"] == "contains_candidates"
+    assert contains_only.payload["items"][0]["node_id"] == tile.id
+
+
+@pytest.mark.asyncio
+async def test_directory_find_path_disambiguates_and_never_mixes_projects() -> None:
+    """同项目同名返回候选；完整路径唯一定位，其他项目同名不会混入。"""
+
+    async with async_session_factory() as db:
+        _run, ctx = await _run_context(db)
+        project = (
+            await db.execute(select(Project).where(Project.id == ctx.project_id))
+        ).scalar_one()
+        workspace = await db.get(Workspace, ctx.workspace_id)
+        assert workspace is not None
+        first_root = Node(project_id=project.id, name="设计规划", position=1)
+        second_root = Node(project_id=project.id, name="施工执行", position=2)
+        db.add_all([first_root, second_root])
+        await db.flush()
+        first = Node(project_id=project.id, parent_id=first_root.id, name="瓷砖地材")
+        second = Node(project_id=project.id, parent_id=second_root.id, name="瓷砖地材")
+        other_project = await create_project(db, workspace, "另一项目")
+        other = Node(project_id=other_project.id, name="瓷砖地材")
+        db.add_all([first, second, other])
+        await db.flush()
+
+        ambiguous = await dispatch_read_tool(
+            db,
+            ctx,
+            tool_name="list_project_directories",
+            tool_version="v1",
+            params={"project_id": project.id, "operation": "find", "name": "瓷砖地材"},
+            budget=ReadToolBudget(1, 1, 10_000),
+            cancel_check=_noop_cancel,
+            registry=KNOWLEDGE_AGENT_READ_TOOL_REGISTRY,
+        )
+        exact_path = await dispatch_read_tool(
+            db,
+            ctx,
+            tool_name="list_project_directories",
+            tool_version="v1",
+            params={
+                "project_id": project.id,
+                "operation": "find",
+                "path": " 设计规划/ 瓷砖地材 ",
+            },
+            budget=ReadToolBudget(1, 1, 10_000),
+            cancel_check=_noop_cancel,
+            registry=KNOWLEDGE_AGENT_READ_TOOL_REGISTRY,
+        )
+
+    assert ambiguous.status == "partial"
+    assert ambiguous.payload["match_status"] == "ambiguous"
+    assert ambiguous.payload["total_count"] == 2
+    assert {item["node_id"] for item in ambiguous.payload["items"]} == {first.id, second.id}
+    assert other.id not in {item["node_id"] for item in ambiguous.payload["items"]}
+    assert exact_path.status == TOOL_COMPLETED
+    assert exact_path.payload["items"][0]["node_id"] == first.id
+    assert exact_path.payload["query"]["path"] == "设计规划 / 瓷砖地材"
+
+
+@pytest.mark.asyncio
+async def test_directory_find_reports_missing_denied_and_truncated_states() -> None:
+    """不存在、无 Workspace 权限、项目越权与候选截断保持可区分状态。"""
+
+    async with async_session_factory() as db:
+        _run, ctx = await _run_context(db)
+        project = (
+            await db.execute(select(Project).where(Project.id == ctx.project_id))
+        ).scalar_one()
+        workspace = await db.get(Workspace, ctx.workspace_id)
+        assert workspace is not None
+        db.add_all(
+            [Node(project_id=project.id, name="重复目录", position=index) for index in range(3)]
+        )
+        foreign_user = await create_user(db, "目录无权限")
+        await db.flush()
+
+        missing = await dispatch_read_tool(
+            db,
+            ctx,
+            tool_name="list_project_directories",
+            tool_version="v1",
+            params={"project_id": project.id, "operation": "find", "name": "墙纸施工"},
+            budget=ReadToolBudget(1, 1, 10_000),
+            cancel_check=_noop_cancel,
+            registry=KNOWLEDGE_AGENT_READ_TOOL_REGISTRY,
+        )
+        truncated = await dispatch_read_tool(
+            db,
+            ctx,
+            tool_name="list_project_directories",
+            tool_version="v1",
+            params={
+                "project_id": project.id,
+                "operation": "find",
+                "name": "重复目录",
+                "limit": 1,
+            },
+            budget=ReadToolBudget(1, 1, 10_000),
+            cancel_check=_noop_cancel,
+            registry=KNOWLEDGE_AGENT_READ_TOOL_REGISTRY,
+        )
+        denied_ctx = RunToolContext(
+            run_id=ctx.run_id,
+            workspace_id=ctx.workspace_id,
+            owner_user_id=foreign_user.id,
+            scope_type=ctx.scope_type,
+            project_id=ctx.project_id,
+            project_name=ctx.project_name,
+        )
+        denied = await dispatch_read_tool(
+            db,
+            denied_ctx,
+            tool_name="list_project_directories",
+            tool_version="v1",
+            params={"project_id": project.id, "operation": "find", "name": "重复目录"},
+            budget=ReadToolBudget(1, 1, 10_000),
+            cancel_check=_noop_cancel,
+            registry=KNOWLEDGE_AGENT_READ_TOOL_REGISTRY,
+            record_audit=False,
+        )
+
+    assert missing.status == TOOL_EMPTY
+    assert missing.payload["match_status"] == "not_found"
+    assert missing.payload["reason_code"] == "directory_not_found"
+    assert truncated.status == "partial"
+    assert truncated.completeness == "limited"
+    assert truncated.payload["total_count"] == 3
+    assert truncated.payload["returned_count"] == 1
+    assert truncated.payload["has_more"] is True
+    assert denied.status == TOOL_DENIED
+    assert denied.audit_summary["reason_code"] == "workspace_access_denied"
+
+
+@pytest.mark.asyncio
+async def test_located_node_scope_queries_only_real_directory_entries() -> None:
+    """定位后的 Node direct/subtree 查询复用现有 Entry 工具且不按名称相关性推算。"""
+
+    async with async_session_factory() as db:
+        _run, ctx = await _run_context(db)
+        project = (
+            await db.execute(select(Project).where(Project.id == ctx.project_id))
+        ).scalar_one()
+        workspace = await db.get(Workspace, ctx.workspace_id)
+        assert workspace is not None
+        tile = Node(project_id=project.id, name="瓷砖地材", position=1)
+        db.add(tile)
+        await db.flush()
+        child = Node(project_id=project.id, parent_id=tile.id, name="铺贴工艺")
+        outside = Node(project_id=project.id, name="墙面材料", position=2)
+        db.add_all([child, outside])
+        await db.flush()
+        foreign_project = await create_project(db, workspace, "同空间其他项目")
+        foreign_node = Node(project_id=foreign_project.id, name="瓷砖地材")
+        db.add(foreign_node)
+        await db.flush()
+        source, attachment = await create_source_attachment(db, workspace, project)
+        direct = await create_entry_with_evidence(
+            db, project, tile, source, attachment, title="瓷砖选购"
+        )
+        nested = await create_entry_with_evidence(
+            db, project, child, source, attachment, title="薄贴法"
+        )
+        await create_entry_with_evidence(
+            db, project, outside, source, attachment, title="乳胶漆"
+        )
+
+        direct_result = await dispatch_read_tool(
+            db,
+            ctx,
+            tool_name="query_entries",
+            tool_version="v1",
+            params={
+                "entry_set": {"project_name": project.name},
+                "limit": 10,
+                "sort": {"field": "created_at", "direction": "asc"},
+                "project_id": project.id,
+                "node_id": tile.id,
+                "node_scope": "direct",
+            },
+            budget=ReadToolBudget(1, 2, 20_000),
+            cancel_check=_noop_cancel,
+            registry=KNOWLEDGE_AGENT_READ_TOOL_REGISTRY,
+        )
+        subtree_result = await dispatch_read_tool(
+            db,
+            ctx,
+            tool_name="aggregate_entries",
+            tool_version="v1",
+            params={
+                "entry_set": {"project_name": project.name},
+                "operation": "count",
+                "group_by": None,
+                "project_id": project.id,
+                "node_id": tile.id,
+                "node_scope": "subtree",
+            },
+            budget=ReadToolBudget(1, 2, 20_000),
+            cancel_check=_noop_cancel,
+            registry=KNOWLEDGE_AGENT_READ_TOOL_REGISTRY,
+        )
+        denied = await dispatch_read_tool(
+            db,
+            ctx,
+            tool_name="query_entries",
+            tool_version="v1",
+            params={
+                "entry_set": {"project_name": project.name},
+                "limit": 10,
+                "sort": {"field": "created_at", "direction": "asc"},
+                "project_id": project.id,
+                "node_id": foreign_node.id,
+                "node_scope": "subtree",
+            },
+            budget=ReadToolBudget(1, 2, 20_000),
+            cancel_check=_noop_cancel,
+            registry=KNOWLEDGE_AGENT_READ_TOOL_REGISTRY,
+        )
+
+    assert [item["entry_id"] for item in direct_result.payload["items"]] == [direct.id]
+    assert subtree_result.payload["value"] == 2
+    assert subtree_result.payload["node_scope"] == {
+        "project_id": project.id,
+        "node_id": tile.id,
+        "scope": "subtree",
+    }
+    assert nested.id != direct.id
+    assert denied.status == TOOL_DENIED
+    assert denied.audit_summary["reason_code"] == "node_scope_denied"
+    assert "瓷砖地材" not in (denied.error or "")
 
 
 @pytest.mark.asyncio

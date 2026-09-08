@@ -14,12 +14,13 @@ from sqlalchemy.orm import selectinload
 
 from app.agents.semantic import run_semantic_agent
 from app.core.config import get_settings
-from app.models import Entry, Project
+from app.models import Entry, Node, Project
 from app.models.knowledge_agent import (
     PURPOSE_RERANK,
     RESULT_COMPLETENESS_COMPLETE,
     RESULT_COMPLETENESS_LIMITED,
     RESULT_COMPLETENESS_UNKNOWN,
+    TOOL_DENIED,
     TOOL_EMPTY,
     TOOL_LIMITED,
 )
@@ -37,6 +38,7 @@ from app.services.knowledge_agent.structured_query import (
     NormalizedEntrySort,
 )
 from app.services.knowledge_agent.tools import RunToolContext
+from app.services.nodes import subtree_node_ids
 from app.services.vector_search import hybrid_recall_by_query_with_meta
 
 STRUCTURED_QUERY_TOOL_VERSION = "v1"
@@ -48,6 +50,20 @@ class QueryEntriesParams(ReadToolParams):
     entry_set: NormalizedEntrySetSpec
     limit: int = Field(ge=1, le=100)
     sort: NormalizedEntrySort
+    project_id: int | None = Field(default=None, ge=1)
+    node_id: int | None = Field(default=None, ge=1)
+    node_scope: Literal["direct", "subtree"] | None = None
+
+    @model_validator(mode="after")
+    def validate_node_scope(self) -> "QueryEntriesParams":
+        values = (self.project_id, self.node_id, self.node_scope)
+        if any(value is not None for value in values) and not all(
+            value is not None for value in values
+        ):
+            raise ValueError("目录范围必须同时提供 project_id、node_id 和 node_scope")
+        if self.node_id is not None and self.entry_set.semantic_query is not None:
+            raise ValueError("目录范围查询不能使用 semantic_query")
+        return self
 
 
 class AggregateEntriesParams(ReadToolParams):
@@ -56,6 +72,9 @@ class AggregateEntriesParams(ReadToolParams):
     entry_set: NormalizedEntrySetSpec
     operation: Literal["count", "group_count"]
     group_by: Literal["main_type", "info_nature", "updated_month", "project"] | None = None
+    project_id: int | None = Field(default=None, ge=1)
+    node_id: int | None = Field(default=None, ge=1)
+    node_scope: Literal["direct", "subtree"] | None = None
 
     @model_validator(mode="after")
     def validate_operation(self) -> "AggregateEntriesParams":
@@ -64,7 +83,60 @@ class AggregateEntriesParams(ReadToolParams):
             raise ValueError("count 不接受 group_by")
         if self.operation == "group_count" and self.group_by is None:
             raise ValueError("group_count 必须指定 group_by")
+        values = (self.project_id, self.node_id, self.node_scope)
+        if any(value is not None for value in values) and not all(
+            value is not None for value in values
+        ):
+            raise ValueError("目录范围必须同时提供 project_id、node_id 和 node_scope")
+        if self.node_id is not None and self.entry_set.semantic_query is not None:
+            raise ValueError("目录范围聚合不能使用 semantic_query")
         return self
+
+
+async def resolve_node_filter(
+    db: AsyncSession,
+    ctx: RunToolContext,
+    *,
+    project_id: int | None,
+    project_name: str | None,
+    node_id: int | None,
+    node_scope: Literal["direct", "subtree"] | None,
+) -> set[int] | None:
+    """重新校验程序解析的 Node 范围，拒绝跨项目或跨 Workspace 对象。"""
+
+    if node_id is None:
+        return None
+    stmt = select(Project.id, Project.name).where(
+        Project.workspace_id == ctx.workspace_id,
+        Project.id == project_id,
+    )
+    if ctx.project_id is not None:
+        stmt = stmt.where(Project.id == ctx.project_id)
+    project = (await db.execute(stmt)).one_or_none()
+    if project is None or (project_name is not None and project.name != project_name):
+        raise PermissionError("目录节点不属于指定项目或当前授权范围")
+    exists = (
+        await db.execute(
+            select(Node.id).where(Node.id == node_id, Node.project_id == project.id)
+        )
+    ).scalar_one_or_none()
+    if exists is None:
+        raise PermissionError("目录节点不属于指定项目或当前授权范围")
+    if node_scope == "subtree":
+        return await subtree_node_ids(db, project.id, node_id)
+    return {node_id}
+
+
+def denied_node_scope_execution() -> ReadToolExecution:
+    """统一 Node 越权结果，不回显外部对象详情。"""
+
+    return ReadToolExecution(
+        status=TOOL_DENIED,
+        payload={},
+        completeness=RESULT_COMPLETENESS_UNKNOWN,
+        audit_summary={"status": TOOL_DENIED, "reason_code": "node_scope_denied"},
+        error="目录节点不属于指定项目或当前授权范围",
+    )
 
 
 async def resolve_project_filter(
@@ -125,6 +197,7 @@ def structured_entry_select(
     ctx: RunToolContext,
     entry_set: NormalizedEntrySetSpec,
     sort: NormalizedEntrySort,
+    node_ids: set[int] | None = None,
 ) -> Select:
     """构造带可信范围、结构化过滤和稳定 tie-breaker 的 Entry 查询。"""
     if entry_set.semantic_query is not None:
@@ -140,6 +213,8 @@ def structured_entry_select(
     if ctx.project_id is not None:
         stmt = stmt.where(Entry.project_id == ctx.project_id)
     stmt = _apply_entry_set_filters(stmt, entry_set)
+    if node_ids is not None:
+        stmt = stmt.where(Entry.node_id.in_(node_ids))
     sort_column = Entry.updated_at if sort.field == "updated_at" else Entry.created_at
     order = desc if sort.direction == "desc" else asc
     return stmt.order_by(order(sort_column), order(Entry.id))
@@ -148,6 +223,7 @@ def structured_entry_select(
 def structured_scope_select(
     ctx: RunToolContext,
     entry_set: NormalizedEntrySetSpec,
+    node_ids: set[int] | None = None,
 ) -> Select:
     """构造可信范围 + 结构化条件查询，供语义候选池与聚合共享。"""
     stmt = (
@@ -158,12 +234,16 @@ def structured_scope_select(
     )
     if ctx.project_id is not None:
         stmt = stmt.where(Entry.project_id == ctx.project_id)
-    return _apply_entry_set_filters(stmt, entry_set)
+    stmt = _apply_entry_set_filters(stmt, entry_set)
+    if node_ids is not None:
+        stmt = stmt.where(Entry.node_id.in_(node_ids))
+    return stmt
 
 
 def _aggregate_scope_stmt(
     ctx: RunToolContext,
     entry_set: NormalizedEntrySetSpec,
+    node_ids: set[int] | None = None,
 ) -> Select:
     """构造聚合共享集合范围；语义集合只能使用服务端预先固化的候选 id。"""
     stmt = (
@@ -174,6 +254,8 @@ def _aggregate_scope_stmt(
     if ctx.project_id is not None:
         stmt = stmt.where(Entry.project_id == ctx.project_id)
     stmt = _apply_entry_set_filters(stmt, entry_set)
+    if node_ids is not None:
+        stmt = stmt.where(Entry.node_id.in_(node_ids))
     if entry_set.semantic_query is not None:
         if ctx.structured_query_entry_ids is None:
             raise ValueError("semantic_query 共享集合尚未由服务端准备")
@@ -197,9 +279,10 @@ def structured_aggregate_statement(
     *,
     dialect_name: str,
     bucket_limit: int,
+    node_ids: set[int] | None = None,
 ) -> Select:
     """构造可按 SQLite/MySQL 8 编译验证的直接聚合查询。"""
-    base_ids = _aggregate_scope_stmt(ctx, params.entry_set).subquery()
+    base_ids = _aggregate_scope_stmt(ctx, params.entry_set, node_ids).subquery()
     if params.operation == "count":
         return select(func.count()).select_from(base_ids)
     if params.group_by == "project":
@@ -246,6 +329,17 @@ async def aggregate_entries_handler(
 ) -> ReadToolExecution:
     """直接对共享集合执行 count/group_count，不依赖任何列表输出。"""
     resolved_scope = await resolve_project_filter(db, ctx, params.entry_set)
+    try:
+        node_ids = await resolve_node_filter(
+            db,
+            ctx,
+            project_id=params.project_id,
+            project_name=params.entry_set.project_name,
+            node_id=params.node_id,
+            node_scope=params.node_scope,
+        )
+    except PermissionError:
+        return denied_node_scope_execution()
     settings = get_settings()
     if (
         params.entry_set.semantic_query is not None
@@ -262,6 +356,16 @@ async def aggregate_entries_handler(
         params,
         dialect_name=dialect_name,
         bucket_limit=settings.knowledge_agent_structured_query_bucket_limit,
+        node_ids=node_ids,
+    )
+    node_scope = (
+        {
+            "project_id": params.project_id,
+            "node_id": params.node_id,
+            "scope": params.node_scope,
+        }
+        if params.node_id is not None
+        else None
     )
     if params.operation == "count":
         value = int((await db.execute(stmt)).scalar_one())
@@ -271,10 +375,12 @@ async def aggregate_entries_handler(
             payload={
                 "value": value,
                 **({"scope": resolved_scope} if params.entry_set.project_name else {}),
+                **({"node_scope": node_scope} if node_scope else {}),
             },
             completeness=base_completeness,
             audit_summary={
                 **({"scope": resolved_scope} if params.entry_set.project_name else {}),
+                **({"node_scope": node_scope} if node_scope else {}),
                 "operation": "count",
                 "value": value,
                 "status": status,
@@ -308,6 +414,7 @@ async def aggregate_entries_handler(
         status=status,
         payload={
             **({"scope": resolved_scope} if params.entry_set.project_name else {}),
+            **({"node_scope": node_scope} if node_scope else {}),
             "group_by": params.group_by,
             "buckets": buckets,
             "truncated": truncated,
@@ -316,6 +423,7 @@ async def aggregate_entries_handler(
         audit_summary={
             "operation": "group_count",
             **({"scope": resolved_scope} if params.entry_set.project_name else {}),
+            **({"node_scope": node_scope} if node_scope else {}),
             "group_by": params.group_by,
             "bucket_count": len(buckets),
             "buckets": buckets,
@@ -511,10 +619,21 @@ async def query_entries_handler(
 ) -> ReadToolExecution:
     """确定性返回有界正式 Entry 快照；列表截断只影响 entries 完整性。"""
     await resolve_project_filter(db, ctx, params.entry_set)
+    try:
+        node_ids = await resolve_node_filter(
+            db,
+            ctx,
+            project_id=params.project_id,
+            project_name=params.entry_set.project_name,
+            node_id=params.node_id,
+            node_scope=params.node_scope,
+        )
+    except PermissionError:
+        return denied_node_scope_execution()
     if params.entry_set.semantic_query is not None:
         return await semantic_query_entries_handler(db, ctx, params)
     settings = get_settings()
-    stmt = structured_entry_select(ctx, params.entry_set, params.sort).limit(
+    stmt = structured_entry_select(ctx, params.entry_set, params.sort, node_ids).limit(
         params.limit + 1
     )
     rows = list((await db.execute(stmt)).scalars().all())
@@ -606,6 +725,17 @@ async def restore_query_entries_handler(
 ) -> ReadToolExecution | None:
     """按已提交有序 Entry id 重建当前快照；对象变化显式降为 partial。"""
     await resolve_project_filter(db, ctx, params.entry_set)
+    try:
+        node_ids = await resolve_node_filter(
+            db,
+            ctx,
+            project_id=params.project_id,
+            project_name=params.entry_set.project_name,
+            node_id=params.node_id,
+            node_scope=params.node_scope,
+        )
+    except PermissionError:
+        return denied_node_scope_execution()
     entry_ids = summary.get("entry_ids")
     if not isinstance(entry_ids, list) or not all(
         isinstance(entry_id, int) for entry_id in entry_ids
@@ -614,7 +744,7 @@ async def restore_query_entries_handler(
     rows = list(
         (
             await db.execute(
-                structured_scope_select(ctx, params.entry_set).where(
+                structured_scope_select(ctx, params.entry_set, node_ids).where(
                     Entry.id.in_(entry_ids)
                 )
             )
@@ -666,6 +796,17 @@ async def restore_aggregate_entries_handler(
 ) -> ReadToolExecution | None:
     """复用已提交的有界 count/桶摘要，不重新扫描共享集合。"""
     await resolve_project_filter(db, ctx, params.entry_set)
+    try:
+        await resolve_node_filter(
+            db,
+            ctx,
+            project_id=params.project_id,
+            project_name=params.entry_set.project_name,
+            node_id=params.node_id,
+            node_scope=params.node_scope,
+        )
+    except PermissionError:
+        return denied_node_scope_execution()
     completeness = summary.get("completeness")
     status = summary.get("status")
     if not isinstance(completeness, str) or not isinstance(status, str):

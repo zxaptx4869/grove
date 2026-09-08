@@ -72,6 +72,7 @@ from evals.dialogue_loop.loop import (
     _verified_failure_output,
     build_agent,
     build_compact_history,
+    directory_reference_item,
     list_directory_position_node_id,
     list_position_entry_id,
     output_errors,
@@ -307,6 +308,27 @@ def test_budget_stop_keeps_directory_continuation_without_fake_leaf_total() -> N
     assert state.active_continuation.pending_steps == [{"parent_node_id": 12}]
 
 
+def test_find_budget_stop_is_partial_and_never_an_empty_match() -> None:
+    """定位未派发时保留部分完成原因，不能伪装成目录不存在。"""
+
+    state = _state()
+    _mark_budget_stop(
+        state,
+        BudgetExceeded("本轮工具动作预算已耗尽"),
+        tool_name="list_project_directories",
+        params={
+            "project_name": "房子装修",
+            "operation": "find",
+            "name": "瓷砖地材",
+        },
+    )
+
+    assert state.stop_state is not None
+    assert state.stop_state.status == "partial_completed"
+    assert state.stop_state.reason_code == "tool_action_budget"
+    assert not state.current_handles
+
+
 def test_tool_capability_stop_does_not_relabel_other_statistics() -> None:
     state = _state()
     events = [
@@ -512,6 +534,11 @@ def test_agent_exposes_real_directory_tool_and_separate_position_handles() -> No
     schema = tools["list_project_directories"].function_schema.json_schema
     assert "parent_result_handle" in schema["properties"]
     assert "parent_position" in schema["properties"]
+    assert {"name", "path", "match", "operation"} <= set(schema["properties"])
+    assert "find" in schema["properties"]["operation"]["enum"]
+    assert "directory_result_handle" in tools["count_entries"].function_schema.json_schema[
+        "properties"
+    ]
 
     state = _state()
     handle = state.store_result(
@@ -527,8 +554,291 @@ def test_agent_exposes_real_directory_tool_and_separate_position_handles() -> No
         "complete",
     )
     assert list_directory_position_node_id(state, handle, 2) == 91
+    with pytest.raises(ValueError, match="不唯一"):
+        directory_reference_item(state, handle)
     with pytest.raises(ValueError):
         list_directory_position_node_id(state, "rs-forged", 1)
+
+    unique = state.store_result(
+        "directories",
+        {
+            "project": {"id": 12, "name": "装修"},
+            "items": [{"node_id": 92, "name": "瓷砖地材", "path": "材料 / 瓷砖地材"}],
+        },
+        "completed",
+        "complete",
+    )
+    assert directory_reference_item(state, unique)["node_id"] == 92
+
+
+@pytest.mark.asyncio
+async def test_known_directory_name_uses_find_without_root_walk(monkeypatch) -> None:
+    """已知名称由一次 find 定位，不先调用根级 children 遍历。"""
+
+    state = _state()
+    dispatched = []
+
+    async def fake_dispatch(ctx, tool_name, params, kind, **_kwargs):
+        dispatched.append((tool_name, params, kind))
+        payload = {
+            "project": {"id": 8, "name": "房子装修"},
+            "operation": "find",
+            "match_status": "unique",
+            "items": [
+                {
+                    "node_id": 81,
+                    "name": "瓷砖地材",
+                    "project_id": 8,
+                    "project_name": "房子装修",
+                    "parent_node_id": 80,
+                    "path": "设计规划 / 风格设计 / 材质选择 / 瓷砖地材",
+                    "depth": 3,
+                    "is_leaf": True,
+                }
+            ],
+            "total_count": 1,
+            "returned_count": 1,
+            "has_more": False,
+        }
+        handle = ctx.deps.state.store_result(kind, payload, "completed", "complete")
+        event = {
+            "tool": "list_project_directories",
+            "shared_tool": tool_name,
+            "result_handle": handle,
+            "status": "completed",
+            "completeness": "complete",
+            "params": params,
+            "error": None,
+            "turn_index": state.turn_index,
+        }
+        state.tool_events.append(event)
+        return {**event, "payload": payload}
+
+    monkeypatch.setattr(loop_module, "_dispatch", fake_dispatch)
+    calls = 0
+
+    def respond(_messages, info):
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            return ModelResponse(
+                parts=[
+                    ToolCallPart(
+                        "list_project_directories",
+                        {
+                            "project_name": "房子装修",
+                            "operation": "find",
+                            "name": "瓷砖地材",
+                            "match": "exact",
+                        },
+                    )
+                ]
+            )
+        handle = next(iter(state.current_handles))
+        return ModelResponse(
+            parts=[
+                ToolCallPart(
+                    info.output_tools[0].name,
+                    {"blocks": [{"kind": "list", "result_handle": handle, "label": "定位"}]},
+                )
+            ]
+        )
+
+    turn, _ = await run_turn(
+        build_agent(FunctionModel(respond)), state, "瓷砖地材的完整路径是什么？", []
+    )
+
+    assert turn["status"] == "completed"
+    assert len(dispatched) == 1
+    assert dispatched[0][1]["operation"] == "find"
+    assert dispatched[0][1]["parent_node_id"] is None
+    assert "设计规划 / 风格设计 / 材质选择 / 瓷砖地材" in turn["answer"]
+
+
+@pytest.mark.asyncio
+async def test_follow_up_reuses_unique_directory_handle_for_node_scope(monkeypatch) -> None:
+    """后续计数从历史定位句柄解析 Node，不重复按名称查找。"""
+
+    state = _state()
+    directory_handle = state.store_result(
+        "directories",
+        {
+            "project": {"id": 8, "name": "房子装修"},
+            "operation": "find",
+            "match_status": "unique",
+            "items": [
+                {
+                    "node_id": 81,
+                    "name": "瓷砖地材",
+                    "project_id": 8,
+                    "project_name": "房子装修",
+                    "path": "材质选择 / 瓷砖地材",
+                }
+            ],
+        },
+        "completed",
+        "complete",
+    )
+    state.begin_turn(5, "这个目录下有多少条知识？")
+    dispatched = []
+
+    async def fake_dispatch(ctx, tool_name, params, kind, **_kwargs):
+        dispatched.append((tool_name, params, kind))
+        payload = {"value": 6, "node_scope": {"node_id": 81, "scope": "subtree"}}
+        handle = ctx.deps.state.store_result(kind, payload, "completed", "complete")
+        event = {
+            "tool": "count_entries",
+            "shared_tool": tool_name,
+            "result_handle": handle,
+            "status": "completed",
+            "completeness": "complete",
+            "params": params,
+            "error": None,
+            "turn_index": state.turn_index,
+        }
+        state.tool_events.append(event)
+        return {**event, "payload": payload}
+
+    monkeypatch.setattr(loop_module, "_dispatch", fake_dispatch)
+    calls = 0
+
+    def respond(_messages, info):
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            return ModelResponse(
+                parts=[
+                    ToolCallPart(
+                        "count_entries",
+                        {
+                            "project_scope": "project",
+                            "project_name": "房子装修",
+                            "directory_result_handle": directory_handle,
+                            "directory_scope": "subtree",
+                        },
+                    )
+                ]
+            )
+        statistic = next(iter(state.current_handles))
+        return ModelResponse(
+            parts=[
+                ToolCallPart(
+                    info.output_tools[0].name,
+                    {
+                        "blocks": [
+                            {"kind": "statistic", "result_handle": statistic, "label": "总数"}
+                        ]
+                    },
+                )
+            ]
+        )
+
+    turn, _ = await run_turn(
+        build_agent(FunctionModel(respond)), state, "这个目录下有多少条知识？", []
+    )
+
+    assert turn["status"] == "completed"
+    assert [item[0] for item in dispatched] == ["aggregate_entries"]
+    assert dispatched[0][1]["project_id"] == 8
+    assert dispatched[0][1]["node_id"] == 81
+    assert dispatched[0][1]["node_scope"] == "subtree"
+    assert turn["answer"] == "总数：6"
+
+
+@pytest.mark.asyncio
+async def test_leaf_follow_up_reuses_handle_and_confirms_empty_children(monkeypatch) -> None:
+    """询问叶子或子目录时复用唯一定位句柄，并实际查询该 Node 的 children。"""
+
+    state = _state()
+    directory_handle = state.store_result(
+        "directories",
+        {
+            "project": {"id": 8, "name": "房子装修"},
+            "operation": "find",
+            "match_status": "unique",
+            "items": [
+                {
+                    "node_id": 81,
+                    "name": "瓷砖地材",
+                    "project_id": 8,
+                    "project_name": "房子装修",
+                    "path": "材质选择 / 瓷砖地材",
+                    "is_leaf": True,
+                }
+            ],
+        },
+        "completed",
+        "complete",
+    )
+    state.begin_turn(6, "这个目录下面还有哪些子目录？")
+    dispatched = []
+
+    async def fake_dispatch(ctx, tool_name, params, kind, **_kwargs):
+        dispatched.append((tool_name, params, kind))
+        payload = {
+            "project": {"id": 8, "name": "房子装修"},
+            "parent": {
+                "node_id": 81,
+                "name": "瓷砖地材",
+                "path": "材质选择 / 瓷砖地材",
+            },
+            "items": [],
+            "total_count": 0,
+            "returned_count": 0,
+            "has_more": False,
+        }
+        handle = ctx.deps.state.store_result(kind, payload, "empty", "complete")
+        event = {
+            "tool": "list_project_directories",
+            "shared_tool": tool_name,
+            "result_handle": handle,
+            "status": "empty",
+            "completeness": "complete",
+            "params": params,
+            "error": None,
+            "turn_index": state.turn_index,
+        }
+        state.tool_events.append(event)
+        return {**event, "payload": payload}
+
+    monkeypatch.setattr(loop_module, "_dispatch", fake_dispatch)
+    calls = 0
+
+    def respond(_messages, info):
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            return ModelResponse(
+                parts=[
+                    ToolCallPart(
+                        "list_project_directories",
+                        {
+                            "project_name": "房子装修",
+                            "parent_result_handle": directory_handle,
+                            "operation": "children",
+                        },
+                    )
+                ]
+            )
+        return ModelResponse(
+            parts=[
+                ToolCallPart(
+                    info.output_tools[0].name,
+                    {"blocks": [{"kind": "text", "text": "这个目录没有直接子目录。"}]},
+                )
+            ]
+        )
+
+    turn, _ = await run_turn(
+        build_agent(FunctionModel(respond)), state, "这个目录下面还有哪些子目录？", []
+    )
+
+    assert turn["status"] == "completed"
+    assert len(dispatched) == 1
+    assert dispatched[0][1]["operation"] == "children"
+    assert dispatched[0][1]["parent_node_id"] == 81
+    assert dispatched[0][1]["name"] is None
+    assert turn["answer"] == "这个目录没有直接子目录。"
 
 
 def test_structured_rendering_uses_authoritative_dimension_and_directory_titles() -> None:

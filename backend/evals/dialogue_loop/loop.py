@@ -77,6 +77,12 @@ SYSTEM_PROMPT = """你是 Grove 知识库的只读对话 Agent。你在一个持
     leaf_summary 操作一次聚合，不能逐层列目录后自行猜测或把已查询节点数当作叶子总数。
 15. 当前白名单不能支持目标时调用 report_unsupported 一次并停止，不要反复搜索 Entry 或改用其他
     维度冒充。程序提示存在 continuation 时，只处理其中尚未完成的步骤，不重复已查询父节点。
+16. 用户明确提到目录名称或完整路径时，优先用 list_project_directories 的 find 操作直接定位；
+    不要先遍历所有一级目录。目录名不是 Entry 标题、知识类型或信息性质，不能用相关性搜索代替定位。
+17. find 只有 match_status=unique 时才是唯一目录；ambiguous 时展示候选完整路径并请用户选择。
+    找到后用目录结果句柄查询 children，或用现有统计/列表工具查询真实 Node 范围。
+18. is_leaf 只以目录工具服务端返回值为准；它来自完整 Node 集合对子节点的确认。后续“这个目录”
+    优先复用上一轮 directory_result_handle 和真实 node_id，不重复 find。
 """.strip()
 
 NO_KNOWLEDGE_PATTERNS = (
@@ -217,22 +223,32 @@ def _reliable_current_records(state: LoopState) -> list[ResultRecord]:
 def _directory_continuation(state: LoopState, params: dict, reason: str) -> ContinuationState:
     """从当前轮真实目录事件构造可续队列，不保存结果句柄。"""
 
+    operation = params.get("operation", "children")
+    task_type = "directory_find" if operation == "find" else "directory_walk"
     existing = state.active_continuation or state.continuation
-    if existing is not None and existing.task_type == "directory_walk":
+    if existing is not None and existing.task_type == task_type:
         continuation = existing
     else:
         continuation = ContinuationState(
-            task_type="directory_walk",
+            task_type=task_type,
             tool_name="list_project_directories",
             scope={
                 "project_id": params.get("project_id"),
                 "project_name": params.get("project_name"),
             },
         )
-    parent_node_id = params.get("parent_node_id")
-    pending = {step.get("parent_node_id") for step in continuation.pending_steps}
-    if parent_node_id not in pending:
-        continuation.pending_steps.append({"parent_node_id": parent_node_id})
+    step = (
+        {
+            "operation": "find",
+            "name": params.get("name"),
+            "path": params.get("path"),
+            "match": params.get("match", "exact"),
+        }
+        if operation == "find"
+        else {"parent_node_id": params.get("parent_node_id")}
+    )
+    if step not in continuation.pending_steps:
+        continuation.pending_steps.append(step)
     continuation.stop_reason = reason
     return continuation
 
@@ -514,6 +530,8 @@ def _model_payload(kind: str, payload: dict) -> dict:
                         "path",
                         "position",
                         "entry_count",
+                        "depth",
+                        "is_leaf",
                         "title",
                         "project_id",
                         "project_name",
@@ -625,6 +643,10 @@ def _history_tool_summary(state: LoopState, event: dict) -> dict:
                 "name": item.get("name"),
                 "parent_node_id": item.get("parent_node_id"),
                 "path": item.get("path"),
+                "depth": item.get("depth"),
+                "is_leaf": item.get("is_leaf"),
+                "project_id": item.get("project_id"),
+                "project_name": item.get("project_name"),
             }
             for index, item in enumerate(payload.get("items", []), 1)
         ]
@@ -739,6 +761,24 @@ def _result_semantics(tool_name: str, params: dict, payload: dict) -> dict:
                 "has_more": payload.get("has_more", False),
                 "completeness": "complete",
             }
+        if payload.get("operation") == "find":
+            query = payload.get("query") or {}
+            return {
+                "subject": "directories",
+                "query_object": "项目目录定位",
+                "display_name": "目录定位结果",
+                "project_id": project.get("id"),
+                "project_name": project.get("name"),
+                "project_scope": "项目",
+                "directory_name": query.get("name"),
+                "directory_path": query.get("path"),
+                "match_status": payload.get("match_status"),
+                "match": query.get("applied_match"),
+                "total_count": payload.get("total_count", 0),
+                "returned_count": payload.get("returned_count", 0),
+                "has_more": payload.get("has_more", False),
+                "completeness": "complete",
+            }
         parent = payload.get("parent")
         return {
             "subject": "directories",
@@ -783,6 +823,8 @@ def _result_semantics(tool_name: str, params: dict, payload: dict) -> dict:
             "bucket_count": len(payload.get("buckets", [])),
             "has_more": payload.get("truncated", False),
             "completeness": "unknown",
+            "node_scope": params.get("node_scope"),
+            "node_id": params.get("node_id"),
         }
     if tool_name in {"query_entries", "search_knowledge"}:
         entry_set = params.get("entry_set", {})
@@ -800,6 +842,8 @@ def _result_semantics(tool_name: str, params: dict, payload: dict) -> dict:
             "total_count": payload.get("total_count"),
             "returned_count": payload.get("returned_count", len(payload.get("items", []))),
             "completeness": payload.get("completeness"),
+            "node_scope": params.get("node_scope"),
+            "node_id": params.get("node_id"),
         }
     return {}
 
@@ -840,6 +884,62 @@ def list_directory_position_node_id(
     if record is None or record.kind != "directories" or not 1 <= position <= len(items):
         raise ValueError("目录结果句柄无效、非目录结果或位置越界")
     return int(items[position - 1]["node_id"])
+
+
+def directory_reference_item(
+    state: LoopState,
+    result_set_handle: str,
+    position: int | None = None,
+) -> dict:
+    """从会话目录句柄解析唯一项或用户指定的实际位置。"""
+
+    record = state.result_sets.get(result_set_handle)
+    items = record.payload.get("items", []) if record and record.kind == "directories" else []
+    if record is None or record.kind != "directories" or not items:
+        raise ValueError("目录结果句柄无效、没有候选或类型不正确")
+    if position is None:
+        if len(items) != 1:
+            raise ValueError("目录结果不唯一，必须按候选完整路径指定位置")
+        return items[0]
+    if not 1 <= position <= len(items):
+        raise ValueError("目录结果位置越界")
+    return items[position - 1]
+
+
+def _entry_directory_scope(
+    state: LoopState,
+    *,
+    project_scope: str,
+    project_name: str | None,
+    result_handle: str | None,
+    position: int | None,
+    scope: Literal["direct", "subtree"] | None,
+) -> tuple[str | None, dict]:
+    """只从可信会话目录结果生成共享 Entry 工具的 Node 范围。"""
+
+    if result_handle is None:
+        if position is not None or scope is not None:
+            raise ModelRetry("目录位置或范围必须与 directory_result_handle 同时提供")
+        return project_name, {}
+    if project_scope != "project":
+        raise ModelRetry("目录范围查询必须使用 project_scope=project")
+    try:
+        item = directory_reference_item(state, result_handle, position)
+    except ValueError as exc:
+        raise ModelRetry(str(exc)) from exc
+    record = state.result_sets[result_handle]
+    project = record.payload.get("project") or {}
+    actual_project_id = item.get("project_id") or project.get("id")
+    actual_project_name = item.get("project_name") or project.get("name")
+    if not actual_project_id or not actual_project_name:
+        raise ModelRetry("目录结果缺少真实项目身份")
+    if project_name is not None and project_name != actual_project_name:
+        raise ModelRetry("project_name 与目录结果所属项目不一致")
+    return actual_project_name, {
+        "project_id": int(actual_project_id),
+        "node_id": int(item["node_id"]),
+        "node_scope": scope or "subtree",
+    }
 
 
 async def _dispatch(
@@ -1115,14 +1215,20 @@ def build_agent(model) -> Agent[LoopDeps, DialogueAnswer]:
         parent_node_id: int | None = None,
         parent_result_handle: str | None = None,
         parent_position: int | None = None,
-        operation: Literal["children", "leaf_summary"] = "children",
+        operation: Literal["children", "find", "leaf_summary"] = "children",
+        name: str | None = None,
+        path: str | None = None,
+        match: Literal["exact", "contains"] = "exact",
+        limit: int = 20,
     ) -> dict:
         """查询 Project 的真实 Node 目录。
 
         children 不传父节点时返回一级目录、传父节点时返回直接子目录；leaf_summary
         一次返回整棵项目目录树的真实叶子节点总数和一级目录分组，且不能传父节点。
-        目录与 Entry、知识类型和信息性质完全不同。追问第几个目录时，必须
-        使用上一轮该工具返回的 parent_result_handle 与 1-based parent_position。
+        用户给出目录名称或完整路径时直接使用 find，不先遍历根目录；exact 精确匹配
+        优先，contains 只在没有精确结果时使用。目录与 Entry、知识类型和信息性质完全
+        不同。追问目录时复用上一轮 parent_result_handle；结果唯一时可省略位置，多候选时
+        必须同时提供 1-based parent_position。
         """
         state = ctx.deps.state
         if operation == "leaf_summary" and (
@@ -1131,13 +1237,20 @@ def build_agent(model) -> Agent[LoopDeps, DialogueAnswer]:
             or parent_position is not None
         ):
             raise ModelRetry("叶子节点聚合不能指定父节点或目录位置")
+        if operation == "find" and (
+            parent_node_id is not None
+            or parent_result_handle is not None
+            or parent_position is not None
+        ):
+            raise ModelRetry("目录定位不能指定父节点或目录位置")
         if parent_result_handle is not None or parent_position is not None:
-            if parent_result_handle is None or parent_position is None:
-                raise ModelRetry("目录追问必须同时提供 parent_result_handle 和 parent_position")
+            if parent_result_handle is None:
+                raise ModelRetry("目录位置必须与 parent_result_handle 同时提供")
             try:
-                resolved_parent = list_directory_position_node_id(
+                resolved_item = directory_reference_item(
                     state, parent_result_handle, parent_position
                 )
+                resolved_parent = int(resolved_item["node_id"])
             except ValueError as exc:
                 raise ModelRetry(str(exc)) from exc
             if parent_node_id is not None and parent_node_id != resolved_parent:
@@ -1156,6 +1269,10 @@ def build_agent(model) -> Agent[LoopDeps, DialogueAnswer]:
             "project_name": project_name,
             "parent_node_id": parent_node_id,
             "operation": operation,
+            "name": name,
+            "path": path,
+            "match": match,
+            "limit": limit,
         }
         if operation == "children" and parent_node_id in state.queried_directory_parents:
             event = {
@@ -1202,9 +1319,21 @@ def build_agent(model) -> Agent[LoopDeps, DialogueAnswer]:
         project_scope: Literal["all", "project"],
         project_name: str | None,
         main_types: list[Literal["knowledge", "method", "parameter", "reminder"]] | None = None,
+        directory_result_handle: str | None = None,
+        directory_position: int | None = None,
+        directory_scope: Literal["direct", "subtree"] | None = None,
     ) -> dict:
-        """精确统计正式记录总数。main_types 未指定表示全部类型；“知识”泛称不是类型筛选。"""
+        """精确统计正式记录总数；目录范围只能从已有目录结果句柄解析。"""
+        project_name, node_scope = _entry_directory_scope(
+            ctx.deps.state,
+            project_scope=project_scope,
+            project_name=project_name,
+            result_handle=directory_result_handle,
+            position=directory_position,
+            scope=directory_scope,
+        )
         params = _count_params(project_scope, project_name, main_types)
+        params.update(node_scope)
         return await _dispatch(
             ctx,
             "aggregate_entries",
@@ -1215,6 +1344,9 @@ def build_agent(model) -> Agent[LoopDeps, DialogueAnswer]:
                 "project_scope": project_scope,
                 "project_name": project_name,
                 "main_types": list(main_types or []),
+                "directory_result_handle": directory_result_handle,
+                "directory_position": directory_position,
+                "directory_scope": directory_scope,
             },
         )
 
@@ -1225,9 +1357,21 @@ def build_agent(model) -> Agent[LoopDeps, DialogueAnswer]:
         project_name: str | None,
         group_by: Literal["project", "main_type", "info_nature", "updated_month"],
         main_types: list[Literal["knowledge", "method", "parameter", "reminder"]] | None = None,
+        directory_result_handle: str | None = None,
+        directory_position: int | None = None,
+        directory_scope: Literal["direct", "subtree"] | None = None,
     ) -> dict:
-        """按一个明确维度统计正式记录。main_types 未指定表示全部正式类型。"""
+        """按明确维度统计正式记录；目录范围只能从已有目录结果句柄解析。"""
+        project_name, node_scope = _entry_directory_scope(
+            ctx.deps.state,
+            project_scope=project_scope,
+            project_name=project_name,
+            result_handle=directory_result_handle,
+            position=directory_position,
+            scope=directory_scope,
+        )
         params = _group_params(project_scope, project_name, group_by, main_types)
+        params.update(node_scope)
         return await _dispatch(
             ctx,
             "aggregate_entries",
@@ -1239,6 +1383,9 @@ def build_agent(model) -> Agent[LoopDeps, DialogueAnswer]:
                 "project_name": project_name,
                 "group_by": group_by,
                 "main_types": list(main_types or []),
+                "directory_result_handle": directory_result_handle,
+                "directory_position": directory_position,
+                "directory_scope": directory_scope,
             },
         )
 
@@ -1252,12 +1399,24 @@ def build_agent(model) -> Agent[LoopDeps, DialogueAnswer]:
         sort_field: Literal["relevance", "updated_at", "created_at"],
         sort_direction: Literal["asc", "desc"],
         main_types: list[Literal["knowledge", "method", "parameter", "reminder"]] | None = None,
+        directory_result_handle: str | None = None,
+        directory_position: int | None = None,
+        directory_scope: Literal["direct", "subtree"] | None = None,
     ) -> dict:
-        """按结构化条件查询列表；semantic_query 非空时结果完整性有限。"""
+        """按结构化条件查询列表；目录范围只接受已定位结果，且不能做语义相关性搜索。"""
+        project_name, node_scope = _entry_directory_scope(
+            ctx.deps.state,
+            project_scope=project_scope,
+            project_name=project_name,
+            result_handle=directory_result_handle,
+            position=directory_position,
+            scope=directory_scope,
+        )
         params = {
             "entry_set": _entry_set(project_scope, project_name, semantic_query, main_types),
             "limit": min(max(limit, 1), 10),
             "sort": {"field": sort_field, "direction": sort_direction},
+            **node_scope,
         }
         result = await _dispatch(
             ctx,
@@ -1271,6 +1430,9 @@ def build_agent(model) -> Agent[LoopDeps, DialogueAnswer]:
                 "main_types": list(main_types or []),
                 "limit": params["limit"],
                 "sort": params["sort"],
+                "directory_result_handle": directory_result_handle,
+                "directory_position": directory_position,
+                "directory_scope": directory_scope,
             },
         )
         ids = [item["entry_id"] for item in result.get("payload", {}).get("items", [])]

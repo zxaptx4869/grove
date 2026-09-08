@@ -11,24 +11,31 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.models import Entry, Node, Project, WorkspaceMember
 from app.models.knowledge_agent import (
     RESULT_COMPLETENESS_COMPLETE,
+    RESULT_COMPLETENESS_LIMITED,
     RESULT_COMPLETENESS_UNKNOWN,
     TOOL_COMPLETED,
     TOOL_DENIED,
     TOOL_EMPTY,
+    TOOL_PARTIAL,
 )
 from app.services.knowledge_agent.read_tools import ReadToolExecution, ReadToolParams
 from app.services.knowledge_agent.tools import RunToolContext
 
 DIRECTORY_TOOL_VERSION = "v1"
+DIRECTORY_FIND_DEFAULT_LIMIT = 20
 
 
 class ListProjectDirectoriesParams(ReadToolParams):
-    """按项目根、指定父节点或整树叶子统计查询目录。"""
+    """按项目根、指定父节点、名称/路径或整树叶子统计查询目录。"""
 
     project_id: int | None = Field(default=None, ge=1)
     project_name: str | None = Field(default=None, min_length=1, max_length=64)
     parent_node_id: int | None = Field(default=None, ge=1)
-    operation: Literal["children", "leaf_summary"] = "children"
+    operation: Literal["children", "find", "leaf_summary"] = "children"
+    name: str | None = Field(default=None, min_length=1, max_length=128)
+    path: str | None = Field(default=None, min_length=1, max_length=2048)
+    match: Literal["exact", "contains"] = "exact"
+    limit: int = Field(default=DIRECTORY_FIND_DEFAULT_LIMIT, ge=1, le=50)
 
     @model_validator(mode="after")
     def require_project_reference(self) -> ListProjectDirectoriesParams:
@@ -36,6 +43,24 @@ class ListProjectDirectoriesParams(ReadToolParams):
             raise ValueError("必须提供 project_id 或 project_name")
         if self.project_name is not None:
             self.project_name = self.project_name.strip()
+            if not self.project_name:
+                raise ValueError("project_name 不能为空")
+        if self.name is not None:
+            self.name = self.name.strip()
+            if not self.name:
+                raise ValueError("name 不能为空")
+        if self.path is not None:
+            segments = [segment.strip() for segment in self.path.split("/")]
+            if not all(segments):
+                raise ValueError("目录路径必须由非空名称组成")
+            self.path = " / ".join(segments)
+        if self.operation == "find":
+            if (self.name is None) == (self.path is None):
+                raise ValueError("目录定位必须且只能提供 name 或 path")
+            if self.parent_node_id is not None:
+                raise ValueError("目录定位不能同时指定父节点")
+        elif self.name is not None or self.path is not None:
+            raise ValueError("只有 find 操作可以提供 name 或 path")
         if self.operation == "leaf_summary" and self.parent_node_id is not None:
             raise ValueError("叶子节点聚合不能同时指定父节点")
         return self
@@ -69,6 +94,154 @@ def _node_paths(nodes: list[Node]) -> dict[int, str]:
     for node in nodes:
         path_for(node.id)
     return cache
+
+
+def _node_depths(nodes: list[Node]) -> dict[int, int]:
+    """以一级目录深度 0 计算真实父链深度；异常环路保守停止。"""
+
+    by_id = {node.id: node for node in nodes}
+    depths: dict[int, int] = {}
+    for node in nodes:
+        depth = 0
+        current = node
+        visited = {node.id}
+        while current.parent_id is not None:
+            parent = by_id.get(current.parent_id)
+            if parent is None or parent.id in visited:
+                break
+            depth += 1
+            visited.add(parent.id)
+            current = parent
+        depths[node.id] = depth
+    return depths
+
+
+def _directory_item(
+    project: Project,
+    node: Node,
+    *,
+    paths: dict[int, str],
+    depths: dict[int, int],
+    parent_ids: set[int],
+    entry_count: int | None = None,
+) -> dict:
+    """构造目录工具各操作共用的权威 Node 身份。"""
+
+    item = {
+        "node_id": node.id,
+        "name": node.name,
+        "project_id": project.id,
+        "project_name": project.name,
+        "parent_node_id": node.parent_id,
+        "path": paths[node.id],
+        "depth": depths[node.id],
+        "is_leaf": node.id not in parent_ids,
+        "position": node.position,
+    }
+    if entry_count is not None:
+        item["entry_count"] = entry_count
+    return item
+
+
+def _find_directories(
+    project: Project,
+    nodes: list[Node],
+    paths: dict[int, str],
+    depths: dict[int, int],
+    params: ListProjectDirectoriesParams,
+) -> ReadToolExecution:
+    """在单一已授权项目的完整 Node 集合中按名称或路径定位。"""
+
+    parent_ids = {node.parent_id for node in nodes if node.parent_id is not None}
+    if params.path is not None:
+        matched = [node for node in nodes if paths[node.id] == params.path]
+        match_kind = "path"
+    else:
+        exact = [node for node in nodes if node.name == params.name]
+        if exact or params.match == "exact":
+            matched = exact
+            match_kind = "exact"
+        else:
+            matched = [node for node in nodes if params.name in node.name]
+            match_kind = "contains"
+    ordered = sorted(matched, key=lambda node: (paths[node.id], node.id))
+    total_count = len(ordered)
+    selected = ordered[: params.limit]
+    has_more = total_count > len(selected)
+    items = [
+        _directory_item(
+            project,
+            node,
+            paths=paths,
+            depths=depths,
+            parent_ids=parent_ids,
+        )
+        for node in selected
+    ]
+    if total_count == 0:
+        match_status = "not_found"
+        status = TOOL_EMPTY
+        completeness = RESULT_COMPLETENESS_COMPLETE
+        error = None
+    elif match_kind == "contains":
+        match_status = "contains_candidates"
+        status = TOOL_PARTIAL
+        completeness = (
+            RESULT_COMPLETENESS_LIMITED if has_more else RESULT_COMPLETENESS_COMPLETE
+        )
+        error = "没有精确匹配，以下为名称包含候选，请根据完整路径确认"
+    elif total_count == 1:
+        match_status = "unique"
+        status = TOOL_COMPLETED
+        completeness = RESULT_COMPLETENESS_COMPLETE
+        error = None
+    else:
+        match_status = "ambiguous"
+        status = TOOL_PARTIAL
+        completeness = (
+            RESULT_COMPLETENESS_LIMITED if has_more else RESULT_COMPLETENESS_COMPLETE
+        )
+        error = "找到多个同名目录，请根据完整路径选择"
+    payload = {
+        "project": {"id": project.id, "name": project.name},
+        "operation": "find",
+        "query": {
+            "name": params.name,
+            "path": params.path,
+            "requested_match": params.match,
+            "applied_match": match_kind,
+        },
+        "match_status": match_status,
+        "items": items,
+        "total_count": total_count,
+        "returned_count": len(items),
+        "has_more": has_more,
+    }
+    reason_code = {
+        "unique": "directory_found",
+        "ambiguous": "directory_name_ambiguous",
+        "contains_candidates": "directory_contains_candidates",
+        "not_found": "directory_not_found",
+    }[match_status]
+    payload["reason_code"] = reason_code
+    return ReadToolExecution(
+        status=status,
+        payload=payload,
+        completeness=completeness,
+        audit_summary={
+            "status": status,
+            "reason_code": reason_code,
+            "project_id": project.id,
+            "operation": "find",
+            "match_status": match_status,
+            "applied_match": match_kind,
+            "total_count": total_count,
+            "returned_count": len(items),
+            "has_more": has_more,
+            "completeness": completeness,
+        },
+        error=error,
+    )
 
 
 def _leaf_summary(project: Project, nodes: list[Node], paths: dict[int, str]) -> dict:
@@ -161,12 +334,7 @@ async def list_project_directories_handler(
                     select(Project.id).where(Project.id == params.project_id)
                 )
             ).scalar_one_or_none() is not None
-        elif params.project_name is not None:
-            inaccessible = (
-                await db.execute(
-                    select(Project.id).where(Project.name == params.project_name)
-                )
-            ).scalar_one_or_none() is not None
+        # 名称只在当前 Workspace 内解析，不能借错误语义泄露其他空间的同名项目。
         return ReadToolExecution(
             status=TOOL_DENIED,
             payload={},
@@ -199,6 +367,9 @@ async def list_project_directories_handler(
     )
     by_id = {node.id: node for node in nodes}
     paths = _node_paths(nodes)
+    depths = _node_depths(nodes)
+    if params.operation == "find":
+        return _find_directories(project, nodes, paths, depths, params)
     if params.operation == "leaf_summary":
         payload = _leaf_summary(project, nodes, paths)
         return ReadToolExecution(
@@ -231,6 +402,7 @@ async def list_project_directories_handler(
         if node.parent_id == params.parent_node_id
     ]
     ordered = _ordered_nodes(children)
+    parent_ids = {node.parent_id for node in nodes if node.parent_id is not None}
     entry_counts = (
         dict(
             (
@@ -245,14 +417,14 @@ async def list_project_directories_handler(
         else {}
     )
     items = [
-        {
-            "node_id": node.id,
-            "name": node.name,
-            "parent_node_id": node.parent_id,
-            "path": paths[node.id],
-            "position": node.position,
-            "entry_count": int(entry_counts.get(node.id, 0)),
-        }
+        _directory_item(
+            project,
+            node,
+            paths=paths,
+            depths=depths,
+            parent_ids=parent_ids,
+            entry_count=int(entry_counts.get(node.id, 0)),
+        )
         for node in ordered
     ]
     payload = {

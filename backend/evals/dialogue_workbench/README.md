@@ -9,7 +9,9 @@
 - 脱敏对话、公开诊断和反馈保存在 `backend/data/knowledge-agent-evals/dialogue-workbench/workbench.json`。
 - `--offline` 只供自动化验收，页面会明确显示“离线桩，仅验收”。
 - 轮次状态区分 `completed`、`partial_completed`、`unsupported`、`denied` 和 `failed`；预算、超时或收尾校验失败会优先保留当前轮可信结果并显示确定性缺口。
-- `list_project_directories` 读取真实 Project/Node 树；`children` 查询根级或直接子目录，`leaf_summary` 一次计算整树中没有直接子节点的真实叶子目录。叶子数量不是 Entry 数量或 `main_type` 分组。
+- `list_project_directories` 读取真实 Project/Node 树；`find` 按已知名称或完整路径直接定位真实 Node，`children` 查询根级或直接子目录，`leaf_summary` 一次计算整树中没有直接子节点的真实叶子目录。名称歧义会显示候选完整路径，不会任意选择。
+- 定位后的目录结果句柄可供 `count_entries`、`group_entries`、`query_entries` 按真实 Node 的直接范围或子树范围查询；目录名不会被当作 Entry 标题、知识类型或相关性搜索词。
+- `is_leaf=true` 只来自服务端对真实子节点集合的确认。后续“这个目录”优先复用已定位句柄，避免从项目根重复遍历。叶子数量不是 Entry 数量或 `main_type` 分组。
 - 部分完成会记录停止原因、未完成步骤和最小 continuation。运行时上下文仍只保存在当前进程；服务重启后历史对话只读，需要新建对话重新发起查询。
 
 从仓库根目录运行 `scripts/dialogue-workbench.sh`，停止时运行
