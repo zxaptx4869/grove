@@ -295,6 +295,55 @@ async def test_directory_tool_returns_real_order_empty_nodes_and_direct_children
 
 
 @pytest.mark.asyncio
+async def test_directory_tool_aggregates_real_leaf_nodes_in_one_call() -> None:
+    """叶子数量由完整 Node 父子关系计算，不把直接子目录数量当作叶子数。"""
+
+    async with async_session_factory() as db:
+        _run, ctx = await _run_context(db)
+        project = (
+            await db.execute(select(Project).where(Project.id == ctx.project_id))
+        ).scalar_one()
+        root = Node(project_id=project.id, parent_id=None, name="规划", position=10)
+        db.add(root)
+        await db.flush()
+        branch = Node(project_id=project.id, parent_id=root.id, name="空间布局", position=0)
+        direct_leaf = Node(project_id=project.id, parent_id=root.id, name="图纸", position=1)
+        db.add_all([branch, direct_leaf])
+        await db.flush()
+        db.add_all(
+            [
+                Node(project_id=project.id, parent_id=branch.id, name="功能分区", position=0),
+                Node(project_id=project.id, parent_id=branch.id, name="收纳设计", position=1),
+                Node(project_id=project.id, parent_id=branch.id, name="动线优化", position=2),
+            ]
+        )
+        await db.flush()
+        rows = (
+            await db.execute(select(Node).where(Node.project_id == project.id))
+        ).scalars().all()
+        parent_ids = {node.parent_id for node in rows if node.parent_id is not None}
+        expected_leaf_count = sum(node.id not in parent_ids for node in rows)
+        result = await dispatch_read_tool(
+            db,
+            ctx,
+            tool_name="list_project_directories",
+            tool_version="v1",
+            params={"project_id": project.id, "operation": "leaf_summary"},
+            budget=ReadToolBudget(1, 1, 10_000),
+            cancel_check=_noop_cancel,
+            registry=KNOWLEDGE_AGENT_READ_TOOL_REGISTRY,
+        )
+
+    assert result.status == TOOL_COMPLETED
+    assert result.completeness == RESULT_COMPLETENESS_COMPLETE
+    assert result.payload["value"] == expected_leaf_count
+    assert result.payload["total_count"] == expected_leaf_count
+    assert result.payload["has_more"] is False
+    planning = next(item for item in result.payload["buckets"] if item["label"] == "规划")
+    assert planning["count"] == 4
+
+
+@pytest.mark.asyncio
 async def test_directory_tool_rejects_foreign_workspace_and_parent() -> None:
     """项目与父节点归属错误都拒绝且不回退到根目录。"""
     async with async_session_factory() as db:
@@ -333,7 +382,8 @@ async def test_directory_tool_rejects_foreign_workspace_and_parent() -> None:
         )
 
     assert foreign_result.status == TOOL_DENIED
-    assert "项目不存在" in (foreign_result.error or "")
+    assert foreign_result.audit_summary["reason_code"] == "project_access_denied"
+    assert "无权" in (foreign_result.error or "")
     assert wrong_parent.status == TOOL_DENIED
     assert "父节点不属于指定项目" in (wrong_parent.error or "")
 

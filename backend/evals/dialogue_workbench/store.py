@@ -33,10 +33,19 @@ class WorkbenchStore:
                 conversation["read_only"] = True
                 conversation["recovery_notice"] = "服务已重启，模型运行上下文不可恢复。"
                 for turn in conversation.get("turns", []):
+                    turn.setdefault("completion", None)
                     if turn.get("status") in {"queued", "running"}:
                         turn["status"] = "interrupted"
                         turn["stage"] = "interrupted"
                         turn["error"] = "服务已重启，上一轮运行状态不可恢复。"
+                        turn["completion"] = {
+                            "status": "interrupted",
+                            "reason_code": "service_restarted",
+                            "reason": "服务重启后运行上下文不可恢复",
+                            "incomplete_steps": ["上一轮执行被中断"],
+                            "can_continue": False,
+                            "continuation": None,
+                        }
         return value
 
     def save(self, value: dict[str, Any]) -> None:

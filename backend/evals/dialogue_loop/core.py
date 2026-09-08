@@ -30,6 +30,19 @@ BATCH_TEXT_REQUESTS = 192
 BATCH_EMBEDDING_REQUESTS = 64
 MAX_TOOL_CONCURRENCY = 2
 
+TURN_COMPLETED = "completed"
+TURN_PARTIAL_COMPLETED = "partial_completed"
+TURN_UNSUPPORTED = "unsupported"
+TURN_DENIED = "denied"
+TURN_FAILED = "failed"
+TURN_TERMINAL_STATUSES = {
+    TURN_COMPLETED,
+    TURN_PARTIAL_COMPLETED,
+    TURN_UNSUPPORTED,
+    TURN_DENIED,
+    TURN_FAILED,
+}
+
 
 @dataclass(frozen=True)
 class Scenario:
@@ -147,6 +160,43 @@ class BudgetExceeded(RuntimeError):
 
 
 @dataclass
+class ContinuationState:
+    """跨轮保存的最小可续任务，不包含正文或历史结果句柄。"""
+
+    task_type: str
+    tool_name: str
+    scope: dict = field(default_factory=dict)
+    completed_steps: list[dict] = field(default_factory=list)
+    pending_steps: list[dict] = field(default_factory=list)
+    confirmed: list[dict] = field(default_factory=list)
+    stop_reason: str | None = None
+
+    def snapshot(self) -> dict:
+        return asdict(self)
+
+
+@dataclass
+class StopState:
+    """程序权威的当前轮停止原因和完成语义。"""
+
+    status: Literal[
+        "partial_completed", "unsupported", "denied", "failed"
+    ]
+    reason_code: str
+    reason: str
+    incomplete_steps: list[str] = field(default_factory=list)
+    can_continue: bool = False
+    continuation: ContinuationState | None = None
+
+    def snapshot(self) -> dict:
+        value = asdict(self)
+        value["continuation"] = (
+            self.continuation.snapshot() if self.continuation is not None else None
+        )
+        return value
+
+
+@dataclass
 class TurnBudget:
     text_requests: int = 0
     embedding_requests: int = 0
@@ -225,6 +275,18 @@ class BudgetLedger:
     @property
     def active_tool_calls(self) -> int:
         return self._require_turn().tool_calls
+
+    @property
+    def remaining_tool_calls(self) -> int:
+        return max(PER_TURN_TOOL_CALLS - self._require_turn().tool_calls, 0)
+
+    @property
+    def remaining_text_requests(self) -> int:
+        turn = self._require_turn()
+        return min(
+            max(PER_TURN_TEXT_REQUESTS - turn.text_requests, 0),
+            max(BATCH_TEXT_REQUESTS - self.batch_text_requests, 0),
+        )
 
     def _require_turn(self) -> TurnBudget:
         if self.active is None:

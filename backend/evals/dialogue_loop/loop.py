@@ -29,9 +29,16 @@ from evals.dialogue_loop.core import (
     MODEL_INPUT_TOKENS_LIMIT,
     OUTPUT_TOKENS_LIMIT,
     PER_TURN_SECONDS,
+    TURN_COMPLETED,
+    TURN_DENIED,
+    TURN_FAILED,
+    TURN_PARTIAL_COMPLETED,
+    TURN_UNSUPPORTED,
     BudgetExceeded,
     BudgetLedger,
+    ContinuationState,
     DialogueAnswer,
+    StopState,
 )
 from evals.dialogue_loop.instrumentation import (
     FinalizeRequired,
@@ -66,6 +73,10 @@ SYSTEM_PROMPT = """你是 Grove 知识库的只读对话 Agent。你在一个持
     目录结果的第几个引用只能用 parent_result_handle 与 parent_position 追问，不能猜 Node id。
 13. 结构化结果的查询对象、范围、分组维度、数量和中文显示名称以工具元数据为准；不要用自定义 label
     把“知识类型统计”称为“一级目录”，也不要把本页返回数写成完整总数。
+14. 叶子节点是没有任何直接子 Node 的目录节点；整树叶子数量必须用 list_project_directories 的
+    leaf_summary 操作一次聚合，不能逐层列目录后自行猜测或把已查询节点数当作叶子总数。
+15. 当前白名单不能支持目标时调用 report_unsupported 一次并停止，不要反复搜索 Entry 或改用其他
+    维度冒充。程序提示存在 continuation 时，只处理其中尚未完成的步骤，不重复已查询父节点。
 """.strip()
 
 NO_KNOWLEDGE_PATTERNS = (
@@ -76,6 +87,7 @@ NO_KNOWLEDGE_PATTERNS = (
     "不用查知识库",
     "不要查知识库",
 )
+CONTINUE_PATTERNS = ("继续", "接着", "剩下", "未完成")
 
 
 @dataclass
@@ -106,6 +118,10 @@ class LoopState:
     turn_index: int = 0
     run_id: int = 0
     tools_allowed: bool = True
+    stop_state: StopState | None = None
+    continuation: ContinuationState | None = None
+    active_continuation: ContinuationState | None = None
+    queried_directory_parents: set[int | None] = field(default_factory=set)
     _handle_sequence: int = 0
     database_lock: asyncio.Lock = field(default_factory=asyncio.Lock, repr=False)
 
@@ -114,9 +130,42 @@ class LoopState:
         self.run_id = run_id
         self.current_handles.clear()
         self.current_evidence.clear()
+        self.stop_state = None
+        self.queried_directory_parents.clear()
         self.tools_allowed = not any(pattern in message for pattern in NO_KNOWLEDGE_PATTERNS)
+        self.active_continuation = (
+            self.continuation
+            if self.continuation is not None
+            and any(pattern in message for pattern in CONTINUE_PATTERNS)
+            else None
+        )
         self.ledger.start_turn()
         self.instrumentation.begin_turn()
+
+    def stop(self, value: StopState) -> None:
+        """保留第一个确定性停止分类，并合并后续待处理步骤。"""
+
+        if self.stop_state is None:
+            self.stop_state = value
+        elif value.continuation and self.stop_state.continuation:
+            existing = self.stop_state.continuation.pending_steps
+            for step in value.continuation.pending_steps:
+                if step not in existing:
+                    existing.append(step)
+        if value.continuation is not None:
+            self.continuation = value.continuation
+
+    def completion_snapshot(self, status: str) -> dict:
+        if self.stop_state is not None:
+            return self.stop_state.snapshot()
+        return {
+            "status": status,
+            "reason_code": "completed" if status == TURN_COMPLETED else status,
+            "reason": "任务已完整完成" if status == TURN_COMPLETED else "任务已结束",
+            "incomplete_steps": [],
+            "can_continue": False,
+            "continuation": None,
+        }
 
     def store_result(
         self,
@@ -154,6 +203,242 @@ class LoopState:
 @dataclass
 class LoopDeps:
     state: LoopState
+
+
+def _reliable_current_records(state: LoopState) -> list[ResultRecord]:
+    return [
+        record
+        for handle, record in state.result_sets.items()
+        if handle in state.current_handles
+        and record.status in {"completed", "ok", "empty", "partial", "limited"}
+    ]
+
+
+def _directory_continuation(state: LoopState, params: dict, reason: str) -> ContinuationState:
+    """从当前轮真实目录事件构造可续队列，不保存结果句柄。"""
+
+    existing = state.active_continuation or state.continuation
+    if existing is not None and existing.task_type == "directory_walk":
+        continuation = existing
+    else:
+        continuation = ContinuationState(
+            task_type="directory_walk",
+            tool_name="list_project_directories",
+            scope={
+                "project_id": params.get("project_id"),
+                "project_name": params.get("project_name"),
+            },
+        )
+    parent_node_id = params.get("parent_node_id")
+    pending = {step.get("parent_node_id") for step in continuation.pending_steps}
+    if parent_node_id not in pending:
+        continuation.pending_steps.append({"parent_node_id": parent_node_id})
+    continuation.stop_reason = reason
+    return continuation
+
+
+def _mark_budget_stop(
+    state: LoopState,
+    exc: BudgetExceeded,
+    *,
+    tool_name: str | None = None,
+    params: dict | None = None,
+) -> None:
+    reason = str(exc)
+    continuation = (
+        _directory_continuation(state, params or {}, reason)
+        if tool_name == "list_project_directories"
+        else None
+    )
+    state.stop(
+        StopState(
+            status=TURN_PARTIAL_COMPLETED,
+            reason_code=_budget_stop_reason(exc),
+            reason=reason,
+            incomplete_steps=[
+                f"未执行：{tool_name}" if tool_name else "未完成剩余查询或读取步骤"
+            ],
+            can_continue=True,
+            continuation=continuation,
+        )
+    )
+
+
+def _stop_from_failure(
+    state: LoopState,
+    exc: BaseException,
+    failure: dict | None,
+    *,
+    default_reason_code: str = "system_error",
+) -> StopState:
+    """把异常、工具状态和已有材料归一为任务级终态。"""
+
+    if state.stop_state is not None:
+        return state.stop_state
+    events = [
+        event
+        for event in state.tool_events
+        if event.get("turn_index") == state.turn_index
+    ]
+    if any(event.get("status") == "unsupported" for event in events):
+        event = next(event for event in events if event.get("status") == "unsupported")
+        return StopState(
+            status=TURN_UNSUPPORTED,
+            reason_code=str(event.get("reason_code") or "tool_capability_missing"),
+            reason=str(event.get("error") or "当前只读工具不支持该任务"),
+            incomplete_steps=["目标对象尚未由工具确认"],
+            can_continue=False,
+        )
+    if any(event.get("status") == "denied" for event in events):
+        event = next(event for event in events if event.get("status") == "denied")
+        reason_code = str(event.get("reason_code") or "access_denied")
+        error = str(event.get("error") or "当前范围不允许该查询")
+        if reason_code == "tool_not_available" or "工具未注册" in error:
+            return StopState(
+                status=TURN_UNSUPPORTED,
+                reason_code="tool_not_available",
+                reason="当前白名单中没有模型请求的工具，目标任务尚不受支持",
+                incomplete_steps=["未执行不存在的工具"],
+                can_continue=False,
+            )
+        if reason_code.endswith("_budget") or "预算" in error:
+            return StopState(
+                status=TURN_PARTIAL_COMPLETED,
+                reason_code=reason_code,
+                reason=error,
+                incomplete_steps=["未完成预算边界后的剩余步骤"],
+                can_continue=True,
+            )
+        return StopState(
+            status=TURN_DENIED,
+            reason_code=reason_code,
+            reason=error,
+            incomplete_steps=["查询未获授权"],
+            can_continue=False,
+        )
+    message = str(exc)
+    category = str((failure or {}).get("category") or "")
+    lower = message.casefold()
+    if category == "budget":
+        return StopState(
+            status=TURN_PARTIAL_COMPLETED,
+            reason_code="budget_boundary",
+            reason=message or "本轮资源预算不足",
+            incomplete_steps=["未完成预算边界后的剩余步骤"],
+            can_continue=True,
+        )
+    if "unknown tool" in lower or "tool not found" in lower or "工具不存在" in message:
+        return StopState(
+            status=TURN_UNSUPPORTED,
+            reason_code="tool_not_available",
+            reason="当前白名单中没有模型请求的工具，目标任务尚不受支持",
+            incomplete_steps=["未执行不存在的工具"],
+            can_continue=False,
+        )
+    if isinstance(exc, TimeoutError) or category == "timeout":
+        return StopState(
+            status=TURN_PARTIAL_COMPLETED,
+            reason_code="time_budget",
+            reason=message or "本轮执行超过时间预算",
+            incomplete_steps=["未完成超时后的剩余步骤"],
+            can_continue=True,
+        )
+    if category in {"schema_validation", "reference_validation", "truncated"}:
+        return StopState(
+            status=(
+                TURN_PARTIAL_COMPLETED
+                if _reliable_current_records(state)
+                else TURN_FAILED
+            ),
+            reason_code="output_validation_failed",
+            reason=message or "模型输出未通过结构校验",
+            incomplete_steps=["模型未能生成合法结构化收尾"],
+            can_continue=True,
+        )
+    if state.instrumentation.finalize_attempted and _reliable_current_records(state):
+        return StopState(
+            status=TURN_PARTIAL_COMPLETED,
+            reason_code="finalize_model_failed",
+            reason=message or "模型收尾失败，已保留当前轮已确认结果",
+            incomplete_steps=["未生成合法的完整回答"],
+            can_continue=True,
+        )
+    return StopState(
+        status=TURN_FAILED,
+        reason_code=default_reason_code,
+        reason=message or "系统执行失败",
+        incomplete_steps=["系统故障导致任务未完成"],
+        can_continue=True,
+    )
+
+
+def _stop_from_events(state: LoopState, events: list[dict]) -> StopState | None:
+    """在模型正常返回后仍以工具真实状态校正轮次终态。"""
+
+    if state.stop_state is not None:
+        return state.stop_state
+    denied = next((event for event in events if event.get("status") == "denied"), None)
+    if denied is not None:
+        reason_code = str(denied.get("reason_code") or "access_denied")
+        error = str(denied.get("error") or "当前范围不允许该查询")
+        if reason_code == "tool_not_available" or "工具未注册" in error:
+            return StopState(
+                status=TURN_UNSUPPORTED,
+                reason_code="tool_not_available",
+                reason="当前白名单中没有模型请求的工具，目标任务尚不受支持",
+                incomplete_steps=["未执行不存在的工具"],
+                can_continue=False,
+            )
+        if reason_code.endswith("_budget") or "预算" in error:
+            return StopState(
+                status=TURN_PARTIAL_COMPLETED,
+                reason_code=reason_code,
+                reason=error,
+                incomplete_steps=["未完成预算边界后的剩余步骤"],
+                can_continue=True,
+            )
+        return StopState(
+            status=TURN_DENIED,
+            reason_code=reason_code,
+            reason=error,
+            incomplete_steps=["查询未获授权"],
+            can_continue=False,
+        )
+    unsupported = next(
+        (event for event in events if event.get("status") == "unsupported"), None
+    )
+    if unsupported is not None:
+        return StopState(
+            status=TURN_UNSUPPORTED,
+            reason_code=str(unsupported.get("reason_code") or "tool_capability_missing"),
+            reason=str(unsupported.get("error") or "当前只读工具不支持该任务"),
+            incomplete_steps=["目标对象尚未由工具确认"],
+            can_continue=False,
+        )
+    incomplete = [
+        event
+        for event in events
+        if event.get("status") in {"partial", "limited", "error"}
+    ]
+    if incomplete:
+        system_error = next(
+            (event for event in incomplete if event.get("status") == "error"), None
+        )
+        status = TURN_PARTIAL_COMPLETED if _reliable_current_records(state) else TURN_FAILED
+        return StopState(
+            status=status,
+            reason_code="tool_result_incomplete" if system_error is None else "tool_error",
+            reason=str(
+                (system_error or incomplete[0]).get("error")
+                or "工具结果不完整，尚有步骤未确认"
+            ),
+            incomplete_steps=[
+                f"未完整完成：{event.get('tool') or event.get('shared_tool') or '未知工具'}"
+                for event in incomplete
+            ],
+            can_continue=True,
+        )
+    return None
 
 
 def _entry_set(
@@ -272,7 +557,14 @@ def _tool_result_summary(payload: dict) -> dict:
     """为实验诊断生成有界摘要，不复制正文或把列表当成精确总数。"""
     summary = {
         key: payload[key]
-        for key in ("count", "total", "total_count", "returned_count", "matched_count")
+        for key in (
+            "value",
+            "count",
+            "total",
+            "total_count",
+            "returned_count",
+            "matched_count",
+        )
         if key in payload and isinstance(payload[key], (int, float, str))
     }
     items = payload.get("items")
@@ -428,6 +720,21 @@ def _result_semantics(tool_name: str, params: dict, payload: dict) -> dict:
     """生成程序权威的查询对象、范围、维度与完整性语义。"""
     if tool_name == "list_project_directories":
         project = payload.get("project") or {}
+        if payload.get("operation") == "leaf_summary":
+            return {
+                "subject": "directories",
+                "query_object": "项目目录叶子节点",
+                "display_name": "叶子节点总数",
+                "project_id": project.get("id"),
+                "project_name": project.get("name"),
+                "project_scope": "项目",
+                "group_by": "root_directory",
+                "group_by_display_name": "一级目录",
+                "total_count": payload.get("value"),
+                "returned_count": payload.get("returned_count", 0),
+                "has_more": payload.get("has_more", False),
+                "completeness": "complete",
+            }
         parent = payload.get("parent")
         return {
             "subject": "directories",
@@ -559,7 +866,30 @@ async def _dispatch(
             "read_evidence": "reading_sources",
         }.get(tool_name, "querying")
     )
-    await state.ledger.reserve_tool()
+    try:
+        await state.ledger.reserve_tool()
+    except BudgetExceeded as exc:
+        _mark_budget_stop(state, exc, tool_name=tool_name, params=params)
+        if not any(
+            event.get("turn_index") == state.turn_index
+            and event.get("reason_code") == "tool_action_budget"
+            for event in state.tool_events
+        ):
+            state.tool_events.append(
+                {
+                    "tool": surface_tool or tool_name,
+                    "shared_tool": tool_name,
+                    "status": "not_executed",
+                    "completeness": RESULT_COMPLETENESS_UNKNOWN,
+                    "params": audit_params or params,
+                    "shared_params": params,
+                    "reason_code": "tool_action_budget",
+                    "error": str(exc),
+                    "duration_ms": 0,
+                    "turn_index": state.turn_index,
+                }
+            )
+        raise
     if not state.tools_allowed:
         event = {
             "tool": surface_tool or tool_name,
@@ -570,6 +900,8 @@ async def _dispatch(
             "shared_params": params,
             "error": "用户明确要求本轮不查知识库",
             "duration_ms": 0,
+            "reason_code": "tools_disallowed_by_user",
+            "turn_index": state.turn_index,
         }
         state.tool_events.append(event)
         return event
@@ -623,8 +955,18 @@ async def _dispatch(
         "params": audit_params or params,
         "shared_params": params,
         "result_summary": _tool_result_summary(payload),
+        "reason_code": (
+            (result.audit_summary or {}).get("reason_code")
+            or (
+                "tool_not_available"
+                if result.status == "denied" and "工具未注册" in (result.error or "")
+                else None
+            )
+            or ("access_denied" if result.status == "denied" else None)
+        ),
         "error": result.error,
         "duration_ms": int((perf_counter() - started) * 1000),
+        "turn_index": state.turn_index,
     }
     state.tool_events.append(event)
     if tool_name == "read_evidence":
@@ -636,7 +978,9 @@ async def _dispatch(
     if result.status == "error" and result.error and "预算已耗尽" in result.error:
         # 共享只读工具会把内部向量/文本预算异常保留为工具错误；实验循环需在
         # 已提交审计后恢复成统一停止信号，禁止 Agent 再发求解动作。
-        raise BudgetExceeded(result.error.removeprefix("只读工具执行失败："))
+        exc = BudgetExceeded(result.error.removeprefix("只读工具执行失败："))
+        _mark_budget_stop(state, exc, tool_name=tool_name, params=params)
+        raise exc
     public = _public_result(result, handle)
     public["payload"] = _model_payload(kind, payload)
     return public
@@ -654,6 +998,44 @@ def build_agent(model) -> Agent[LoopDeps, DialogueAnswer]:
         tool_timeout=PER_TURN_SECONDS,
     )
 
+    @agent.instructions
+    def continuation_instruction(ctx: RunContext[LoopDeps]) -> str:
+        continuation = ctx.deps.state.active_continuation
+        if continuation is None:
+            return ""
+        return (
+            "程序已恢复上一轮未完成任务。只执行 pending_steps，禁止重复 completed_steps。"
+            f"continuation={json.dumps(continuation.snapshot(), ensure_ascii=False)}"
+        )
+
+    @agent.tool
+    async def report_unsupported(
+        ctx: RunContext[LoopDeps], target: str, reason: str
+    ) -> dict:
+        """当前白名单没有支持目标对象的只读能力时，记录能力不足并停止尝试替代查询。"""
+
+        event = {
+            "tool": "report_unsupported",
+            "status": "unsupported",
+            "completeness": "unknown",
+            "params": {"target": target[:200]},
+            "reason_code": "tool_capability_missing",
+            "error": reason[:1000] or "当前只读工具不支持该任务",
+            "duration_ms": 0,
+            "turn_index": ctx.deps.state.turn_index,
+        }
+        ctx.deps.state.tool_events.append(event)
+        ctx.deps.state.stop(
+            StopState(
+                status=TURN_UNSUPPORTED,
+                reason_code="tool_capability_missing",
+                reason=event["error"],
+                incomplete_steps=[f"不支持的目标：{target[:200]}"],
+                can_continue=False,
+            )
+        )
+        return event
+
     @agent.tool
     async def list_projects(ctx: RunContext[LoopDeps]) -> dict:
         """列出当前认证 Workspace 中可访问的 Project；这不是目录或 Entry 列表。"""
@@ -666,12 +1048,18 @@ def build_agent(model) -> Agent[LoopDeps, DialogueAnswer]:
 
         state = ctx.deps.state
         state.instrumentation.emit_activity("querying")
-        await state.ledger.reserve_tool()
+        try:
+            await state.ledger.reserve_tool()
+        except BudgetExceeded as exc:
+            _mark_budget_stop(state, exc, tool_name="list_projects", params={})
+            raise
         if not state.tools_allowed:
             event = {
                 "tool": "list_projects",
                 "status": "not_executed",
                 "error": "用户明确要求本轮不查知识库",
+                "reason_code": "tools_disallowed_by_user",
+                "turn_index": state.turn_index,
             }
             state.tool_events.append(event)
             return event
@@ -710,6 +1098,7 @@ def build_agent(model) -> Agent[LoopDeps, DialogueAnswer]:
             "params": {},
             "error": None,
             "duration_ms": 0,
+            "turn_index": state.turn_index,
         }
         state.tool_events.append(event)
         return {**event, "payload": payload}
@@ -722,14 +1111,22 @@ def build_agent(model) -> Agent[LoopDeps, DialogueAnswer]:
         parent_node_id: int | None = None,
         parent_result_handle: str | None = None,
         parent_position: int | None = None,
+        operation: Literal["children", "leaf_summary"] = "children",
     ) -> dict:
         """查询 Project 的真实 Node 目录。
 
-        不传父节点时返回项目根下的一级目录；传父节点时只返回直接子目录。
+        children 不传父节点时返回一级目录、传父节点时返回直接子目录；leaf_summary
+        一次返回整棵项目目录树的真实叶子节点总数和一级目录分组，且不能传父节点。
         目录与 Entry、知识类型和信息性质完全不同。追问第几个目录时，必须
         使用上一轮该工具返回的 parent_result_handle 与 1-based parent_position。
         """
         state = ctx.deps.state
+        if operation == "leaf_summary" and (
+            parent_node_id is not None
+            or parent_result_handle is not None
+            or parent_position is not None
+        ):
+            raise ModelRetry("叶子节点聚合不能指定父节点或目录位置")
         if parent_result_handle is not None or parent_position is not None:
             if parent_result_handle is None or parent_position is None:
                 raise ModelRetry("目录追问必须同时提供 parent_result_handle 和 parent_position")
@@ -754,8 +1151,45 @@ def build_agent(model) -> Agent[LoopDeps, DialogueAnswer]:
             "project_id": project_id,
             "project_name": project_name,
             "parent_node_id": parent_node_id,
+            "operation": operation,
         }
-        result = await _dispatch(ctx, "list_project_directories", params, "directories")
+        if operation == "children" and parent_node_id in state.queried_directory_parents:
+            event = {
+                "tool": "list_project_directories",
+                "shared_tool": "list_project_directories",
+                "status": "not_executed",
+                "completeness": "unknown",
+                "params": params,
+                "reason_code": "duplicate_directory_query",
+                "error": "同一轮已查询该父节点，未重复执行",
+                "duration_ms": 0,
+                "turn_index": state.turn_index,
+            }
+            state.tool_events.append(event)
+            return event
+        result = await _dispatch(
+            ctx,
+            "list_project_directories",
+            params,
+            "statistic" if operation == "leaf_summary" else "directories",
+        )
+        if result.get("status") in {"completed", "empty"}:
+            if operation == "children":
+                state.queried_directory_parents.add(parent_node_id)
+                continuation = state.active_continuation
+                if continuation is not None:
+                    continuation.completed_steps.append({"parent_node_id": parent_node_id})
+                    continuation.pending_steps = [
+                        step
+                        for step in continuation.pending_steps
+                        if step.get("parent_node_id") != parent_node_id
+                    ]
+                    if not continuation.pending_steps:
+                        state.continuation = None
+                        state.active_continuation = None
+            else:
+                state.continuation = None
+                state.active_continuation = None
         return result
 
     @agent.tool
@@ -836,7 +1270,11 @@ def build_agent(model) -> Agent[LoopDeps, DialogueAnswer]:
             },
         )
         ids = [item["entry_id"] for item in result.get("payload", {}).get("items", [])]
-        ctx.deps.state.ledger.reserve_entries(ids)
+        try:
+            ctx.deps.state.ledger.reserve_entries(ids)
+        except BudgetExceeded as exc:
+            _mark_budget_stop(ctx.deps.state, exc, tool_name="query_entries")
+            raise
         return result
 
     @agent.tool
@@ -859,13 +1297,21 @@ def build_agent(model) -> Agent[LoopDeps, DialogueAnswer]:
             },
         )
         ids = [item["entry_id"] for item in result.get("payload", {}).get("items", [])]
-        ctx.deps.state.ledger.reserve_entries(ids)
+        try:
+            ctx.deps.state.ledger.reserve_entries(ids)
+        except BudgetExceeded as exc:
+            _mark_budget_stop(ctx.deps.state, exc, tool_name="search_knowledge")
+            raise
         return result
 
     @agent.tool
     async def read_entries(ctx: RunContext[LoopDeps], entry_ids: list[int]) -> dict:
         """读取本会话已由列表或搜索发现的 Entry 正文；任意新 id 会被拒绝。"""
-        ctx.deps.state.ledger.reserve_entries(entry_ids)
+        try:
+            ctx.deps.state.ledger.reserve_entries(entry_ids)
+        except BudgetExceeded as exc:
+            _mark_budget_stop(ctx.deps.state, exc, tool_name="read_entries")
+            raise
         return await _dispatch(ctx, "read_entries", {"entry_ids": entry_ids}, "entries")
 
     @agent.tool
@@ -873,7 +1319,11 @@ def build_agent(model) -> Agent[LoopDeps, DialogueAnswer]:
         ctx: RunContext[LoopDeps], entry_id: int, source_ids: list[int]
     ) -> dict:
         """当前轮重新核验已发现 Entry 的真实 Source 原文并创建 Evidence。"""
-        ctx.deps.state.ledger.reserve_evidence(len(source_ids))
+        try:
+            ctx.deps.state.ledger.reserve_evidence(len(source_ids))
+        except BudgetExceeded as exc:
+            _mark_budget_stop(ctx.deps.state, exc, tool_name="read_evidence")
+            raise
         return await _dispatch(
             ctx, "read_evidence", {"entry_id": entry_id, "source_ids": source_ids}, "evidence"
         )
@@ -892,7 +1342,11 @@ def build_agent(model) -> Agent[LoopDeps, DialogueAnswer]:
 
         state = ctx.deps.state
         state.instrumentation.emit_activity("reading_entries")
-        await state.ledger.reserve_tool()
+        try:
+            await state.ledger.reserve_tool()
+        except BudgetExceeded as exc:
+            _mark_budget_stop(state, exc, tool_name="open_list_item")
+            raise
         try:
             entry_id = list_position_entry_id(state, result_set_handle, position)
         except ValueError:
@@ -975,8 +1429,14 @@ def render_answer(answer: DialogueAnswer, state: LoopState) -> tuple[str, list[d
             semantics = record.semantics
             group_display = semantics.get("group_by_display_name")
             if "value" in payload:
-                # 保留现有回答文本兼容性；权威项目/查询对象随 rendered semantics 返回。
-                text = f"总数：{payload['value']}"
+                if semantics.get("subject") == "directories":
+                    text = (
+                        f"{semantics.get('project_name') or '当前项目'} · "
+                        f"{semantics.get('display_name') or '目录统计'}：{payload['value']}"
+                    )
+                else:
+                    # 保留既有正式记录计数回答的文本兼容性。
+                    text = f"总数：{payload['value']}"
             else:
                 title = (
                     f"{semantics.get('project_name')} · 按{group_display or '维度'}统计"
@@ -1060,88 +1520,82 @@ def render_answer(answer: DialogueAnswer, state: LoopState) -> tuple[str, list[d
     return "\n".join(lines), rendered
 
 
-def _verified_failure_output(state: LoopState) -> tuple[str, list[dict]]:
-    """收尾失败时只展示程序已核验的当前轮结构化结果。"""
-    status = state.instrumentation.finalize_status
-    notices = {
-        "timed_out": "收尾请求超时，本轮未完成。",
-        "invalid_output": "收尾输出未通过结构校验，本轮未完成。",
-        "not_dispatched": "没有可用请求预算，未派发模型收尾，本轮未完成。",
-        "failed": "收尾模型请求失败，本轮未完成。",
-        "cancelled": "收尾请求被取消，本轮未完成。",
-    }
-    notice = notices.get(status, "本轮未完成。")
-    lines = [notice]
-    blocks: list[dict] = [{"kind": "insufficient", "text": notice}]
+def _verified_failure_output(
+    state: LoopState, stop: StopState | None = None
+) -> tuple[str, list[dict]]:
+    """无模型地只展示当前轮真实句柄，并明确缺口、原因和续查能力。"""
+
+    stop = stop or state.stop_state
+    if stop is None:
+        finalize_status = state.instrumentation.finalize_status
+        notices = {
+            "timed_out": "收尾请求超过时间预算",
+            "invalid_output": "收尾输出未通过结构校验",
+            "not_dispatched": "没有可用文本请求预算，未派发模型收尾",
+            "failed": "收尾模型请求失败",
+            "cancelled": "收尾请求被取消",
+        }
+        stop = StopState(
+            status=(
+                TURN_PARTIAL_COMPLETED
+                if _reliable_current_records(state)
+                else TURN_FAILED
+            ),
+            reason_code=f"finalize_{finalize_status}",
+            reason=notices.get(finalize_status, "任务未能完成"),
+            incomplete_steps=["未生成合法的完整回答"],
+            can_continue=True,
+        )
+    state.stop(stop)
+    status_text = {
+        TURN_PARTIAL_COMPLETED: "本轮已部分完成，以下只保留程序确认的结果。",
+        TURN_UNSUPPORTED: "当前工具能力不支持完整处理这个任务。",
+        TURN_DENIED: "当前权限或数据范围不允许执行这个任务。",
+        TURN_FAILED: "本轮遇到系统故障，以下仅保留已经确认的结果。",
+    }[stop.status]
+    requested_blocks: list[dict] = [{"kind": "text", "text": status_text}]
     for handle, record in state.result_sets.items():
-        if handle not in state.current_handles or record.status not in {"completed", "ok"}:
+        if handle not in state.current_handles or record.status not in {
+            "completed", "ok", "empty", "partial", "limited"
+        }:
             continue
         if record.kind == "statistic":
-            payload = record.payload
-            if "value" in payload:
-                text = f"已验证统计：{payload['value']}"
-            else:
-                values = "；".join(
-                    f"{item.get('label') or item.get('key')}：{item.get('count')}"
-                    for item in payload.get("buckets", [])
-                )
-                text = f"已验证分组统计：{values or '无分组记录'}"
-            lines.append(text)
-            blocks.append(
-                {
-                    "kind": "statistic",
-                    "handle": handle,
-                    "text": text,
-                    "value": payload.get("value"),
-                    "group_by": payload.get("group_by"),
-                    "buckets": payload.get("buckets", []),
-                    "status": record.status,
-                    "completeness": record.completeness,
-                }
+            requested_blocks.append(
+                {"kind": "statistic", "result_handle": handle, "label": "已确认统计"}
             )
         elif record.kind in {"list", "directories"}:
-            items = record.payload.get("items", [])
-            title = (
-                f"已验证目录：{record.semantics.get('project_name', '当前项目')} · "
-                f"{record.semantics.get('display_name', '项目目录')}"
-                if record.kind == "directories"
-                else "已验证列表："
+            requested_blocks.append(
+                {"kind": "list", "result_handle": handle, "label": "已确认列表"}
             )
-            lines.append(title)
-            for index, item in enumerate(items, 1):
-                if record.kind == "directories":
-                    lines.append(f"{index}. {item.get('name', '未命名')}（{item.get('path', '')}）")
-                else:
-                    lines.append(
-                        f"{index}. {item.get('title', '未命名')}"
-                        f"（{item.get('project_name', '未知项目')}）"
-                    )
-            blocks.append(
-                {
-                    "kind": "list",
-                    "handle": handle,
-                    "label": title,
-                    "items": items,
-                    "status": record.status,
-                    "completeness": record.completeness,
-                    "semantics": record.semantics,
-                }
+    for handle in state.evidence:
+        if handle in state.current_evidence:
+            requested_blocks.append(
+                {"kind": "evidence", "evidence_handle": handle, "note": "已确认来源"}
             )
-    for handle, item in state.evidence.items():
-        if handle not in state.current_evidence:
-            continue
-        text = f"已验证来源《{item.get('source_title', '')}》：{item.get('quote', '')}"
-        lines.append(text)
-        blocks.append(
-            {
-                "kind": "evidence",
-                "handle": handle,
-                "text": text,
-                "entry_id": item.get("entry_id"),
-                "source_id": item.get("source_id"),
-            }
-        )
-    return "\n".join(lines), blocks
+    missing = "；".join(stop.incomplete_steps) or "仍有步骤尚未确认"
+    if stop.can_continue and stop.continuation is not None:
+        continuation_text = "可以在下一轮说“继续”，系统将从已保存的未完成步骤继续。"
+    elif stop.can_continue:
+        continuation_text = "可以在下一轮重新发起查询；当前没有可自动恢复的步骤。"
+    else:
+        continuation_text = "当前任务不能从已保存步骤自动继续。"
+    finalize_status = state.instrumentation.finalize_status
+    finalize_note = (
+        f"；模型收尾状态：{finalize_status}"
+        if finalize_status not in {"not_needed", "completed"}
+        else ""
+    )
+    requested_blocks.append(
+        {
+            "kind": "insufficient",
+            "text": (
+                f"尚未确认：{missing}。停止原因：{stop.reason}{finalize_note}。"
+                f"{continuation_text}"
+            ),
+        }
+    )
+    answer = DialogueAnswer.model_validate({"blocks": requested_blocks})
+    return render_answer(answer, state)
 
 
 def _usage_limits(request_limit: int) -> UsageLimits:
@@ -1338,12 +1792,15 @@ async def run_turn(
                 state.instrumentation.finalize_reason or "budget_boundary",
             )
         except Exception as finalize_exc:
-            text, blocks = _verified_failure_output(state)
-            status = "failed"
             error_details = state.instrumentation.finalize_failure
-            error = state.instrumentation.finalize_error or (
+            raw_error = state.instrumentation.finalize_error or (
                 f"{type(finalize_exc).__name__}: {finalize_exc}"
             )
+            stop = _stop_from_failure(state, finalize_exc, error_details)
+            state.stop(stop)
+            text, blocks = _verified_failure_output(state, stop)
+            status = stop.status
+            error = raw_error if status == TURN_FAILED else None
             usage = None
         else:
             text, blocks = render_answer(result.output, state)
@@ -1354,11 +1811,11 @@ async def run_turn(
     except BudgetExceeded as exc:
         solve_error = f"{type(exc).__name__}: {exc}"
         solve_failure = state.instrumentation.describe_failure(exc, before_logs)
+        _mark_budget_stop(state, exc)
         if not state.instrumentation.context_policy_enabled:
-            text = "本轮未完成。"
-            blocks = [{"kind": "insufficient", "text": text}]
-            status = "failed"
-            error = solve_error
+            text, blocks = _verified_failure_output(state)
+            status = TURN_PARTIAL_COMPLETED
+            error = None
             error_details = solve_failure
             usage = None
         else:
@@ -1371,30 +1828,30 @@ async def run_turn(
                     state.tool_events[before_events:],
                     _budget_stop_reason(exc),
                 )
-            except Exception as finalize_exc:
-                text, blocks = _verified_failure_output(state)
-                status = "failed"
+            except Exception:
                 error_details = state.instrumentation.finalize_failure
-                error = state.instrumentation.finalize_error or (
-                    f"{type(finalize_exc).__name__}: {finalize_exc}"
-                )
+                text, blocks = _verified_failure_output(state)
+                status = TURN_PARTIAL_COMPLETED
+                error = None
                 usage = None
             else:
                 text, blocks = render_answer(result.output, state)
                 state.instrumentation.complete_finalize()
-                status = "completed"
+                status = TURN_PARTIAL_COMPLETED
                 error = None
                 usage = asdict(result.usage) if result.usage is not None else None
     except TimeoutError as exc:
+        solve_error = f"{type(exc).__name__}: 求解超过 {PER_TURN_SECONDS:g} 秒"
+        solve_failure = state.instrumentation.describe_failure(exc, before_logs)
+        stop = _stop_from_failure(state, exc, solve_failure)
+        state.stop(stop)
         if state.instrumentation.finalize_attempted:
-            text, blocks = _verified_failure_output(state)
-            status = "failed"
+            text, blocks = _verified_failure_output(state, stop)
+            status = stop.status
             error_details = state.instrumentation.finalize_failure
-            error = state.instrumentation.finalize_error or f"{type(exc).__name__}: {exc}"
+            error = None
             usage = None
         else:
-            solve_error = f"{type(exc).__name__}: 求解超过 {PER_TURN_SECONDS:g} 秒"
-            solve_failure = state.instrumentation.describe_failure(exc, before_logs)
             try:
                 result = await _finalize_once(
                     agent,
@@ -1404,38 +1861,55 @@ async def run_turn(
                     state.tool_events[before_events:],
                     "solve_timeout",
                 )
-            except Exception as finalize_exc:
-                text, blocks = _verified_failure_output(state)
-                status = "failed"
+            except Exception:
+                text, blocks = _verified_failure_output(state, stop)
+                status = stop.status
                 error_details = state.instrumentation.finalize_failure
-                error = state.instrumentation.finalize_error or (
-                    f"{type(finalize_exc).__name__}: {finalize_exc}"
-                )
+                error = None
                 usage = None
             else:
                 text, blocks = render_answer(result.output, state)
                 state.instrumentation.complete_finalize()
-                status = "completed"
+                status = stop.status
                 error = None
                 usage = asdict(result.usage) if result.usage is not None else None
     except Exception as exc:
         error_details = state.instrumentation.describe_failure(exc, before_logs)
-        if state.instrumentation.finalize_reason is not None:
-            text, blocks = _verified_failure_output(state)
-            error = state.instrumentation.finalize_error or f"{type(exc).__name__}: {exc}"
-        else:
-            text = "本轮未完成。"
-            blocks = [{"kind": "insufficient", "text": text}]
-            error = f"{type(exc).__name__}: {exc}"
-        status = "failed"
+        stop = _stop_from_failure(state, exc, error_details)
+        state.stop(stop)
+        text, blocks = _verified_failure_output(state, stop)
+        status = stop.status
+        error = f"{type(exc).__name__}: {exc}" if status == TURN_FAILED else None
         usage = None
     else:
         text, blocks = render_answer(result.output, state)
         state.instrumentation.complete_finalize()
-        status = "completed"
+        status = TURN_COMPLETED
         error = None
         usage = asdict(result.usage) if result.usage is not None else None
     current_events = state.tool_events[before_events:]
+    event_stop = _stop_from_events(state, current_events)
+    if event_stop is not None:
+        state.stop(event_stop)
+        status = event_stop.status
+        if status in {TURN_UNSUPPORTED, TURN_DENIED, TURN_FAILED}:
+            text, blocks = _verified_failure_output(state, event_stop)
+        elif not any(block.get("kind") == "insufficient" for block in blocks):
+            continuation_text = (
+                "可以在下一轮继续未完成步骤。"
+                if event_stop.can_continue and event_stop.continuation is not None
+                else "可以在下一轮重新发起查询。"
+                if event_stop.can_continue
+                else "当前任务不能自动继续。"
+            )
+            notice = (
+                f"尚未完成：{'；'.join(event_stop.incomplete_steps)}。"
+                f"停止原因：{event_stop.reason}。{continuation_text}"
+            )
+            blocks.append({"kind": "insufficient", "text": notice})
+            text = f"{text}\n{notice}" if text else notice
+        if status != TURN_FAILED:
+            error = None
     state.remember_turn(message, text, current_events)
     new_history = build_compact_history(state)
     input_estimates = [
@@ -1482,4 +1956,5 @@ async def run_turn(
             "finalize_seconds_limit": FINALIZE_SECONDS,
         },
         "finalization": state.instrumentation.finalization_snapshot(),
+        "completion": state.completion_snapshot(status),
     }, new_history

@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from typing import Literal
+
 from pydantic import Field, model_validator
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -21,11 +23,12 @@ DIRECTORY_TOOL_VERSION = "v1"
 
 
 class ListProjectDirectoriesParams(ReadToolParams):
-    """按项目根或指定父节点查询直接子目录。"""
+    """按项目根、指定父节点或整树叶子统计查询目录。"""
 
     project_id: int | None = Field(default=None, ge=1)
     project_name: str | None = Field(default=None, min_length=1, max_length=64)
     parent_node_id: int | None = Field(default=None, ge=1)
+    operation: Literal["children", "leaf_summary"] = "children"
 
     @model_validator(mode="after")
     def require_project_reference(self) -> ListProjectDirectoriesParams:
@@ -33,6 +36,8 @@ class ListProjectDirectoriesParams(ReadToolParams):
             raise ValueError("必须提供 project_id 或 project_name")
         if self.project_name is not None:
             self.project_name = self.project_name.strip()
+        if self.operation == "leaf_summary" and self.parent_node_id is not None:
+            raise ValueError("叶子节点聚合不能同时指定父节点")
         return self
 
 
@@ -64,6 +69,56 @@ def _node_paths(nodes: list[Node]) -> dict[int, str]:
     for node in nodes:
         path_for(node.id)
     return cache
+
+
+def _leaf_summary(project: Project, nodes: list[Node], paths: dict[int, str]) -> dict:
+    """从同一项目的完整 Node 集合确定性计算整树叶子节点。"""
+
+    by_id = {node.id: node for node in nodes}
+    parent_ids = {node.parent_id for node in nodes if node.parent_id is not None}
+    leaves = _ordered_nodes([node for node in nodes if node.id not in parent_ids])
+    roots = _ordered_nodes([node for node in nodes if node.parent_id is None])
+
+    def root_id_for(node: Node) -> int | None:
+        current = node
+        visited: set[int] = set()
+        while current.parent_id is not None and current.id not in visited:
+            visited.add(current.id)
+            parent = by_id.get(current.parent_id)
+            if parent is None:
+                return None
+            current = parent
+        return current.id if current.parent_id is None else None
+
+    counts = {root.id: 0 for root in roots}
+    detached_count = 0
+    for leaf in leaves:
+        root_id = root_id_for(leaf)
+        if root_id in counts:
+            counts[root_id] += 1
+        else:
+            detached_count += 1
+    buckets = [
+        {"key": str(root.id), "label": root.name, "count": counts[root.id]}
+        for root in roots
+    ]
+    if detached_count:
+        buckets.append({"key": "detached", "label": "未挂接目录", "count": detached_count})
+    return {
+        "project": {"id": project.id, "name": project.name},
+        "operation": "leaf_summary",
+        "definition": "没有任何直接子 Node 的项目目录节点",
+        "value": len(leaves),
+        "total_count": len(leaves),
+        "returned_count": len(buckets),
+        "group_by": "root_directory",
+        "buckets": buckets,
+        "has_more": False,
+        "sample_leaf_nodes": [
+            {"node_id": node.id, "name": node.name, "path": paths[node.id]}
+            for node in leaves[:10]
+        ],
+    }
 
 
 async def list_project_directories_handler(
@@ -99,12 +154,32 @@ async def list_project_directories_handler(
         project_stmt = project_stmt.where(Project.name == params.project_name)
     projects = (await db.execute(project_stmt.limit(2))).scalars().all()
     if not projects:
+        inaccessible = False
+        if params.project_id is not None:
+            inaccessible = (
+                await db.execute(
+                    select(Project.id).where(Project.id == params.project_id)
+                )
+            ).scalar_one_or_none() is not None
+        elif params.project_name is not None:
+            inaccessible = (
+                await db.execute(
+                    select(Project.id).where(Project.name == params.project_name)
+                )
+            ).scalar_one_or_none() is not None
         return ReadToolExecution(
             status=TOOL_DENIED,
             payload={},
             completeness=RESULT_COMPLETENESS_UNKNOWN,
-            audit_summary={"status": TOOL_DENIED, "reason_code": "project_not_found"},
-            error="项目不存在或不在当前授权范围",
+            audit_summary={
+                "status": TOOL_DENIED,
+                "reason_code": "project_access_denied" if inaccessible else "project_not_found",
+            },
+            error=(
+                "当前用户无权访问该项目"
+                if inaccessible
+                else "项目不存在或不在当前授权范围"
+            ),
         )
     if len(projects) > 1:
         return ReadToolExecution(
@@ -124,6 +199,22 @@ async def list_project_directories_handler(
     )
     by_id = {node.id: node for node in nodes}
     paths = _node_paths(nodes)
+    if params.operation == "leaf_summary":
+        payload = _leaf_summary(project, nodes, paths)
+        return ReadToolExecution(
+            status=TOOL_COMPLETED,
+            payload=payload,
+            completeness=RESULT_COMPLETENESS_COMPLETE,
+            audit_summary={
+                "status": TOOL_COMPLETED,
+                "project_id": project.id,
+                "operation": "leaf_summary",
+                "leaf_count": payload["value"],
+                "root_bucket_count": payload["returned_count"],
+                "has_more": False,
+                "completeness": RESULT_COMPLETENESS_COMPLETE,
+            },
+        )
     parent = by_id.get(params.parent_node_id) if params.parent_node_id is not None else None
     if params.parent_node_id is not None and parent is None:
         return ReadToolExecution(

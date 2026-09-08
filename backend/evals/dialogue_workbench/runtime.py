@@ -16,13 +16,22 @@ from evals.dialogue_loop.core import (
     BATCH_TEXT_REQUESTS,
     EXPERIMENT_VERSION,
     PROMPT_VERSION,
+    BudgetExceeded,
     BudgetLedger,
     frozen_budget,
 )
 from evals.dialogue_loop.report import sanitize
 from evals.dialogue_workbench.store import WorkbenchStore
 
-TERMINAL_TURN_STATUSES = {"completed", "failed", "cancelled", "interrupted"}
+TERMINAL_TURN_STATUSES = {
+    "completed",
+    "partial_completed",
+    "unsupported",
+    "denied",
+    "failed",
+    "cancelled",
+    "interrupted",
+}
 FEEDBACK_KINDS = {"wrong", "misunderstood", "omitted"}
 
 
@@ -208,6 +217,7 @@ class WorkbenchRuntime:
             "budget": None,
             "context": None,
             "finalization": None,
+            "completion": None,
             "persistence": None,
             "isolation_check": None,
             "feedback": None,
@@ -253,6 +263,34 @@ class WorkbenchRuntime:
             turn["status"] = "cancelled"
             turn["stage"] = "cancelled"
             turn["error"] = "用户已停止生成。"
+            turn["completion"] = {
+                "status": "cancelled",
+                "reason_code": "user_cancelled",
+                "reason": "用户已停止生成",
+                "incomplete_steps": ["当前轮已取消"],
+                "can_continue": True,
+                "continuation": None,
+            }
+        except BudgetExceeded as exc:
+            turn["status"] = "partial_completed"
+            turn["stage"] = "partial_completed"
+            turn["answer"] = f"本轮因资源预算停止：{exc}"
+            turn["blocks"] = [
+                {
+                    "kind": "insufficient",
+                    "text": f"尚有步骤未完成。停止原因：{exc}。可以在下一轮重新发起查询。",
+                }
+            ]
+            turn["error"] = None
+            turn["error_details"] = {"category": "budget", "message": str(exc)}
+            turn["completion"] = {
+                "status": "partial_completed",
+                "reason_code": "budget_boundary",
+                "reason": str(exc),
+                "incomplete_steps": ["未完成剩余步骤"],
+                "can_continue": True,
+                "continuation": None,
+            }
         except Exception as exc:
             turn["status"] = "failed"
             turn["stage"] = "failed"
@@ -261,8 +299,26 @@ class WorkbenchRuntime:
                 "category": "runtime",
                 "message": str(exc)[:4_000],
             }
+            turn["completion"] = {
+                "status": "failed",
+                "reason_code": "runtime_error",
+                "reason": str(exc)[:4_000],
+                "incomplete_steps": ["运行时异常导致当前轮未完成"],
+                "can_continue": True,
+                "continuation": None,
+            }
         else:
             turn.update(sanitize(result))
+            if turn.get("completion") is None:
+                completed = turn.get("status") == "completed"
+                turn["completion"] = {
+                    "status": turn.get("status", "failed"),
+                    "reason_code": "completed" if completed else "runtime_result",
+                    "reason": "任务已完整完成" if completed else "运行结果已返回",
+                    "incomplete_steps": [],
+                    "can_continue": False,
+                    "continuation": None,
+                }
             turn["stage"] = turn.get("status", "completed")
         finally:
             turn["duration_ms"] = turn.get("duration_ms") or int((perf_counter() - started) * 1000)

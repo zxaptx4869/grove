@@ -19,6 +19,7 @@ from evals.dialogue_loop.instrumentation import (
 from evals.dialogue_loop.loop import (
     LoopState,
     _aggregate_text_usage,
+    _stop_from_failure,
     _verified_failure_output,
     build_agent,
     build_compact_history,
@@ -139,19 +140,28 @@ class UnifiedLoopEngine:
     ) -> dict:
         """统一循环意外逸出时，从内存态恢复真实公开诊断。"""
         state = context.state
-        text, blocks = _verified_failure_output(state)
         logs = self.instrumentation.logs[context.log_start :]
         events = state.tool_events[context.event_start :]
         failure = self.instrumentation.describe_failure(exc, context.log_start)
+        stop = _stop_from_failure(state, exc, failure)
+        state.stop(stop)
+        text, blocks = _verified_failure_output(state, stop)
+        public_parts = [
+            part
+            for log in logs
+            for part in (log.public_response or {}).get("parts", [])
+            if part.get("kind") == "tool_call"
+        ]
+        tool_calls_known = not (public_parts and not events)
         if not state.history_turns or state.history_turns[-1].get("turn") != state.turn_index:
             state.remember_turn(message, text, events)
         context.history = build_compact_history(state)
         return {
             "message": message,
-            "status": "failed",
+            "status": stop.status,
             "answer": text,
             "blocks": blocks,
-            "error": f"{type(exc).__name__}: {exc}",
+            "error": f"{type(exc).__name__}: {exc}" if stop.status == "failed" else None,
             "error_details": failure,
             "solve_error": f"{type(exc).__name__}: {exc}",
             "solve_failure": failure,
@@ -162,10 +172,11 @@ class UnifiedLoopEngine:
                 state.ledger.active_tool_calls,
             ),
             "budget": state.ledger.snapshot(),
-            "tool_calls": events,
+            "tool_calls": events if tool_calls_known else None,
             "model_calls": [asdict(item) for item in logs],
             "context": {"history_turns": len(state.history_turns)},
             "finalization": self.instrumentation.finalization_snapshot(),
+            "completion": state.completion_snapshot(stop.status),
         }
 
     async def cancel_turn(self, context: UnifiedConversationContext) -> dict:
@@ -184,6 +195,14 @@ class UnifiedLoopEngine:
             "context": {"history_turns": len(state.history_turns)},
             "finalization": state.instrumentation.finalization_snapshot(),
             "persistence": context.persistence,
+            "completion": {
+                "status": "cancelled",
+                "reason_code": "user_cancelled",
+                "reason": "用户已停止生成",
+                "incomplete_steps": ["当前轮已取消"],
+                "can_continue": True,
+                "continuation": None,
+            },
         }
 
 

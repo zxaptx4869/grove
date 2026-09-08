@@ -44,6 +44,9 @@ const STAGES: Record<string, string> = {
   finalizing: '预算内收尾中',
   cancelling: '正在停止',
   completed: '已完成',
+  partial_completed: '部分完成',
+  unsupported: '暂不支持',
+  denied: '无权访问',
   failed: '未完成',
   cancelled: '已停止',
   interrupted: '已中断',
@@ -76,6 +79,8 @@ function pretty(value: unknown) {
 
 function statusTone(status: string) {
   if (status === 'completed') return 'success'
+  if (status === 'partial_completed') return 'warning'
+  if (status === 'unsupported' || status === 'denied') return 'error'
   if (status === 'failed' || status === 'interrupted') return 'error'
   if (status === 'cancelled') return 'warning'
   return 'running'
@@ -85,6 +90,9 @@ function statisticTitle(block: AnswerBlock) {
   const semantics = block.semantics
   if (!semantics) return block.text || block.label || '统计结果'
   const scope = semantics?.project_name ? `${semantics.project_name} · ` : '全部项目 · '
+  if (semantics.subject === 'directories') {
+    return `${scope}${semantics.display_name || '项目目录统计'}`
+  }
   return semantics?.group_by_display_name
     ? `${scope}按${semantics.group_by_display_name}统计`
     : `${scope}正式记录总数`
@@ -371,6 +379,21 @@ function AssistantTurn({
             <div className="notice-block warning-block">
               <AlertTriangle aria-hidden="true" />
               <span>求解提前停止：{turn.solve_error}</span>
+            </div>
+          )}
+          {turn.completion && turn.completion.status !== 'completed' && (
+            <div className="notice-block warning-block">
+              <AlertTriangle aria-hidden="true" />
+              <div>
+                <strong>{STAGES[turn.completion.status || turn.status] || '本轮未完整完成'}</strong>
+                {turn.completion.reason && <span>{turn.completion.reason}</span>}
+                {!!turn.completion.incomplete_steps?.length && (
+                  <span>未完成：{turn.completion.incomplete_steps.join('；')}</span>
+                )}
+                {turn.completion.can_continue && (
+                  <span>可以下一轮继续未完成步骤。</span>
+                )}
+              </div>
             </div>
           )}
           {turn.error && (

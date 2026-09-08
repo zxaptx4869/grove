@@ -105,6 +105,7 @@ class ReadToolDispatchResult:
     error: str | None
     duration_ms: int
     reused: bool = False
+    audit_summary: dict | None = None
 
 
 # 应用静态注册表；具体工具在模块加载时由明确代码一次性装配，不扫描模块。
@@ -410,6 +411,7 @@ async def dispatch_read_tool(
         payload=payload,
         error=error,
         duration_ms=duration,
+        audit_summary=audit,
     )
 
 

@@ -42,6 +42,7 @@ from evals.dialogue_loop.core import (
     BudgetExceeded,
     BudgetLedger,
     DialogueAnswer,
+    StopState,
 )
 from evals.dialogue_loop.credentials import (
     DEMO_PASSWORD_PROVIDER,
@@ -65,7 +66,10 @@ from evals.dialogue_loop.loop import (
     _current_material_history,
     _entry_set,
     _group_params,
+    _mark_budget_stop,
     _model_payload,
+    _stop_from_events,
+    _verified_failure_output,
     build_agent,
     build_compact_history,
     list_directory_position_node_id,
@@ -257,6 +261,70 @@ def test_list_position_uses_actual_order_and_rejects_forgery() -> None:
         list_position_entry_id(state, "forged", 1)
     with pytest.raises(ValueError):
         list_position_entry_id(state, handle, 4)
+
+
+def test_deterministic_fallback_isolated_to_current_turn_material() -> None:
+    state = _state()
+    historical = state.store_result("statistic", {"value": 99}, "completed", "complete")
+    state.begin_turn(5, "当前查询")
+    current = state.store_result("statistic", {"value": 4}, "completed", "complete")
+    state.stop(
+        StopState(
+            status="partial_completed",
+            reason_code="budget_boundary",
+            reason="工具动作预算已耗尽",
+            incomplete_steps=["未核验叶子节点的子节点"],
+            can_continue=True,
+        )
+    )
+
+    text, blocks = _verified_failure_output(state)
+
+    handles = {block.get("handle") for block in blocks if block.get("kind") == "statistic"}
+    assert current in handles
+    assert historical not in handles
+    assert any(block["kind"] == "insufficient" for block in blocks)
+    assert "未核验叶子节点" in text
+
+
+def test_budget_stop_keeps_directory_continuation_without_fake_leaf_total() -> None:
+    state = _state()
+    _mark_budget_stop(
+        state,
+        BudgetExceeded("本轮工具动作预算已耗尽"),
+        tool_name="list_project_directories",
+        params={"project_id": 26, "parent_node_id": 12, "operation": "children"},
+    )
+
+    assert state.stop_state is not None
+    assert state.stop_state.status == "partial_completed"
+    assert state.stop_state.continuation is not None
+    assert state.stop_state.continuation.pending_steps == [{"parent_node_id": 12}]
+    assert state.stop_state.continuation.scope["project_id"] == 26
+
+    state.begin_turn(6, "继续核验刚才没查完的目录")
+    assert state.active_continuation is not None
+    assert state.active_continuation.pending_steps == [{"parent_node_id": 12}]
+
+
+def test_tool_capability_stop_does_not_relabel_other_statistics() -> None:
+    state = _state()
+    events = [
+        {
+            "tool": "report_unsupported",
+            "status": "unsupported",
+            "reason_code": "tool_capability_missing",
+            "error": "当前没有整树聚合能力",
+            "turn_index": state.turn_index,
+        }
+    ]
+
+    stop = _stop_from_events(state, events)
+
+    assert stop is not None
+    assert stop.status == "unsupported"
+    assert stop.reason_code == "tool_capability_missing"
+    assert "整树聚合" in stop.reason
 
 
 def test_compact_history_keeps_order_and_protocol_without_large_body() -> None:
@@ -977,8 +1045,9 @@ async def test_context_over_limit_stops_without_model_call() -> None:
 
     agent = build_agent(FunctionModel(respond))
     turn, _ = await run_turn(agent, state, "继续", ["x" * 50_000])
-    assert turn["status"] == "failed"
-    assert "上下文" in turn["error"]
+    assert turn["status"] == "partial_completed"
+    assert turn["completion"]["reason_code"] == "input_hard_limit"
+    assert turn["error"] is None
     assert calls == []
 
 
@@ -1041,7 +1110,7 @@ async def test_solve_timeout_uses_at_most_one_separate_finalize_request(monkeypa
     agent = build_agent(BudgetedModel(FunctionModel(respond), state.instrumentation))
     turn, _ = await run_turn(agent, state, "请查询后回答", [])
 
-    assert turn["status"] == "completed"
+    assert turn["status"] == "partial_completed"
     assert turn["solve_error"] == "TimeoutError: 求解超过 0.01 秒"
     assert turn["finalization"]["reason"] == "solve_timeout"
     assert turn["finalization"]["status"] == "completed"
@@ -1105,7 +1174,7 @@ async def test_tool_action_budget_stop_uses_one_tool_free_finalize() -> None:
     model = BudgetedModel(FunctionModel(respond), state.instrumentation)
     turn, _ = await run_turn(build_agent(model), state, "继续查询", [])
 
-    assert turn["status"] == "completed"
+    assert turn["status"] == "partial_completed"
     assert turn["solve_error"] == "BudgetExceeded: 本轮工具动作预算已耗尽"
     assert turn["finalization"]["reason"] == "tool_action_budget"
     assert turn["finalization"]["attempted"] is True
@@ -1159,7 +1228,7 @@ async def test_material_budget_stops_share_the_single_finalize_path(
 
     turn, _ = await run_turn(agent, state, "继续", [])
 
-    assert turn["status"] == "completed"
+    assert turn["status"] == "partial_completed"
     assert turn["solve_error"] == f"BudgetExceeded: {message}"
     assert turn["finalization"]["reason"] == reason
     assert turn["finalization"]["attempted"] is True
@@ -1181,7 +1250,7 @@ async def test_hard_input_limit_does_not_dispatch_finalize_when_input_still_cann
     history = [ModelRequest(parts=[UserPromptPart(content="甲" * 50_000)])]
     turn, _ = await run_turn(build_agent(model), state, "继续", history)
 
-    assert turn["status"] == "failed"
+    assert turn["status"] == "partial_completed"
     assert turn["solve_error"].startswith("BudgetExceeded: 压缩后对话上下文")
     assert turn["finalization"]["reason"] == "input_hard_limit"
     assert turn["finalization"]["status"] == "not_dispatched"
@@ -1207,7 +1276,7 @@ async def test_finalize_provider_failure_is_not_retried_and_keeps_verified_resul
     history = [ModelRequest(parts=[UserPromptPart(content="甲" * 9_500)])]
     turn, _ = await run_turn(agent, state, "请总结", history)
 
-    assert turn["status"] == "failed"
+    assert turn["status"] == "partial_completed"
     assert turn["finalization"]["status"] == "failed"
     assert turn["finalization"]["attempted"] is True
     assert len(calls) == 1
@@ -1216,7 +1285,8 @@ async def test_finalize_provider_failure_is_not_retried_and_keeps_verified_resul
     assert turn["usage"]["input_tokens"] is None
     assert turn["usage"]["usage_complete"] is False
     assert any(block.get("handle") == handle for block in turn["blocks"])
-    assert "provider unavailable" in turn["error"]
+    assert turn["error"] is None
+    assert "provider unavailable" in turn["answer"]
     assert turn["error_details"]["category"] == "provider"
     assert turn["error_details"]["exception_chain"][0] == {
         "type": "RuntimeError",
@@ -1246,13 +1316,13 @@ async def test_finalize_timeout_is_not_retried_and_has_real_deadline(monkeypatch
     history = [ModelRequest(parts=[UserPromptPart(content="甲" * 9_500)])]
     turn, _ = await run_turn(agent, state, "请总结", history)
 
-    assert turn["status"] == "failed"
+    assert turn["status"] == "partial_completed"
     assert turn["solve_error"] is None
     assert turn["finalization"]["status"] == "timed_out"
     assert len(calls) == 1
     assert turn["budget"]["turn"]["text_requests"] == 1
     assert turn["duration_ms"] < 500
-    assert "已验证统计：5" in turn["answer"]
+    assert "总数：5" in turn["answer"]
     assert turn["error_details"]["category"] == "timeout"
 
 
@@ -1282,12 +1352,13 @@ async def test_invalid_finalize_output_does_not_trigger_model_retry() -> None:
     history = [ModelRequest(parts=[UserPromptPart(content="甲" * 9_500)])]
     turn, _ = await run_turn(agent, state, "请总结", history)
 
-    assert turn["status"] == "failed"
+    assert turn["status"] == "partial_completed"
     assert turn["finalization"]["status"] == "invalid_output"
     assert len(calls) == 1
     assert turn["budget"]["turn"]["text_requests"] == 1
     assert any(block.get("handle") == handle for block in turn["blocks"])
-    assert "未重试模型请求" in turn["error"]
+    assert turn["error"] is None
+    assert "模型收尾状态：invalid_output" in turn["answer"]
     assert turn["error_details"]["category"] == "reference_validation"
     assert "forged 不是当前轮结果" in turn["error_details"]["message"]
     assert turn["finalization"]["failure"]["category"] == "reference_validation"
@@ -1435,12 +1506,12 @@ async def test_no_remaining_budget_does_not_dispatch_or_claim_finalize() -> None
     agent = build_agent(BudgetedModel(FunctionModel(respond), state.instrumentation))
     turn, _ = await run_turn(agent, state, "请总结", [])
 
-    assert turn["status"] == "failed"
+    assert turn["status"] == "partial_completed"
     assert turn["finalization"]["status"] == "not_dispatched"
     assert turn["finalization"]["attempted"] is False
     assert turn["budget"]["batch_text_requests"] == BATCH_TEXT_REQUESTS
     assert calls == []
-    assert "未派发模型收尾" in turn["answer"]
+    assert "模型收尾状态：not_dispatched" in turn["answer"]
     assert any(item["kind"] == "text_not_dispatched" for item in turn["model_calls"])
     assert turn["error_details"]["category"] == "budget"
 

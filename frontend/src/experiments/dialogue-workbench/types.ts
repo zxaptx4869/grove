@@ -1,4 +1,13 @@
-export type TurnStatus = 'queued' | 'running' | 'completed' | 'failed' | 'cancelled' | 'interrupted'
+export type TurnStatus =
+  | 'queued'
+  | 'running'
+  | 'completed'
+  | 'partial_completed'
+  | 'unsupported'
+  | 'denied'
+  | 'failed'
+  | 'cancelled'
+  | 'interrupted'
 
 export interface Feedback {
   kind: 'wrong' | 'misunderstood' | 'omitted'
@@ -83,6 +92,14 @@ export interface Turn {
   budget?: Record<string, unknown> | null
   context?: Record<string, unknown> | null
   finalization?: Record<string, unknown> | null
+  completion?: {
+    status?: string
+    reason_code?: string
+    reason?: string
+    incomplete_steps?: string[]
+    can_continue?: boolean
+    continuation?: Record<string, unknown> | null
+  } | null
   persistence?: Record<string, unknown> | null
   isolation_check?: Record<string, unknown> | null
   feedback?: Feedback | null

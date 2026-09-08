@@ -310,8 +310,9 @@ async def test_failure_and_exhausted_budget_are_explicit_without_reset(tmp_path:
     runtime.engine.ledger.batch_text_requests = BATCH_TEXT_REQUESTS
     exhausted = await runtime.submit_turn(conversation["id"], "再查询", "request-3002")
     exhausted_done = await wait_for_turn(runtime, conversation["id"], exhausted["id"])
-    assert exhausted_done["status"] == "failed"
-    assert "整批文本模型请求预算已耗尽" in exhausted_done["error"]
+    assert exhausted_done["status"] == "partial_completed"
+    assert exhausted_done["error"] is None
+    assert "整批文本模型请求预算已耗尽" in exhausted_done["answer"]
     assert runtime.public_state()["budget"]["remaining"]["text_requests"] == 0
 
 

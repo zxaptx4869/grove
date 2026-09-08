@@ -224,4 +224,26 @@ describe('知识 Agent 实验工作台', () => {
     expect(screen.getByText(/工具记录未知 · 模型调用记录未知/)).toBeInTheDocument()
     expect(screen.queryByText(/0 个工具 · 0 次模型调用/)).not.toBeInTheDocument()
   })
+
+  it('部分完成轮次展示权威停止原因与可继续提示', async () => {
+    const partial = structuredClone(state)
+    const turn = partial.sessions[0].conversations[0].turns[0]
+    turn.status = 'partial_completed'
+    turn.stage = 'partial_completed'
+    turn.completion = {
+      status: 'partial_completed',
+      reason_code: 'tool_action_budget',
+      reason: '本轮工具动作预算已耗尽',
+      incomplete_steps: ['未核验剩余目录'],
+      can_continue: true,
+    }
+    vi.mocked(api.bootstrap).mockResolvedValue(partial)
+
+    render(<WorkbenchApp />)
+
+    expect((await screen.findAllByText('部分完成')).length).toBeGreaterThanOrEqual(1)
+    expect(screen.getByText('本轮工具动作预算已耗尽')).toBeInTheDocument()
+    expect(screen.getByText(/未完成：未核验剩余目录/)).toBeInTheDocument()
+    expect(screen.getByText('可以下一轮继续未完成步骤。')).toBeInTheDocument()
+  })
 })
