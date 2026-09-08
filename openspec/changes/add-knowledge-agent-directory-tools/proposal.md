@@ -8,15 +8,18 @@
 - 在共享只读工具入口校验 Workspace、项目和父节点归属，明确区分项目不存在、父节点不属于项目、目录为空与无权限，并继续使用现有审计、预算、超时、取消及事务保护。
 - 将目录工具接入统一循环原型和实验工作台，以有序目录结果句柄支持“第二个目录下面有哪些子目录”等跨轮指代；历史仅保留必要的节点身份、顺序和范围元数据。
 - 为 Entry 统计与目录列表补充权威查询对象、项目/筛选范围、分组维度、显示名称、数量/返回数量和完整性元数据；工作台确定性渲染权威标题，不允许模型把 `main_type` 统计包装成目录统计。
+- 统一循环终态为 `completed`、`partial_completed`、`unsupported`、`denied` 与 `failed`；预算、能力或收尾限制不再一律降为系统失败。
+- 在模型收尾不可用、超时或输出非法时，由程序只使用当前轮已验证结果生成确定性 blocks，并保存停止原因、未完成步骤与可续状态。
+- 为递归目录任务增加预算预检、重复父节点保护与轻量 continuation；现有目录工具补充一次整树叶子节点聚合，避免逐节点查询耗尽预算。
 - 补充无真实模型调用的领域查询、循环接线、历史引用、权限隔离、失败续聊和既有混合结果回归测试；不重放历史消息、不调用付费评测。
 
-非目标：目录创建/移动/删除、旧 Agent 正式流程替换、生产接入、通用收尾引用修复、取消诊断补全、部分完成状态重构、搜索回答质量改造、预算提高或历史压缩重构。
+非目标：目录创建/移动/删除、旧 Agent 正式流程替换、生产接入、取消诊断补全、搜索回答质量改造、预算提高或历史压缩重构。
 
 ## Capabilities
 
 ### New Capabilities
 
-- `knowledge-agent-directory-tools-experiment`：统一循环原型中的真实 Project/Node 目录读取、目录顺序指代与权威结果语义展示。
+- `knowledge-agent-directory-tools-experiment`：统一循环原型中的真实 Project/Node 目录读取、目录顺序指代、叶子节点聚合、权威结果语义展示和统一部分完成收尾。
 
 ### Modified Capabilities
 
@@ -24,7 +27,7 @@
 
 ## Impact
 
-- 后端：`backend/app/services/knowledge_agent/` 的共享只读工具合同与目录领域查询；`backend/evals/dialogue_loop/` 的工具暴露、结果合同、历史摘要和确定性渲染。
-- 实验工作台：`backend/evals/dialogue_workbench/` 的原型运行时复用，以及 `frontend/src/experiments/dialogue-workbench/` 的结果块类型与展示。
+- 后端：`backend/app/services/knowledge_agent/` 的共享只读工具合同与目录领域查询；`backend/evals/dialogue_loop/` 的工具暴露、结果合同、停止状态、续查快照、历史摘要和确定性渲染。
+- 实验工作台：`backend/evals/dialogue_workbench/` 的终态持久化与原型运行时复用，以及 `frontend/src/experiments/dialogue-workbench/` 的完成状态、缺口和结果块展示。
 - 测试：真实 SQLite Node/Project 数据、Workspace/项目/父节点边界、无模型 Pydantic AI 接线、历史目录引用、统计语义与既有回答回归。
 - 无数据库迁移、无目录写操作、无正式业务数据修改、无模型或请求预算调整。
