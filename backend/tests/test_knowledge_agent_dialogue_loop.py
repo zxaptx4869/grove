@@ -327,6 +327,21 @@ def test_tool_capability_stop_does_not_relabel_other_statistics() -> None:
     assert "整树聚合" in stop.reason
 
 
+def test_finalize_tool_shape_error_is_partial_and_not_a_system_failure() -> None:
+    from evals.dialogue_loop.loop import _stop_from_failure
+
+    state = _state()
+    stop = _stop_from_failure(
+        state,
+        RuntimeError("Tool 'count_entries' exceeded max retries count of 0"),
+        {"category": "unknown"},
+    )
+
+    assert stop.status == "partial_completed"
+    assert stop.reason_code == "output_validation_failed"
+    assert stop.can_continue is True
+
+
 def test_compact_history_keeps_order_and_protocol_without_large_body() -> None:
     state = _state()
     handle = state.store_result(
@@ -1385,9 +1400,10 @@ async def test_missing_required_output_field_keeps_schema_diagnostic() -> None:
     history = [ModelRequest(parts=[UserPromptPart(content="甲" * 9_500)])]
     turn, _ = await run_turn(build_agent(model), state, "请总结", history)
 
-    assert turn["status"] == "failed"
+    assert turn["status"] == "partial_completed"
     assert len(calls) == 1
     assert turn["error_details"]["category"] == "schema_validation"
+    assert turn["error"] is None
     errors = turn["error_details"]["validation"]["errors"]
     assert any(item["location"] == ["blocks"] and item["type"] == "missing" for item in errors)
     assert turn["finalization"]["failure"]["category"] == "schema_validation"
@@ -1413,8 +1429,9 @@ async def test_length_finish_reason_is_distinct_from_schema_failure() -> None:
     history = [ModelRequest(parts=[UserPromptPart(content="甲" * 9_500)])]
     turn, _ = await run_turn(build_agent(model), state, "请总结", history)
 
-    assert turn["status"] == "failed"
+    assert turn["status"] == "partial_completed"
     assert turn["error_details"]["category"] == "truncated"
+    assert turn["error"] is None
     assert turn["model_calls"][-1]["finish_reason"] == "length"
 
 

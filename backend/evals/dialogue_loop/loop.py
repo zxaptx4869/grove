@@ -345,14 +345,18 @@ def _stop_from_failure(
         )
     if category in {"schema_validation", "reference_validation", "truncated"}:
         return StopState(
-            status=(
-                TURN_PARTIAL_COMPLETED
-                if _reliable_current_records(state)
-                else TURN_FAILED
-            ),
+            status=TURN_PARTIAL_COMPLETED,
             reason_code="output_validation_failed",
             reason=message or "模型输出未通过结构校验",
-            incomplete_steps=["模型未能生成合法结构化收尾"],
+            incomplete_steps=["模型未能生成合法的完整回答"],
+            can_continue=True,
+        )
+    if "exceeded max retries" in lower or "校验" in message:
+        return StopState(
+            status=TURN_PARTIAL_COMPLETED,
+            reason_code="output_validation_failed",
+            reason=message or "模型输出未通过结构校验",
+            incomplete_steps=["模型未能生成合法的完整回答"],
             can_continue=True,
         )
     if state.instrumentation.finalize_attempted and _reliable_current_records(state):
