@@ -364,6 +364,28 @@ def test_finalize_tool_shape_error_is_partial_and_not_a_system_failure() -> None
     assert stop.can_continue is True
 
 
+def test_invalid_tool_params_are_not_reported_as_access_denied() -> None:
+    """模型参数错误属于可重试的部分完成，不得伪装成用户无权限。"""
+
+    state = _state()
+    stop = _stop_from_events(
+        state,
+        [
+            {
+                "tool": "list_project_directories",
+                "status": "denied",
+                "reason_code": "invalid_tool_params",
+                "error": "工具参数非法：1 项",
+            }
+        ],
+    )
+
+    assert stop is not None
+    assert stop.status == "partial_completed"
+    assert stop.reason_code == "invalid_tool_params"
+    assert stop.can_continue is True
+
+
 def test_compact_history_keeps_order_and_protocol_without_large_body() -> None:
     state = _state()
     handle = state.store_result(
@@ -721,7 +743,8 @@ async def test_missing_directory_does_not_fall_back_to_root_walk(monkeypatch) ->
                     )
                 ]
             )
-        if calls == 2:
+        if calls in {2, 3, 4}:
+            parent_node_id = {2: None, 3: 0, 4: -1}[calls]
             return ModelResponse(
                 parts=[
                     ToolCallPart(
@@ -729,7 +752,7 @@ async def test_missing_directory_does_not_fall_back_to_root_walk(monkeypatch) ->
                         {
                             "project_name": "房子装修",
                             "operation": "children",
-                            "name": "null",
+                            "parent_node_id": parent_node_id,
                         },
                     )
                 ]
@@ -750,8 +773,18 @@ async def test_missing_directory_does_not_fall_back_to_root_walk(monkeypatch) ->
 
     assert turn["status"] == "completed"
     assert len(dispatched) == 1
-    assert [item["status"] for item in turn["tool_calls"]] == ["empty", "not_executed"]
-    assert turn["tool_calls"][-1]["reason_code"] == "directory_lookup_already_resolved"
+    assert [item["status"] for item in turn["tool_calls"]] == [
+        "empty",
+        "not_executed",
+        "not_executed",
+        "not_executed",
+    ]
+    assert {
+        item["params"]["parent_node_id"] for item in turn["tool_calls"][1:]
+    } == {None, 0, -1}
+    assert {
+        item["reason_code"] for item in turn["tool_calls"][1:]
+    } == {"directory_lookup_already_resolved"}
     assert turn["answer"] == "房子装修 · 未找到名为「墙纸施工」的目录。"
     assert "权限" not in turn["answer"]
 

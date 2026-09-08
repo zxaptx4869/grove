@@ -592,6 +592,21 @@ async def test_directory_find_reports_missing_denied_and_truncated_states() -> N
             cancel_check=_noop_cancel,
             registry=KNOWLEDGE_AGENT_READ_TOOL_REGISTRY,
         )
+        invalid_params = await dispatch_read_tool(
+            db,
+            ctx,
+            tool_name="list_project_directories",
+            tool_version="v1",
+            params={
+                "project_id": project.id,
+                "operation": "children",
+                "parent_node_id": 0,
+            },
+            budget=ReadToolBudget(1, 1, 10_000),
+            cancel_check=_noop_cancel,
+            registry=KNOWLEDGE_AGENT_READ_TOOL_REGISTRY,
+            record_audit=False,
+        )
         denied_ctx = RunToolContext(
             run_id=ctx.run_id,
             workspace_id=ctx.workspace_id,
@@ -620,6 +635,8 @@ async def test_directory_find_reports_missing_denied_and_truncated_states() -> N
     assert truncated.payload["total_count"] == 3
     assert truncated.payload["returned_count"] == 1
     assert truncated.payload["has_more"] is True
+    assert invalid_params.status == TOOL_DENIED
+    assert invalid_params.audit_summary["reason_code"] == "invalid_tool_params"
     assert denied.status == TOOL_DENIED
     assert denied.audit_summary["reason_code"] == "workspace_access_denied"
 

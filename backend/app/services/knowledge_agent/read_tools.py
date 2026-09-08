@@ -254,6 +254,10 @@ async def dispatch_read_tool(
             params={"rejected_keys": raw_keys},
         )
         error = f"工具参数非法：{exc.error_count()} 项"
+        audit_summary = {
+            "status": TOOL_DENIED,
+            "reason_code": "invalid_tool_params",
+        }
         duration = int((perf_counter() - started) * 1000)
         if record_audit:
             await _record_dispatch(
@@ -263,7 +267,7 @@ async def dispatch_read_tool(
                 tool_version=tool_version,
                 fingerprint=fingerprint,
                 params_summary={"rejected_keys": raw_keys},
-                result_summary={"status": TOOL_DENIED},
+                result_summary=audit_summary,
                 status=TOOL_DENIED,
                 error=error,
                 duration_ms=duration,
@@ -277,6 +281,7 @@ async def dispatch_read_tool(
             payload={},
             error=error,
             duration_ms=duration,
+            audit_summary=audit_summary,
         )
 
     normalized_params = validated.model_dump(mode="json", by_alias=True)

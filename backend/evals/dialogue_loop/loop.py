@@ -308,10 +308,27 @@ def _stop_from_failure(
             incomplete_steps=["目标对象尚未由工具确认"],
             can_continue=False,
         )
-    if any(event.get("status") == "denied" for event in events):
-        event = next(event for event in events if event.get("status") == "denied")
+    denied_events = [event for event in events if event.get("status") == "denied"]
+    if denied_events:
+        event = next(
+            (
+                item
+                for item in denied_events
+                if item.get("reason_code") != "invalid_tool_params"
+                and "工具参数非法" not in str(item.get("error") or "")
+            ),
+            denied_events[0],
+        )
         reason_code = str(event.get("reason_code") or "access_denied")
         error = str(event.get("error") or "当前范围不允许该查询")
+        if reason_code == "invalid_tool_params" or "工具参数非法" in error:
+            return StopState(
+                status=TURN_PARTIAL_COMPLETED,
+                reason_code="invalid_tool_params",
+                reason=error,
+                incomplete_steps=["模型未能提交合法的工具参数"],
+                can_continue=True,
+            )
         if reason_code == "tool_not_available" or "工具未注册" in error:
             return StopState(
                 status=TURN_UNSUPPORTED,
@@ -400,10 +417,27 @@ def _stop_from_events(state: LoopState, events: list[dict]) -> StopState | None:
 
     if state.stop_state is not None:
         return state.stop_state
-    denied = next((event for event in events if event.get("status") == "denied"), None)
+    denied_events = [event for event in events if event.get("status") == "denied"]
+    denied = next(
+        (
+            event
+            for event in denied_events
+            if event.get("reason_code") != "invalid_tool_params"
+            and "工具参数非法" not in str(event.get("error") or "")
+        ),
+        denied_events[0] if denied_events else None,
+    )
     if denied is not None:
         reason_code = str(denied.get("reason_code") or "access_denied")
         error = str(denied.get("error") or "当前范围不允许该查询")
+        if reason_code == "invalid_tool_params" or "工具参数非法" in error:
+            return StopState(
+                status=TURN_PARTIAL_COMPLETED,
+                reason_code="invalid_tool_params",
+                reason=error,
+                incomplete_steps=["模型未能提交合法的工具参数"],
+                can_continue=True,
+            )
         if reason_code == "tool_not_available" or "工具未注册" in error:
             return StopState(
                 status=TURN_UNSUPPORTED,
@@ -1312,7 +1346,6 @@ def build_agent(model) -> Agent[LoopDeps, DialogueAnswer]:
                 project_name=project_name,
             )
             if operation == "children"
-            and parent_node_id is None
             and parent_result_handle is None
             else None
         )
