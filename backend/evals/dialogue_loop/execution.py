@@ -268,7 +268,7 @@ async def _finish_new_run(run_id: int, answer: str, failed: str | None) -> None:
     from app.schemas.knowledge_agent import KnowledgeAnswerOut
     from app.services.knowledge_agent.runs import finalize_run, mark_run_failed
 
-    for attempt in range(4):
+    for attempt in range(6):
         try:
             async with async_session_factory() as db:
                 run = await db.get(KnowledgeAgentRun, run_id)
@@ -287,10 +287,10 @@ async def _finish_new_run(run_id: int, answer: str, failed: str | None) -> None:
                 await db.commit()
             return
         except Exception as exc:  # noqa: BLE001
-            if not _is_sqlite_lock(exc) or attempt >= 3:
+            if not _is_sqlite_lock(exc) or attempt >= 5:
                 raise
             # SQLite 写事务释放存在短暂窗口；让前一笔审计事务完成后再重试。
-            await asyncio.sleep(0.08 * (2**attempt))
+            await asyncio.sleep(0.1 * (2**attempt))
 
 
 def _is_sqlite_lock(exc: BaseException) -> bool:

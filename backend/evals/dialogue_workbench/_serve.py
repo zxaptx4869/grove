@@ -75,7 +75,7 @@ def _fingerprint_with_retry(path: Path, workspace_id: int) -> dict:
 
     from evals.dialogue_loop.isolation import domain_fingerprint
 
-    for attempt in range(4):
+    for attempt in range(6):
         try:
             return domain_fingerprint(path, workspace_id)
         except sqlite3.OperationalError as exc:
@@ -83,9 +83,9 @@ def _fingerprint_with_retry(path: Path, workspace_id: int) -> dict:
             if (
                 "database is locked" not in message
                 and "database table is locked" not in message
-            ) or attempt >= 3:
+            ) or attempt >= 5:
                 raise
-            time_to_wait = 0.08 * (2**attempt)
+            time_to_wait = 0.1 * (2**attempt)
             time.sleep(time_to_wait)
     raise RuntimeError("隔离指纹重试未返回")
 
