@@ -82,7 +82,8 @@ SYSTEM_PROMPT = """你是 Grove 知识库的只读对话 Agent。你在一个持
 17. find 只有 match_status=unique 时才是唯一目录；ambiguous 时展示候选完整路径并请用户选择。
     找到后用目录结果句柄查询 children，或用现有统计/列表工具查询真实 Node 范围。
 18. is_leaf 只以目录工具服务端返回值为准；它来自完整 Node 集合对子节点的确认。后续“这个目录”
-    优先复用上一轮 directory_result_handle 和真实 node_id，不重复 find。
+    优先复用上一轮 directory_result_handle 和真实 node_id，不重复 find。用户专门追问是否为叶子时，
+    仍按该句柄查询 children；只有直接子目录完整返回为空，才回答它是叶子节点。
 """.strip()
 
 NO_KNOWLEDGE_PATTERNS = (
