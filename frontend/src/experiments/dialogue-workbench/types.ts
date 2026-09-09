@@ -2,6 +2,7 @@ export type TurnStatus =
   | 'queued'
   | 'running'
   | 'completed'
+  | 'not_executed'
   | 'partial_completed'
   | 'unsupported'
   | 'denied'
@@ -23,6 +24,7 @@ export interface ToolCall {
   params?: Record<string, unknown>
   result_summary?: Record<string, unknown>
   result_handle?: string
+  result_role?: 'candidate' | 'authorized'
   error?: string | null
   duration_ms?: number
 }
@@ -73,6 +75,13 @@ export interface AnswerBlock {
     returned_count?: number | null
     has_more?: boolean
     completeness?: string
+    result_role?: 'candidate' | 'authorized'
+    relevance_scope?: 'direct'
+    classification_counts?: {
+      direct?: number
+      indirect?: number
+      unrelated?: number
+    }
   }
 }
 

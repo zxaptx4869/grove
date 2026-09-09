@@ -256,4 +256,60 @@ describe('知识 Agent 实验工作台', () => {
     expect(screen.getByText(/未完成：未核验剩余目录/)).toBeInTheDocument()
     expect(screen.getByText('可以下一轮继续未完成步骤。')).toBeInTheDocument()
   })
+
+  it('直接相关集合使用专用标题且读取失败显示精确状态', async () => {
+    const partial = structuredClone(state)
+    const turn = partial.sessions[0].conversations[0].turns[0]
+    const list = turn.blocks[1]
+    list.semantics = {
+      subject: 'entries',
+      project_name: '房子装修',
+      relevance_scope: 'direct',
+      result_role: 'authorized',
+      returned_count: 1,
+      total_count: 1,
+      completeness: 'limited',
+      classification_counts: { direct: 1, indirect: 1, unrelated: 1 },
+    }
+    list.items = [{ entry_id: 1, title: '第一条', project_name: '房子装修' }]
+    turn.status = 'partial_completed'
+    turn.stage = 'partial_completed'
+    turn.completion = {
+      status: 'partial_completed',
+      reason_code: 'search_succeeded_read_failed',
+      reason: '搜索成功，但 Entry 正文读取失败',
+      incomplete_steps: ['搜索已完成；正文尚未完整读取'],
+      can_continue: true,
+    }
+    vi.mocked(api.bootstrap).mockResolvedValue(partial)
+
+    render(<WorkbenchApp />)
+
+    expect(await screen.findByText('房子装修 · 直接相关正式记录')).toBeInTheDocument()
+    expect(screen.getByText('搜索成功但读取失败')).toBeInTheDocument()
+    expect(screen.getByText('搜索成功，但 Entry 正文读取失败')).toBeInTheDocument()
+  })
+
+  it('纯参数错误显示未执行而不是部分完成', async () => {
+    const notExecuted = structuredClone(state)
+    const turn = notExecuted.sessions[0].conversations[0].turns[0]
+    turn.status = 'not_executed'
+    turn.stage = 'not_executed'
+    turn.answer = ''
+    turn.blocks = []
+    turn.completion = {
+      status: 'not_executed',
+      reason_code: 'invalid_tool_params',
+      reason: '工具参数非法：1 项',
+      incomplete_steps: ['查询未执行：模型未能提交合法参数'],
+      can_continue: true,
+    }
+    vi.mocked(api.bootstrap).mockResolvedValue(notExecuted)
+
+    render(<WorkbenchApp />)
+
+    expect((await screen.findAllByText('未执行')).length).toBeGreaterThanOrEqual(1)
+    expect(screen.getByText('查询未执行')).toBeInTheDocument()
+    expect(screen.queryByText('部分完成')).not.toBeInTheDocument()
+  })
 })

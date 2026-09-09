@@ -44,12 +44,29 @@ const STAGES: Record<string, string> = {
   finalizing: '预算内收尾中',
   cancelling: '正在停止',
   completed: '已完成',
+  not_executed: '未执行',
   partial_completed: '部分完成',
   unsupported: '暂不支持',
   denied: '无权访问',
   failed: '未完成',
   cancelled: '已停止',
   interrupted: '已中断',
+}
+
+const COMPLETION_LABELS: Record<string, string> = {
+  invalid_tool_params: '查询未执行',
+  search_succeeded_read_failed: '搜索成功但读取失败',
+  tool_action_budget: '预算耗尽',
+  embedding_request_budget: '预算耗尽',
+  entry_read_budget: '预算耗尽',
+  evidence_read_budget: '预算耗尽',
+  text_request_budget: '预算耗尽',
+  input_hard_limit: '预算耗尽',
+  time_budget: '预算耗尽',
+  tool_capability_missing: '能力不支持',
+  tool_not_available: '能力不支持',
+  system_error: '系统故障',
+  tool_error: '系统故障',
 }
 
 const FEEDBACK_LABELS: Record<Feedback['kind'], string> = {
@@ -79,7 +96,7 @@ function pretty(value: unknown) {
 
 function statusTone(status: string) {
   if (status === 'completed') return 'success'
-  if (status === 'partial_completed') return 'warning'
+  if (status === 'not_executed' || status === 'partial_completed') return 'warning'
   if (status === 'unsupported' || status === 'denied') return 'error'
   if (status === 'failed' || status === 'interrupted') return 'error'
   if (status === 'cancelled') return 'warning'
@@ -104,7 +121,10 @@ function listTitle(block: AnswerBlock) {
   if (semantics?.subject === 'directories') {
     return `${semantics.project_name || '当前项目'} · ${semantics.display_name || '项目目录'}`
   }
-  return `${semantics?.project_name ? `${semantics.project_name} · ` : '全部项目 · '}正式记录列表`
+  const scope = semantics?.project_name ? `${semantics.project_name} · ` : '全部项目 · '
+  return semantics?.relevance_scope === 'direct'
+    ? `${scope}直接相关正式记录`
+    : `${scope}正式记录列表`
 }
 
 const MAIN_TYPE_LABELS: Record<string, string> = {
@@ -403,7 +423,11 @@ function AssistantTurn({
             <div className="notice-block warning-block">
               <AlertTriangle aria-hidden="true" />
               <div>
-                <strong>{STAGES[turn.completion.status || turn.status] || '本轮未完整完成'}</strong>
+                <strong>
+                  {COMPLETION_LABELS[turn.completion.reason_code || ''] ||
+                    STAGES[turn.completion.status || turn.status] ||
+                    '本轮未完整完成'}
+                </strong>
                 {turn.completion.reason && <span>{turn.completion.reason}</span>}
                 {!!turn.completion.incomplete_steps?.length && (
                   <span>未完成：{turn.completion.incomplete_steps.join('；')}</span>
