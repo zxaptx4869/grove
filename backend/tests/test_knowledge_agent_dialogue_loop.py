@@ -667,6 +667,14 @@ def test_entry_block_renders_read_content_and_rejects_unread_or_forged_results()
     assert blocks[0]["entry_id"] == 90
     assert blocks[0]["content"] == "Entry 正文：乳胶漆维护更简单。"
 
+    legacy_answer = DialogueAnswer.model_validate(
+        {"blocks": [{"kind": "text", "text": f"[[{entries}:1]]"}]}
+    )
+    assert output_errors(legacy_answer, state) == []
+    legacy_text, legacy_blocks = render_answer(legacy_answer, state)
+    assert "Entry 正文：乳胶漆维护更简单。" in legacy_text
+    assert legacy_blocks[0]["entry_id"] == 90
+
     forged = DialogueAnswer.model_validate(
         {
             "blocks": [

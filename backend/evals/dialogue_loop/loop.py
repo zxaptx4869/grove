@@ -165,8 +165,8 @@ def _entry_content_requested(message: str) -> bool:
 
 
 def _entry_reference(text: str) -> tuple[str, int] | None:
-    """解析模型输出的正文引用标记；句柄和位置随后仍由服务端校验。"""
-    match = re.fullmatch(r"\[\[entry:([^:\]]+):(\d+)\]\]", text.strip())
+    """解析正文引用标记，兼容旧版句柄格式；句柄随后仍由服务端校验。"""
+    match = re.fullmatch(r"\[\[(?:entry:)?([^:\]]+):(\d+)\]\]", text.strip())
     if match is None:
         return None
     return match.group(1), int(match.group(2))
