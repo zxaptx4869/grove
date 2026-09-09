@@ -716,6 +716,88 @@ async def test_known_directory_name_uses_find_without_root_walk(monkeypatch) -> 
 
 
 @pytest.mark.asyncio
+async def test_project_search_routes_to_strict_project_query(monkeypatch) -> None:
+    """明确项目的知识搜索收紧到该项目的结构化语义查询。"""
+
+    state = _state()
+    dispatched = []
+
+    async def fake_dispatch(ctx, tool_name, params, kind, **kwargs):
+        dispatched.append((tool_name, params, kind, kwargs))
+        payload = {
+            "items": [
+                {
+                    "entry_id": 90,
+                    "title": "墙面材料选乳胶漆优于壁纸/墙布",
+                    "project_name": "房子装修",
+                    "node_path": "墙面工程",
+                }
+            ],
+            "returned_count": 1,
+            "has_more": False,
+        }
+        handle = ctx.deps.state.store_result(
+            "entries", payload, "limited", "limited",
+            semantics=loop_module._result_semantics(tool_name, params, payload),
+        )
+        event = {
+            "tool": "search_knowledge",
+            "shared_tool": tool_name,
+            "result_handle": handle,
+            "status": "limited",
+            "completeness": "limited",
+            "params": params,
+            "error": None,
+            "turn_index": state.turn_index,
+        }
+        state.tool_events.append(event)
+        return {**event, "payload": payload}
+
+    monkeypatch.setattr(loop_module, "_dispatch", fake_dispatch)
+
+    def respond(_messages, info):
+        if not dispatched:
+            return ModelResponse(
+                parts=[
+                    ToolCallPart(
+                        "search_knowledge",
+                        {
+                            "project_scope": "project",
+                            "project_name": "房子装修",
+                            "query": "墙纸",
+                        },
+                    )
+                ]
+            )
+        handle = next(iter(state.current_handles))
+        return ModelResponse(
+            parts=[
+                ToolCallPart(
+                    info.output_tools[0].name,
+                    {
+                        "blocks": [
+                            {"kind": "list", "result_handle": handle, "label": "墙纸知识"}
+                        ]
+                    },
+                )
+            ]
+        )
+
+    turn, _ = await run_turn(
+        build_agent(FunctionModel(respond)), state, "房子装修项目中，有关于墙纸的知识吗", []
+    )
+
+    assert turn["status"] == "partial_completed", turn
+    assert len(dispatched) == 1
+    tool_name, params, _kind, kwargs = dispatched[0]
+    assert tool_name == "query_entries"
+    assert params["entry_set"]["project_name"] == "房子装修"
+    assert params["entry_set"]["semantic_query"] == "墙纸"
+    assert params["sort"] == {"field": "relevance", "direction": "desc"}
+    assert kwargs["surface_tool"] == "search_knowledge"
+
+
+@pytest.mark.asyncio
 async def test_missing_directory_does_not_fall_back_to_root_walk(monkeypatch) -> None:
     """完整未命中后即使模型请求根级 children，也复用结果并明确回答不存在。"""
 

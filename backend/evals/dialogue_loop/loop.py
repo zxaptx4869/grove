@@ -86,6 +86,9 @@ SYSTEM_PROMPT = """你是 Grove 知识库的只读对话 Agent。你在一个持
     仍按该句柄查询 children；只有直接子目录完整返回为空，才回答它是叶子节点。
 19. find 完整返回 not_found 后，直接说明指定目录不存在；必要时最多改用 contains 查找相近名称，
     不得再从项目根调用 children 逐层遍历，也不得把定位空结果改写成权限错误。
+20. 用户明确提到项目名并询问其中的知识时，search_knowledge 必须使用 project_scope=project 和准确
+    project_name；只有用户明确询问全部项目时才使用 all。项目范围搜索只返回严格语义相关的正式记录，
+    不要把相近主题候选当作墙纸等目标知识。
 """.strip()
 
 NO_KNOWLEDGE_PATTERNS = (
@@ -1552,16 +1555,29 @@ def build_agent(model) -> Agent[LoopDeps, DialogueAnswer]:
     @agent.tool
     async def search_knowledge(
         ctx: RunContext[LoopDeps],
-        project_scope: Literal["all"],
-        project_name: None,
+        project_scope: Literal["all", "project"],
+        project_name: str | None,
         query: str,
     ) -> dict:
-        """在授权 Workspace 全部项目中复用真实混合语义搜索；结果不能用于精确计数。"""
+        """搜索正式记录；指定项目时使用严格项目范围，结果不能用于精确计数。"""
+        if project_scope == "project":
+            params = {
+                "entry_set": _entry_set(project_scope, project_name, query, None),
+                "limit": 10,
+                "sort": {"field": "relevance", "direction": "desc"},
+            }
+            dispatch_tool = "query_entries"
+        else:
+            if project_name is not None:
+                raise ModelRetry("字段 project_name：project_scope=all 时必须设为 null")
+            params = {"query": query}
+            dispatch_tool = "search_knowledge"
         result = await _dispatch(
             ctx,
-            "search_knowledge",
-            {"query": query},
+            dispatch_tool,
+            params,
             "list",
+            surface_tool="search_knowledge",
             audit_params={
                 "project_scope": project_scope,
                 "project_name": project_name,

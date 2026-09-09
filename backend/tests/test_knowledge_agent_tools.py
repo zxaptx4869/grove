@@ -14,6 +14,7 @@ from app.models.knowledge_agent import (
 )
 from app.services.knowledge_agent.tools import (
     RunToolContext,
+    _ordered_entries,
     read_entries,
     read_source_evidence,
     search_confirmed_knowledge,
@@ -26,6 +27,26 @@ from tests._knowledge_agent_fixtures import (
     create_user,
     create_workspace,
 )
+
+
+def test_ordered_entries_does_not_readd_candidates_omitted_by_reranker() -> None:
+    """重排器已有明确结果时，不把无关召回候选重新塞回列表。"""
+    from types import SimpleNamespace
+
+    candidates = [SimpleNamespace(id=1), SimpleNamespace(id=2), SimpleNamespace(id=3)]
+    draft = SimpleNamespace(results=[SimpleNamespace(entry_id=2)])
+
+    assert [entry.id for entry in _ordered_entries(candidates, draft, 10)] == [2]
+
+
+def test_ordered_entries_keeps_recall_as_empty_rerank_fallback() -> None:
+    """模型降级或无重排结果时仍保留原始召回，避免静默返回空列表。"""
+    from types import SimpleNamespace
+
+    candidates = [SimpleNamespace(id=1), SimpleNamespace(id=2)]
+    draft = SimpleNamespace(results=[])
+
+    assert [entry.id for entry in _ordered_entries(candidates, draft, 10)] == [1, 2]
 
 
 async def _base_ctx(

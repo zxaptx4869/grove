@@ -135,7 +135,7 @@ async def _load_scope_entries(
 
 
 def _ordered_entries(candidates: list[Entry], draft, limit: int) -> list[Entry]:
-    """按语义重排结果取前 limit 条；重排缺失时保持召回顺序。"""
+    """按语义重排结果取前 limit 条；重排无结果时保持召回顺序。"""
     by_id = {entry.id: entry for entry in candidates}
     ordered: list[Entry] = []
     seen: set[int] = set()
@@ -146,12 +146,15 @@ def _ordered_entries(candidates: list[Entry], draft, limit: int) -> list[Entry]:
             seen.add(entry.id)
         if len(ordered) >= limit:
             break
-    for entry in candidates:
-        if entry.id not in seen:
-            ordered.append(entry)
-            seen.add(entry.id)
-        if len(ordered) >= limit:
-            break
+    # 重排器返回结果时，它已经明确排除了不相关候选；不能再把候选全集补回列表。
+    # 仅在模型降级或没有可用重排结果时，才保留原始召回作为确定性兜底。
+    if not ordered:
+        for entry in candidates:
+            if entry.id not in seen:
+                ordered.append(entry)
+                seen.add(entry.id)
+            if len(ordered) >= limit:
+                break
     return ordered
 
 
