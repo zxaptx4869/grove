@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import re
 from dataclasses import asdict, dataclass, field, replace
 from decimal import Decimal, InvalidOperation
 from time import perf_counter
@@ -141,6 +142,34 @@ def _candidate_revision_requested(message: str) -> bool:
     if any(pattern in normalized for pattern in DIRECT_WRITE_PATTERNS):
         return False
     return any(pattern in normalized for pattern in CANDIDATE_REVISION_PATTERNS)
+
+
+ENTRY_CONTENT_PATTERNS = (
+    "具体内容",
+    "完整内容",
+    "完整正文",
+    "正文是什么",
+    "正文内容",
+    "详细内容",
+    "内容是什么",
+    "展开说说",
+    "展开看看",
+)
+
+
+def _entry_content_requested(message: str) -> bool:
+    """识别需要直接展示已读取 Entry 正文的请求，不参与候选稿分流。"""
+    return not _candidate_revision_requested(message) and any(
+        pattern in message.strip().lower() for pattern in ENTRY_CONTENT_PATTERNS
+    )
+
+
+def _entry_reference(text: str) -> tuple[str, int] | None:
+    """解析模型输出的正文引用标记；句柄和位置随后仍由服务端校验。"""
+    match = re.fullmatch(r"\[\[entry:([^:\]]+):(\d+)\]\]", text.strip())
+    if match is None:
+        return None
+    return match.group(1), int(match.group(2))
 
 
 @dataclass
@@ -953,8 +982,31 @@ def output_errors(answer: DialogueAnswer, state: LoopState) -> list[str]:
                 errors.append(f"{block.result_handle} 不是列表结果")
             elif expected == "statistic" and record.kind != expected:
                 errors.append(f"{block.result_handle} 不是 statistic 结果")
+        elif block.kind == "text" and (reference := _entry_reference(block.text)):
+            result_handle, position = reference
+            record = state.result_sets.get(result_handle)
+            if record is None or result_handle not in state.current_handles:
+                errors.append(f"{result_handle} 不是当前轮结果")
+            elif record.kind != "entries":
+                errors.append(f"{result_handle} 不是已读取 Entry 结果")
+            elif not 1 <= position <= len(record.payload.get("items", [])):
+                errors.append(f"{result_handle} 的正文位置越界")
+            elif not record.payload["items"][position - 1].get("content"):
+                errors.append(f"{result_handle} 的正文未成功读取")
         elif block.kind == "evidence" and block.evidence_handle not in state.current_evidence:
             errors.append(f"{block.evidence_handle} 不是当前轮核验 Evidence")
+    if _entry_content_requested(state.current_message):
+        has_entry_result = any(
+            handle in state.current_handles
+            and record.kind == "entries"
+            and any(item.get("content") for item in record.payload.get("items", []))
+            for handle, record in state.result_sets.items()
+        )
+        has_entry_block = any(
+            block.kind == "text" and _entry_reference(block.text) for block in answer.blocks
+        )
+        if has_entry_result and not has_entry_block:
+            errors.append("用户要求具体内容时必须提供正文引用，直接展示已读取正文")
     if _candidate_revision_requested(state.current_message):
         draft_text = "\n".join(
             block.text for block in answer.blocks if block.kind == "text"
@@ -1288,6 +1340,16 @@ def build_agent(model) -> Agent[LoopDeps, DialogueAnswer]:
             "当前请求只要求生成候选修改稿，用户将自行审核或更新，不是写入正式记录。"
             "不要调用 report_unsupported 或任何写入工具；直接用 final_result 的 text 块输出，"
             "明确尚未写入知识库，并区分原记录要点、建议补充、修改后候选版本和来源边界说明。"
+        )
+
+    @agent.instructions
+    def entry_content_instruction(ctx: RunContext[LoopDeps]) -> str:
+        if not _entry_content_requested(ctx.deps.state.current_message):
+            return ""
+        return (
+            "用户要求具体内容、正文、完整内容或展开记录。完成 read_entries 后，必须追加一个"
+            "text 块，且 text 严格写成 [[entry:结果句柄:位置]]（位置从 1 开始）来引用真实正文；"
+            "程序会将该标记渲染为正文块。Evidence 只表示出处，不能替代 Entry 正文。"
         )
 
     @agent.tool
@@ -1808,7 +1870,9 @@ def render_answer(answer: DialogueAnswer, state: LoopState) -> tuple[str, list[d
     lines: list[str] = []
     rendered: list[dict] = []
     for block in answer.blocks:
-        if block.kind in {"text", "insufficient"}:
+        if block.kind == "insufficient" or (
+            block.kind == "text" and _entry_reference(block.text) is None
+        ):
             text = block.text
             lines.append(text)
             rendered.append({"kind": block.kind, "text": text})
@@ -1900,6 +1964,30 @@ def render_answer(answer: DialogueAnswer, state: LoopState) -> tuple[str, list[d
                     "semantics": semantics,
                 }
             )
+        elif block.kind == "text" and (reference := _entry_reference(block.text)):
+            result_handle, position = reference
+            record = state.result_sets[result_handle]
+            items = record.payload.get("items", [])
+            item = items[position - 1]
+            content = item.get("content") or ""
+            text = f"《{item.get('title', '未命名知识')}》正文：\n{content}"
+            lines.append(text)
+            rendered.append(
+                {
+                    "kind": "entry",
+                    "handle": result_handle,
+                    "position": position,
+                    "label": "已读取知识正文",
+                    "text": text,
+                    "entry_id": item.get("entry_id"),
+                    "title": item.get("title"),
+                    "content": content,
+                    "project_name": item.get("project_name"),
+                    "node_path": item.get("node_path"),
+                    "status": record.status,
+                    "completeness": record.completeness,
+                }
+            )
         else:
             item = state.evidence[block.evidence_handle]
             text = f"来源《{item.get('source_title', '')}》：{item.get('quote', '')}"
@@ -1965,6 +2053,15 @@ def _verified_failure_output(
             requested_blocks.append(
                 {"kind": "list", "result_handle": handle, "label": "已确认列表"}
             )
+        elif record.kind == "entries":
+            for position, item in enumerate(record.payload.get("items", []), 1):
+                if item.get("content"):
+                    requested_blocks.append(
+                        {
+                            "kind": "text",
+                            "text": f"[[entry:{handle}:{position}]]",
+                        }
+                    )
     for handle in state.evidence:
         if handle in state.current_evidence:
             requested_blocks.append(

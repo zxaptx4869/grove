@@ -184,7 +184,7 @@ function AnswerBlockView({ block }: { block: AnswerBlock }) {
                   <>
                     <strong>{String(item.title ?? `记录 ${item.entry_id ?? index + 1}`)}</strong>
                     <span>
-                      {[item.project_name, item.main_type, item.summary]
+                      {[item.project_name, item.main_type, item.excerpt ?? item.summary]
                         .filter(Boolean)
                         .map(String)
                         .join(' · ')}
@@ -195,6 +195,24 @@ function AnswerBlockView({ block }: { block: AnswerBlock }) {
             </li>
           ))}
         </ol>
+      </section>
+    )
+  }
+  if (block.kind === 'entry') {
+    return (
+      <section className="result-block entry-block" aria-label={`${block.title || '知识'}正文`}>
+        <div className="block-heading">
+          <BookOpen aria-hidden="true" />
+          <div>
+            <strong>{block.title || '已读取知识正文'}</strong>
+            <span>
+              {block.project_name || '当前项目'}
+              {block.node_path ? ` · ${block.node_path}` : ''}
+              {block.completeness ? ` · 完整性：${block.completeness}` : ''}
+            </span>
+          </div>
+        </div>
+        <div className="entry-content">{block.content || '正文读取为空，未将标题当作完整正文。'}</div>
       </section>
     )
   }

@@ -322,6 +322,39 @@ def test_deterministic_fallback_isolated_to_current_turn_material() -> None:
     assert "未核验叶子节点" in text
 
 
+def test_deterministic_fallback_keeps_current_read_entry_content() -> None:
+    state = _state()
+    state.store_result(
+        "entries",
+        {
+            "items": [
+                {
+                    "entry_id": 90,
+                    "title": "墙面材料建议",
+                    "content": "真实正文",
+                    "project_name": "房子装修",
+                }
+            ]
+        },
+        "completed",
+        "limited",
+    )
+    state.stop(
+        StopState(
+            status="partial_completed",
+            reason_code="budget_boundary",
+            reason="文本预算已耗尽",
+            incomplete_steps=["未生成完整回答"],
+            can_continue=True,
+        )
+    )
+
+    text, blocks = _verified_failure_output(state)
+
+    assert "真实正文" in text
+    assert any(block["kind"] == "entry" for block in blocks)
+
+
 def test_budget_stop_keeps_directory_continuation_without_fake_leaf_total() -> None:
     state = _state()
     _mark_budget_stop(
@@ -597,6 +630,99 @@ def test_output_rejects_old_or_forged_handles_and_renders_real_values() -> None:
         {"blocks": [{"kind": "evidence", "evidence_handle": "ev-old"}]}
     )
     assert output_errors(old_evidence, state)
+
+
+def test_entry_block_renders_read_content_and_rejects_unread_or_forged_results() -> None:
+    state = _state()
+    entries = state.store_result(
+        "entries",
+        {
+            "items": [
+                {
+                    "entry_id": 90,
+                    "title": "墙面材料建议",
+                    "content": "Entry 正文：乳胶漆维护更简单。",
+                    "project_name": "房子装修",
+                    "node_path": "材质选择/饰面涂料",
+                }
+            ]
+        },
+        "completed",
+        "limited",
+    )
+    answer = DialogueAnswer.model_validate(
+        {
+            "blocks": [
+                {
+                    "kind": "text",
+                    "text": f"[[entry:{entries}:1]]",
+                }
+            ]
+        }
+    )
+
+    assert output_errors(answer, state) == []
+    text, blocks = render_answer(answer, state)
+    assert "Entry 正文：乳胶漆维护更简单。" in text
+    assert blocks[0]["entry_id"] == 90
+    assert blocks[0]["content"] == "Entry 正文：乳胶漆维护更简单。"
+
+    forged = DialogueAnswer.model_validate(
+        {
+            "blocks": [
+                {
+                    "kind": "text",
+                    "text": "[[entry:fake:1]]",
+                }
+            ]
+        }
+    )
+    assert output_errors(forged, state)
+
+    unread = state.store_result(
+        "entries",
+        {"items": [{"entry_id": 91, "title": "只有标题"}]},
+        "completed",
+        "limited",
+    )
+    unread_answer = DialogueAnswer.model_validate(
+        {
+            "blocks": [
+                {
+                    "kind": "text",
+                    "text": f"[[entry:{unread}:1]]",
+                }
+            ]
+        }
+    )
+    assert any("正文未成功读取" in error for error in output_errors(unread_answer, state))
+
+
+def test_content_request_requires_entry_block_when_read_result_is_available() -> None:
+    state = _state()
+    state.begin_turn(5, "这条知识的具体内容是什么")
+    entries = state.store_result(
+        "entries",
+        {"items": [{"entry_id": 90, "title": "标题", "content": "真实正文"}]},
+        "completed",
+        "limited",
+    )
+    missing = DialogueAnswer.model_validate(
+        {"blocks": [{"kind": "text", "text": "具体内容如下。"}]}
+    )
+    assert any("必须提供正文引用" in error for error in output_errors(missing, state))
+    complete = DialogueAnswer.model_validate(
+        {
+            "blocks": [
+                {"kind": "text", "text": "具体内容如下。"},
+                {
+                    "kind": "text",
+                    "text": f"[[entry:{entries}:1]]",
+                },
+            ]
+        }
+    )
+    assert output_errors(complete, state) == []
 
 
 def test_no_knowledge_instruction_is_programmatically_recorded() -> None:

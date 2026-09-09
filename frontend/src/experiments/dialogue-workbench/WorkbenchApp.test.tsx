@@ -77,13 +77,21 @@ const state: WorkbenchState = {
               duration_ms: 1234,
               blocks: [
                 { kind: 'statistic', text: '正式记录总数：2', value: 2 },
-                {
-                  kind: 'list',
-                  label: '相关记录',
-                  items: [
-                    { entry_id: 1, title: '第一条', project_name: '房子装修' },
+                  {
+                    kind: 'list',
+                    label: '相关记录',
+                    items: [
+                    { entry_id: 1, title: '第一条', project_name: '房子装修', excerpt: '第一条正文摘录' },
                     { entry_id: 2, title: '第二条', project_name: '房子装修' },
-                  ],
+                    ],
+                  },
+                {
+                  kind: 'entry',
+                  title: '第一条',
+                  content: '第一条完整正文',
+                  project_name: '房子装修',
+                  node_path: '装修/材料',
+                  completeness: 'limited',
                 },
                 { kind: 'evidence', text: '已核验原文', entry_id: 1, source_id: 2 },
               ],
@@ -131,6 +139,8 @@ describe('知识 Agent 实验工作台', () => {
     const items = screen.getAllByRole('listitem')
     expect(items[0]).toHaveTextContent('第一条')
     expect(items[1]).toHaveTextContent('第二条')
+    expect(screen.getByText('房子装修 · 第一条正文摘录')).toBeInTheDocument()
+    expect(screen.getByText('第一条完整正文')).toBeInTheDocument()
     expect(screen.getByText('查看已核验来源')).toBeInTheDocument()
     expect(screen.getByText('执行记录')).toBeInTheDocument()
     expect(screen.queryByText('实际输入 token：320')).not.toBeVisible()

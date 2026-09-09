@@ -42,10 +42,15 @@ export interface ModelCall {
 }
 
 export interface AnswerBlock {
-  kind: 'text' | 'statistic' | 'list' | 'evidence' | 'insufficient'
+  kind: 'text' | 'statistic' | 'list' | 'entry' | 'evidence' | 'insufficient'
   text?: string
   label?: string
   handle?: string
+  position?: number
+  title?: string
+  content?: string
+  project_name?: string
+  node_path?: string
   value?: number | string | null
   buckets?: Array<{ label?: string; key?: string; count?: number }>
   items?: Array<Record<string, unknown>>
