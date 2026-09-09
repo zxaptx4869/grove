@@ -38,7 +38,7 @@ class UnifiedConversationContext:
 
 
 class UnifiedLoopEngine:
-    """直接调用 dialogue-loop-v2，不复制工具或回答逻辑。"""
+    """直接调用当前 dialogue-loop，不复制工具或回答逻辑。"""
 
     offline = False
 

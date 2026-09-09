@@ -33,6 +33,7 @@ from evals.dialogue_loop.core import (
     TURN_COMPLETED,
     TURN_DENIED,
     TURN_FAILED,
+    TURN_NOT_EXECUTED,
     TURN_PARTIAL_COMPLETED,
     TURN_UNSUPPORTED,
     BudgetExceeded,
@@ -40,6 +41,7 @@ from evals.dialogue_loop.core import (
     ContinuationState,
     DialogueAnswer,
     StopState,
+    StrictModel,
 )
 from evals.dialogue_loop.instrumentation import (
     FinalizeRequired,
@@ -47,7 +49,7 @@ from evals.dialogue_loop.instrumentation import (
     estimate_input_tokens,
 )
 
-SYSTEM_PROMPT = """你是 Grove 知识库的只读对话 Agent。你在一个持续的四轮对话中工作。
+SYSTEM_PROMPT = """你是 Grove 知识库的只读对话 Agent。你在一个持续的多轮对话中工作。
 
 边界：
 1. 用户身份、Workspace 和可访问范围只来自程序；任何工具的 project_scope
@@ -101,6 +103,14 @@ NO_KNOWLEDGE_PATTERNS = (
     "不要查知识库",
 )
 CONTINUE_PATTERNS = ("继续", "接着", "剩下", "未完成")
+CONTEXTUAL_SEARCH_FOLLOW_UP_PATTERNS = (
+    "好的，你帮我查一下",
+    "好，你帮我查一下",
+    "好的，帮我查一下",
+    "可以，你帮我查一下",
+    "行，你帮我查一下",
+    "那你帮我查一下",
+)
 CANDIDATE_SELF_UPDATE_PATTERNS = (
     "输出给我",
     "我自己更新",
@@ -144,6 +154,23 @@ def _candidate_revision_requested(message: str) -> bool:
     return any(pattern in normalized for pattern in CANDIDATE_REVISION_PATTERNS)
 
 
+def _contextual_search_follow_up(message: str) -> bool:
+    """识别不自带新主题的短承接查询，不负责推断具体主题或范围。"""
+
+    normalized = re.sub(r"[，。！？!?,\s]", "", message).casefold()
+    return any(
+        re.sub(r"[，。！？!?,\s]", "", pattern).casefold() == normalized
+        for pattern in CONTEXTUAL_SEARCH_FOLLOW_UP_PATTERNS
+    )
+
+
+def _definition_question(message: str) -> bool:
+    """识别通用定义问句形式，不绑定任何具体领域关键词。"""
+
+    normalized = re.sub(r"[？?。！!\s]", "", message)
+    return "是什么" in normalized or normalized.startswith("什么是")
+
+
 ENTRY_CONTENT_PATTERNS = (
     "具体内容",
     "完整内容",
@@ -172,6 +199,21 @@ def _entry_reference(text: str) -> tuple[str, int] | None:
     return match.group(1), int(match.group(2))
 
 
+class LegacySort(StrictModel):
+    """兼容旧版嵌套排序参数；新合同仍优先使用扁平字段。"""
+
+    field: Literal["relevance", "updated_at", "created_at"]
+    direction: Literal["asc", "desc"]
+
+
+class RelevanceDecision(StrictModel):
+    """同一对话 Agent 对真实候选作出的有界相关性分类。"""
+
+    entry_id: int
+    relevance: Literal["direct", "indirect", "unrelated"]
+    reason: str = ""
+
+
 @dataclass
 class ResultRecord:
     handle: str
@@ -181,6 +223,7 @@ class ResultRecord:
     completeness: str
     turn_index: int
     semantics: dict = field(default_factory=dict)
+    displayable: bool = True
 
 
 @dataclass
@@ -191,6 +234,8 @@ class LoopState:
     ledger: BudgetLedger
     instrumentation: Instrumentation
     discovered_entry_ids: set[int] = field(default_factory=set)
+    authorized_entry_ids: set[int] = field(default_factory=set)
+    read_entry_ids: set[int] = field(default_factory=set)
     result_sets: dict[str, ResultRecord] = field(default_factory=dict)
     evidence: dict[str, dict] = field(default_factory=dict)
     current_handles: set[str] = field(default_factory=set)
@@ -204,9 +249,11 @@ class LoopState:
     continuation: ContinuationState | None = None
     active_continuation: ContinuationState | None = None
     queried_directory_parents: set[int | None] = field(default_factory=set)
+    semantic_search_results: dict[str, str] = field(default_factory=dict)
     current_message: str = ""
     _handle_sequence: int = 0
     database_lock: asyncio.Lock = field(default_factory=asyncio.Lock, repr=False)
+    semantic_search_lock: asyncio.Lock = field(default_factory=asyncio.Lock, repr=False)
 
     def begin_turn(self, run_id: int, message: str) -> None:
         self.turn_index += 1
@@ -258,6 +305,8 @@ class LoopState:
         status: str,
         completeness: str,
         semantics: dict | None = None,
+        *,
+        displayable: bool = True,
     ) -> str:
         self._handle_sequence += 1
         handle = f"rs-{self.conversation_id}-{self._handle_sequence}"
@@ -269,7 +318,14 @@ class LoopState:
             completeness,
             self.turn_index,
             semantics or {},
+            displayable,
         )
+        if kind == "list" and displayable:
+            self.authorized_entry_ids.update(
+                int(item["entry_id"])
+                for item in payload.get("items", [])
+                if item.get("entry_id") is not None
+            )
         self.current_handles.add(handle)
         return handle
 
@@ -294,8 +350,121 @@ def _reliable_current_records(state: LoopState) -> list[ResultRecord]:
         record
         for handle, record in state.result_sets.items()
         if handle in state.current_handles
+        and record.displayable
         and record.status in {"completed", "ok", "empty", "partial", "limited"}
     ]
+
+
+def _none_if_string_null(value: str | None) -> str | None:
+    """将模型常见的字符串 null 视为未提供，不处理其他值。"""
+
+    if value is None or not value.strip() or value.strip().casefold() == "null":
+        return None
+    return value.strip()
+
+
+def _optional_int(value: int | str | None, field_name: str) -> int | None:
+    """只兼容字符串 null；其他字符串不能借兼容层变成对象 ID。"""
+
+    if value is None:
+        return None
+    if isinstance(value, str):
+        if value.strip().casefold() == "null":
+            return None
+        raise ModelRetry(f"字段 {field_name}：只接受整数或 null")
+    return value
+
+
+def _optional_main_types(
+    value: list[Literal["knowledge", "method", "parameter", "reminder"]] | str | None,
+) -> list[Literal["knowledge", "method", "parameter", "reminder"]] | None:
+    """兼容可空列表的字符串 null，同时拒绝其他字符串。"""
+
+    if value is None:
+        return None
+    if isinstance(value, str):
+        if value.strip().casefold() == "null":
+            return None
+        raise ModelRetry("字段 main_types：只接受类型数组或 null")
+    return value
+
+
+def _optional_directory_scope(value: str | None) -> Literal["direct", "subtree"] | None:
+    normalized = _none_if_string_null(value)
+    if normalized is None:
+        return None
+    if normalized not in {"direct", "subtree"}:
+        raise ModelRetry("字段 directory_scope：只接受 direct、subtree 或 null")
+    return normalized
+
+
+def _normalized_sort(
+    *,
+    semantic_query: str | None,
+    sort_field: Literal["relevance", "updated_at", "created_at"] | None,
+    sort_direction: Literal["asc", "desc"] | None,
+    sort: LegacySort | str | None,
+) -> tuple[
+    Literal["relevance", "updated_at", "created_at"], Literal["asc", "desc"]
+]:
+    """规范化首选扁平排序字段与唯一旧式嵌套兼容形态。"""
+
+    legacy = None
+    if isinstance(sort, str):
+        if sort.strip().casefold() != "null":
+            raise ModelRetry("字段 sort：只接受 {field, direction} 或 null")
+    else:
+        legacy = sort
+    if legacy is not None:
+        if sort_field is not None and sort_field != legacy.field:
+            raise ModelRetry("sort.field 与 sort_field 冲突")
+        if sort_direction is not None and sort_direction != legacy.direction:
+            raise ModelRetry("sort.direction 与 sort_direction 冲突")
+        sort_field = sort_field or legacy.field
+        sort_direction = sort_direction or legacy.direction
+    sort_field = sort_field or ("relevance" if semantic_query else "updated_at")
+    sort_direction = sort_direction or "desc"
+    if semantic_query is None and sort_field == "relevance":
+        raise ModelRetry("没有 semantic_query 时不能按 relevance 排序")
+    return sort_field, sort_direction
+
+
+def _semantic_query_key(
+    *,
+    project_scope: str,
+    project_name: str | None,
+    query: str,
+    main_types: list[str] | None = None,
+    node_scope: dict | None = None,
+) -> str:
+    """为确定性相同的语义查询生成跨表面工具共享键。"""
+
+    return json.dumps(
+        {
+            "project_scope": project_scope,
+            "project_name": project_name.casefold() if project_name else None,
+            "query": " ".join(query.casefold().split()),
+            "main_types": sorted(main_types or []),
+            "node_scope": node_scope or {},
+        },
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    )
+
+
+def _authorized_list_for_entry_ids(
+    state: LoopState, entry_ids: list[int]
+) -> tuple[str, ResultRecord] | None:
+    """定位包含读取目标的最近授权列表，供失败续执行保存最小状态。"""
+
+    for handle, record in reversed(list(state.result_sets.items())):
+        if record.kind != "list" or not record.displayable:
+            continue
+        available = [int(item["entry_id"]) for item in record.payload.get("items", [])]
+        if entry_ids == available:
+            return handle, record
+    return None
 
 
 def _directory_continuation(state: LoopState, params: dict, reason: str) -> ContinuationState:
@@ -398,7 +567,11 @@ def _stop_from_failure(
         error = str(event.get("error") or "当前范围不允许该查询")
         if reason_code == "invalid_tool_params" or "工具参数非法" in error:
             return StopState(
-                status=TURN_PARTIAL_COMPLETED,
+                status=(
+                    TURN_PARTIAL_COMPLETED
+                    if _reliable_current_records(state)
+                    else TURN_NOT_EXECUTED
+                ),
                 reason_code="invalid_tool_params",
                 reason=error,
                 incomplete_steps=["模型未能提交合法的工具参数"],
@@ -463,11 +636,20 @@ def _stop_from_failure(
             can_continue=True,
         )
     if "exceeded max retries" in lower or "校验" in message:
+        invalid_tool_shape = (
+            "tool" in lower and not _reliable_current_records(state) and not events
+        )
         return StopState(
-            status=TURN_PARTIAL_COMPLETED,
-            reason_code="output_validation_failed",
+            status=TURN_NOT_EXECUTED if invalid_tool_shape else TURN_PARTIAL_COMPLETED,
+            reason_code=(
+                "invalid_tool_params" if invalid_tool_shape else "output_validation_failed"
+            ),
             reason=message or "模型输出未通过结构校验",
-            incomplete_steps=["模型未能生成合法的完整回答"],
+            incomplete_steps=[
+                "查询未执行：模型未能提交合法参数"
+                if invalid_tool_shape
+                else "模型未能生成合法的完整回答"
+            ],
             can_continue=True,
         )
     if state.instrumentation.finalize_attempted and _reliable_current_records(state):
@@ -507,7 +689,11 @@ def _stop_from_events(state: LoopState, events: list[dict]) -> StopState | None:
         error = str(denied.get("error") or "当前范围不允许该查询")
         if reason_code == "invalid_tool_params" or "工具参数非法" in error:
             return StopState(
-                status=TURN_PARTIAL_COMPLETED,
+                status=(
+                    TURN_PARTIAL_COMPLETED
+                    if _reliable_current_records(state)
+                    else TURN_NOT_EXECUTED
+                ),
                 reason_code="invalid_tool_params",
                 reason=error,
                 incomplete_steps=["模型未能提交合法的工具参数"],
@@ -586,9 +772,8 @@ def _entry_set(
     semantic_query: str | None,
     main_types: list[Literal["knowledge", "method", "parameter", "reminder"]] | None,
 ) -> dict:
-    normalized_project_name = (
-        project_name.strip() if project_name and project_name.strip() else None
-    )
+    normalized_project_name = _none_if_string_null(project_name)
+    normalized_query = _none_if_string_null(semantic_query)
     if project_scope == "project" and normalized_project_name is None:
         raise ModelRetry("字段 project_name：project_scope=project 时必须填写非空项目名")
     if project_scope == "all" and normalized_project_name is not None:
@@ -596,7 +781,7 @@ def _entry_set(
     return {
         "schema_version": "v1",
         "project_name": normalized_project_name,
-        "semantic_query": semantic_query.strip() if semantic_query else None,
+        "semantic_query": normalized_query,
         "main_types": list(main_types or []),
         "info_natures": [],
         "updated_at": None,
@@ -663,10 +848,18 @@ def _model_payload(kind: str, payload: dict) -> dict:
                         "excerpt",
                         "matched_fields",
                         "match_hint",
+                        "relevance_level",
                     }
                 }
             )
-        return {**{key: value for key, value in payload.items() if key != "items"}, "items": items}
+        return {
+            **{
+                key: value
+                for key, value in payload.items()
+                if key not in {"items", "internal_classifications"}
+            },
+            "items": items,
+        }
     if kind == "entries":
         items = []
         for item in payload.get("items", []):
@@ -749,15 +942,19 @@ def _history_tool_summary(state: LoopState, event: dict) -> dict:
         }
         summary["semantics"] = record.semantics
     elif record.kind == "list":
-        summary["ordered_items"] = [
-            {
-                "position": index,
-                "entry_id": item.get("entry_id"),
-                "title": item.get("title"),
-                "project_name": item.get("project_name"),
-            }
-            for index, item in enumerate(payload.get("items", []), 1)
-        ]
+        if record.displayable:
+            summary["ordered_items"] = [
+                {
+                    "position": index,
+                    "entry_id": item.get("entry_id"),
+                    "title": item.get("title"),
+                    "project_name": item.get("project_name"),
+                    "relevance_level": item.get("relevance_level"),
+                }
+                for index, item in enumerate(payload.get("items", []), 1)
+            ]
+        else:
+            summary["candidate_count"] = len(payload.get("items", []))
         summary["semantics"] = record.semantics
     elif record.kind == "directories":
         summary["directory_items"] = [
@@ -842,9 +1039,10 @@ def _without_historical_system_prompts(history: list[ModelMessage]) -> list[Mode
     return cleaned
 
 
-def _public_result(result, handle: str) -> dict:
+def _public_result(result, handle: str, *, result_role: str = "authorized") -> dict:
     return {
         "result_handle": handle,
+        "result_role": result_role,
         "status": result.status,
         "completeness": result.completeness,
         "payload": result.payload,
@@ -981,6 +1179,8 @@ def output_errors(answer: DialogueAnswer, state: LoopState) -> list[str]:
             expected = block.kind
             if record is None or block.result_handle not in state.current_handles:
                 errors.append(f"{block.result_handle} 不是当前轮结果")
+            elif not record.displayable:
+                errors.append(f"{block.result_handle} 是内部候选，不能进入主答案")
             elif expected == "list" and record.kind not in {"list", "directories"}:
                 errors.append(f"{block.result_handle} 不是列表结果")
             elif expected == "statistic" and record.kind != expected:
@@ -998,6 +1198,49 @@ def output_errors(answer: DialogueAnswer, state: LoopState) -> list[str]:
                 errors.append(f"{result_handle} 的正文未成功读取")
         elif block.kind == "evidence" and block.evidence_handle not in state.current_evidence:
             errors.append(f"{block.evidence_handle} 不是当前轮核验 Evidence")
+    candidate_handles = {
+        handle
+        for handle, record in state.result_sets.items()
+        if handle in state.current_handles
+        and record.semantics.get("result_role") == "candidate"
+        and record.status in {"completed", "empty", "limited"}
+    }
+    selected_candidates = {
+        record.semantics.get("candidate_result_handle")
+        for handle, record in state.result_sets.items()
+        if handle in state.current_handles
+        and record.displayable
+        and record.semantics.get("result_role") == "authorized"
+    }
+    if candidate_handles - selected_candidates:
+        errors.append("语义候选必须先完整调用 select_relevant_entries 形成授权集合")
+    answer_text = "\n".join(
+        block.text
+        for block in answer.blocks
+        if block.kind in {"text", "insufficient"}
+    )
+    for record in state.result_sets.values():
+        if (
+            record.handle not in state.current_handles
+            or record.semantics.get("result_role") != "authorized"
+        ):
+            continue
+        candidate = state.result_sets.get(
+            str(record.semantics.get("candidate_result_handle") or "")
+        )
+        rejected_ids = {
+            int(item["entry_id"])
+            for item in record.payload.get("internal_classifications", [])
+            if item.get("relevance") != "direct"
+        }
+        rejected_titles = {
+            str(item.get("title") or "").strip()
+            for item in (candidate.payload.get("items", []) if candidate else [])
+            if int(item["entry_id"]) in rejected_ids
+        }
+        if any(title and title in answer_text for title in rejected_titles):
+            errors.append("主答案包含间接相关或不相关候选的标题")
+            break
     if _entry_content_requested(state.current_message):
         has_entry_result = any(
             handle in state.current_handles
@@ -1010,6 +1253,17 @@ def output_errors(answer: DialogueAnswer, state: LoopState) -> list[str]:
         )
         if has_entry_result and not has_entry_block:
             errors.append("用户要求具体内容时必须提供正文引用，直接展示已读取正文")
+    if _definition_question(state.current_message):
+        first_text = next(
+            (index for index, block in enumerate(answer.blocks) if block.kind == "text"),
+            None,
+        )
+        first_list = next(
+            (index for index, block in enumerate(answer.blocks) if block.kind == "list"),
+            None,
+        )
+        if first_list is not None and (first_text is None or first_text > first_list):
+            errors.append("定义型问题必须先回答概念和核心结论，再展示直接相关正式记录")
     if _candidate_revision_requested(state.current_message):
         draft_text = "\n".join(
             block.text for block in answer.blocks if block.kind == "text"
@@ -1050,7 +1304,12 @@ def list_position_entry_id(state: LoopState, result_set_handle: str, position: i
     """将会话内有序列表位置解析为真实 Entry id。"""
     record = state.result_sets.get(result_set_handle)
     items = record.payload.get("items", []) if record and record.kind == "list" else []
-    if record is None or record.kind != "list" or not 1 <= position <= len(items):
+    if (
+        record is None
+        or record.kind != "list"
+        or not record.displayable
+        or not 1 <= position <= len(items)
+    ):
         raise ValueError("结果集句柄无效、非列表或位置越界")
     return int(items[position - 1]["entry_id"])
 
@@ -1270,8 +1529,18 @@ async def _dispatch(
         payload = {**payload, "items": payload["items"][:10], "truncated_by_experiment": True}
     semantics = _result_semantics(tool_name, params, payload)
     semantics["completeness"] = result.completeness
+    is_semantic_candidate = kind == "list" and (
+        tool_name == "search_knowledge"
+        or (params.get("entry_set") or {}).get("semantic_query") is not None
+    )
+    semantics["result_role"] = "candidate" if is_semantic_candidate else "authorized"
     handle = state.store_result(
-        kind, payload, result.status, result.completeness, semantics=semantics
+        kind,
+        payload,
+        result.status,
+        result.completeness,
+        semantics=semantics,
+        displayable=not is_semantic_candidate,
     )
     event = {
         "tool": surface_tool or tool_name,
@@ -1308,9 +1577,71 @@ async def _dispatch(
         exc = BudgetExceeded(result.error.removeprefix("只读工具执行失败："))
         _mark_budget_stop(state, exc, tool_name=tool_name, params=params)
         raise exc
-    public = _public_result(result, handle)
+    public = _public_result(
+        result,
+        handle,
+        result_role="candidate" if is_semantic_candidate else "authorized",
+    )
     public["payload"] = _model_payload(kind, payload)
     return public
+
+
+async def _semantic_search_dispatch(
+    ctx: RunContext[LoopDeps],
+    *,
+    search_key: str,
+    dispatch_tool: str,
+    params: dict,
+    surface_tool: str,
+    audit_params: dict,
+) -> dict:
+    """串行执行或复用等价语义查询，跨两个表面入口共享成功结果。"""
+
+    state = ctx.deps.state
+    async with state.semantic_search_lock:
+        existing_handle = state.semantic_search_results.get(search_key)
+        existing = state.result_sets.get(existing_handle) if existing_handle else None
+        if existing is not None:
+            state.current_handles.add(existing.handle)
+            event = {
+                "tool": surface_tool,
+                "shared_tool": dispatch_tool,
+                "result_handle": existing.handle,
+                "status": "not_executed",
+                "completeness": existing.completeness,
+                "params": audit_params,
+                "shared_params": params,
+                "result_summary": _tool_result_summary(existing.payload),
+                "reason_code": "duplicate_semantic_query",
+                "error": "等价语义查询已成功完成，本次复用既有结果而未重复执行",
+                "duration_ms": 0,
+                "turn_index": state.turn_index,
+            }
+            state.tool_events.append(event)
+            return {
+                **event,
+                "result_role": existing.semantics.get("result_role", "candidate"),
+                "payload": _model_payload(existing.kind, existing.payload),
+            }
+        result = await _dispatch(
+            ctx,
+            dispatch_tool,
+            params,
+            "list",
+            surface_tool=surface_tool,
+            audit_params=audit_params,
+        )
+        handle = result.get("result_handle")
+        record = state.result_sets.get(handle)
+        if record is not None:
+            record.semantics["search_key"] = search_key
+        if record is not None and result.get("status") in {
+            "completed",
+            "empty",
+            "limited",
+        }:
+            state.semantic_search_results[search_key] = record.handle
+        return result
 
 
 def build_agent(model) -> Agent[LoopDeps, DialogueAnswer]:
@@ -1333,6 +1664,26 @@ def build_agent(model) -> Agent[LoopDeps, DialogueAnswer]:
         return (
             "程序已恢复上一轮未完成任务。只执行 pending_steps，禁止重复 completed_steps。"
             f"continuation={json.dumps(continuation.snapshot(), ensure_ascii=False)}"
+        )
+
+    @agent.instructions
+    def relevance_selection_instruction(ctx: RunContext[LoopDeps]) -> str:
+        if ctx.deps.state.instrumentation.phase == "finalize":
+            return ""
+        return (
+            "语义候选先用 select_relevant_entries 全量三分；仅 direct 授权句柄可展示或读取，"
+            "无 direct 不凑数。同义查询只用一个搜索入口，查询后再选择和读取。"
+            "定义问题先答概念再列直接记录，并区分通用知识、正式记录与 Source。"
+        )
+
+    @agent.instructions
+    def contextual_search_follow_up_instruction(ctx: RunContext[LoopDeps]) -> str:
+        if not _contextual_search_follow_up(ctx.deps.state.current_message):
+            return ""
+        return (
+            "当前消息是对上一轮建议的承接查询，不包含新主题。请从历史用户原话、已展示回答和"
+            "工具条件复用上一轮主题与项目范围，只选择 search_knowledge 或 query_entries 一个"
+            "语义搜索入口；不要把‘好的’或‘帮我查一下’本身作为 query。"
         )
 
     @agent.instructions
@@ -1388,6 +1739,125 @@ def build_agent(model) -> Agent[LoopDeps, DialogueAnswer]:
             )
         )
         return event
+
+    @agent.tool
+    async def select_relevant_entries(
+        ctx: RunContext[LoopDeps],
+        candidate_result_handle: str,
+        classifications: list[RelevanceDecision],
+    ) -> dict:
+        """把语义候选逐项分为 direct/indirect/unrelated，并只授权 direct。
+
+        必须覆盖候选中的每个 entry_id 且不得新增或重复。direct 表示标题或正文明确回答
+        当前主题；indirect 只涉及相关材料、场景或风险；unrelated 只有弱语义相似。
+        """
+
+        state = ctx.deps.state
+        candidate_result_handle = _none_if_string_null(candidate_result_handle) or ""
+        record = state.result_sets.get(candidate_result_handle)
+        if (
+            record is None
+            or candidate_result_handle not in state.current_handles
+            or record.kind != "list"
+            or record.semantics.get("result_role") != "candidate"
+        ):
+            raise ModelRetry("candidate_result_handle 不是当前可分类的语义候选")
+        candidate_items = record.payload.get("items", [])
+        candidate_ids = [int(item["entry_id"]) for item in candidate_items]
+        decision_ids = [item.entry_id for item in classifications]
+        if len(decision_ids) != len(set(decision_ids)):
+            raise ModelRetry("classifications 中的 entry_id 不得重复")
+        if set(decision_ids) != set(candidate_ids):
+            raise ModelRetry("classifications 必须且只能覆盖候选中的全部 entry_id")
+        try:
+            await state.ledger.reserve_tool()
+        except BudgetExceeded as exc:
+            _mark_budget_stop(
+                state,
+                exc,
+                tool_name="select_relevant_entries",
+                params={"candidate_result_handle": candidate_result_handle},
+            )
+            raise
+        by_id = {item.entry_id: item for item in classifications}
+        direct_items = [
+            {**item, "relevance_level": "direct"}
+            for item in candidate_items
+            if by_id[int(item["entry_id"])].relevance == "direct"
+        ]
+        counts = {
+            level: sum(1 for item in classifications if item.relevance == level)
+            for level in ("direct", "indirect", "unrelated")
+        }
+        payload = {
+            **{
+                key: value
+                for key, value in record.payload.items()
+                if key not in {"items", "returned_count", "has_more"}
+            },
+            "items": direct_items,
+            "returned_count": len(direct_items),
+            "has_more": False,
+            "candidate_count": len(candidate_items),
+            "internal_classifications": [
+                {
+                    "entry_id": item.entry_id,
+                    "relevance": item.relevance,
+                    "reason": item.reason[:300],
+                }
+                for item in classifications
+            ],
+        }
+        semantics = {
+            **record.semantics,
+            "result_role": "authorized",
+            "relevance_scope": "direct",
+            "display_name": "直接相关正式记录",
+            "candidate_result_handle": candidate_result_handle,
+            "classification_counts": counts,
+            "total_count": len(direct_items),
+            "returned_count": len(direct_items),
+            "has_more": False,
+        }
+        status = "completed" if direct_items else "empty"
+        handle = state.store_result(
+            "list",
+            payload,
+            status,
+            record.completeness,
+            semantics=semantics,
+            displayable=True,
+        )
+        state.authorized_entry_ids.update(
+            int(item["entry_id"]) for item in direct_items
+        )
+        search_key = record.semantics.get("search_key")
+        if search_key:
+            state.semantic_search_results[search_key] = handle
+        event = {
+            "tool": "select_relevant_entries",
+            "shared_tool": "select_relevant_entries",
+            "result_handle": handle,
+            "status": status,
+            "completeness": record.completeness,
+            "params": {"candidate_result_handle": candidate_result_handle},
+            "result_summary": {
+                "candidate_count": len(candidate_items),
+                "returned_count": len(direct_items),
+                "classification_counts": counts,
+                "has_more": False,
+            },
+            "reason_code": "direct_results_authorized",
+            "error": None,
+            "duration_ms": 0,
+            "turn_index": state.turn_index,
+        }
+        state.tool_events.append(event)
+        return {
+            **event,
+            "result_role": "authorized",
+            "payload": _model_payload("list", payload),
+        }
 
     @agent.tool
     async def list_projects(ctx: RunContext[LoopDeps]) -> dict:
@@ -1461,9 +1931,9 @@ def build_agent(model) -> Agent[LoopDeps, DialogueAnswer]:
         ctx: RunContext[LoopDeps],
         project_id: int | None = None,
         project_name: str | None = None,
-        parent_node_id: int | None = None,
+        parent_node_id: int | str | None = None,
         parent_result_handle: str | None = None,
-        parent_position: int | None = None,
+        parent_position: int | str | None = None,
         operation: Literal["children", "find", "leaf_summary"] = "children",
         name: str | None = None,
         path: str | None = None,
@@ -1480,6 +1950,12 @@ def build_agent(model) -> Agent[LoopDeps, DialogueAnswer]:
         必须同时提供 1-based parent_position。
         """
         state = ctx.deps.state
+        project_name = _none_if_string_null(project_name)
+        parent_node_id = _optional_int(parent_node_id, "parent_node_id")
+        parent_result_handle = _none_if_string_null(parent_result_handle)
+        parent_position = _optional_int(parent_position, "parent_position")
+        name = _none_if_string_null(name)
+        path = _none_if_string_null(path)
         if operation == "leaf_summary" and (
             parent_node_id is not None
             or parent_result_handle is not None
@@ -1593,12 +2069,19 @@ def build_agent(model) -> Agent[LoopDeps, DialogueAnswer]:
         ctx: RunContext[LoopDeps],
         project_scope: Literal["all", "project"],
         project_name: str | None,
-        main_types: list[Literal["knowledge", "method", "parameter", "reminder"]] | None = None,
+        main_types: list[Literal["knowledge", "method", "parameter", "reminder"]]
+        | str
+        | None = None,
         directory_result_handle: str | None = None,
-        directory_position: int | None = None,
-        directory_scope: Literal["direct", "subtree"] | None = None,
+        directory_position: int | str | None = None,
+        directory_scope: Literal["direct", "subtree"] | str | None = None,
     ) -> dict:
         """精确统计正式记录总数；目录范围只能从已有目录结果句柄解析。"""
+        project_name = _none_if_string_null(project_name)
+        main_types = _optional_main_types(main_types)
+        directory_result_handle = _none_if_string_null(directory_result_handle)
+        directory_position = _optional_int(directory_position, "directory_position")
+        directory_scope = _optional_directory_scope(directory_scope)
         project_name, node_scope = _entry_directory_scope(
             ctx.deps.state,
             project_scope=project_scope,
@@ -1631,12 +2114,19 @@ def build_agent(model) -> Agent[LoopDeps, DialogueAnswer]:
         project_scope: Literal["all", "project"],
         project_name: str | None,
         group_by: Literal["project", "main_type", "info_nature", "updated_month"],
-        main_types: list[Literal["knowledge", "method", "parameter", "reminder"]] | None = None,
+        main_types: list[Literal["knowledge", "method", "parameter", "reminder"]]
+        | str
+        | None = None,
         directory_result_handle: str | None = None,
-        directory_position: int | None = None,
-        directory_scope: Literal["direct", "subtree"] | None = None,
+        directory_position: int | str | None = None,
+        directory_scope: Literal["direct", "subtree"] | str | None = None,
     ) -> dict:
         """按明确维度统计正式记录；目录范围只能从已有目录结果句柄解析。"""
+        project_name = _none_if_string_null(project_name)
+        main_types = _optional_main_types(main_types)
+        directory_result_handle = _none_if_string_null(directory_result_handle)
+        directory_position = _optional_int(directory_position, "directory_position")
+        directory_scope = _optional_directory_scope(directory_scope)
         project_name, node_scope = _entry_directory_scope(
             ctx.deps.state,
             project_scope=project_scope,
@@ -1670,15 +2160,34 @@ def build_agent(model) -> Agent[LoopDeps, DialogueAnswer]:
         project_scope: Literal["all", "project"],
         project_name: str | None,
         semantic_query: str | None,
-        limit: int,
-        sort_field: Literal["relevance", "updated_at", "created_at"],
-        sort_direction: Literal["asc", "desc"],
-        main_types: list[Literal["knowledge", "method", "parameter", "reminder"]] | None = None,
+        limit: int = 10,
+        sort_field: Literal["relevance", "updated_at", "created_at"] | None = None,
+        sort_direction: Literal["asc", "desc"] | None = None,
+        sort: LegacySort | str | None = None,
+        main_types: list[Literal["knowledge", "method", "parameter", "reminder"]]
+        | str
+        | None = None,
         directory_result_handle: str | None = None,
-        directory_position: int | None = None,
-        directory_scope: Literal["direct", "subtree"] | None = None,
+        directory_position: int | str | None = None,
+        directory_scope: Literal["direct", "subtree"] | str | None = None,
     ) -> dict:
-        """按结构化条件查询列表；目录范围只接受已定位结果，且不能做语义相关性搜索。"""
+        """按结构化条件查询列表。
+
+        首选 sort_field/sort_direction；兼容旧式 sort={field,direction}。可空字段
+        的字符串 "null" 只按未提供处理。目录范围只接受已定位结果，且不能做语义搜索。
+        """
+        project_name = _none_if_string_null(project_name)
+        semantic_query = _none_if_string_null(semantic_query)
+        main_types = _optional_main_types(main_types)
+        directory_result_handle = _none_if_string_null(directory_result_handle)
+        directory_position = _optional_int(directory_position, "directory_position")
+        directory_scope = _optional_directory_scope(directory_scope)
+        sort_field, sort_direction = _normalized_sort(
+            semantic_query=semantic_query,
+            sort_field=sort_field,
+            sort_direction=sort_direction,
+            sort=sort,
+        )
         project_name, node_scope = _entry_directory_scope(
             ctx.deps.state,
             project_scope=project_scope,
@@ -1693,29 +2202,49 @@ def build_agent(model) -> Agent[LoopDeps, DialogueAnswer]:
             "sort": {"field": sort_field, "direction": sort_direction},
             **node_scope,
         }
-        result = await _dispatch(
-            ctx,
-            "query_entries",
-            params,
-            "list",
-            audit_params={
-                "project_scope": project_scope,
-                "project_name": project_name,
-                "semantic_query": semantic_query,
-                "main_types": list(main_types or []),
-                "limit": params["limit"],
-                "sort": params["sort"],
-                "directory_result_handle": directory_result_handle,
-                "directory_position": directory_position,
-                "directory_scope": directory_scope,
-            },
-        )
+        audit_params = {
+            "project_scope": project_scope,
+            "project_name": project_name,
+            "semantic_query": semantic_query,
+            "main_types": list(main_types or []),
+            "limit": params["limit"],
+            "sort": params["sort"],
+            "directory_result_handle": directory_result_handle,
+            "directory_position": directory_position,
+            "directory_scope": directory_scope,
+        }
+        if semantic_query is not None:
+            search_key = _semantic_query_key(
+                project_scope=project_scope,
+                project_name=project_name,
+                query=semantic_query,
+                main_types=list(main_types or []),
+                node_scope=node_scope,
+            )
+            result = await _semantic_search_dispatch(
+                ctx,
+                search_key=search_key,
+                dispatch_tool="query_entries",
+                params=params,
+                surface_tool="query_entries",
+                audit_params=audit_params,
+            )
+        else:
+            result = await _dispatch(
+                ctx,
+                "query_entries",
+                params,
+                "list",
+                audit_params=audit_params,
+            )
         ids = [item["entry_id"] for item in result.get("payload", {}).get("items", [])]
         try:
             ctx.deps.state.ledger.reserve_entries(ids)
         except BudgetExceeded as exc:
             _mark_budget_stop(ctx.deps.state, exc, tool_name="query_entries")
             raise
+        if semantic_query is None:
+            ctx.deps.state.authorized_entry_ids.update(ids)
         return result
 
     @agent.tool
@@ -1726,7 +2255,7 @@ def build_agent(model) -> Agent[LoopDeps, DialogueAnswer]:
         query: str,
     ) -> dict:
         """搜索正式记录；指定项目时使用严格项目范围，结果不能用于精确计数。"""
-        project_name = project_name.strip() if project_name and project_name.strip() else None
+        project_name = _none_if_string_null(project_name)
         if project_scope == "project":
             params = {
                 "entry_set": _entry_set(project_scope, project_name, query, None),
@@ -1739,17 +2268,23 @@ def build_agent(model) -> Agent[LoopDeps, DialogueAnswer]:
                 raise ModelRetry("字段 project_name：project_scope=all 时必须设为 null")
             params = {"query": query}
             dispatch_tool = "search_knowledge"
-        result = await _dispatch(
+        audit_params = {
+            "project_scope": project_scope,
+            "project_name": project_name,
+            "query": query,
+        }
+        search_key = _semantic_query_key(
+            project_scope=project_scope,
+            project_name=project_name,
+            query=query,
+        )
+        result = await _semantic_search_dispatch(
             ctx,
-            dispatch_tool,
-            params,
-            "list",
+            search_key=search_key,
+            dispatch_tool=dispatch_tool,
+            params=params,
             surface_tool="search_knowledge",
-            audit_params={
-                "project_scope": project_scope,
-                "project_name": project_name,
-                "query": query,
-            },
+            audit_params=audit_params,
         )
         ids = [item["entry_id"] for item in result.get("payload", {}).get("items", [])]
         try:
@@ -1761,19 +2296,73 @@ def build_agent(model) -> Agent[LoopDeps, DialogueAnswer]:
 
     @agent.tool
     async def read_entries(ctx: RunContext[LoopDeps], entry_ids: list[int]) -> dict:
-        """读取本会话已由列表或搜索发现的 Entry 正文；任意新 id 会被拒绝。"""
+        """读取授权结果集合中的 Entry 正文；原始语义候选或任意新 id 会被拒绝。"""
+        state = ctx.deps.state
+        unauthorized = sorted(set(entry_ids) - state.authorized_entry_ids)
+        authorized = _authorized_list_for_entry_ids(state, entry_ids)
+        if unauthorized or authorized is None:
+            raise ModelRetry(
+                "read_entries 必须按同一授权展示集合的完整顺序读取；语义候选必须先调用 "
+                f"select_relevant_entries。未授权 entry_ids={unauthorized}"
+            )
         try:
-            ctx.deps.state.ledger.reserve_entries(entry_ids)
+            state.ledger.reserve_entries(entry_ids)
         except BudgetExceeded as exc:
-            _mark_budget_stop(ctx.deps.state, exc, tool_name="read_entries")
+            _mark_budget_stop(state, exc, tool_name="read_entries")
             raise
-        return await _dispatch(ctx, "read_entries", {"entry_ids": entry_ids}, "entries")
+        result = await _dispatch(ctx, "read_entries", {"entry_ids": entry_ids}, "entries")
+        payload = result.get("payload", {})
+        state.read_entry_ids.update(
+            int(item["entry_id"]) for item in payload.get("items", [])
+        )
+        unavailable_only = (
+            result.get("status") == "denied"
+            and payload.get("unavailable_entry_ids")
+            and not payload.get("denied_entry_ids")
+        )
+        if result.get("status") in {"partial", "error"} or unavailable_only:
+            continuation = ContinuationState(
+                task_type="read_entries",
+                tool_name="read_entries",
+                scope={
+                    "entry_ids": entry_ids,
+                    "authorized_result_handle": authorized[0],
+                },
+                completed_steps=[
+                    {
+                        "tool": "semantic_search",
+                        "result_set_handle": authorized[0],
+                    }
+                ],
+                pending_steps=[{"tool": "read_entries", "entry_ids": entry_ids}],
+                confirmed=[{"entry_id": value} for value in sorted(state.authorized_entry_ids)],
+                stop_reason=str(result.get("error") or "Entry 正文读取失败"),
+            )
+            state.stop(
+                StopState(
+                    status=TURN_PARTIAL_COMPLETED,
+                    reason_code="search_succeeded_read_failed",
+                    reason=str(result.get("error") or "搜索成功，但 Entry 正文读取失败"),
+                    incomplete_steps=["搜索已完成；正文尚未完整读取"],
+                    can_continue=True,
+                    continuation=continuation,
+                )
+            )
+        elif result.get("status") in {"completed", "empty"}:
+            if state.active_continuation and state.active_continuation.task_type == "read_entries":
+                state.continuation = None
+                state.active_continuation = None
+        return result
 
     @agent.tool
     async def read_evidence(
         ctx: RunContext[LoopDeps], entry_id: int, source_ids: list[int]
     ) -> dict:
         """当前轮重新核验已发现 Entry 的真实 Source 原文并创建 Evidence。"""
+        if entry_id not in ctx.deps.state.authorized_entry_ids:
+            raise ModelRetry("read_evidence 只能读取授权展示集合中的 Entry")
+        if entry_id not in ctx.deps.state.read_entry_ids:
+            raise ModelRetry("读取 Source 前必须先成功执行 read_entries")
         try:
             ctx.deps.state.ledger.reserve_evidence(len(source_ids))
         except BudgetExceeded as exc:
@@ -1843,6 +2432,7 @@ def build_agent(model) -> Agent[LoopDeps, DialogueAnswer]:
         handle = state.store_result(
             "entries", payload, "completed" if output.items else "error", "limited"
         )
+        state.read_entry_ids.update(item.entry_id for item in output.items)
         event = {
             "tool": "open_list_item",
             "result_handle": handle,
@@ -1942,10 +2532,15 @@ def render_answer(answer: DialogueAnswer, state: LoopState) -> tuple[str, list[d
                 else:
                     title = f"{project_name} · {semantics.get('display_name', '项目目录')}"
             else:
-                title = (
-                    f"{semantics.get('project_name')} · 正式记录列表"
+                scope = (
+                    f"{semantics.get('project_name')} · "
                     if semantics.get("project_name")
-                    else "全部项目 · 正式记录列表"
+                    else "全部项目 · "
+                )
+                title = (
+                    f"{scope}直接相关正式记录"
+                    if semantics.get("relevance_scope") == "direct"
+                    else f"{scope}正式记录列表"
                 )
             lines.append(title)
             items = record.payload.get("items", [])
@@ -2038,6 +2633,7 @@ def _verified_failure_output(
         )
     state.stop(stop)
     status_text = {
+        TURN_NOT_EXECUTED: "本轮查询未执行，以下说明具体原因和缺口。",
         TURN_PARTIAL_COMPLETED: "本轮已部分完成，以下只保留程序确认的结果。",
         TURN_UNSUPPORTED: "当前工具能力不支持完整处理这个任务。",
         TURN_DENIED: "当前权限或数据范围不允许执行这个任务。",
@@ -2048,6 +2644,8 @@ def _verified_failure_output(
         if handle not in state.current_handles or record.status not in {
             "completed", "ok", "empty", "partial", "limited"
         }:
+            continue
+        if not record.displayable:
             continue
         if record.kind == "statistic":
             requested_blocks.append(
@@ -2404,7 +3002,7 @@ async def run_turn(
     if event_stop is not None:
         state.stop(event_stop)
         status = event_stop.status
-        if status in {TURN_UNSUPPORTED, TURN_DENIED, TURN_FAILED}:
+        if status in {TURN_NOT_EXECUTED, TURN_UNSUPPORTED, TURN_DENIED, TURN_FAILED}:
             text, blocks = _verified_failure_output(state, event_stop)
         elif not any(block.get("kind") == "insufficient" for block in blocks):
             continuation_text = (

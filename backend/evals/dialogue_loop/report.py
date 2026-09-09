@@ -202,7 +202,7 @@ def evaluate(results: list[dict], oracle: dict) -> dict:
         turns = result["turns"]
         for index, turn in enumerate(turns, 1):
             reasons = []
-            if turn["status"] in {"failed", "blocked", "cancelled"}:
+            if turn["status"] in {"not_executed", "failed", "blocked", "cancelled"}:
                 status = "blocked" if turn["status"] == "blocked" else "fail"
                 reasons.append(turn.get("error") or turn["status"])
             else:

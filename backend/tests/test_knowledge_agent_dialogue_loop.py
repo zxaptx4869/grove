@@ -418,7 +418,7 @@ def test_tool_capability_stop_does_not_relabel_other_statistics() -> None:
     assert "整树聚合" in stop.reason
 
 
-def test_finalize_tool_shape_error_is_partial_and_not_a_system_failure() -> None:
+def test_finalize_tool_shape_error_is_not_executed_and_not_a_system_failure() -> None:
     from evals.dialogue_loop.loop import _stop_from_failure
 
     state = _state()
@@ -428,13 +428,59 @@ def test_finalize_tool_shape_error_is_partial_and_not_a_system_failure() -> None
         {"category": "unknown"},
     )
 
-    assert stop.status == "partial_completed"
-    assert stop.reason_code == "output_validation_failed"
+    assert stop.status == "not_executed"
+    assert stop.reason_code == "invalid_tool_params"
     assert stop.can_continue is True
 
 
+@pytest.mark.asyncio
+async def test_invalid_query_params_retry_once_then_report_not_executed() -> None:
+    """非法工具参数最多纠正一次，且未执行查询时不得标成部分完成。"""
+
+    state = _state()
+    state.instrumentation.context_policy_enabled = True
+    calls = []
+
+    def respond(_messages, info):
+        calls.append(info)
+        if info.function_tools:
+            return ModelResponse(
+                parts=[
+                    ToolCallPart(
+                        "query_entries",
+                        {
+                            "project_scope": "all",
+                            "project_name": "null",
+                            "semantic_query": "测试主题",
+                            "sort": {
+                                "field": "created_at",
+                                "direction": "sideways",
+                            },
+                        },
+                    )
+                ]
+            )
+        return ModelResponse(
+            parts=[
+                ToolCallPart(
+                    info.output_tools[0].name,
+                    {"blocks": [{"kind": "insufficient", "text": "查询参数未通过校验。"}]},
+                )
+            ]
+        )
+
+    model = BudgetedModel(FunctionModel(respond), state.instrumentation)
+    turn, _ = await run_turn(build_agent(model), state, "请查测试主题", [])
+
+    assert turn["status"] == "not_executed"
+    assert turn["completion"]["reason_code"] == "invalid_tool_params"
+    assert turn["tool_calls"] == []
+    assert sum(bool(info.function_tools) for info in calls) == 2
+    assert len(calls) == 2
+
+
 def test_invalid_tool_params_are_not_reported_as_access_denied() -> None:
-    """模型参数错误属于可重试的部分完成，不得伪装成用户无权限。"""
+    """没有确认材料时，模型参数错误属于未执行且不得伪装成权限问题。"""
 
     state = _state()
     stop = _stop_from_events(
@@ -450,7 +496,7 @@ def test_invalid_tool_params_are_not_reported_as_access_denied() -> None:
     )
 
     assert stop is not None
-    assert stop.status == "partial_completed"
+    assert stop.status == "not_executed"
     assert stop.reason_code == "invalid_tool_params"
     assert stop.can_continue is True
 
@@ -596,7 +642,8 @@ async def test_pydantic_ai_accepts_rebuilt_paired_history() -> None:
     assert turn["status"] == "completed"
     assert calls
     messages, info = calls[0]
-    assert info.instructions == SYSTEM_PROMPT
+    assert info.instructions.startswith(SYSTEM_PROMPT)
+    assert "select_relevant_entries" in info.instructions
     assert "过期 Grove 规则" not in str(messages)
     assert SYSTEM_PROMPT not in str(messages)
     assert any(
@@ -1131,6 +1178,712 @@ async def test_project_search_routes_to_strict_project_query(monkeypatch) -> Non
     assert params["entry_set"]["semantic_query"] == "墙纸"
     assert params["sort"] == {"field": "relevance", "direction": "desc"}
     assert kwargs["surface_tool"] == "search_knowledge"
+
+
+@pytest.mark.asyncio
+async def test_semantic_selection_aligns_search_read_and_rendered_direct_set(
+    monkeypatch,
+) -> None:
+    """原始候选不可展示，选择、读取和前端块只使用同一 direct 集合。"""
+
+    state = _state()
+    dispatched = []
+    candidates = [
+        {
+            "entry_id": 11,
+            "title": "甲醛的定义与特征",
+            "project_name": "房子装修",
+            "excerpt": "甲醛是一种挥发性有机物。",
+        },
+        {
+            "entry_id": 22,
+            "title": "窗帘清洗注意事项",
+            "project_name": "房子装修",
+            "excerpt": "装修后清洗窗帘。",
+        },
+        {
+            "entry_id": 33,
+            "title": "客厅灯光搭配",
+            "project_name": "房子装修",
+            "excerpt": "色温与照度。",
+        },
+    ]
+
+    async def fake_dispatch(ctx, tool_name, params, kind, **kwargs):
+        dispatched.append((tool_name, params, kwargs))
+        if tool_name == "query_entries":
+            payload = {"items": candidates, "returned_count": 3, "has_more": False}
+            semantics = loop_module._result_semantics(tool_name, params, payload)
+            semantics["result_role"] = "candidate"
+            handle = ctx.deps.state.store_result(
+                "list",
+                payload,
+                "limited",
+                "limited",
+                semantics=semantics,
+                displayable=False,
+            )
+            event = {
+                "tool": kwargs.get("surface_tool") or tool_name,
+                "shared_tool": tool_name,
+                "result_handle": handle,
+                "status": "limited",
+                "completeness": "limited",
+                "params": kwargs.get("audit_params") or params,
+                "result_summary": {"returned_count": 3, "has_more": False},
+                "error": None,
+                "turn_index": state.turn_index,
+            }
+            state.tool_events.append(event)
+            return {**event, "result_role": "candidate", "payload": payload}
+        assert tool_name == "read_entries"
+        assert params == {"entry_ids": [11]}
+        payload = {
+            "items": [
+                {
+                    "entry_id": 11,
+                    "title": "甲醛的定义与特征",
+                    "content": "甲醛是一种挥发性有机物。",
+                    "project_name": "房子装修",
+                    "node_path": "材料 / 环保",
+                    "sources": [],
+                }
+            ],
+            "denied_entry_ids": [],
+            "unavailable_entry_ids": [],
+        }
+        handle = ctx.deps.state.store_result("entries", payload, "completed", "limited")
+        event = {
+            "tool": tool_name,
+            "shared_tool": tool_name,
+            "result_handle": handle,
+            "status": "completed",
+            "completeness": "limited",
+            "params": params,
+            "result_summary": {"returned_count": 1},
+            "error": None,
+            "turn_index": state.turn_index,
+        }
+        state.tool_events.append(event)
+        return {**event, "payload": payload}
+
+    monkeypatch.setattr(loop_module, "_dispatch", fake_dispatch)
+    calls = 0
+
+    def respond(_messages, info):
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            return ModelResponse(
+                parts=[
+                    ToolCallPart(
+                        "search_knowledge",
+                        {
+                            "project_scope": "project",
+                            "project_name": "房子装修",
+                            "query": "甲醛",
+                        },
+                    )
+                ]
+            )
+        candidate = next(
+            handle
+            for handle in state.current_handles
+            if state.result_sets[handle].semantics.get("result_role") == "candidate"
+        )
+        if calls == 2:
+            return ModelResponse(
+                parts=[
+                    ToolCallPart(
+                        "select_relevant_entries",
+                        {
+                            "candidate_result_handle": candidate,
+                            "classifications": [
+                                {"entry_id": 11, "relevance": "direct", "reason": "正文定义"},
+                                {"entry_id": 22, "relevance": "indirect", "reason": "相关场景"},
+                                {"entry_id": 33, "relevance": "unrelated", "reason": "弱相似"},
+                            ],
+                        },
+                    )
+                ]
+            )
+        selected = next(
+            handle
+            for handle in state.current_handles
+            if state.result_sets[handle].semantics.get("relevance_scope") == "direct"
+        )
+        if calls == 3:
+            return ModelResponse(
+                parts=[ToolCallPart("read_entries", {"entry_ids": [11]})]
+            )
+        read_handle = next(
+            handle
+            for handle in state.current_handles
+            if state.result_sets[handle].kind == "entries"
+        )
+        return ModelResponse(
+            parts=[
+                ToolCallPart(
+                    info.output_tools[0].name,
+                    {
+                        "blocks": [
+                            {"kind": "text", "text": "模型通用知识：甲醛是一种挥发性有机物。"},
+                            {"kind": "list", "result_handle": selected, "label": "直接相关"},
+                            {"kind": "text", "text": f"[[entry:{read_handle}:1]]"},
+                        ]
+                    },
+                )
+            ]
+        )
+
+    turn, _ = await run_turn(
+        build_agent(FunctionModel(respond)), state, "甲醛是什么？", []
+    )
+
+    assert turn["status"] == "completed", turn
+    list_block = next(block for block in turn["blocks"] if block["kind"] == "list")
+    assert [item["entry_id"] for item in list_block["items"]] == [11]
+    assert list_block["semantics"]["classification_counts"] == {
+        "direct": 1,
+        "indirect": 1,
+        "unrelated": 1,
+    }
+    assert [item[1] for item in dispatched if item[0] == "read_entries"] == [
+        {"entry_ids": [11]}
+    ]
+    assert "窗帘清洗" not in turn["answer"]
+    assert "客厅灯光" not in turn["answer"]
+    assert turn["blocks"][0]["kind"] == "text"
+
+
+def test_candidate_handle_cannot_render_or_resolve_position() -> None:
+    state = _state()
+    candidate = state.store_result(
+        "list",
+        {"items": [{"entry_id": 8, "title": "弱相关"}]},
+        "limited",
+        "limited",
+        semantics={"result_role": "candidate"},
+        displayable=False,
+    )
+    answer = DialogueAnswer.model_validate(
+        {"blocks": [{"kind": "list", "result_handle": candidate, "label": "候选"}]}
+    )
+
+    assert any("内部候选" in error for error in output_errors(answer, state))
+    with pytest.raises(ValueError):
+        list_position_entry_id(state, candidate, 1)
+    state.stop(
+        StopState(
+            status="partial_completed",
+            reason_code="output_validation_failed",
+            reason="相关性选择未完成",
+            incomplete_steps=["未形成直接相关授权集合"],
+            can_continue=True,
+        )
+    )
+    text, blocks = _verified_failure_output(state)
+    assert "弱相关" not in text
+    assert not any(block["kind"] == "list" for block in blocks)
+
+
+def test_rejected_candidate_title_cannot_leak_into_answer_text() -> None:
+    state = _state()
+    candidate = state.store_result(
+        "list",
+        {
+            "items": [
+                {"entry_id": 1, "title": "直接主题"},
+                {"entry_id": 2, "title": "间接材料"},
+            ]
+        },
+        "limited",
+        "limited",
+        semantics={"result_role": "candidate"},
+        displayable=False,
+    )
+    state.store_result(
+        "list",
+        {
+            "items": [{"entry_id": 1, "title": "直接主题"}],
+            "internal_classifications": [
+                {"entry_id": 1, "relevance": "direct"},
+                {"entry_id": 2, "relevance": "indirect"},
+            ],
+        },
+        "completed",
+        "limited",
+        semantics={
+            "result_role": "authorized",
+            "candidate_result_handle": candidate,
+        },
+    )
+    answer = DialogueAnswer.model_validate(
+        {"blocks": [{"kind": "text", "text": "还可以参考间接材料。"}]}
+    )
+
+    assert "主答案包含间接相关或不相关候选的标题" in output_errors(
+        answer, state
+    )
+
+
+@pytest.mark.asyncio
+async def test_equivalent_semantic_tools_dispatch_only_one_search(monkeypatch) -> None:
+    state = _state()
+    dispatches = []
+
+    async def fake_dispatch(ctx, tool_name, params, kind, **kwargs):
+        dispatches.append((tool_name, params))
+        payload = {
+            "items": [{"entry_id": 7, "title": "直接结果", "project_name": "房子装修"}],
+            "returned_count": 1,
+            "has_more": False,
+        }
+        semantics = loop_module._result_semantics(tool_name, params, payload)
+        semantics["result_role"] = "candidate"
+        handle = ctx.deps.state.store_result(
+            kind,
+            payload,
+            "limited",
+            "limited",
+            semantics=semantics,
+            displayable=False,
+        )
+        event = {
+            "tool": kwargs.get("surface_tool") or tool_name,
+            "shared_tool": tool_name,
+            "result_handle": handle,
+            "status": "limited",
+            "completeness": "limited",
+            "params": kwargs.get("audit_params") or params,
+            "result_summary": {"returned_count": 1, "has_more": False},
+            "error": None,
+            "turn_index": state.turn_index,
+        }
+        state.tool_events.append(event)
+        return {**event, "result_role": "candidate", "payload": payload}
+
+    monkeypatch.setattr(loop_module, "_dispatch", fake_dispatch)
+    calls = 0
+
+    def respond(_messages, info):
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            return ModelResponse(
+                parts=[
+                    ToolCallPart(
+                        "search_knowledge",
+                        {
+                            "project_scope": "project",
+                            "project_name": "房子装修",
+                            "query": "墙面材料",
+                        },
+                    ),
+                    ToolCallPart(
+                        "query_entries",
+                        {
+                            "project_scope": "project",
+                            "project_name": "房子装修",
+                            "semantic_query": "墙面材料",
+                            "limit": 10,
+                            "sort_field": "relevance",
+                            "sort_direction": "desc",
+                        },
+                    ),
+                ]
+            )
+        candidate = next(
+            handle
+            for handle in state.current_handles
+            if state.result_sets[handle].semantics.get("result_role") == "candidate"
+        )
+        if calls == 2:
+            return ModelResponse(
+                parts=[
+                    ToolCallPart(
+                        "select_relevant_entries",
+                        {
+                            "candidate_result_handle": candidate,
+                            "classifications": [
+                                {"entry_id": 7, "relevance": "direct", "reason": "直接回答"}
+                            ],
+                        },
+                    )
+                ]
+            )
+        selected = next(
+            handle
+            for handle in state.current_handles
+            if state.result_sets[handle].semantics.get("relevance_scope") == "direct"
+        )
+        return ModelResponse(
+            parts=[
+                ToolCallPart(
+                    info.output_tools[0].name,
+                    {"blocks": [{"kind": "list", "result_handle": selected, "label": "结果"}]},
+                )
+            ]
+        )
+
+    turn, _ = await run_turn(
+        build_agent(FunctionModel(respond)), state, "帮我查墙面材料", []
+    )
+
+    assert turn["status"] == "completed", turn
+    assert len(dispatches) == 1
+    assert sum(
+        event.get("reason_code") == "duplicate_semantic_query"
+        for event in turn["tool_calls"]
+    ) == 1
+
+
+@pytest.mark.asyncio
+async def test_legacy_sort_and_string_null_are_normalized_once(monkeypatch) -> None:
+    state = _state()
+    dispatched = []
+
+    async def fake_dispatch(ctx, tool_name, params, kind, **kwargs):
+        dispatched.append((tool_name, params, kwargs))
+        payload = {"items": [], "returned_count": 0, "has_more": False}
+        handle = ctx.deps.state.store_result(kind, payload, "empty", "complete")
+        event = {
+            "tool": tool_name,
+            "shared_tool": tool_name,
+            "result_handle": handle,
+            "status": "empty",
+            "completeness": "complete",
+            "params": kwargs.get("audit_params") or params,
+            "result_summary": {"returned_count": 0, "has_more": False},
+            "error": None,
+            "turn_index": state.turn_index,
+        }
+        state.tool_events.append(event)
+        return {**event, "payload": payload}
+
+    monkeypatch.setattr(loop_module, "_dispatch", fake_dispatch)
+    calls = 0
+
+    def respond(_messages, info):
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            return ModelResponse(
+                parts=[
+                    ToolCallPart(
+                        "query_entries",
+                        {
+                            "project_scope": "all",
+                            "project_name": "null",
+                            "semantic_query": "null",
+                            "main_types": "null",
+                            "directory_result_handle": "null",
+                            "directory_position": "null",
+                            "directory_scope": "null",
+                            "limit": 5,
+                            "sort": {"field": "updated_at", "direction": "desc"},
+                        },
+                    )
+                ]
+            )
+        handle = next(iter(state.current_handles))
+        return ModelResponse(
+            parts=[
+                ToolCallPart(
+                    info.output_tools[0].name,
+                    {"blocks": [{"kind": "list", "result_handle": handle, "label": "最近"}]},
+                )
+            ]
+        )
+
+    turn, _ = await run_turn(
+        build_agent(FunctionModel(respond)), state, "列出最近五条记录", []
+    )
+
+    assert turn["status"] == "completed", turn
+    assert len(dispatched) == 1
+    _, params, kwargs = dispatched[0]
+    assert params["entry_set"]["project_name"] is None
+    assert params["entry_set"]["semantic_query"] is None
+    assert params["entry_set"]["main_types"] == []
+    assert params["sort"] == {"field": "updated_at", "direction": "desc"}
+    assert "sort" in kwargs["audit_params"]
+
+
+@pytest.mark.asyncio
+async def test_contextual_search_follow_up_reuses_prior_topic_and_scope(monkeypatch) -> None:
+    state = _state()
+    state.remember_turn(
+        "房子装修项目里甲醛可能来自哪里？",
+        "我可以继续查询知识库中的直接相关记录。",
+        [],
+    )
+    history = build_compact_history(state)
+    state.begin_turn(5, "好的，你帮我查一下")
+    dispatched = []
+
+    async def fake_dispatch(ctx, tool_name, params, kind, **kwargs):
+        dispatched.append((tool_name, params, kwargs))
+        payload = {"items": [], "returned_count": 0, "has_more": False}
+        semantics = loop_module._result_semantics(tool_name, params, payload)
+        semantics["result_role"] = "candidate"
+        handle = ctx.deps.state.store_result(
+            kind,
+            payload,
+            "empty",
+            "limited",
+            semantics=semantics,
+            displayable=False,
+        )
+        event = {
+            "tool": kwargs.get("surface_tool") or tool_name,
+            "shared_tool": tool_name,
+            "result_handle": handle,
+            "status": "empty",
+            "completeness": "limited",
+            "params": kwargs.get("audit_params") or params,
+            "result_summary": {"returned_count": 0, "has_more": False},
+            "error": None,
+            "turn_index": state.turn_index,
+        }
+        state.tool_events.append(event)
+        return {**event, "result_role": "candidate", "payload": payload}
+
+    monkeypatch.setattr(loop_module, "_dispatch", fake_dispatch)
+    calls = 0
+
+    def respond(_messages, info):
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            assert "当前消息是对上一轮建议的承接查询" in info.instructions
+            return ModelResponse(
+                parts=[
+                    ToolCallPart(
+                        "search_knowledge",
+                        {
+                            "project_scope": "project",
+                            "project_name": "房子装修",
+                            "query": "甲醛来源",
+                        },
+                    )
+                ]
+            )
+        candidate = next(
+            handle
+            for handle in state.current_handles
+            if state.result_sets[handle].semantics.get("result_role") == "candidate"
+        )
+        if calls == 2:
+            return ModelResponse(
+                parts=[
+                    ToolCallPart(
+                        "select_relevant_entries",
+                        {"candidate_result_handle": candidate, "classifications": []},
+                    )
+                ]
+            )
+        return ModelResponse(
+            parts=[
+                ToolCallPart(
+                    info.output_tools[0].name,
+                    {
+                        "blocks": [
+                            {"kind": "text", "text": "查询已执行。"},
+                            {"kind": "insufficient", "text": "没有找到直接相关正式记录。"},
+                        ]
+                    },
+                )
+            ]
+        )
+
+    turn, _ = await run_turn(
+        build_agent(FunctionModel(respond)), state, "好的，你帮我查一下", history
+    )
+
+    assert turn["status"] == "completed", turn
+    assert len(dispatched) == 1
+    assert dispatched[0][1]["entry_set"]["project_name"] == "房子装修"
+    assert dispatched[0][1]["entry_set"]["semantic_query"] == "甲醛来源"
+
+
+@pytest.mark.asyncio
+async def test_search_success_read_failure_continues_without_repeating_search(
+    monkeypatch,
+) -> None:
+    state = _state()
+    dispatches = []
+    read_attempts = 0
+
+    async def fake_dispatch(ctx, tool_name, params, kind, **kwargs):
+        nonlocal read_attempts
+        dispatches.append((tool_name, params))
+        if tool_name == "query_entries":
+            payload = {
+                "items": [{"entry_id": 9, "title": "甲醛来源", "project_name": "房子装修"}],
+                "returned_count": 1,
+                "has_more": False,
+            }
+            semantics = loop_module._result_semantics(tool_name, params, payload)
+            semantics["result_role"] = "candidate"
+            handle = ctx.deps.state.store_result(
+                kind,
+                payload,
+                "limited",
+                "limited",
+                semantics=semantics,
+                displayable=False,
+            )
+            status = "limited"
+            error = None
+        else:
+            read_attempts += 1
+            if read_attempts == 1:
+                payload = {
+                    "items": [],
+                    "denied_entry_ids": [],
+                    "unavailable_entry_ids": [9],
+                }
+                status = "error"
+                error = "Entry 正文暂时不可用"
+            else:
+                payload = {
+                    "items": [
+                        {
+                            "entry_id": 9,
+                            "title": "甲醛来源",
+                            "content": "来源包括部分装修材料。",
+                            "project_name": "房子装修",
+                            "node_path": "环保",
+                            "sources": [],
+                        }
+                    ],
+                    "denied_entry_ids": [],
+                    "unavailable_entry_ids": [],
+                }
+                status = "completed"
+                error = None
+            handle = ctx.deps.state.store_result(kind, payload, status, "limited")
+        event = {
+            "tool": kwargs.get("surface_tool") or tool_name,
+            "shared_tool": tool_name,
+            "result_handle": handle,
+            "status": status,
+            "completeness": "limited",
+            "params": kwargs.get("audit_params") or params,
+            "result_summary": {
+                "returned_count": len(payload.get("items", [])),
+                "has_more": False,
+            },
+            "error": error,
+            "turn_index": state.turn_index,
+        }
+        state.tool_events.append(event)
+        return {
+            **event,
+            "result_role": (
+                "candidate" if tool_name == "query_entries" else "authorized"
+            ),
+            "payload": payload,
+        }
+
+    monkeypatch.setattr(loop_module, "_dispatch", fake_dispatch)
+    calls = 0
+
+    def first_respond(_messages, info):
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            return ModelResponse(
+                parts=[
+                    ToolCallPart(
+                        "search_knowledge",
+                        {
+                            "project_scope": "project",
+                            "project_name": "房子装修",
+                            "query": "甲醛来源",
+                        },
+                    )
+                ]
+            )
+        candidate = next(
+            handle
+            for handle in state.current_handles
+            if state.result_sets[handle].semantics.get("result_role") == "candidate"
+        )
+        if calls == 2:
+            return ModelResponse(
+                parts=[
+                    ToolCallPart(
+                        "select_relevant_entries",
+                        {
+                            "candidate_result_handle": candidate,
+                            "classifications": [
+                                {"entry_id": 9, "relevance": "direct", "reason": "直接回答"}
+                            ],
+                        },
+                    )
+                ]
+            )
+        selected = next(
+            handle
+            for handle in state.current_handles
+            if state.result_sets[handle].semantics.get("relevance_scope") == "direct"
+        )
+        if calls == 3:
+            return ModelResponse(parts=[ToolCallPart("read_entries", {"entry_ids": [9]})])
+        return ModelResponse(
+            parts=[
+                ToolCallPart(
+                    info.output_tools[0].name,
+                    {
+                        "blocks": [
+                            {"kind": "list", "result_handle": selected, "label": "已找到"},
+                            {"kind": "insufficient", "text": "正文尚未读取。"},
+                        ]
+                    },
+                )
+            ]
+        )
+
+    first, history = await run_turn(
+        build_agent(FunctionModel(first_respond)), state, "查甲醛来源", []
+    )
+    assert first["status"] == "partial_completed", first
+    assert first["completion"]["reason_code"] == "search_succeeded_read_failed"
+    assert state.continuation is not None
+    assert sum(tool == "query_entries" for tool, _params in dispatches) == 1
+
+    state.begin_turn(5, "继续")
+    second_calls = 0
+
+    def second_respond(_messages, info):
+        nonlocal second_calls
+        second_calls += 1
+        if second_calls == 1:
+            assert "read_entries" in info.instructions
+            return ModelResponse(parts=[ToolCallPart("read_entries", {"entry_ids": [9]})])
+        read_handle = next(
+            handle
+            for handle in state.current_handles
+            if state.result_sets[handle].kind == "entries"
+        )
+        return ModelResponse(
+            parts=[
+                ToolCallPart(
+                    info.output_tools[0].name,
+                    {"blocks": [{"kind": "text", "text": f"[[entry:{read_handle}:1]]"}]},
+                )
+            ]
+        )
+
+    second, _ = await run_turn(
+        build_agent(FunctionModel(second_respond)), state, "继续", history
+    )
+    assert second["status"] == "completed", second
+    assert sum(tool == "query_entries" for tool, _params in dispatches) == 1
+    assert read_attempts == 2
+    assert "来源包括部分装修材料" in second["answer"]
 
 
 def test_limited_result_without_more_is_not_an_incomplete_step() -> None:
@@ -1719,6 +2472,23 @@ def test_new_total_cannot_pass_by_summing_category_buckets() -> None:
     assert result["dialogues"][0]["status"] == "fail"
 
 
+def test_not_executed_turn_is_not_sent_to_manual_content_review() -> None:
+    oracle = {"projects": [], "entries": []}
+    turn = {
+        "answer": "查询参数未通过校验。",
+        "error": None,
+        "status": "not_executed",
+    }
+
+    result = evaluate(
+        [{"arm": "new", "scenario": "A", "turns": [turn]}],
+        oracle,
+    )
+
+    assert result["turns"][0]["status"] == "fail"
+    assert result["turns"][0]["reasons"] == ["not_executed"]
+
+
 def test_project_bucket_scoring_checks_name_count_pairs() -> None:
     oracle = {
         "projects": [
@@ -1902,7 +2672,7 @@ def test_rehearsal_writes_four_json_safe_checkpoints() -> None:
     assert result["turns"][0]["model_calls"][0]["kind"] == "pipeline_fixture"
     assert checkpoints[0]["turns"][0]["usage"]["cost"] == "0.000000"
     assert checkpoints[0]["turns"][0]["budget"]["turn"]["entry_reads"] == [1]
-    assert checkpoints[0]["turns"][0]["context"]["experiment_version"] == "prototype-v2"
+    assert checkpoints[0]["turns"][0]["context"]["experiment_version"] == "prototype-v3"
 
 
 def test_v2_control_preflight_is_entirely_deterministic_and_passes() -> None:
@@ -1969,7 +2739,7 @@ async def test_structured_output_gets_only_one_bounded_correction() -> None:
     assert turn["status"] == "completed"
     assert turn["answer"] == "总数：7"
     assert len(calls) == 2
-    assert all(info.instructions == SYSTEM_PROMPT for _, info in calls)
+    assert all(info.instructions.startswith(SYSTEM_PROMPT) for _, info in calls)
     assert all(SYSTEM_PROMPT not in str(messages) for messages, _ in calls)
 
 
@@ -2426,13 +3196,17 @@ async def test_provider_shaped_estimate_records_components_scope_and_usage_error
     legacy_estimate = ceil(len(legacy_raw.encode("utf-8")) / 3)
     assert log["estimated_input_tokens"] < legacy_estimate
     assert log["estimate_components"]["version"] == INPUT_ESTIMATE_VERSION
-    assert log["estimate_components"]["instruction_utf8_bytes"] == len(
-        SYSTEM_PROMPT.encode("utf-8")
-    )
-    assert log["estimate_components"]["instruction_count"] == 1
+    assert abs(
+        log["estimate_components"]["instruction_utf8_bytes"]
+        - len(info.instructions.encode("utf-8"))
+    ) <= 2
+    assert log["estimate_components"]["instruction_count"] == 2
     assert log["estimate_components"]["historical_system_count"] == 0
+    instruction_payload = "\n".join(
+        part.content for part in info.model_request_parameters.instruction_parts
+    )
     assert log["estimate_components"]["instruction_sha256"] == hashlib.sha256(
-        SYSTEM_PROMPT.encode("utf-8")
+        instruction_payload.encode("utf-8")
     ).hexdigest()
     assert log["request_scope"] == "dialogue_agent"
     assert log["actual_input_tokens"] == 1_000

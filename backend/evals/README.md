@@ -42,6 +42,12 @@
 原文完整保存在程序侧结果仓，模型视图只保留有界的本轮材料；后续引用仍须重新读取并
 执行当前权限与 Evidence 核验。历史缩减不调用摘要或分类模型。
 
+`dialogue-loop-v3` 在同一循环内把语义召回保留为不可展示候选，再由当前 Agent 调用
+`select_relevant_entries` 分为直接、间接和不相关，只将直接相关项固化为可展示、可读取、
+可按序号引用的授权集合。等价语义查询跨 `search_knowledge` 与 `query_entries` 去重，
+旧式排序对象和可空字段字符串 `"null"` 只在实验表面层规范化；权限与 Workspace 校验不变。
+该版本的离线测试只验证合同和状态，不代表真实模型语义验收通过。
+
 完整 Grove 规则通过 Pydantic AI 的当前 `instructions` 进入每次首轮、续聊、纠正和
 独立收尾请求；历史中的旧 system 会被清除，收尾指令只作追加约束。无模型测试直接
 检查底层 FunctionModel 收到的 messages 和 instructions，而非只检查 Agent 配置。

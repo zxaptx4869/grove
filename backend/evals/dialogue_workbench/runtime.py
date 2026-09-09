@@ -25,6 +25,7 @@ from evals.dialogue_workbench.store import WorkbenchStore
 
 TERMINAL_TURN_STATUSES = {
     "completed",
+    "not_executed",
     "partial_completed",
     "unsupported",
     "denied",

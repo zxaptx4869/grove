@@ -8,8 +8,8 @@ from typing import Annotated, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
-PROMPT_VERSION = "dialogue-loop-v2"
-EXPERIMENT_VERSION = "prototype-v2"
+PROMPT_VERSION = "dialogue-loop-v3"
+EXPERIMENT_VERSION = "prototype-v3"
 INPUT_BYTES_LIMIT = 48_000
 MODEL_INPUT_TOKENS_LIMIT = 12_000
 INPUT_ESTIMATE_SOFT_LIMIT = 9_000
@@ -32,12 +32,14 @@ MAX_TOOL_CONCURRENCY = 2
 
 TURN_COMPLETED = "completed"
 TURN_PARTIAL_COMPLETED = "partial_completed"
+TURN_NOT_EXECUTED = "not_executed"
 TURN_UNSUPPORTED = "unsupported"
 TURN_DENIED = "denied"
 TURN_FAILED = "failed"
 TURN_TERMINAL_STATUSES = {
     TURN_COMPLETED,
     TURN_PARTIAL_COMPLETED,
+    TURN_NOT_EXECUTED,
     TURN_UNSUPPORTED,
     TURN_DENIED,
     TURN_FAILED,
@@ -180,7 +182,7 @@ class StopState:
     """程序权威的当前轮停止原因和完成语义。"""
 
     status: Literal[
-        "partial_completed", "unsupported", "denied", "failed"
+        "not_executed", "partial_completed", "unsupported", "denied", "failed"
     ]
     reason_code: str
     reason: str
