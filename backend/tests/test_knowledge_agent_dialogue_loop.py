@@ -668,6 +668,7 @@ async def test_known_directory_name_uses_find_without_root_walk(monkeypatch) -> 
             "status": "completed",
             "completeness": "complete",
             "params": params,
+            "result_summary": {"returned_count": 1, "has_more": False},
             "error": None,
             "turn_index": state.turn_index,
         }
@@ -737,7 +738,7 @@ async def test_project_search_routes_to_strict_project_query(monkeypatch) -> Non
             "has_more": False,
         }
         handle = ctx.deps.state.store_result(
-            "entries", payload, "limited", "limited",
+            "list", payload, "limited", "limited",
             semantics=loop_module._result_semantics(tool_name, params, payload),
         )
         event = {
@@ -747,6 +748,7 @@ async def test_project_search_routes_to_strict_project_query(monkeypatch) -> Non
             "status": "limited",
             "completeness": "limited",
             "params": params,
+            "result_summary": {"returned_count": 1, "has_more": False},
             "error": None,
             "turn_index": state.turn_index,
         }
@@ -787,7 +789,7 @@ async def test_project_search_routes_to_strict_project_query(monkeypatch) -> Non
         build_agent(FunctionModel(respond)), state, "房子装修项目中，有关于墙纸的知识吗", []
     )
 
-    assert turn["status"] == "partial_completed", turn
+    assert turn["status"] == "completed", turn
     assert len(dispatched) == 1
     tool_name, params, _kind, kwargs = dispatched[0]
     assert tool_name == "query_entries"
@@ -795,6 +797,37 @@ async def test_project_search_routes_to_strict_project_query(monkeypatch) -> Non
     assert params["entry_set"]["semantic_query"] == "墙纸"
     assert params["sort"] == {"field": "relevance", "direction": "desc"}
     assert kwargs["surface_tool"] == "search_knowledge"
+
+
+def test_limited_result_without_more_is_not_an_incomplete_step() -> None:
+    """语义结果可保持 limited 完整性，但没有后续页时不显示未完成警告。"""
+
+    state = _state()
+    assert _stop_from_events(
+        state,
+        [
+            {
+                "tool": "search_knowledge",
+                "status": "limited",
+                "completeness": "limited",
+                "result_summary": {"returned_count": 1, "has_more": False},
+            }
+        ],
+    ) is None
+
+    stop = _stop_from_events(
+        state,
+        [
+            {
+                "tool": "query_entries",
+                "status": "limited",
+                "completeness": "limited",
+                "result_summary": {"returned_count": 10, "has_more": True},
+            }
+        ],
+    )
+    assert stop is not None
+    assert stop.status == "failed"
 
 
 @pytest.mark.asyncio

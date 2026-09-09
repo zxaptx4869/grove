@@ -475,11 +475,18 @@ def _stop_from_events(state: LoopState, events: list[dict]) -> StopState | None:
             incomplete_steps=["目标对象尚未由工具确认"],
             can_continue=False,
         )
-    incomplete = [
-        event
-        for event in events
-        if event.get("status") in {"partial", "limited", "error"}
-    ]
+    incomplete = []
+    for event in events:
+        status = event.get("status")
+        if status in {"partial", "error"}:
+            incomplete.append(event)
+            continue
+        # 语义查询即使没有更多结果也会标记 limited，只有明确存在后续结果时
+        # 才把它视为尚未完成的步骤。
+        if status == "limited":
+            has_more = (event.get("result_summary") or {}).get("has_more")
+            if has_more is not False:
+                incomplete.append(event)
     if incomplete:
         system_error = next(
             (event for event in incomplete if event.get("status") == "error"), None
@@ -626,6 +633,8 @@ def _tool_result_summary(payload: dict) -> dict:
             "total_count",
             "returned_count",
             "matched_count",
+            "has_more",
+            "truncated",
         )
         if key in payload and isinstance(payload[key], (int, float, str))
     }
