@@ -1427,6 +1427,49 @@ def test_rejected_candidate_title_cannot_leak_into_answer_text() -> None:
     )
 
 
+def test_definition_with_no_direct_records_requires_explicit_insufficient_block() -> None:
+    state = _state()
+    state.current_message = "某种材料是什么？"
+    candidate = state.store_result(
+        "list",
+        {"items": [{"entry_id": 2, "title": "相关场景"}]},
+        "limited",
+        "limited",
+        semantics={"result_role": "candidate"},
+        displayable=False,
+    )
+    state.store_result(
+        "list",
+        {
+            "items": [],
+            "internal_classifications": [
+                {"entry_id": 2, "relevance": "indirect"}
+            ],
+        },
+        "empty",
+        "limited",
+        semantics={
+            "result_role": "authorized",
+            "relevance_scope": "direct",
+            "candidate_result_handle": candidate,
+        },
+    )
+    incomplete = DialogueAnswer.model_validate(
+        {"blocks": [{"kind": "text", "text": "模型通用知识：这是一个概念。"}]}
+    )
+    complete = DialogueAnswer.model_validate(
+        {
+            "blocks": [
+                {"kind": "text", "text": "模型通用知识：这是一个概念。"},
+                {"kind": "insufficient", "text": "没有找到直接相关正式记录。"},
+            ]
+        }
+    )
+
+    assert any("必须明确说明结果不足" in error for error in output_errors(incomplete, state))
+    assert output_errors(complete, state) == []
+
+
 @pytest.mark.asyncio
 async def test_equivalent_semantic_tools_dispatch_only_one_search(monkeypatch) -> None:
     state = _state()

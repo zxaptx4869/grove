@@ -1264,6 +1264,16 @@ def output_errors(answer: DialogueAnswer, state: LoopState) -> list[str]:
         )
         if first_list is not None and (first_text is None or first_text > first_list):
             errors.append("定义型问题必须先回答概念和核心结论，再展示直接相关正式记录")
+        empty_direct_result = any(
+            handle in state.current_handles
+            and record.semantics.get("relevance_scope") == "direct"
+            and not record.payload.get("items")
+            for handle, record in state.result_sets.items()
+        )
+        if empty_direct_result and not any(
+            block.kind == "insufficient" for block in answer.blocks
+        ):
+            errors.append("定义型问题没有直接相关正式记录时必须明确说明结果不足")
     if _candidate_revision_requested(state.current_message):
         draft_text = "\n".join(
             block.text for block in answer.blocks if block.kind == "text"
