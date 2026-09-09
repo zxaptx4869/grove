@@ -100,6 +100,47 @@ NO_KNOWLEDGE_PATTERNS = (
     "不要查知识库",
 )
 CONTINUE_PATTERNS = ("继续", "接着", "剩下", "未完成")
+CANDIDATE_SELF_UPDATE_PATTERNS = (
+    "输出给我",
+    "我自己更新",
+    "我去更新",
+    "我自己修改",
+    "供我审核",
+    "给我审核",
+    "候选修改稿",
+    "建议草稿",
+)
+CANDIDATE_REVISION_PATTERNS = (
+    "帮我补充",
+    "帮我完善",
+    "改写一版",
+    "给我一版更新后的内容",
+    "整理成可以更新的版本",
+)
+DIRECT_WRITE_PATTERNS = (
+    "直接帮我更新",
+    "直接更新知识库",
+    "更新知识库",
+    "保存到这条记录",
+    "保存到原记录",
+    "把原记录改掉",
+    "覆盖原来的内容",
+    "覆盖原记录",
+    "写入 entry",
+    "替我保存",
+    "保存修改",
+)
+
+
+def _candidate_revision_requested(message: str) -> bool:
+    """确定性区分候选文本生成与明确写入；用户自行更新的表达优先。"""
+
+    normalized = message.strip().lower()
+    if any(pattern in normalized for pattern in CANDIDATE_SELF_UPDATE_PATTERNS):
+        return True
+    if any(pattern in normalized for pattern in DIRECT_WRITE_PATTERNS):
+        return False
+    return any(pattern in normalized for pattern in CANDIDATE_REVISION_PATTERNS)
 
 
 @dataclass
@@ -134,12 +175,14 @@ class LoopState:
     continuation: ContinuationState | None = None
     active_continuation: ContinuationState | None = None
     queried_directory_parents: set[int | None] = field(default_factory=set)
+    current_message: str = ""
     _handle_sequence: int = 0
     database_lock: asyncio.Lock = field(default_factory=asyncio.Lock, repr=False)
 
     def begin_turn(self, run_id: int, message: str) -> None:
         self.turn_index += 1
         self.run_id = run_id
+        self.current_message = message
         self.current_handles.clear()
         self.current_evidence.clear()
         self.stop_state = None
@@ -912,6 +955,24 @@ def output_errors(answer: DialogueAnswer, state: LoopState) -> list[str]:
                 errors.append(f"{block.result_handle} 不是 statistic 结果")
         elif block.kind == "evidence" and block.evidence_handle not in state.current_evidence:
             errors.append(f"{block.evidence_handle} 不是当前轮核验 Evidence")
+    if _candidate_revision_requested(state.current_message):
+        draft_text = "\n".join(
+            block.text for block in answer.blocks if block.kind == "text"
+        )
+        required_sections = {
+            "未写入状态": ("尚未写入知识库", "尚未写入正式记录"),
+            "原记录内容": ("原记录要点", "原记录已有内容"),
+            "新增建议": ("建议补充", "建议新增"),
+            "修改后版本": ("修改后候选版本", "候选修改稿"),
+            "来源边界": ("不属于原始来源原文", "不是原始来源原文"),
+        }
+        missing = [
+            label
+            for label, markers in required_sections.items()
+            if not any(marker in draft_text for marker in markers)
+        ]
+        if missing:
+            errors.append(f"候选修改稿缺少：{'、'.join(missing)}")
     return errors
 
 
@@ -1204,11 +1265,27 @@ def build_agent(model) -> Agent[LoopDeps, DialogueAnswer]:
             f"continuation={json.dumps(continuation.snapshot(), ensure_ascii=False)}"
         )
 
+    @agent.instructions
+    def candidate_revision_instruction(ctx: RunContext[LoopDeps]) -> str:
+        if not _candidate_revision_requested(ctx.deps.state.current_message):
+            return ""
+        return (
+            "当前请求只要求生成候选修改稿，用户将自行审核或更新，不是写入正式记录。"
+            "不要调用 report_unsupported 或任何写入工具；直接用 final_result 的 text 块输出，"
+            "明确尚未写入知识库，并区分原记录要点、建议补充、修改后候选版本和来源边界说明。"
+        )
+
     @agent.tool
     async def report_unsupported(
         ctx: RunContext[LoopDeps], target: str, reason: str
     ) -> dict:
         """当前白名单没有支持目标对象的只读能力时，记录能力不足并停止尝试替代查询。"""
+
+        if _candidate_revision_requested(ctx.deps.state.current_message):
+            raise ModelRetry(
+                "当前用户只要求生成供审核的候选修改稿，不是写入请求。请不要调用 "
+                "report_unsupported，改用 final_result 输出候选稿，并明确尚未写入知识库。"
+            )
 
         event = {
             "tool": "report_unsupported",

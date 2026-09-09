@@ -62,6 +62,7 @@ from evals.dialogue_loop.loop import (
     SYSTEM_PROMPT,
     LoopDeps,
     LoopState,
+    _candidate_revision_requested,
     _count_params,
     _current_material_history,
     _entry_set,
@@ -248,6 +249,38 @@ def test_statistic_adapters_build_unambiguous_shared_tool_params() -> None:
 def test_project_validation_names_the_invalid_field() -> None:
     with pytest.raises(ModelRetry, match="字段 project_name"):
         _entry_set("project", None, None, None)
+
+
+@pytest.mark.parametrize(
+    "message",
+    [
+        "帮我补充一下这条知识",
+        "帮我完善一下",
+        "按你的分析改写一版",
+        "给我一版更新后的内容",
+        "把修改后的内容输出给我，我自己更新",
+        "帮我整理成可以更新的版本",
+        "帮我更新一下，把内容输出给我，我去更新",
+    ],
+)
+def test_candidate_revision_wording_is_not_treated_as_direct_write(message: str) -> None:
+    assert _candidate_revision_requested(message) is True
+
+
+@pytest.mark.parametrize(
+    "message",
+    [
+        "直接帮我更新知识库",
+        "保存到这条记录",
+        "把原记录改掉",
+        "覆盖原来的内容",
+        "写入 Entry",
+        "替我保存修改",
+        "把修改后的内容保存到原记录并覆盖旧内容",
+    ],
+)
+def test_direct_write_wording_is_not_treated_as_candidate_revision(message: str) -> None:
+    assert _candidate_revision_requested(message) is False
 
 
 def test_list_position_uses_actual_order_and_rejects_forgery() -> None:
@@ -574,17 +607,157 @@ def test_no_knowledge_instruction_is_programmatically_recorded() -> None:
     assert state.tools_allowed is False
 
 
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "message",
+    [
+        "帮我补充一下这条知识",
+        "把修改后的内容输出给我，我自己更新",
+    ],
+)
+async def test_candidate_revision_corrects_unsupported_and_outputs_review_draft(
+    message: str,
+) -> None:
+    """候选文本生成可完成；模型误报不支持时由程序纠正且不产生写入事件。"""
+
+    state = _state()
+    state.begin_turn(5, message)
+    calls = 0
+
+    def respond(_messages, info):
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            return ModelResponse(
+                parts=[
+                    ToolCallPart(
+                        "report_unsupported",
+                        {
+                            "target": "更新正式记录",
+                            "reason": "当前只有只读工具",
+                        },
+                    )
+                ]
+            )
+        return ModelResponse(
+            parts=[
+                ToolCallPart(
+                    info.output_tools[0].name,
+                    {
+                        "blocks": [
+                            {
+                                "kind": "text",
+                                "text": (
+                                    "可以。下面是一版供你审核的候选修改稿，尚未写入知识库。\n\n"
+                                    "原记录要点：乳胶漆更省心，壁纸胶可能带来环保风险。\n\n"
+                                    "建议补充：环保与寿命取决于产品、胶黏剂和施工条件。\n\n"
+                                    "修改后候选版本：墙面材料应结合环保等级、维护成本与装饰需求选择。\n\n"
+                                    "说明：以上新增内容基于当前对话的分析和建议，不属于原始来源原文。"
+                                ),
+                            }
+                        ]
+                    },
+                )
+            ]
+        )
+
+    turn, _ = await run_turn(build_agent(FunctionModel(respond)), state, message, [])
+
+    assert turn["status"] == "completed"
+    assert calls == 2
+    assert turn["tool_calls"] == []
+    assert state.current_evidence == set()
+    assert "尚未写入知识库" in turn["answer"]
+    assert "原记录要点" in turn["answer"]
+    assert "建议补充" in turn["answer"]
+    assert "修改后候选版本" in turn["answer"]
+    assert "不属于原始来源原文" in turn["answer"]
+    assert "unsupported" not in json.dumps(turn, ensure_ascii=False)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "message",
+    [
+        "直接帮我更新知识库里的这条记录",
+        "覆盖原记录并保存",
+    ],
+)
+async def test_direct_entry_write_request_remains_unsupported(message: str) -> None:
+    """明确写入或覆盖正式 Entry 时仍停在只读能力边界。"""
+
+    state = _state()
+    state.begin_turn(5, message)
+    calls = 0
+
+    def respond(_messages, info):
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            return ModelResponse(
+                parts=[
+                    ToolCallPart(
+                        "report_unsupported",
+                        {
+                            "target": "直接修改并保存正式 Entry",
+                            "reason": "当前只读白名单不支持写入或覆盖正式记录",
+                        },
+                    )
+                ]
+            )
+        return ModelResponse(
+            parts=[
+                ToolCallPart(
+                    info.output_tools[0].name,
+                    {"blocks": [{"kind": "insufficient", "text": "当前不支持直接写入。"}]},
+                )
+            ]
+        )
+
+    turn, _ = await run_turn(build_agent(FunctionModel(respond)), state, message, [])
+
+    assert turn["status"] == "unsupported"
+    assert [event["tool"] for event in turn["tool_calls"]] == ["report_unsupported"]
+    assert state.current_evidence == set()
+    assert "不支持写入或覆盖正式记录" in turn["answer"]
+
+
 def test_agent_exposes_split_statistics_without_composite_arguments() -> None:
     agent = build_agent(FunctionModel(lambda _messages, _info: None))
     tools = agent._function_toolset.tools
     assert "count_entries" in tools
     assert "group_entries" in tools
     assert "aggregate_entries" not in tools
+    assert not {
+        "update_entry",
+        "save_entry",
+        "write_entry",
+        "create_evidence",
+    } & set(tools)
     count_schema = tools["count_entries"].function_schema.json_schema
     group_schema = tools["group_entries"].function_schema.json_schema
     assert "operation" not in count_schema["properties"]
     assert "group_by" not in count_schema["properties"]
     assert group_schema["required"] == ["project_scope", "project_name", "group_by"]
+
+
+def test_candidate_revision_output_requires_sections_and_source_boundary() -> None:
+    """候选稿缺少未写入声明或内容分区时，输出校验必须拒绝。"""
+
+    state = _state()
+    state.begin_turn(5, "帮我完善一下这条知识")
+    incomplete = DialogueAnswer.model_validate(
+        {"blocks": [{"kind": "text", "text": "已经帮你更新好了。"}]}
+    )
+
+    errors = output_errors(incomplete, state)
+
+    assert errors
+    assert "未写入状态" in errors[0]
+    assert "原记录内容" in errors[0]
+    assert "新增建议" in errors[0]
+    assert "修改后版本" in errors[0]
+    assert "来源边界" in errors[0]
 
 
 def test_agent_exposes_real_directory_tool_and_separate_position_handles() -> None:

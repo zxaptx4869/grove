@@ -70,3 +70,12 @@
 - [x] 11.1 在工具结果摘要中保留 `has_more`/截断信息，并让轮次状态只对确有后续结果的 limited 标记未完成。
 - [x] 11.2 增加无真实模型回归测试，覆盖 `has_more=false` 的正常完成与 `has_more=true` 的部分完成。
 - [x] 11.3 执行后端全量测试、静态检查、前端构建与 OpenSpec 严格校验，并本地提交。
+
+## 12. 候选修改稿与正式写入分流
+
+- [x] 12.1 增加候选稿与明确写入的确定性话术边界；自行审核/更新优先生成候选稿，明确保存、覆盖和写入仍返回 unsupported。
+- [x] 12.2 为候选稿注入按需 instructions 并校验未写入声明、原记录、建议补充、候选版本和来源边界；误调 `report_unsupported` 时纠正而不记录虚假能力不足事件。
+- [x] 12.3 增加无真实模型回归，覆盖候选表达、混合表达、直接写入、无写工具、无虚假 Evidence 和既有工作台行为。
+- [x] 12.4 执行后端全量测试、工作台测试、ruff、Python 编译、`git diff --check`、前端构建和全库 OpenSpec 严格校验并本地提交。
+
+候选修改稿缺陷验证记录（2026-09-09）：无真实模型测试覆盖 7 类候选表达、7 类明确写入表达、模型误调 unsupported 后纠正、候选稿五项语义校验、无写入工具与无虚假 Evidence，以及明确保存/覆盖继续 unsupported；相关循环/工作台/只读工具/结构化查询测试、后端全量 pytest、全后端 ruff、`compileall`、前端 135 项测试、前端 lint/build、`git diff --check` 与全库 59 项 OpenSpec 严格校验通过。前端 lint 保留 2 条本 change 范围外的既有 Hook 依赖 warning。未运行付费评测或真实模型请求，未修改正式 Entry、Source 或 Evidence。
