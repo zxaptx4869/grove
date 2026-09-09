@@ -964,13 +964,28 @@ def output_errors(answer: DialogueAnswer, state: LoopState) -> list[str]:
             "原记录内容": ("原记录要点", "原记录已有内容"),
             "新增建议": ("建议补充", "建议新增"),
             "修改后版本": ("修改后候选版本", "候选修改稿"),
-            "来源边界": ("不属于原始来源原文", "不是原始来源原文"),
         }
         missing = [
             label
             for label, markers in required_sections.items()
             if not any(marker in draft_text for marker in markers)
         ]
+        source_boundary_phrases = (
+            "不属于原始来源原文",
+            "不是原始来源原文",
+            "并非来自该来源原文",
+            "并非来自原始来源",
+            "不来自原始来源",
+        )
+        has_source_boundary = any(
+            phrase in draft_text for phrase in source_boundary_phrases
+        ) or (
+            "来源边界" in draft_text
+            and "来源原文" in draft_text
+            and any(negation in draft_text for negation in ("并非", "不是", "不属于"))
+        )
+        if not has_source_boundary:
+            missing.append("来源边界")
         if missing:
             errors.append(f"候选修改稿缺少：{'、'.join(missing)}")
     return errors

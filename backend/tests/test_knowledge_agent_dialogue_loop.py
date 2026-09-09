@@ -760,6 +760,31 @@ def test_candidate_revision_output_requires_sections_and_source_boundary() -> No
     assert "来源边界" in errors[0]
 
 
+def test_candidate_revision_accepts_equivalent_source_boundary_wording() -> None:
+    """“并非来自该来源原文”等等价说明不能被固定文案校验误拒绝。"""
+
+    state = _state()
+    state.begin_turn(5, "帮我补充这条知识，把内容输出给我")
+    answer = DialogueAnswer.model_validate(
+        {
+            "blocks": [
+                {
+                    "kind": "text",
+                    "text": (
+                        "以下是候选修改稿，尚未写入知识库。\n"
+                        "原记录要点：乳胶漆是默认建议。\n"
+                        "建议补充：结合产品和施工判断。\n"
+                        "修改后候选版本：按实际条件选择墙面材料。\n"
+                        "来源边界说明：补充分析并非来自该来源原文。"
+                    ),
+                }
+            ]
+        }
+    )
+
+    assert output_errors(answer, state) == []
+
+
 def test_agent_exposes_real_directory_tool_and_separate_position_handles() -> None:
     agent = build_agent(FunctionModel(lambda _messages, _info: None))
     tools = agent._function_toolset.tools
