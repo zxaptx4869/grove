@@ -221,8 +221,10 @@ async def test_parallel_reservations_cannot_exceed_turn_budget() -> None:
 def test_explicit_project_filter_can_be_replaced_and_cleared() -> None:
     project = _entry_set("project", "房子装修", None, [])
     all_projects = _entry_set("all", None, None, [])
+    all_projects_from_empty = _entry_set("all", "  ", None, [])
     assert project["project_name"] == "房子装修"
     assert all_projects["project_name"] is None
+    assert all_projects_from_empty["project_name"] is None
     with pytest.raises(ModelRetry):
         _entry_set("project", None, None, [])
     with pytest.raises(ModelRetry):

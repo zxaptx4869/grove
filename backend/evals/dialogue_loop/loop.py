@@ -586,13 +586,16 @@ def _entry_set(
     semantic_query: str | None,
     main_types: list[Literal["knowledge", "method", "parameter", "reminder"]] | None,
 ) -> dict:
-    if project_scope == "project" and not (project_name or "").strip():
+    normalized_project_name = (
+        project_name.strip() if project_name and project_name.strip() else None
+    )
+    if project_scope == "project" and normalized_project_name is None:
         raise ModelRetry("字段 project_name：project_scope=project 时必须填写非空项目名")
-    if project_scope == "all" and project_name is not None:
+    if project_scope == "all" and normalized_project_name is not None:
         raise ModelRetry("字段 project_name：project_scope=all 时必须设为 null")
     return {
         "schema_version": "v1",
-        "project_name": project_name.strip() if project_name else None,
+        "project_name": normalized_project_name,
         "semantic_query": semantic_query.strip() if semantic_query else None,
         "main_types": list(main_types or []),
         "info_natures": [],
@@ -1723,6 +1726,7 @@ def build_agent(model) -> Agent[LoopDeps, DialogueAnswer]:
         query: str,
     ) -> dict:
         """搜索正式记录；指定项目时使用严格项目范围，结果不能用于精确计数。"""
+        project_name = project_name.strip() if project_name and project_name.strip() else None
         if project_scope == "project":
             params = {
                 "entry_set": _entry_set(project_scope, project_name, query, None),
