@@ -971,6 +971,21 @@ def completed_directory_not_found(
     return None
 
 
+def render_directory_not_found(
+    state: LoopState,
+) -> tuple[str, list[dict]] | None:
+    """为完整目录未命中生成无需模型收尾的确定性回答。"""
+
+    resolved = completed_directory_not_found(state, project_id=None, project_name=None)
+    if resolved is None:
+        return None
+    handle, record = resolved
+    answer = DialogueAnswer.model_validate(
+        {"blocks": [{"kind": "list", "result_handle": handle, "label": "目录定位"}]}
+    )
+    return render_answer(answer, state)
+
+
 def _entry_directory_scope(
     state: LoopState,
     *,
@@ -2048,32 +2063,45 @@ async def run_turn(
                 usage_limits=_usage_limits(12),
             )
     except FinalizeRequired:
-        try:
-            result = await _finalize_once(
-                agent,
-                state,
-                message,
-                history,
-                state.tool_events[before_events:],
-                state.instrumentation.finalize_reason or "budget_boundary",
-            )
-        except Exception as finalize_exc:
-            error_details = state.instrumentation.finalize_failure
-            raw_error = state.instrumentation.finalize_error or (
-                f"{type(finalize_exc).__name__}: {finalize_exc}"
-            )
-            stop = _stop_from_failure(state, finalize_exc, error_details)
-            state.stop(stop)
-            text, blocks = _verified_failure_output(state, stop)
-            status = stop.status
-            error = raw_error if status == TURN_FAILED else None
+        deterministic = render_directory_not_found(state)
+        if deterministic is not None:
+            # 目录定位的完整空结果已经是服务端确定性结论，不需要再派发收尾模型。
+            state.instrumentation.phase = "solve"
+            state.instrumentation.finalize_reason = None
+            state.instrumentation.finalize_status = "not_needed"
+            state.instrumentation.finalize_error = None
+            state.instrumentation.finalize_failure = None
+            text, blocks = deterministic
+            status = TURN_COMPLETED
+            error = None
             usage = None
         else:
-            text, blocks = render_answer(result.output, state)
-            state.instrumentation.complete_finalize()
-            status = "completed"
-            error = None
-            usage = asdict(result.usage) if result.usage is not None else None
+            try:
+                result = await _finalize_once(
+                    agent,
+                    state,
+                    message,
+                    history,
+                    state.tool_events[before_events:],
+                    state.instrumentation.finalize_reason or "budget_boundary",
+                )
+            except Exception as finalize_exc:
+                error_details = state.instrumentation.finalize_failure
+                raw_error = state.instrumentation.finalize_error or (
+                    f"{type(finalize_exc).__name__}: {finalize_exc}"
+                )
+                stop = _stop_from_failure(state, finalize_exc, error_details)
+                state.stop(stop)
+                text, blocks = _verified_failure_output(state, stop)
+                status = stop.status
+                error = raw_error if status == TURN_FAILED else None
+                usage = None
+            else:
+                text, blocks = render_answer(result.output, state)
+                state.instrumentation.complete_finalize()
+                status = "completed"
+                error = None
+                usage = asdict(result.usage) if result.usage is not None else None
     except BudgetExceeded as exc:
         solve_error = f"{type(exc).__name__}: {exc}"
         solve_failure = state.instrumentation.describe_failure(exc, before_logs)

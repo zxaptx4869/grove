@@ -77,6 +77,7 @@ from evals.dialogue_loop.loop import (
     list_position_entry_id,
     output_errors,
     render_answer,
+    render_directory_not_found,
     run_turn,
 )
 from evals.dialogue_loop.report import _visible_answer, evaluate, evaluation_plan, sanitize
@@ -384,6 +385,43 @@ def test_invalid_tool_params_are_not_reported_as_access_denied() -> None:
     assert stop.status == "partial_completed"
     assert stop.reason_code == "invalid_tool_params"
     assert stop.can_continue is True
+
+
+def test_complete_directory_not_found_has_deterministic_rendering() -> None:
+    """完整空结果可在收尾预算不足时直接渲染，不依赖第二次模型请求。"""
+
+    state = _state()
+    payload = {
+        "project": {"id": 26, "name": "房子装修"},
+        "operation": "find",
+        "query": {
+            "name": "墙纸设计",
+            "path": None,
+            "requested_match": "exact",
+            "applied_match": "exact",
+        },
+        "match_status": "not_found",
+        "items": [],
+        "total_count": 0,
+        "returned_count": 0,
+        "has_more": False,
+    }
+    state.store_result(
+        "directories",
+        payload,
+        "empty",
+        "complete",
+        semantics=loop_module._result_semantics(
+            "list_project_directories",
+            {"operation": "find"},
+            payload,
+        ),
+    )
+
+    rendered = render_directory_not_found(state)
+
+    assert rendered is not None
+    assert rendered[0] == "房子装修 · 未找到名为「墙纸设计」的目录。"
 
 
 def test_compact_history_keeps_order_and_protocol_without_large_body() -> None:
