@@ -128,6 +128,7 @@ FINALIZE_CONTINUE_MESSAGES = {
     "继续完成",
     "接着完成",
     "继续刚才的回答",
+    "下一轮继续",
 }
 CONTEXTUAL_SEARCH_FOLLOW_UP_PATTERNS = (
     "好的，你帮我查一下",
@@ -323,6 +324,12 @@ class LoopState:
             )
             else None
         )
+        if (
+            self.active_continuation is not None
+            and self.active_continuation.scope.get("answer_basis") == "model_only"
+        ):
+            # “继续”本身没有否定词，仍须恢复原任务的不使用知识库约束。
+            self.tools_allowed = False
         self.ledger.start_turn()
         self.instrumentation.begin_turn()
 
@@ -1404,6 +1411,12 @@ def _result_semantics(tool_name: str, params: dict, payload: dict) -> dict:
 def output_errors(answer: DialogueAnswer, state: LoopState) -> list[str]:
     """返回句柄边界错误；供一次模型纠正与无模型反例测试共用。"""
     errors = []
+    if not state.tools_allowed and any(
+        block.kind in {"statistic", "list", "evidence"}
+        or (block.kind == "text" and _entry_reference(block.text) is not None)
+        for block in answer.blocks
+    ):
+        errors.append("本轮明确不使用知识库，回答不得引用 Grove 结果、Entry 或 Evidence")
     for block in answer.blocks:
         if block.kind in {"statistic", "list"}:
             record = state.result_sets.get(block.result_handle)
@@ -2722,9 +2735,8 @@ def build_agent(model) -> Agent[LoopDeps, DialogueAnswer]:
 
 
 FINALIZER_SYSTEM_PROMPT = """你是 Grove 知识 Agent 的独立收尾执行器。
-程序已经取得并核验本次可用材料。你只能组织最终 DialogueAnswer，不能调用搜索、目录、
-Entry 或 Evidence 等任何资料工具，也不能声称执行了外部核验。真实统计、列表、正文和来源
-必须使用当前材料中已有且获授权的句柄；无法支持的结论用 insufficient 明确说明。
+你只能组织最终 DialogueAnswer，不能调用搜索、目录、Entry 或 Evidence 等任何资料工具，
+也不能声称执行了外部核验。无法支持的结论用 insufficient 明确说明。
 知识库正式记录、Source 原文与模型分析必须区分，读到来源不等于通过官方交叉验证。
 AI 回答或候选修改稿不得声称已经写入正式 Entry。""".strip()
 
@@ -2742,6 +2754,20 @@ def build_finalizer_agent(model) -> Agent[LoopDeps, DialogueAnswer]:
         max_concurrency=1,
         tool_timeout=FINALIZE_SECONDS,
     )
+
+    @agent.instructions
+    def answer_basis_instruction(ctx: RunContext[LoopDeps]) -> str:
+        if ctx.deps.state.tools_allowed:
+            return (
+                "程序已经取得并核验本轮可用材料。真实统计、列表、正文和来源只能使用"
+                "当前材料中已有且获授权的句柄；不得引用历史轮次的材料句柄。"
+            )
+        return (
+            "用户明确要求本轮不使用知识库。只能根据模型通用知识和对话中用于识别讨论对象的"
+            "有界叙述作答；这些历史叙述不是可引用证据。只能输出 text 或 insufficient 块，"
+            "不得输出统计、列表、Entry、Evidence 或任何 Grove 句柄，不得声称查询、读取、"
+            "实时核验或得到 Grove 正式记录与 Source 支持。请明确这是模型通用分析及其边界。"
+        )
 
     @agent.output_validator
     async def validate_output(ctx: RunContext[LoopDeps], answer: DialogueAnswer) -> DialogueAnswer:
@@ -2932,13 +2958,21 @@ def _verified_failure_output(
             can_continue=True,
         )
     state.stop(stop)
-    status_text = {
+    model_only = (
+        stop.continuation is not None
+        and stop.continuation.scope.get("answer_basis") == "model_only"
+    )
+    status_text = (
+        "本轮未生成可展示的通用知识回答，以下说明具体原因和续执行方式。"
+        if model_only
+        else {
         TURN_NOT_EXECUTED: "本轮查询未执行，以下说明具体原因和缺口。",
         TURN_PARTIAL_COMPLETED: "本轮已部分完成，以下只保留程序确认的结果。",
         TURN_UNSUPPORTED: "当前工具能力不支持完整处理这个任务。",
         TURN_DENIED: "当前权限或数据范围不允许执行这个任务。",
         TURN_FAILED: "本轮遇到系统故障，以下仅保留已经确认的结果。",
-    }[stop.status]
+        }[stop.status]
+    )
     requested_blocks: list[dict] = [{"kind": "text", "text": status_text}]
     for handle, record in state.result_sets.items():
         if handle not in state.current_handles or record.status not in {
@@ -2976,8 +3010,11 @@ def _verified_failure_output(
         and stop.continuation.task_type == "finalize_answer"
     ):
         continuation_text = (
-            "可以在下一轮说“继续”，系统将只根据已保存材料重试最终回答，"
-            "不会重复已完成的查询或来源读取。"
+            "可以在下一轮说“继续”或“下一轮继续”，系统将保持不使用知识库，"
+            "只根据已保存的有界对话上下文重试最终回答。"
+            if model_only
+            else "可以在下一轮说“继续”或“下一轮继续”，系统将只根据已保存材料"
+            "重试最终回答，不会重复已完成的查询或来源读取。"
         )
     elif stop.can_continue and stop.continuation is not None:
         continuation_text = "可以在下一轮说“继续”，系统将从已保存的未完成步骤继续。"
@@ -3151,6 +3188,7 @@ def _continuation_material(state: LoopState, current_events: list[dict]) -> dict
         if handle in selected:
             known_events[handle] = event
     return {
+        "mode": "grove_material",
         "records": records,
         "evidence": evidence,
         "events": list(known_events.values()),
@@ -3158,6 +3196,61 @@ def _continuation_material(state: LoopState, current_events: list[dict]) -> dict
             handle: _material_fingerprint(record) for handle, record in records.items()
         },
     }
+
+
+def _model_only_context_turns(state: LoopState) -> list[dict]:
+    """复制无资料收尾所需的有界叙述，不携带工具或 Grove 引用元数据。"""
+
+    turns = []
+    for turn in state.history_turns:
+        answer_summary = turn.get("answer_summary") or {}
+        turns.append(
+            {
+                "turn": turn.get("turn"),
+                "user": str(turn.get("user") or ""),
+                "answer_summary": {
+                    "narrative": _shorten_middle(
+                        str(answer_summary.get("narrative") or ""),
+                        HISTORY_ANSWER_CHARS_PER_TURN,
+                    ),
+                    "references": [],
+                },
+                "completion": _history_completion_summary(turn.get("completion")),
+            }
+        )
+    return turns
+
+
+def _model_only_history(
+    state: LoopState,
+    message: str,
+    context_turns: list[dict] | None = None,
+) -> list[ModelMessage]:
+    """为无资料 finalizer 重建仅含用户话语和回答叙述的有界历史。"""
+
+    turns = context_turns if context_turns is not None else _model_only_context_turns(state)
+    minimal_turns: set[int] = set()
+
+    def rebuild() -> list[ModelMessage]:
+        messages = [
+            item
+            for index, turn in enumerate(turns)
+            for item in _history_turn_messages(
+                {**turn, "tools": []}, minimal=index in minimal_turns
+            )
+        ]
+        messages.append(ModelRequest(parts=[UserPromptPart(content=message)]))
+        return messages
+
+    messages = rebuild()
+    if estimate_input_tokens(messages) <= HISTORY_INPUT_TOKENS_TARGET:
+        return messages
+    for index in range(len(turns)):
+        minimal_turns.add(index)
+        messages = rebuild()
+        if estimate_input_tokens(messages) <= HISTORY_INPUT_TOKENS_TARGET:
+            break
+    return messages
 
 
 async def _database_material_refs(
@@ -3282,6 +3375,29 @@ async def _create_finalize_continuation(
     message: str,
     current_events: list[dict],
 ) -> ContinuationState:
+    if not state.tools_allowed:
+        reason_code, reason = _finalize_failure_reason(state)
+        return ContinuationState(
+            task_type="finalize_answer",
+            tool_name="finalize_answer",
+            scope={
+                "workspace_id": state.workspace_id,
+                "user_id": state.user_id,
+                "answer_basis": "model_only",
+            },
+            completed_steps=[{"step": "model_only_context_preserved"}],
+            pending_steps=[{"step": "finalize_answer"}],
+            stop_reason=f"{reason_code}: {reason}",
+            original_question=message,
+            recoverable_material={
+                "mode": "model_only",
+                "history_turns": _model_only_context_turns(state),
+                "records": {},
+                "evidence": {},
+                "events": [],
+            },
+            validation_refs={"mode": "model_only"},
+        )
     material = _continuation_material(state, current_events)
     entry_ids = sorted(
         {
@@ -3325,6 +3441,7 @@ async def _create_finalize_continuation(
         scope={
             "workspace_id": state.workspace_id,
             "user_id": state.user_id,
+            "answer_basis": "grove_material",
             "authorized_entry_ids": sorted(state.authorized_entry_ids),
         },
         completed_steps=[
@@ -3355,6 +3472,21 @@ async def _validate_finalize_continuation(
     if continuation.scope.get("user_id") != state.user_id:
         return False, "续执行用户与当前身份不一致"
     material = continuation.recoverable_material
+    answer_basis = continuation.scope.get("answer_basis", "grove_material")
+    if answer_basis == "model_only":
+        if material.get("mode") != "model_only":
+            return False, "无资料续执行的回答依据已失效"
+        if any(material.get(key) for key in ("records", "evidence", "events")):
+            return False, "无资料续执行不能携带 Grove 材料或工具事件"
+        if continuation.validation_refs.get("mode") != "model_only":
+            return False, "无资料续执行的校验范围不匹配"
+        if not continuation.original_question:
+            return False, "无资料续执行缺少原始问题"
+        if not isinstance(material.get("history_turns"), list):
+            return False, "无资料续执行缺少可恢复的对话上下文"
+        return True, None
+    if answer_basis != "grove_material":
+        return False, "续执行回答依据不受支持"
     if not material.get("records") and not material.get("evidence"):
         return False, "续执行没有保存可恢复材料"
     for handle, expected in material.get("record_fingerprints", {}).items():
@@ -3399,7 +3531,11 @@ async def _attach_finalize_continuation(
 ) -> bool:
     if state.instrumentation.finalize_status in {"not_needed", "completed", "cancelled"}:
         return False
-    if not _reliable_current_records(state) and not state.current_evidence:
+    if (
+        state.tools_allowed
+        and not _reliable_current_records(state)
+        and not state.current_evidence
+    ):
         return False
     try:
         continuation = await _create_finalize_continuation(state, message, current_events)
@@ -3421,13 +3557,16 @@ async def _attach_finalize_continuation(
             reason_code=reason_code,
             reason=reason,
         )
-    state.stop_state.status = TURN_PARTIAL_COMPLETED
+    model_only = continuation.scope.get("answer_basis") == "model_only"
+    state.stop_state.status = TURN_NOT_EXECUTED if model_only else TURN_PARTIAL_COMPLETED
     state.stop_state.reason_code = reason_code
     state.stop_state.reason = reason
     state.stop_state.can_continue = True
     state.stop_state.continuation = continuation
     state.stop_state.incomplete_steps = [
-        "来源已取得，可信度分析尚未完成"
+        "通用知识回答尚未生成"
+        if model_only
+        else "来源已取得，可信度分析尚未完成"
         if state.current_evidence
         else "材料已取得，最终回答尚未完成"
     ]
@@ -3439,8 +3578,12 @@ def _current_material_history(
     message: str,
     history: list[ModelMessage],
     current_events: list[dict],
+    *,
+    model_only_context: list[dict] | None = None,
 ) -> list[ModelMessage]:
     """把求解阶段已取得的当前轮材料重建为合法配对消息。"""
+    if not state.tools_allowed:
+        return _model_only_history(state, message, model_only_context)
     messages = [
         *_without_historical_system_prompts(history),
         ModelRequest(parts=[UserPromptPart(content=message)]),
@@ -3479,15 +3622,29 @@ async def _finalize_once(
     history: list[ModelMessage],
     current_events: list[dict],
     reason: str,
+    *,
+    model_only_context: list[dict] | None = None,
 ) -> object:
     """在独立时间窗内用当前轮已核验材料做唯一一次无工具收尾。"""
     state.instrumentation.begin_finalize(reason)
     before_logs = len(state.instrumentation.logs)
-    material_history = _current_material_history(state, message, history, current_events)
+    material_history = _current_material_history(
+        state,
+        message,
+        history,
+        current_events,
+        model_only_context=model_only_context,
+    )
+    finalizer_prompt = (
+        "求解阶段已停止。用户明确要求不使用知识库；请只基于通用知识和有界对话叙述"
+        "完成回答，并清楚说明它不是 Grove 材料或外部权威核验。"
+        if not state.tools_allowed
+        else "求解阶段已停止。请只根据本轮已获得并核验的材料收尾。"
+    )
     try:
         async with asyncio.timeout(FINALIZE_SECONDS):
             return await finalizer.run(
-                "求解阶段已停止。请只根据本轮已获得并核验的材料收尾。",
+                finalizer_prompt,
                 deps=LoopDeps(state),
                 message_history=material_history,
                 usage_limits=_usage_limits(1),
@@ -3567,16 +3724,24 @@ async def _run_finalize_continuation(
                 history,
                 list(material.get("events", [])),
                 "continuation_finalize_only",
+                model_only_context=(
+                    material.get("history_turns", [])
+                    if continuation.scope.get("answer_basis") == "model_only"
+                    else None
+                ),
             )
         except Exception as exc:  # noqa: BLE001
             reason_code, reason = _finalize_failure_reason(state)
             continuation.stop_reason = f"{reason_code}: {reason}"
+            model_only = continuation.scope.get("answer_basis") == "model_only"
             stop = StopState(
-                status=TURN_PARTIAL_COMPLETED,
+                status=TURN_NOT_EXECUTED if model_only else TURN_PARTIAL_COMPLETED,
                 reason_code=reason_code,
                 reason=reason,
                 incomplete_steps=[
-                    "来源已取得，可信度分析尚未完成"
+                    "通用知识回答尚未生成"
+                    if model_only
+                    else "来源已取得，可信度分析尚未完成"
                     if material.get("evidence")
                     else "材料已取得，最终回答尚未完成"
                 ],
@@ -3585,7 +3750,7 @@ async def _run_finalize_continuation(
             )
             state.stop(stop)
             text, blocks = _verified_failure_output(state, stop)
-            status = TURN_PARTIAL_COMPLETED
+            status = TURN_NOT_EXECUTED if model_only else TURN_PARTIAL_COMPLETED
             error = None
             error_details = state.instrumentation.finalize_failure or {
                 "category": reason_code,

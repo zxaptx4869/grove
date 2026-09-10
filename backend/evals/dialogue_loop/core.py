@@ -184,6 +184,7 @@ class ContinuationState:
         material = value.pop("recoverable_material", {})
         validation_refs = value.pop("validation_refs", {})
         value["material_summary"] = {
+            "answer_basis": material.get("mode", "grove_material"),
             "result_handles": sorted(material.get("records", {})),
             "evidence_handles": sorted(material.get("evidence", {})),
             "entry_ids": validation_refs.get("entry_ids", []),

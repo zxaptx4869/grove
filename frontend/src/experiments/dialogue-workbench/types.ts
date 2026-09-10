@@ -116,6 +116,7 @@ export interface Turn {
       task_type?: string
       pending_steps?: Array<Record<string, unknown>>
       material_summary?: {
+        answer_basis?: 'grove_material' | 'model_only'
         result_handles?: string[]
         evidence_handles?: string[]
         entry_ids?: number[]

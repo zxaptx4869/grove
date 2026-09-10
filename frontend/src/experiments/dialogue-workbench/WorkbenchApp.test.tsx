@@ -273,7 +273,11 @@ describe('知识 Agent 实验工作台', () => {
       continuation: {
         task_type: 'finalize_answer',
         pending_steps: [{ step: 'finalize_answer' }],
-        material_summary: { entry_ids: [7], source_ids: [66, 89] },
+        material_summary: {
+          answer_basis: 'grove_material',
+          entry_ids: [7],
+          source_ids: [66, 89],
+        },
       },
     }
     vi.mocked(api.bootstrap).mockResolvedValue(partial)
@@ -283,7 +287,35 @@ describe('知识 Agent 实验工作台', () => {
     expect(await screen.findByText('收尾工具调用已拦截')).toBeInTheDocument()
     expect(screen.getByText(/来源已取得，可信度分析尚未完成/)).toBeInTheDocument()
     expect(
-      screen.getByText('说“继续”将只重试最终回答，不重复已完成的查询或来源读取。'),
+      screen.getByText(
+        '说“继续”或“下一轮继续”将只重试最终回答，不重复已完成的查询或来源读取。',
+      ),
+    ).toBeInTheDocument()
+  })
+
+  it('无资料回答续执行明确保持知识库关闭', async () => {
+    const partial = structuredClone(state)
+    const turn = partial.sessions[0].conversations[0].turns[0]
+    turn.status = 'not_executed'
+    turn.stage = 'not_executed'
+    turn.completion = {
+      status: 'not_executed',
+      reason_code: 'finalize_output_invalid',
+      reason: '收尾输出未通过结构或引用校验',
+      incomplete_steps: ['通用知识回答尚未生成'],
+      can_continue: true,
+      continuation: {
+        task_type: 'finalize_answer',
+        pending_steps: [{ step: 'finalize_answer' }],
+        material_summary: { answer_basis: 'model_only' },
+      },
+    }
+    vi.mocked(api.bootstrap).mockResolvedValue(partial)
+
+    render(<WorkbenchApp />)
+
+    expect(
+      await screen.findByText('说“继续”或“下一轮继续”将保持不使用知识库，只重试最终回答。'),
     ).toBeInTheDocument()
   })
 

@@ -3781,6 +3781,114 @@ async def test_finalize_tool_attempt_is_blocked_and_resume_only_retries_answer()
 
 
 @pytest.mark.asyncio
+async def test_model_only_finalizer_drops_historical_material_and_supports_answer_only_continue(
+) -> None:
+    state = _state()
+    state.history_turns = [
+        {
+            "turn": 1,
+            "user": "甲醛是什么",
+            "answer_summary": {
+                "narrative": "上一轮说明了 ENF 的概念和讨论边界。",
+                "references": [
+                    {"kind": "evidence", "handle": "ev-old", "source_id": 66}
+                ],
+            },
+            "tools": [
+                {
+                    "tool": "read_evidence",
+                    "conditions": {"entry_id": 9, "source_ids": [66]},
+                    "status": "completed",
+                    "result_handle": "ev-old",
+                }
+            ],
+            "completion": {"status": "completed"},
+        }
+    ]
+    state.begin_turn(5, "抛开知识库，你觉得可信吗")
+    state.instrumentation.context_policy_enabled = True
+    provider_calls = []
+
+    def respond(messages, info):
+        provider_calls.append((messages, info))
+        if len(provider_calls) == 1:
+            return ModelResponse(
+                parts=[
+                    ToolCallPart(
+                        info.output_tools[0].name,
+                        {
+                            "blocks": [
+                                {
+                                    "kind": "evidence",
+                                    "evidence_handle": "ev-old",
+                                    "note": "历史来源",
+                                }
+                            ]
+                        },
+                    )
+                ]
+            )
+        return ModelResponse(
+            parts=[
+                ToolCallPart(
+                    info.output_tools[0].name,
+                    {
+                        "blocks": [
+                            {
+                                "kind": "text",
+                                "text": "这是基于通用知识的分析，不是 Grove 来源核验。",
+                            }
+                        ]
+                    },
+                )
+            ]
+        )
+
+    model = BudgetedModel(
+        FunctionModel(respond), state.instrumentation, request_scope="dialogue_agent"
+    )
+    finalizer = build_finalizer_agent(model)
+
+    try:
+        await loop_module._finalize_once(
+            finalizer,
+            state,
+            state.current_message,
+            build_compact_history(state),
+            [],
+            "output_validation_failed",
+        )
+    except Exception as exc:  # noqa: BLE001
+        assert type(exc).__name__ in {"UnexpectedModelBehavior", "ModelRetry"}
+    else:
+        pytest.fail("非法历史 Evidence 引用必须使无资料 finalizer 失败")
+
+    serialized = json.dumps(provider_calls[0][0], ensure_ascii=False, default=str)
+    assert "read_evidence" not in serialized
+    assert "ev-old" not in serialized
+    assert state.instrumentation.finalize_status == "invalid_output"
+    assert await loop_module._attach_finalize_continuation(
+        state, state.current_message, []
+    )
+    assert state.continuation is not None
+    assert state.continuation.scope["answer_basis"] == "model_only"
+    assert state.continuation.snapshot()["material_summary"]["answer_basis"] == "model_only"
+    assert "ev-old" not in json.dumps(state.continuation.snapshot(), ensure_ascii=False)
+
+    state.begin_turn(6, "下一轮继续")
+    completed, _ = await run_turn(
+        build_agent(model), state, "下一轮继续", [], finalizer
+    )
+
+    assert completed["status"] == "completed"
+    assert completed["tool_calls"] == []
+    assert len(provider_calls) == 2
+    assert state.continuation is None
+    assert state.tools_allowed is False
+    assert "不是 Grove 来源核验" in completed["answer"]
+
+
+@pytest.mark.asyncio
 async def test_finalize_continuation_rejects_forgery_permission_and_material_changes() -> None:
     from sqlalchemy import delete, update
 

@@ -441,7 +441,9 @@ function AssistantTurn({
                 {turn.completion.can_continue && (
                   <span>
                     {turn.completion.continuation?.task_type === 'finalize_answer'
-                      ? '说“继续”将只重试最终回答，不重复已完成的查询或来源读取。'
+                      ? turn.completion.continuation.material_summary?.answer_basis === 'model_only'
+                        ? '说“继续”或“下一轮继续”将保持不使用知识库，只重试最终回答。'
+                        : '说“继续”或“下一轮继续”将只重试最终回答，不重复已完成的查询或来源读取。'
                       : '可以下一轮继续未完成步骤。'}
                   </span>
                 )}

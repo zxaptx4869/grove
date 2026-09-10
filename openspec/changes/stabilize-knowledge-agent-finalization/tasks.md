@@ -10,15 +10,15 @@
 - [x] 2.2 检测并拒绝 finalizer 的资料工具调用，记录 `finalize_tool_attempted`，确保工具执行为零且不追加模型请求
 - [x] 2.3 保存包含问题、指代、授权范围、可恢复材料和指纹的 finalize-only continuation，并实现 Workspace、对象、来源关系与材料有效性复验
 - [x] 2.4 实现“继续”只调用 finalizer、成功后清理、主题切换清理和材料失效转重新核验，不重复成功搜索或读取
-- [ ] 2.5 将 `model_only` 回答依据传入 finalizer 和输出校验，过滤历史资料工具、授权集合与 Entry/Evidence 引用
-- [ ] 2.6 为无资料最终回答失败保存最小 answer-only continuation，支持“继续”和“下一轮继续”只重试回答
+- [x] 2.5 将 `model_only` 回答依据传入 finalizer 和输出校验，过滤历史资料工具、授权集合与 Entry/Evidence 引用
+- [x] 2.6 为无资料最终回答失败保存最小 answer-only continuation，支持“继续”和“下一轮继续”只重试回答
 
 ## 3. 工作台状态与离线回归
 
 - [x] 3.1 更新工作台公开完成状态和前端文案，准确区分来源已取得但分析未完成、非法工具尝试、输出失败、超时、系统故障与材料失效
 - [x] 3.2 补充四轮现场、历史压缩、软硬阈值、无工具 finalizer、续执行保存/恢复/清理/失效及预算常量测试
 - [x] 3.3 运行第三批授权集合、搜索去重、位置指代、Workspace/目录/统计/正文/候选稿只读回归，修复本 change 引入的问题
-- [ ] 3.4 补充人工验收现场回归，验证无资料收尾不引用历史 Evidence、失败可续执行且不重复资料读取
+- [x] 3.4 补充离线回归，验证无资料收尾不引用历史 Evidence、失败可续执行且不重复资料读取；工作台真实现场仍待用户验收
 
 ## 4. 验证与交付
 
@@ -37,6 +37,9 @@
 - 收尾：`git diff --check` 通过；全库 `openspec validate --all --strict` 再次通过，61 passed、0 failed。
 - 预算：离线测试断言软阈值 9000、硬上限 12000、文本请求 12、工具 8、Entry 30、Evidence 20、单轮 120 秒、批次文本 192 和向量 64 均未提高。
 - 边界：以上 FunctionModel 与离线回归只证明历史、工具、授权、续执行和状态合同，不证明真实模型对自然语言指代及可信度回答质量已经通过；未运行真实模型评测，也未勾选人工验收。
+- 本次缺口回归（2026-09-10）：新增 `model_only` finalizer 历史过滤、非法历史 Evidence 拒绝、answer-only continuation 保存/快照脱敏、“下一轮继续”只重试回答和零资料工具调用测试；定向对话循环测试通过。
+- 前端提示更新为同时接受“继续”和“下一轮继续”；工作台 Vitest 138 个测试、TypeScript/Vite build 通过，ESLint 0 error，保留 `DirectoryDraftDialog.tsx` 两条既有 Hook dependency warning。
+- 后端受影响测试单独运行通过；全文件串行运行时，既有 `_seed_finalize_material` 使用 `id(state)` 生成用户名，在长测试进程中可能因 Python 对象地址复用触发 SQLite 唯一键冲突，单测重跑通过，未将该测试夹具问题归入本次业务回归。
 
 ## 工作台人工验收清单
 
