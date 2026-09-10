@@ -38,7 +38,7 @@
 - 预算：离线测试断言软阈值 9000、硬上限 12000、文本请求 12、工具 8、Entry 30、Evidence 20、单轮 120 秒、批次文本 192 和向量 64 均未提高。
 - 边界：以上 FunctionModel 与离线回归只证明历史、工具、授权、续执行和状态合同，不证明真实模型对自然语言指代及可信度回答质量已经通过；未运行真实模型评测，也未勾选人工验收。
 - 本次缺口回归（2026-09-10）：新增 `model_only` finalizer 历史过滤、非法历史 Evidence 拒绝、answer-only continuation 保存/快照脱敏、“下一轮继续”只重试回答和零资料工具调用测试；定向对话循环测试通过。
-- 前端提示更新为同时接受“继续”和“下一轮继续”；工作台 Vitest 138 个测试、TypeScript/Vite build 通过，ESLint 0 error，保留 `DirectoryDraftDialog.tsx` 两条既有 Hook dependency warning。
+- 前端提示更新为同时接受“继续”和“下一轮继续”；工作台 Vitest 139 个测试、TypeScript/Vite build 通过，ESLint 0 error，保留 `DirectoryDraftDialog.tsx` 两条既有 Hook dependency warning。
 - 后端受影响测试单独运行通过；全文件串行运行时，既有 `_seed_finalize_material` 使用 `id(state)` 生成用户名，在长测试进程中可能因 Python 对象地址复用触发 SQLite 唯一键冲突，单测重跑通过，未将该测试夹具问题归入本次业务回归。
 
 ## 工作台人工验收清单
