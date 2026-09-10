@@ -105,6 +105,19 @@ NO_KNOWLEDGE_PATTERNS = (
     "别查库",
     "不用查知识库",
     "不要查知识库",
+    "抛开知识库",
+    "不参考知识库",
+    "别参考知识库",
+    "不要参考知识库",
+    "不考虑知识库",
+    "不用知识库",
+)
+MODEL_ANSWERABLE_TARGET_PATTERNS = (
+    "通用知识",
+    "通用常识",
+    "一般知识",
+    "主观判断",
+    "个人判断",
 )
 CONTINUE_PATTERNS = ("继续", "接着", "剩下", "未完成")
 FINALIZE_CONTINUE_MESSAGES = {
@@ -165,6 +178,23 @@ def _candidate_revision_requested(message: str) -> bool:
     if any(pattern in normalized for pattern in DIRECT_WRITE_PATTERNS):
         return False
     return any(pattern in normalized for pattern in CANDIDATE_REVISION_PATTERNS)
+
+
+def _knowledge_tools_disabled(message: str) -> bool:
+    """只识别用户明确给出的知识库范围否定，不推断业务问题意图。"""
+
+    normalized = re.sub(r"[，。！？!?,\s]", "", message).casefold()
+    return any(
+        re.sub(r"[，。！？!?,\s]", "", pattern).casefold() in normalized
+        for pattern in NO_KNOWLEDGE_PATTERNS
+    )
+
+
+def _unsupported_target_is_model_answerable(target: str, reason: str) -> bool:
+    """识别模型把自身通用回答能力误报为外部工具能力缺失的情况。"""
+
+    description = f"{target}\n{reason}".casefold()
+    return any(pattern in description for pattern in MODEL_ANSWERABLE_TARGET_PATTERNS)
 
 
 def _contextual_search_follow_up(message: str) -> bool:
@@ -276,7 +306,7 @@ class LoopState:
         self.current_evidence.clear()
         self.stop_state = None
         self.queried_directory_parents.clear()
-        self.tools_allowed = not any(pattern in message for pattern in NO_KNOWLEDGE_PATTERNS)
+        self.tools_allowed = not _knowledge_tools_disabled(message)
         if (
             self.continuation is not None
             and self.continuation.task_type == "finalize_answer"
@@ -1898,6 +1928,18 @@ def build_agent(model) -> Agent[LoopDeps, DialogueAnswer]:
         )
 
     @agent.instructions
+    def model_only_discussion_instruction(ctx: RunContext[LoopDeps]) -> str:
+        if ctx.deps.state.tools_allowed:
+            return ""
+        return (
+            "用户明确要求本轮不使用知识库。不要调用搜索、目录、Entry 或 Evidence 工具；"
+            "模型通用知识和带清晰边界的主观分析仍属于可用回答能力，不得仅因无法核验外部"
+            "标准原文而调用 report_unsupported。请直接用 final_result 回答，并明确内容属于"
+            "模型通用分析，不是 Grove 正式记录、Source 原文、实时外部资料或权威核验。"
+            "只有任务确实依赖未提供的联网、外部原文读取、写入或其他未注册能力时，才报告不支持。"
+        )
+
+    @agent.instructions
     def candidate_revision_instruction(ctx: RunContext[LoopDeps]) -> str:
         if not _candidate_revision_requested(ctx.deps.state.current_message):
             return ""
@@ -1921,12 +1963,21 @@ def build_agent(model) -> Agent[LoopDeps, DialogueAnswer]:
     async def report_unsupported(
         ctx: RunContext[LoopDeps], target: str, reason: str
     ) -> dict:
-        """当前白名单没有支持目标对象的只读能力时，记录能力不足并停止尝试替代查询。"""
+        """目标确实依赖联网、写入或未注册只读能力时，记录能力不足并停止。"""
 
         if _candidate_revision_requested(ctx.deps.state.current_message):
             raise ModelRetry(
                 "当前用户只要求生成供审核的候选修改稿，不是写入请求。请不要调用 "
                 "report_unsupported，改用 final_result 输出候选稿，并明确尚未写入知识库。"
+            )
+        if (
+            not ctx.deps.state.tools_allowed
+            and _unsupported_target_is_model_answerable(target, reason)
+        ):
+            raise ModelRetry(
+                "用户明确要求不使用知识库，但通用知识和带边界的主观分析仍可直接回答。"
+                "请不要调用 report_unsupported；改用 final_result，并明确这不是 Grove "
+                "正式记录、外部实时资料或权威核验。"
             )
 
         event = {

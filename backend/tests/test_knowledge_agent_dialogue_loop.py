@@ -820,6 +820,122 @@ def test_no_knowledge_instruction_is_programmatically_recorded() -> None:
     assert state.tools_allowed is False
     state.begin_turn(6, "先别查库，聊聊怎样安排间隔复习")
     assert state.tools_allowed is False
+    state.begin_turn(7, "抛开知识库，你觉得这条说法可信吗")
+    assert state.tools_allowed is False
+
+
+@pytest.mark.asyncio
+async def test_model_only_opinion_corrects_false_unsupported_without_knowledge_tools() -> None:
+    """明确抛开知识库时，通用判断可回答，模型误报不支持不会覆盖正确结果。"""
+
+    state = _state()
+    state.remember_turn(
+        "第二条主要讲了什么，可信吗",
+        "第二条是日本 F4 星级，来源是个人整理，具体标准建议核验原文。",
+        [],
+    )
+    message = "抛开知识库，你觉得可信吗"
+    state.begin_turn(3, message)
+    calls = 0
+
+    def respond(_messages, info):
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            return ModelResponse(
+                parts=[
+                    ToolCallPart(
+                        "report_unsupported",
+                        {
+                            "target": "对知识库外通用知识可信度的主观评价",
+                            "reason": (
+                                "当前白名单只支持知识库只读查询，无法核验外部标准原文"
+                                "或给出权威可信度结论"
+                            ),
+                        },
+                    )
+                ]
+            )
+        assert info.function_tools
+        return ModelResponse(
+            parts=[
+                ToolCallPart(
+                    info.output_tools[0].name,
+                    {
+                        "blocks": [
+                            {
+                                "kind": "text",
+                                "text": (
+                                    "抛开知识库，从通用知识看，这条说法方向基本合理，"
+                                    "但具体限值和认证条件仍应以标准原文为准。"
+                                    "这是模型通用分析，不是外部实时核验。"
+                                ),
+                            }
+                        ]
+                    },
+                )
+            ]
+        )
+
+    turn, _ = await run_turn(build_agent(FunctionModel(respond)), state, message, [])
+
+    assert calls == 2
+    assert turn["status"] == "completed"
+    assert turn["completion"]["reason_code"] == "completed"
+    assert turn["tool_calls"] == []
+    assert state.current_evidence == set()
+    assert "方向基本合理" in turn["answer"]
+    assert "不是外部实时核验" in turn["answer"]
+    assert "tool_capability_missing" not in json.dumps(turn, ensure_ascii=False)
+
+
+@pytest.mark.asyncio
+async def test_no_knowledge_external_verification_remains_unsupported() -> None:
+    """禁用知识库不等于获得联网能力，外部官方原文核验仍必须明确不支持。"""
+
+    state = _state()
+    message = "抛开知识库，帮我联网核验最新 JAS 官方标准原文"
+    state.begin_turn(3, message)
+    calls = 0
+
+    def respond(_messages, info):
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            return ModelResponse(
+                parts=[
+                    ToolCallPart(
+                        "report_unsupported",
+                        {
+                            "target": "联网读取并核验最新 JAS 官方标准原文",
+                            "reason": "当前没有联网或外部标准原文读取能力",
+                        },
+                    )
+                ]
+            )
+        return ModelResponse(
+            parts=[
+                ToolCallPart(
+                    info.output_tools[0].name,
+                    {
+                        "blocks": [
+                            {
+                                "kind": "insufficient",
+                                "text": "当前不能联网读取或核验最新官方标准原文。",
+                            }
+                        ]
+                    },
+                )
+            ]
+        )
+
+    turn, _ = await run_turn(build_agent(FunctionModel(respond)), state, message, [])
+
+    assert turn["status"] == "unsupported"
+    assert turn["completion"]["reason_code"] == "tool_capability_missing"
+    assert calls == 2
+    assert [event["tool"] for event in turn["tool_calls"]] == ["report_unsupported"]
+    assert "没有联网或外部标准原文读取能力" in turn["answer"]
 
 
 @pytest.mark.asyncio
