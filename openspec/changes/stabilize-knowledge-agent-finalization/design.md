@@ -1,0 +1,72 @@
+## Context
+
+第三批已在实验统一循环中建立语义候选分层、单一授权结果集合、位置指代、搜索去重与精确部分完成状态。本 change 只处理长对话和收尾阶段暴露的四个相连缺口。真实失败发生在 `session-20260909-222648 / e49b01d3-db3e-47dd-bfa4-8cfc84160e7a` 第四轮：模型已正确将“第一条”解析为 ENF，但第一次正常请求投影约 9028，未派发便进入 finalize；原 Agent 在唯一收尾请求中实际执行 `read_evidence(7,[66,89])`，随后因 `request_limit=1` 无法组织最终回答，且没有可恢复 continuation。
+
+当前 `build_compact_history` 会压缩工具结果，却把完整 `turn["answer"]` 作为 `TextPart` 写回历史。渲染答案包含 Entry 正文和 Evidence 原文，因而程序侧材料又以长文本进入模型历史。`BudgetedModel` 也把 9000 软阈值应用到本轮第一次请求；收尾只删除 Provider schema 中的 function tools，却复用注册了工具的 Agent。
+
+## Goals / Non-Goals
+
+**Goals:**
+
+- 让模型历史只携带继续对话所需的有界语义和对象映射，正文与来源材料留在程序侧。
+- 保持所有预算数值不变，修正第一次请求与后续请求的软阈值触发时机。
+- 让 finalizer 在程序级没有资料工具执行能力，并保留一次请求上限。
+- 让“材料已经取得、只差最终回答”的失败可以在同一工作台进程内真实续执行。
+- 保持第三批授权集合、来源边界、只读与 Workspace 隔离。
+
+**Non-Goals:**
+
+- 不实现分页、全局查询效率优化或输入估算算法重做。
+- 不新增摘要、规划、分类或评分模型，不提高上下文、工具、文本或时间预算。
+- 不把 continuation 扩展为可跨服务重启恢复的通用任务系统。
+- 不接入正式 App/API/Worker，不新增任何 Entry/Source 写权限。
+
+## Decisions
+
+### 1. 历史采用结构化摘要块与分级确定性压缩
+
+`LoopState.remember_turn` 改为接收渲染后的结构化回答块和 completion，而不是完整回答字符串。每轮历史记录包含：用户原话、工具结构摘要、普通文字/不足说明的有界摘要、回答引用元数据和未完成状态。`entry` 与 `evidence` 块只记录 Entry/Source/Attachment ID、句柄、状态与关系，不记录 `content`、`quote` 或渲染 `text`；列表顺序继续由工具摘要和 `result_sets` 保存。
+
+单轮普通回答摘要上限设为 1200 个 Unicode 字符，优先保留首尾以兼顾核心结论、候选性质和后续建议。整体历史使用既有输入估算器控制在 5000 token 目标内：先移除较早轮次的非必要普通回答摘要，只保留用户原话、决定/缺口标记和对象映射；再把较早工具摘要缩为条件、状态、句柄、统计及有序对象/来源关系。这个目标是上下文装配边界，不改变 9000/12000 请求预算。若用户原话与必要映射本身仍使完整请求超过 12000，则拒绝派发并说明硬限制。
+
+不采用对渲染字符串做关键字删除，因为它无法可靠区分模型分析、Entry 正文和 Evidence 原文，也容易删除后续承接信息；不新增摘要模型以避免额外语义漂移和预算。
+
+### 2. 软阈值判断使用本轮正常请求序号
+
+`BudgetedModel` 在 `phase=solve` 时读取本轮已经派发的文本请求数。计数为零时，9000 软阈值不触发 finalize，但完整请求仍经过 12000 硬门禁、文本/批次预算与时间预算；计数大于零时，投影达到 9000 就转入 finalize，不依赖工具是否成功或是否取得材料。保留最后一个文本请求给收尾的既有规则仍然优先生效。
+
+这不是提高预算：9000、12000、单轮 12 次文本、8 次工具、30 个 Entry、20 个 Evidence、120 秒求解、15 秒收尾和批次上限全部保持原值。
+
+### 3. Finalizer 使用单独 Agent 且只注册结构化输出
+
+`build_finalizer_agent` 与普通 `build_agent` 共用同一已包装模型、`DialogueAnswer`、模型设置和引用校验，但不装饰任何资料工具，也不注入普通阶段的动态工具 instructions。`_finalize_once` 只接收该 Agent。Instrumentation 在 finalize 响应中检测除输出工具外的任何 ToolCallPart；一旦发现，立即记录 `finalize_tool_attempted` 并抛出确定性失败，不把响应交给可执行资料工具的运行时，也不追加请求。
+
+只在 Provider 参数层隐藏 schema 仍不足以阻止原 Agent 按模型输出找到已注册工具，因此不再作为隔离手段。独立多模型规划架构不在本次范围内。
+
+### 4. Finalize-only continuation 保存内存材料，公开记录只保存摘要
+
+`ContinuationState` 增加只用于 `finalize_answer` 的原始问题、已解析指代、授权集合快照、已确认 result/evidence 材料副本和材料指纹。材料副本仅存在当前服务进程的 `LoopState`；`snapshot()` 返回工作台可保存的有界元数据和指纹，不返回完整正文或来源原文。浏览器刷新仍通过当前 runtime context 续执行；服务重启后旧对话继续按现有规则只读，不承诺恢复内存材料。
+
+continuation 在收尾失败且存在当前轮可展示材料时建立，唯一 pending step 为 `finalize_answer`。收到明确“继续”时，`run_turn` 在进入普通 Agent 前识别该状态，执行程序侧材料复验，然后直接调用 finalizer。其他消息视为新主题并清理旧 finalize-only continuation，不强制恢复。
+
+复验在隔离数据库中直接查询 WorkspaceMember、Entry、Project、EntrySourceEvidence、Source 与 Attachment，不调用模型资料工具，也不新增工具审计。Entry 标题/正文、来源标题、关联 quote、Attachment 文本及相关 ID 形成 SHA-256 指纹；任何成员关系、Workspace 归属、对象存在性、来源关系或指纹变化都使材料失效。失效时清除 continuation，并返回 `continuation_material_invalid`，要求重新核验。
+
+### 5. 状态与工作台只表达真实可恢复能力
+
+收尾失败原因沿用 `StopState`/`finalization`/`completion`：分别记录预算、`finalize_tool_attempted`、输出校验、超时、Provider/系统故障和 `continuation_material_invalid`。若当前材料包含 Evidence，确定性文案明确“来源已取得，可信度分析尚未完成”；只有 completion 中确实带 `finalize_answer` continuation 时才提示“说继续仅重试最终回答”。前端增加对应原因标签和续执行文案，不创建新的视觉结构或通用任务界面。
+
+## Risks / Trade-offs
+
+- [1200 字符摘要可能遗漏较早回答细节] → 首尾保留并把对象、状态、决定和后续建议独立结构化；完整材料仍在程序侧按需装配。
+- [直接数据库复验与工具合同重复一部分校验] → 复验仅判断已保存材料能否复用，不生成新 Evidence、不消费资料工具预算，并覆盖相同 Workspace/对象/来源边界。
+- [工作台服务重启会丢失可续材料] → 明确限定同进程刷新恢复；旧运行继续只读，避免宣称不可实现的持久化恢复。
+- [模型可能输出未声明的工具名] → Instrumentation 在响应离开模型层前识别并终止，测试断言资料工具实际执行次数为零且请求数为一。
+- [首次 9000–12000 请求会增加一次正常模型调用机会] → 仍受硬门禁及所有冻结预算约束，并在诊断中记录首次请求软阈值例外。
+
+## Migration Plan
+
+仅修改实验循环和工作台，不涉及数据库迁移。实施后先用 FunctionModel 和隔离数据库测试验证，再运行后端、前端与 OpenSpec 静态检查。若回滚，恢复本 change 的本地提交即可；工作台历史 JSON 继续兼容新增的可选诊断字段。
+
+## Open Questions
+
+无。跨服务重启的 continuation 恢复、分页与其他第四批效率事项留在本 change 之外。
