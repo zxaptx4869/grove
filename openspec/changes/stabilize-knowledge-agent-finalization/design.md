@@ -55,6 +55,14 @@ continuation 在收尾失败且存在当前轮可展示材料时建立，唯一 
 
 收尾失败原因沿用 `StopState`/`finalization`/`completion`：分别记录预算、`finalize_tool_attempted`、输出校验、超时、Provider/系统故障和 `continuation_material_invalid`。若当前材料包含 Evidence，确定性文案明确“来源已取得，可信度分析尚未完成”；只有 completion 中确实带 `finalize_answer` continuation 时才提示“说继续仅重试最终回答”。前端增加对应原因标签和续执行文案，不创建新的视觉结构或通用任务界面。
 
+### 6. 回答依据贯穿 finalizer 与 answer-only continuation
+
+`LoopState` 在每轮开始时确定回答依据：默认允许使用经授权的 Grove 材料；用户以高置信表达明确要求“抛开/不使用知识库”时切换为 `model_only`。该值不是新的意图分类，而是已有确定性资料工具禁用边界的结构化表示，并传入独立 finalizer、输出校验与 continuation。它只关闭 Grove 资料路径，不放宽外部核验、写入、Workspace 或对象权限。
+
+`model_only` finalizer 从结构化历史中只装配用户原话、必要顺序、普通回答的有界结论与后续建议；历史 ToolCall/ToolReturn、授权结果集合、Entry/Evidence 引用元数据及程序侧材料均不进入请求。finalizer 获得显式动态指令：可以基于通用知识给出带边界的分析，但不得声称查询、核验或引用 Grove，不得输出 Entry、Evidence、列表或统计块。输出校验再次执行相同约束，避免提示词成为唯一防线。
+
+若 `model_only` finalizer 仍因输出校验、超时或系统故障失败，即使本轮没有 Grove 材料，也建立最小 answer-only continuation。它只保存原始问题、已解析对象的有界叙述上下文、`model_only` 策略、完成/待办步骤和 Workspace/用户作用域；公开快照不返回完整上下文。收到“继续”或“下一轮继续”时先恢复该策略并直接调用 finalizer，不调用数据库材料复验或任何资料工具；主题切换仍清理旧待办。数据库材料 continuation 继续沿用既有指纹复验，两种模式都只允许一次最终回答请求。
+
 ## Risks / Trade-offs
 
 - [1200 字符摘要可能遗漏较早回答细节] → 首尾保留并把对象、状态、决定和后续建议独立结构化；完整材料仍在程序侧按需装配。
@@ -62,6 +70,7 @@ continuation 在收尾失败且存在当前轮可展示材料时建立，唯一 
 - [工作台服务重启会丢失可续材料] → 明确限定同进程刷新恢复；旧运行继续只读，避免宣称不可实现的持久化恢复。
 - [模型可能输出未声明的工具名] → Instrumentation 在响应离开模型层前识别并终止，测试断言资料工具实际执行次数为零且请求数为一。
 - [首次 9000–12000 请求会增加一次正常模型调用机会] → 仍受硬门禁及所有冻结预算约束，并在诊断中记录首次请求软阈值例外。
+- [无资料 continuation 可能把过时讨论带入新问题] → 仅响应明确继续表达，保存有界叙述上下文；其他输入一律按主题切换清理，不自动恢复。
 
 ## Migration Plan
 

@@ -49,6 +49,14 @@
 - **WHEN** finalizer 输出非法句柄、结构不合法、请求超时或发生 Provider 故障
 - **THEN** 程序不追加第二次模型请求，并确定性展示可展示的已确认材料及具体缺口
 
+#### Scenario: 明确不使用知识库后转入收尾
+- **WHEN** 用户明确要求抛开知识库，普通阶段输出校验失败并在后续请求达到软阈值后转入 finalizer
+- **THEN** finalizer 继承 `model_only` 回答依据，只接收必要的有界叙述上下文，不接收历史 ToolCall、ToolReturn、授权列表或 Entry/Evidence 句柄，并可基于通用知识完成带边界的回答
+
+#### Scenario: 无资料 finalizer 尝试引用历史记录
+- **WHEN** `model_only` finalizer 输出 Entry、Evidence、正式记录列表或声称已查询 Grove
+- **THEN** 程序拒绝该输出，不执行任何资料工具，不把历史材料引用渲染给用户，也不追加第二次模型请求
+
 ### Requirement: 已取得材料的最终回答必须可续执行
 当搜索、Entry 或 Evidence 材料已经成功取得，但最终回答因非法工具尝试、输出校验失败、超时或系统故障未完成时，系统 MUST 保存 finalize-only continuation。该状态 MUST 包含原始待完成问题、已解析指代、授权集合与范围、已成功读取材料的可恢复副本、Entry/Source/Attachment 关系及材料指纹、已完成步骤和唯一待完成的最终回答步骤；公开快照 MUST 只暴露有界元数据，不重复泄露完整正文。用户明确说“继续”且没有切换主题时，系统 MUST 先复验 Workspace 成员关系、对象归属、授权集合、来源关系与材料指纹，再只重试最终回答，不得重新搜索或重复调用成功的 `read_entries`/`read_evidence`。
 
@@ -71,6 +79,14 @@
 #### Scenario: 续执行成功
 - **WHEN** finalizer 使用有效 continuation 生成并通过校验的最终回答
 - **THEN** 系统清理待办状态，后续“继续”不重复执行已经完成的旧任务
+
+#### Scenario: 无资料最终回答失败后继续
+- **WHEN** 用户明确要求不使用知识库，finalizer 因输出非法、超时或系统故障未完成，且本轮没有 Grove Entry 或 Evidence 材料
+- **THEN** 系统保存只含原始问题、必要有界叙述上下文、作用域和 `model_only` 策略的 answer-only continuation，不把参数错误或未执行查询伪装为已取得资料
+
+#### Scenario: 下一轮继续无资料回答
+- **WHEN** 存在有效的 `model_only` answer-only continuation，用户输入“继续”或“下一轮继续”
+- **THEN** 系统恢复不使用知识库的约束并只调用一次 finalizer，新增搜索、Entry 读取和 Evidence 读取次数均为零；成功后清理 continuation
 
 ### Requirement: 部分完成状态必须与真实可恢复能力一致
 已取得来源但未完成分析时，轮次 MUST 表达“来源已取得，分析尚未完成”，并且只有实际保存可恢复 continuation 时才提示用户说“继续”。没有可展示材料、参数错误或资料工具未执行时 MUST NOT 伪装为有效部分完成。原因码 MUST 区分预算边界、`finalize_tool_attempted`、输出校验失败、超时、系统故障和材料失效，同时复用现有状态机制，不另建通用任务系统。
