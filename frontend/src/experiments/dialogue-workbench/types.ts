@@ -112,7 +112,18 @@ export interface Turn {
     reason?: string
     incomplete_steps?: string[]
     can_continue?: boolean
-    continuation?: Record<string, unknown> | null
+    continuation?: {
+      task_type?: string
+      pending_steps?: Array<Record<string, unknown>>
+      material_summary?: {
+        result_handles?: string[]
+        evidence_handles?: string[]
+        entry_ids?: number[]
+        source_ids?: number[]
+        fingerprint_count?: number
+      }
+      [key: string]: unknown
+    } | null
   } | null
   persistence?: Record<string, unknown> | null
   isolation_check?: Record<string, unknown> | null
@@ -163,6 +174,8 @@ export interface WorkbenchState {
     tool_calls_per_turn: number
     model_input_tokens_per_request: number
     input_estimate_soft_limit: number
+    history_answer_chars_per_turn?: number
+    history_input_tokens_target?: number
     solve_seconds_per_turn: number
     finalize_seconds: number
     used: { text_requests: number; embedding_requests: number }

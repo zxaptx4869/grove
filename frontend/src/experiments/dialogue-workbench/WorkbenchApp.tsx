@@ -62,7 +62,13 @@ const COMPLETION_LABELS: Record<string, string> = {
   evidence_read_budget: '预算耗尽',
   text_request_budget: '预算耗尽',
   input_hard_limit: '预算耗尽',
+  finalize_budget_boundary: '预算耗尽',
   time_budget: '预算耗尽',
+  finalize_tool_attempted: '收尾工具调用已拦截',
+  finalize_output_invalid: '最终回答校验失败',
+  finalize_timeout: '最终回答超时',
+  finalize_system_failure: '最终回答系统故障',
+  continuation_material_invalid: '续执行材料已失效',
   tool_capability_missing: '能力不支持',
   tool_not_available: '能力不支持',
   system_error: '系统故障',
@@ -433,7 +439,11 @@ function AssistantTurn({
                   <span>未完成：{turn.completion.incomplete_steps.join('；')}</span>
                 )}
                 {turn.completion.can_continue && (
-                  <span>可以下一轮继续未完成步骤。</span>
+                  <span>
+                    {turn.completion.continuation?.task_type === 'finalize_answer'
+                      ? '说“继续”将只重试最终回答，不重复已完成的查询或来源读取。'
+                      : '可以下一轮继续未完成步骤。'}
+                  </span>
                 )}
               </div>
             </div>

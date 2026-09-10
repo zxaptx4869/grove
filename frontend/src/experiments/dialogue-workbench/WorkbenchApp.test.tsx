@@ -36,11 +36,13 @@ const state: WorkbenchState = {
   budget: {
     text_requests_per_batch: 192,
     embedding_requests_per_batch: 64,
-    text_requests_per_turn: 8,
+    text_requests_per_turn: 12,
     embedding_requests_per_turn: 4,
-    tool_calls_per_turn: 12,
-    model_input_tokens_per_request: 8192,
-    input_estimate_soft_limit: 6500,
+    tool_calls_per_turn: 8,
+    model_input_tokens_per_request: 12000,
+    input_estimate_soft_limit: 9000,
+    history_answer_chars_per_turn: 1200,
+    history_input_tokens_target: 5000,
     solve_seconds_per_turn: 120,
     finalize_seconds: 15,
     used: { text_requests: 1, embedding_requests: 0 },
@@ -255,6 +257,34 @@ describe('知识 Agent 实验工作台', () => {
     expect(screen.getByText('本轮工具动作预算已耗尽')).toBeInTheDocument()
     expect(screen.getByText(/未完成：未核验剩余目录/)).toBeInTheDocument()
     expect(screen.getByText('可以下一轮继续未完成步骤。')).toBeInTheDocument()
+  })
+
+  it('最终回答续执行只提示重试回答并显示工具拦截原因', async () => {
+    const partial = structuredClone(state)
+    const turn = partial.sessions[0].conversations[0].turns[0]
+    turn.status = 'partial_completed'
+    turn.stage = 'partial_completed'
+    turn.completion = {
+      status: 'partial_completed',
+      reason_code: 'finalize_tool_attempted',
+      reason: '收尾模型尝试调用资料工具',
+      incomplete_steps: ['来源已取得，可信度分析尚未完成'],
+      can_continue: true,
+      continuation: {
+        task_type: 'finalize_answer',
+        pending_steps: [{ step: 'finalize_answer' }],
+        material_summary: { entry_ids: [7], source_ids: [66, 89] },
+      },
+    }
+    vi.mocked(api.bootstrap).mockResolvedValue(partial)
+
+    render(<WorkbenchApp />)
+
+    expect(await screen.findByText('收尾工具调用已拦截')).toBeInTheDocument()
+    expect(screen.getByText(/来源已取得，可信度分析尚未完成/)).toBeInTheDocument()
+    expect(
+      screen.getByText('说“继续”将只重试最终回答，不重复已完成的查询或来源读取。'),
+    ).toBeInTheDocument()
   })
 
   it('直接相关集合使用专用标题且读取失败显示精确状态', async () => {
