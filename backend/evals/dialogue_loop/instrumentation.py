@@ -50,6 +50,10 @@ class FinalizeRequired(RuntimeError):
     """求解阶段已到停止点，必须转入独立收尾阶段。"""
 
 
+class FinalizeToolAttempted(RuntimeError):
+    """独立 finalizer 输出了未注册的资料工具调用。"""
+
+
 @dataclass(frozen=True)
 class InputEstimate:
     tokens: int
@@ -510,7 +514,7 @@ class BudgetedModel(Model):
         reason = None
         if self.state.phase == "finalize":
             reason = self.state.finalize_reason or "explicit_finalize"
-        elif estimate >= INPUT_ESTIMATE_SOFT_LIMIT:
+        elif turn_requests > 0 and estimate >= INPUT_ESTIMATE_SOFT_LIMIT:
             reason = "input_soft_limit"
         elif (
             turn_requests >= PER_TURN_TEXT_REQUESTS - 1
@@ -578,8 +582,9 @@ class BudgetedModel(Model):
         dispatched = estimate_input(dispatched_messages, dispatched_parameters)
         dispatched_estimate = dispatched.tokens
         if self.state.context_policy_enabled and dispatched_estimate > MODEL_INPUT_TOKENS_LIMIT:
+            stage_name = "预算收尾" if finalize_only else "完整请求"
             error = (
-                f"预算收尾输入长度估算 {dispatched_estimate} 超过 "
+                f"{stage_name}输入长度估算 {dispatched_estimate} 超过 "
                 f"{MODEL_INPUT_TOKENS_LIMIT}，未派发请求"
             )
             self.state.logs.append(
@@ -697,7 +702,28 @@ class BudgetedModel(Model):
         actual_input = _actual_input(usage)
         finish_reason = to_jsonable_python(getattr(response, "finish_reason", None))
         public_response = _public_response(response)
+        unexpected_finalize_tools = (
+            [
+                part.tool_name
+                for part in response.parts
+                if isinstance(part, ToolCallPart)
+                and part.tool_name
+                not in {tool.name for tool in dispatched_parameters.output_tools}
+            ]
+            if finalize_only
+            else []
+        )
         response_validation = (
+            {
+                "category": "finalize_tool_attempted",
+                "message": (
+                    "独立收尾响应尝试调用未注册资料工具："
+                    + "、".join(unexpected_finalize_tools)
+                ),
+                "errors": [{"tool_name": name} for name in unexpected_finalize_tools],
+            }
+            if unexpected_finalize_tools
+            else (
             _schema_diagnostic(
                 response,
                 {tool.name for tool in dispatched_parameters.output_tools},
@@ -706,6 +732,7 @@ class BudgetedModel(Model):
             )
             if self.request_scope == "dialogue_agent"
             else None
+            )
         )
         self.state.logs.append(
             InvocationLog(
@@ -727,11 +754,27 @@ class BudgetedModel(Model):
                 finish_reason=finish_reason,
                 public_response=public_response,
                 response_validation=response_validation,
-                error_kind="truncated"
-                if finish_reason in {"length", "max_tokens"}
-                else None,
+                error_kind=(
+                    "finalize_tool_attempted"
+                    if unexpected_finalize_tools
+                    else "truncated"
+                    if finish_reason in {"length", "max_tokens"}
+                    else None
+                ),
             )
         )
+        if unexpected_finalize_tools:
+            error = response_validation["message"]
+            self.state.finalize_status = "tool_attempted"
+            self.state.finalize_error = error
+            self.state.finalize_failure = {
+                "category": "finalize_tool_attempted",
+                "message": error,
+                "exception_chain": [],
+                "validation": response_validation,
+                "public_response": public_response,
+            }
+            raise FinalizeToolAttempted(error)
         return response
 
     async def count_tokens(self, messages, model_settings, model_request_parameters):

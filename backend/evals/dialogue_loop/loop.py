@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
 import re
 from dataclasses import asdict, dataclass, field, replace
@@ -26,6 +27,8 @@ from sqlalchemy import select
 
 from evals.dialogue_loop.core import (
     FINALIZE_SECONDS,
+    HISTORY_ANSWER_CHARS_PER_TURN,
+    HISTORY_INPUT_TOKENS_TARGET,
     MAX_TOOL_CONCURRENCY,
     MODEL_INPUT_TOKENS_LIMIT,
     OUTPUT_TOKENS_LIMIT,
@@ -45,6 +48,7 @@ from evals.dialogue_loop.core import (
 )
 from evals.dialogue_loop.instrumentation import (
     FinalizeRequired,
+    FinalizeToolAttempted,
     Instrumentation,
     estimate_input_tokens,
 )
@@ -103,6 +107,15 @@ NO_KNOWLEDGE_PATTERNS = (
     "不要查知识库",
 )
 CONTINUE_PATTERNS = ("继续", "接着", "剩下", "未完成")
+FINALIZE_CONTINUE_MESSAGES = {
+    "继续",
+    "请继续",
+    "好的，继续",
+    "好，继续",
+    "继续完成",
+    "接着完成",
+    "继续刚才的回答",
+}
 CONTEXTUAL_SEARCH_FOLLOW_UP_PATTERNS = (
     "好的，你帮我查一下",
     "好，你帮我查一下",
@@ -264,10 +277,20 @@ class LoopState:
         self.stop_state = None
         self.queried_directory_parents.clear()
         self.tools_allowed = not any(pattern in message for pattern in NO_KNOWLEDGE_PATTERNS)
+        if (
+            self.continuation is not None
+            and self.continuation.task_type == "finalize_answer"
+            and message.strip() not in FINALIZE_CONTINUE_MESSAGES
+        ):
+            self.continuation = None
         self.active_continuation = (
             self.continuation
             if self.continuation is not None
-            and any(pattern in message for pattern in CONTINUE_PATTERNS)
+            and (
+                message.strip() in FINALIZE_CONTINUE_MESSAGES
+                if self.continuation.task_type == "finalize_answer"
+                else any(pattern in message for pattern in CONTINUE_PATTERNS)
+            )
             else None
         )
         self.ledger.start_turn()
@@ -329,13 +352,24 @@ class LoopState:
         self.current_handles.add(handle)
         return handle
 
-    def remember_turn(self, message: str, answer: str, events: list[dict]) -> None:
+    def remember_turn(
+        self,
+        message: str,
+        answer: str,
+        events: list[dict],
+        *,
+        blocks: list[dict] | None = None,
+        completion: dict | None = None,
+    ) -> None:
+        """保存可重建的结构化历史；渲染正文和来源原文不回写模型上下文。"""
+
         self.history_turns.append(
             {
                 "turn": self.turn_index,
                 "user": message,
-                "answer": answer,
+                "answer_summary": _history_answer_summary(blocks, answer),
                 "tools": [_history_tool_summary(self, event) for event in events],
+                "completion": _history_completion_summary(completion),
             }
         )
 
@@ -515,7 +549,13 @@ def _mark_budget_stop(
     )
     state.stop(
         StopState(
-            status=TURN_PARTIAL_COMPLETED,
+            status=(
+                TURN_PARTIAL_COMPLETED
+                if continuation is not None
+                or _reliable_current_records(state)
+                or state.current_evidence
+                else TURN_NOT_EXECUTED
+            ),
             reason_code=_budget_stop_reason(exc),
             reason=reason,
             incomplete_steps=[
@@ -819,6 +859,98 @@ def _shorten(text: str | None, limit: int) -> str | None:
     return text[:limit] + f"\n[实验材料已缩减；原文保存在程序侧，省略 {len(text) - limit} 字符]"
 
 
+def _shorten_middle(text: str, limit: int) -> str:
+    """同时保留结论开头和后续建议或候选边界结尾。"""
+
+    if len(text) <= limit:
+        return text
+    marker = f"\n[历史回答已缩减；省略 {len(text) - limit} 字符]\n"
+    remaining = max(limit - len(marker), 2)
+    head = remaining * 2 // 3
+    return f"{text[:head]}{marker}{text[-(remaining - head):]}"
+
+
+def _bounded_history_value(value, *, string_limit: int = 400):
+    """限制工具条件和错误文本，不改变对象 ID、顺序或统计数值。"""
+
+    if isinstance(value, str):
+        return _shorten_middle(value, string_limit)
+    if isinstance(value, list):
+        return [_bounded_history_value(item, string_limit=string_limit) for item in value]
+    if isinstance(value, dict):
+        return {
+            str(key): _bounded_history_value(item, string_limit=string_limit)
+            for key, item in value.items()
+        }
+    return value
+
+
+def _history_answer_summary(blocks: list[dict] | None, answer: str) -> dict:
+    """从回答块提取历史语义，明确排除渲染后的正文与 Evidence 原文。"""
+
+    if blocks is None:
+        return {
+            "narrative": _shorten_middle(answer, HISTORY_ANSWER_CHARS_PER_TURN),
+            "references": [],
+        }
+    narrative = "\n".join(
+        str(block.get("text", ""))
+        for block in blocks
+        if block.get("kind") in {"text", "insufficient"} and block.get("text")
+    )
+    references: list[dict] = []
+    for block in blocks:
+        kind = block.get("kind")
+        if kind == "entry":
+            references.append(
+                {
+                    "kind": kind,
+                    "handle": block.get("handle"),
+                    "position": block.get("position"),
+                    "entry_id": block.get("entry_id"),
+                    "title": block.get("title"),
+                    "status": block.get("status"),
+                }
+            )
+        elif kind == "evidence":
+            references.append(
+                {
+                    "kind": kind,
+                    "handle": block.get("handle"),
+                    "entry_id": block.get("entry_id"),
+                    "source_id": block.get("source_id"),
+                }
+            )
+        elif kind in {"list", "statistic"}:
+            references.append(
+                {
+                    "kind": kind,
+                    "handle": block.get("handle"),
+                    "status": block.get("status"),
+                    "completeness": block.get("completeness"),
+                }
+            )
+    return {
+        "narrative": _shorten_middle(narrative, HISTORY_ANSWER_CHARS_PER_TURN),
+        "references": references,
+    }
+
+
+def _history_completion_summary(completion: dict | None) -> dict | None:
+    if not completion:
+        return None
+    return {
+        "status": completion.get("status"),
+        "reason_code": completion.get("reason_code"),
+        "reason": _shorten_middle(str(completion.get("reason") or ""), 300),
+        "incomplete_steps": [
+            _shorten_middle(str(item), 200)
+            for item in completion.get("incomplete_steps", [])[:8]
+        ],
+        "can_continue": bool(completion.get("can_continue")),
+    }
+
+
 def _model_payload(kind: str, payload: dict) -> dict:
     """保留本轮推理所需材料，完整正文只留在 result_sets。"""
     if kind in {"list", "directories"}:
@@ -923,12 +1055,14 @@ def _history_tool_summary(state: LoopState, event: dict) -> dict:
     summary = {
         "tool": event.get("tool"),
         "shared_tool": event.get("shared_tool"),
-        "conditions": event.get("params", {}),
-        "executed_conditions": event.get("shared_params", event.get("params", {})),
+        "conditions": _bounded_history_value(event.get("params", {})),
+        "executed_conditions": _bounded_history_value(
+            event.get("shared_params", event.get("params", {}))
+        ),
         "status": event.get("status"),
         "completeness": event.get("completeness", "unknown"),
         "result_handle": event.get("result_handle"),
-        "error": event.get("error"),
+        "error": _shorten_middle(str(event.get("error") or ""), 300),
     }
     record = state.result_sets.get(event.get("result_handle"))
     if record is None:
@@ -1002,27 +1136,94 @@ def _history_tool_summary(state: LoopState, event: dict) -> dict:
     return summary
 
 
+def _minimal_history_tool_summary(tool: dict) -> dict:
+    """整体历史超目标后，仍保留引用、范围、状态与有序对象映射。"""
+
+    keys = {
+        "tool",
+        "shared_tool",
+        "conditions",
+        "executed_conditions",
+        "status",
+        "completeness",
+        "result_handle",
+        "error",
+        "statistics",
+        "semantics",
+        "ordered_items",
+        "candidate_count",
+        "directory_items",
+        "directory_total_count",
+        "directory_returned_count",
+        "directory_has_more",
+        "items",
+        "sources",
+    }
+    return {key: value for key, value in tool.items() if key in keys}
+
+
+def _history_turn_messages(turn: dict, *, minimal: bool) -> list[ModelMessage]:
+    messages: list[ModelMessage] = [
+        ModelRequest(parts=[UserPromptPart(content=turn["user"])])
+    ]
+    tools = turn["tools"]
+    if tools:
+        call_parts = []
+        return_parts = []
+        for index, original in enumerate(tools, 1):
+            tool = _minimal_history_tool_summary(original) if minimal else original
+            call_id = f"history-{turn['turn']}-{index}"
+            tool_name = tool.get("tool") or "unknown_tool"
+            call_parts.append(
+                ToolCallPart(tool_name, tool.get("conditions", {}), tool_call_id=call_id)
+            )
+            return_parts.append(ToolReturnPart(tool_name, tool, tool_call_id=call_id))
+        messages.append(ModelResponse(parts=call_parts))
+        messages.append(ModelRequest(parts=return_parts))
+    answer_summary = dict(turn.get("answer_summary") or {})
+    if not answer_summary:
+        answer_summary = {
+            "narrative": _shorten_middle(
+                str(turn.get("answer") or ""), HISTORY_ANSWER_CHARS_PER_TURN
+            ),
+            "references": [],
+        }
+    if minimal:
+        answer_summary["narrative"] = _shorten_middle(
+            str(answer_summary.get("narrative") or ""), 240
+        )
+    content = {
+        "answer_summary": answer_summary,
+        "completion": turn.get("completion"),
+    }
+    messages.append(
+        ModelResponse(
+            parts=[TextPart(content=json.dumps(content, ensure_ascii=False, separators=(",", ":")))]
+        )
+    )
+    return messages
+
+
 def build_compact_history(state: LoopState) -> list[ModelMessage]:
-    """从程序侧记录重建合法、配对且不含历史正文的模型历史。"""
-    messages: list[ModelMessage] = []
-    for turn in state.history_turns:
-        messages.append(ModelRequest(parts=[UserPromptPart(content=turn["user"])]))
-        tools = turn["tools"]
-        if tools:
-            call_parts = []
-            return_parts = []
-            for index, tool in enumerate(tools, 1):
-                call_id = f"history-{turn['turn']}-{index}"
-                tool_name = tool.get("tool") or "unknown_tool"
-                call_parts.append(
-                    ToolCallPart(tool_name, tool.get("conditions", {}), tool_call_id=call_id)
-                )
-                return_parts.append(
-                    ToolReturnPart(tool_name, tool, tool_call_id=call_id)
-                )
-            messages.append(ModelResponse(parts=call_parts))
-            messages.append(ModelRequest(parts=return_parts))
-        messages.append(ModelResponse(parts=[TextPart(content=turn["answer"])]))
+    """重建合法配对历史，优先缩减旧回答，不删除用户原话或对象顺序。"""
+
+    minimal_turns: set[int] = set()
+
+    def rebuild() -> list[ModelMessage]:
+        return [
+            message
+            for index, turn in enumerate(state.history_turns)
+            for message in _history_turn_messages(turn, minimal=index in minimal_turns)
+        ]
+
+    messages = rebuild()
+    if estimate_input_tokens(messages) <= HISTORY_INPUT_TOKENS_TARGET:
+        return messages
+    for index in range(len(state.history_turns)):
+        minimal_turns.add(index)
+        messages = rebuild()
+        if estimate_input_tokens(messages) <= HISTORY_INPUT_TOKENS_TARGET:
+            break
     return messages
 
 
@@ -2469,6 +2670,42 @@ def build_agent(model) -> Agent[LoopDeps, DialogueAnswer]:
     return agent
 
 
+FINALIZER_SYSTEM_PROMPT = """你是 Grove 知识 Agent 的独立收尾执行器。
+程序已经取得并核验本次可用材料。你只能组织最终 DialogueAnswer，不能调用搜索、目录、
+Entry 或 Evidence 等任何资料工具，也不能声称执行了外部核验。真实统计、列表、正文和来源
+必须使用当前材料中已有且获授权的句柄；无法支持的结论用 insufficient 明确说明。
+知识库正式记录、Source 原文与模型分析必须区分，读到来源不等于通过官方交叉验证。
+AI 回答或候选修改稿不得声称已经写入正式 Entry。""".strip()
+
+
+def build_finalizer_agent(model) -> Agent[LoopDeps, DialogueAnswer]:
+    """构造程序级无资料工具 finalizer，只保留结构化输出与引用校验。"""
+
+    agent = Agent(
+        model,
+        deps_type=LoopDeps,
+        output_type=DialogueAnswer,
+        instructions=FINALIZER_SYSTEM_PROMPT,
+        retries=0,
+        model_settings={"temperature": 0, "max_tokens": OUTPUT_TOKENS_LIMIT},
+        max_concurrency=1,
+        tool_timeout=FINALIZE_SECONDS,
+    )
+
+    @agent.output_validator
+    async def validate_output(ctx: RunContext[LoopDeps], answer: DialogueAnswer) -> DialogueAnswer:
+        errors = output_errors(answer, ctx.deps.state)
+        if errors:
+            message = "；".join(errors)
+            ctx.deps.state.instrumentation.record_validation_failure(
+                "reference_validation", message, answer.model_dump(mode="json")
+            )
+            raise ModelRetry(message)
+        return answer
+
+    return agent
+
+
 def render_answer(answer: DialogueAnswer, state: LoopState) -> tuple[str, list[dict]]:
     """按模型块顺序以真实工具数据渲染，不接受模型填写数字或原文。"""
     lines: list[str] = []
@@ -2626,6 +2863,8 @@ def _verified_failure_output(
         notices = {
             "timed_out": "收尾请求超过时间预算",
             "invalid_output": "收尾输出未通过结构校验",
+            "tool_attempted": "收尾模型尝试调用资料工具，程序已拦截",
+            "material_invalid": "续执行材料已失效",
             "not_dispatched": "没有可用文本请求预算，未派发模型收尾",
             "failed": "收尾模型请求失败",
             "cancelled": "收尾请求被取消",
@@ -2680,7 +2919,16 @@ def _verified_failure_output(
                 {"kind": "evidence", "evidence_handle": handle, "note": "已确认来源"}
             )
     missing = "；".join(stop.incomplete_steps) or "仍有步骤尚未确认"
-    if stop.can_continue and stop.continuation is not None:
+    if (
+        stop.can_continue
+        and stop.continuation is not None
+        and stop.continuation.task_type == "finalize_answer"
+    ):
+        continuation_text = (
+            "可以在下一轮说“继续”，系统将只根据已保存材料重试最终回答，"
+            "不会重复已完成的查询或来源读取。"
+        )
+    elif stop.can_continue and stop.continuation is not None:
         continuation_text = "可以在下一轮说“继续”，系统将从已保存的未完成步骤继续。"
     elif stop.can_continue:
         continuation_text = "可以在下一轮重新发起查询；当前没有可自动恢复的步骤。"
@@ -2776,6 +3024,365 @@ def _aggregate_text_usage(logs: list, text_requests: int, tool_calls: int) -> di
     }
 
 
+def _material_fingerprint(value: dict) -> str:
+    raw = json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+    return hashlib.sha256(raw.encode("utf-8")).hexdigest()
+
+
+def _finalize_failure_reason(state: LoopState) -> tuple[str, str]:
+    status = state.instrumentation.finalize_status
+    mapping = {
+        "tool_attempted": ("finalize_tool_attempted", "收尾模型尝试调用资料工具"),
+        "invalid_output": ("finalize_output_invalid", "收尾输出未通过结构或引用校验"),
+        "timed_out": ("finalize_timeout", "收尾请求超过时间预算"),
+        "failed": ("finalize_system_failure", "收尾模型请求发生系统故障"),
+        "not_dispatched": ("finalize_budget_boundary", "收尾请求受预算或输入上限阻止"),
+        "cancelled": ("finalize_cancelled", "收尾请求被取消"),
+    }
+    return mapping.get(status, (f"finalize_{status}", "最终回答尚未完成"))
+
+
+def _continuation_material(state: LoopState, current_events: list[dict]) -> dict:
+    """复制 finalizer 可恢复材料；完整内容只留在当前进程内存。"""
+
+    selected: set[str] = set()
+    target_entry_ids = {
+        int(item["entry_id"])
+        for handle, item in state.evidence.items()
+        if handle in state.current_evidence and item.get("entry_id") is not None
+    }
+    for handle in state.current_handles:
+        record = state.result_sets.get(handle)
+        if record is None or not record.displayable:
+            continue
+        selected.add(handle)
+        target_entry_ids.update(
+            int(item["entry_id"])
+            for item in record.payload.get("items", [])
+            if item.get("entry_id") is not None
+        )
+    if target_entry_ids:
+        for handle, record in state.result_sets.items():
+            if not record.displayable or record.kind not in {"list", "entries"}:
+                continue
+            record_ids = {
+                int(item["entry_id"])
+                for item in record.payload.get("items", [])
+                if item.get("entry_id") is not None
+            }
+            if record_ids & target_entry_ids:
+                selected.add(handle)
+    records = {
+        handle: {
+            "kind": record.kind,
+            "payload": record.payload,
+            "status": record.status,
+            "completeness": record.completeness,
+            "turn_index": record.turn_index,
+            "semantics": record.semantics,
+            "displayable": record.displayable,
+        }
+        for handle in selected
+        if (record := state.result_sets.get(handle)) is not None
+    }
+    evidence = {
+        handle: item
+        for handle, item in state.evidence.items()
+        if handle in state.current_evidence
+    }
+    known_events = {
+        event.get("result_handle"): event
+        for event in state.tool_events
+        if event.get("result_handle") in selected
+    }
+    for event in current_events:
+        handle = event.get("result_handle")
+        if handle in selected:
+            known_events[handle] = event
+    return {
+        "records": records,
+        "evidence": evidence,
+        "events": list(known_events.values()),
+        "record_fingerprints": {
+            handle: _material_fingerprint(record) for handle, record in records.items()
+        },
+    }
+
+
+async def _database_material_refs(
+    state: LoopState,
+    entry_ids: list[int],
+    source_pairs: list[tuple[int, int]],
+) -> dict:
+    """直接复验已保存材料，不创建新 Evidence 或模型资料工具事件。"""
+
+    from sqlalchemy.orm import selectinload
+
+    from app.db.session import async_session_factory
+    from app.models import Attachment, Entry, EntrySourceEvidence, Project, Source, WorkspaceMember
+    from app.services.knowledge_agent.evidence import available_attachment_text
+
+    fingerprints: dict[str, str] = {}
+    async with state.database_lock:
+        async with async_session_factory() as db:
+            member = (
+                await db.execute(
+                    select(WorkspaceMember.id).where(
+                        WorkspaceMember.workspace_id == state.workspace_id,
+                        WorkspaceMember.user_id == state.user_id,
+                    )
+                )
+            ).scalar_one_or_none()
+            if member is None:
+                raise ValueError("当前用户已不再属于原 Workspace")
+            entries = (
+                await db.execute(
+                    select(Entry)
+                    .join(Project, Entry.project_id == Project.id)
+                    .where(
+                        Entry.id.in_(entry_ids or [-1]),
+                        Project.workspace_id == state.workspace_id,
+                    )
+                )
+            ).scalars().all()
+            by_entry = {int(entry.id): entry for entry in entries}
+            missing = sorted(set(entry_ids) - set(by_entry))
+            if missing:
+                raise ValueError(f"Entry 已删除或移出当前 Workspace：{missing}")
+            for entry_id in entry_ids:
+                entry = by_entry[entry_id]
+                fingerprints[f"entry:{entry_id}"] = _material_fingerprint(
+                    {
+                        "entry_id": entry_id,
+                        "project_id": int(entry.project_id),
+                        "node_id": int(entry.node_id),
+                        "title": entry.title,
+                        "content": entry.content,
+                        "updated_at": entry.updated_at.isoformat(),
+                    }
+                )
+
+            source_ids = sorted({source_id for _, source_id in source_pairs})
+            sources = (
+                await db.execute(
+                    select(Source)
+                    .options(selectinload(Source.attachments))
+                    .where(
+                        Source.id.in_(source_ids or [-1]),
+                        Source.workspace_id == state.workspace_id,
+                    )
+                )
+            ).scalars().all()
+            by_source = {int(source.id): source for source in sources}
+            relations = (
+                await db.execute(
+                    select(EntrySourceEvidence).where(
+                        EntrySourceEvidence.entry_id.in_(entry_ids or [-1]),
+                        EntrySourceEvidence.source_id.in_(source_ids or [-1]),
+                    )
+                )
+            ).scalars().all()
+            by_pair = {
+                (int(relation.entry_id), int(relation.source_id)): relation
+                for relation in relations
+            }
+            for entry_id, source_id in source_pairs:
+                relation = by_pair.get((entry_id, source_id))
+                source = by_source.get(source_id)
+                if relation is None or source is None:
+                    raise ValueError(
+                        f"Entry {entry_id} 与 Source {source_id} 的来源关系已失效"
+                    )
+                attachment = (
+                    await db.get(Attachment, relation.attachment_id)
+                    if relation.attachment_id is not None
+                    else None
+                )
+                if attachment is None and source.attachments:
+                    attachment = source.attachments[0]
+                attachment_text = available_attachment_text(attachment)
+                if not attachment_text:
+                    raise ValueError(f"Source {source_id} 已没有可复验的 Attachment 文本")
+                fingerprints[f"evidence:{entry_id}:{source_id}"] = _material_fingerprint(
+                    {
+                        "entry_id": entry_id,
+                        "source_id": source_id,
+                        "source_title": source.title,
+                        "source_updated_at": source.updated_at.isoformat(),
+                        "relation_id": int(relation.id),
+                        "relation_quote": relation.quote or "",
+                        "attachment_id": int(attachment.id),
+                        "attachment_text": attachment_text,
+                    }
+                )
+            await db.rollback()
+    return {
+        "workspace_id": state.workspace_id,
+        "user_id": state.user_id,
+        "entry_ids": entry_ids,
+        "source_ids": sorted({source_id for _, source_id in source_pairs}),
+        "source_pairs": [list(pair) for pair in source_pairs],
+        "fingerprints": fingerprints,
+    }
+
+
+async def _create_finalize_continuation(
+    state: LoopState,
+    message: str,
+    current_events: list[dict],
+) -> ContinuationState:
+    material = _continuation_material(state, current_events)
+    entry_ids = sorted(
+        {
+            int(item["entry_id"])
+            for record in material["records"].values()
+            for item in record["payload"].get("items", [])
+            if item.get("entry_id") is not None
+        }
+        | {
+            int(item["entry_id"])
+            for item in material["evidence"].values()
+            if item.get("entry_id") is not None
+        }
+    )
+    source_pairs = sorted(
+        {
+            (int(item["entry_id"]), int(item["source_id"]))
+            for item in material["evidence"].values()
+            if item.get("entry_id") is not None and item.get("source_id") is not None
+        }
+    )
+    validation_refs = await _database_material_refs(state, entry_ids, source_pairs)
+    resolved = []
+    for handle, record in material["records"].items():
+        if record["kind"] != "list":
+            continue
+        for position, item in enumerate(record["payload"].get("items", []), 1):
+            if item.get("entry_id") in entry_ids:
+                resolved.append(
+                    {
+                        "result_handle": handle,
+                        "position": position,
+                        "entry_id": item.get("entry_id"),
+                        "title": item.get("title"),
+                    }
+                )
+    reason_code, reason = _finalize_failure_reason(state)
+    return ContinuationState(
+        task_type="finalize_answer",
+        tool_name="finalize_answer",
+        scope={
+            "workspace_id": state.workspace_id,
+            "user_id": state.user_id,
+            "authorized_entry_ids": sorted(state.authorized_entry_ids),
+        },
+        completed_steps=[
+            {"tool": event.get("tool"), "result_handle": event.get("result_handle")}
+            for event in current_events
+            if event.get("status") in {"completed", "ok", "limited", "empty"}
+        ],
+        pending_steps=[{"step": "finalize_answer"}],
+        confirmed=[
+            {"entry_id": entry_id} for entry_id in validation_refs["entry_ids"]
+        ]
+        + [{"source_id": source_id} for source_id in validation_refs["source_ids"]],
+        stop_reason=f"{reason_code}: {reason}",
+        original_question=message,
+        resolved_references=resolved,
+        recoverable_material=material,
+        validation_refs=validation_refs,
+    )
+
+
+async def _validate_finalize_continuation(
+    state: LoopState, continuation: ContinuationState
+) -> tuple[bool, str | None]:
+    if continuation.task_type != "finalize_answer":
+        return False, "续执行任务类型不匹配"
+    if continuation.scope.get("workspace_id") != state.workspace_id:
+        return False, "续执行 Workspace 与当前范围不一致"
+    if continuation.scope.get("user_id") != state.user_id:
+        return False, "续执行用户与当前身份不一致"
+    material = continuation.recoverable_material
+    if not material.get("records") and not material.get("evidence"):
+        return False, "续执行没有保存可恢复材料"
+    for handle, expected in material.get("record_fingerprints", {}).items():
+        record = state.result_sets.get(handle)
+        if record is None or not record.displayable:
+            return False, f"结果句柄已失效或不可展示：{handle}"
+        actual = _material_fingerprint(
+            {
+                "kind": record.kind,
+                "payload": record.payload,
+                "status": record.status,
+                "completeness": record.completeness,
+                "turn_index": record.turn_index,
+                "semantics": record.semantics,
+                "displayable": record.displayable,
+            }
+        )
+        if actual != expected:
+            return False, f"结果句柄材料已变化：{handle}"
+    authorized = set(continuation.scope.get("authorized_entry_ids", []))
+    if not set(continuation.validation_refs.get("entry_ids", [])).issubset(authorized):
+        return False, "续执行材料包含未授权 Entry"
+    if not authorized.issubset(state.authorized_entry_ids):
+        return False, "授权结果集合已经变化"
+    try:
+        current = await _database_material_refs(
+            state,
+            list(continuation.validation_refs.get("entry_ids", [])),
+            [tuple(pair) for pair in continuation.validation_refs.get("source_pairs", [])],
+        )
+    except Exception as exc:  # noqa: BLE001
+        return False, str(exc)
+    if current.get("fingerprints") != continuation.validation_refs.get("fingerprints"):
+        return False, "Entry、Source、来源关系或材料版本已经变化"
+    return True, None
+
+
+async def _attach_finalize_continuation(
+    state: LoopState,
+    message: str,
+    current_events: list[dict],
+) -> bool:
+    if state.instrumentation.finalize_status in {"not_needed", "completed", "cancelled"}:
+        return False
+    if not _reliable_current_records(state) and not state.current_evidence:
+        return False
+    try:
+        continuation = await _create_finalize_continuation(state, message, current_events)
+    except Exception as exc:  # noqa: BLE001
+        if state.instrumentation.finalize_failure is None:
+            state.instrumentation.finalize_failure = {
+                "category": "continuation_material_invalid",
+                "message": str(exc),
+                "exception_chain": [],
+                "validation": None,
+                "public_response": None,
+            }
+        return False
+    state.continuation = continuation
+    reason_code, reason = _finalize_failure_reason(state)
+    if state.stop_state is None:
+        state.stop_state = StopState(
+            status=TURN_PARTIAL_COMPLETED,
+            reason_code=reason_code,
+            reason=reason,
+        )
+    state.stop_state.status = TURN_PARTIAL_COMPLETED
+    state.stop_state.reason_code = reason_code
+    state.stop_state.reason = reason
+    state.stop_state.can_continue = True
+    state.stop_state.continuation = continuation
+    state.stop_state.incomplete_steps = [
+        "来源已取得，可信度分析尚未完成"
+        if state.current_evidence
+        else "材料已取得，最终回答尚未完成"
+    ]
+    return True
+
+
 def _current_material_history(
     state: LoopState,
     message: str,
@@ -2815,7 +3422,7 @@ def _current_material_history(
 
 
 async def _finalize_once(
-    agent: Agent[LoopDeps, DialogueAnswer],
+    finalizer: Agent[LoopDeps, DialogueAnswer],
     state: LoopState,
     message: str,
     history: list[ModelMessage],
@@ -2828,7 +3435,7 @@ async def _finalize_once(
     material_history = _current_material_history(state, message, history, current_events)
     try:
         async with asyncio.timeout(FINALIZE_SECONDS):
-            return await agent.run(
+            return await finalizer.run(
                 "求解阶段已停止。请只根据本轮已获得并核验的材料收尾。",
                 deps=LoopDeps(state),
                 message_history=material_history,
@@ -2846,7 +3453,9 @@ async def _finalize_once(
     except Exception as exc:
         failure = state.instrumentation.describe_failure(exc, before_logs)
         state.instrumentation.finalize_failure = failure
-        if state.instrumentation.finalize_response_received:
+        if isinstance(exc, FinalizeToolAttempted):
+            pass
+        elif state.instrumentation.finalize_response_received:
             state.instrumentation.finalize_status = "invalid_output"
             state.instrumentation.finalize_error = (
                 "收尾输出非法，未重试模型请求："
@@ -2860,13 +3469,154 @@ async def _finalize_once(
         raise
 
 
+async def _run_finalize_continuation(
+    finalizer: Agent[LoopDeps, DialogueAnswer],
+    state: LoopState,
+    message: str,
+    history: list[ModelMessage],
+    history_estimate: int,
+    before_logs: int,
+    before_events: int,
+    started: float,
+) -> tuple[dict, list[ModelMessage]]:
+    """只复验并重试最终回答，不重新执行已完成的资料步骤。"""
+
+    continuation = state.active_continuation
+    assert continuation is not None and continuation.task_type == "finalize_answer"
+    valid, invalid_reason = await _validate_finalize_continuation(state, continuation)
+    solve_error = None
+    solve_failure = None
+    usage = None
+    error_details = None
+    if not valid:
+        state.continuation = None
+        state.active_continuation = None
+        state.instrumentation.finalize_status = "material_invalid"
+        state.instrumentation.finalize_error = invalid_reason
+        stop = StopState(
+            status=TURN_NOT_EXECUTED,
+            reason_code="continuation_material_invalid",
+            reason=invalid_reason or "续执行材料已经失效",
+            incomplete_steps=["旧材料不能安全复用，需要重新核验"],
+            can_continue=False,
+        )
+        state.stop(stop)
+        text, blocks = _verified_failure_output(state, stop)
+        status = TURN_NOT_EXECUTED
+        error = None
+    else:
+        material = continuation.recoverable_material
+        state.current_handles.update(material.get("records", {}))
+        state.current_evidence.update(material.get("evidence", {}))
+        try:
+            result = await _finalize_once(
+                finalizer,
+                state,
+                continuation.original_question or message,
+                history,
+                list(material.get("events", [])),
+                "continuation_finalize_only",
+            )
+        except Exception as exc:  # noqa: BLE001
+            reason_code, reason = _finalize_failure_reason(state)
+            continuation.stop_reason = f"{reason_code}: {reason}"
+            stop = StopState(
+                status=TURN_PARTIAL_COMPLETED,
+                reason_code=reason_code,
+                reason=reason,
+                incomplete_steps=[
+                    "来源已取得，可信度分析尚未完成"
+                    if material.get("evidence")
+                    else "材料已取得，最终回答尚未完成"
+                ],
+                can_continue=True,
+                continuation=continuation,
+            )
+            state.stop(stop)
+            text, blocks = _verified_failure_output(state, stop)
+            status = TURN_PARTIAL_COMPLETED
+            error = None
+            error_details = state.instrumentation.finalize_failure or {
+                "category": reason_code,
+                "message": str(exc),
+            }
+        else:
+            text, blocks = render_answer(result.output, state)
+            state.instrumentation.complete_finalize()
+            state.continuation = None
+            state.active_continuation = None
+            state.stop_state = None
+            status = TURN_COMPLETED
+            error = None
+            usage = asdict(result.usage) if result.usage is not None else None
+    current_events = state.tool_events[before_events:]
+    completion = state.completion_snapshot(status)
+    state.remember_turn(
+        message,
+        text,
+        current_events,
+        blocks=blocks,
+        completion=completion,
+    )
+    new_history = build_compact_history(state)
+    input_estimates = [
+        {
+            "projected_input_tokens": item.projected_input_tokens,
+            "estimated_input_tokens": item.estimated_input_tokens,
+            "method": item.input_estimate_method,
+            "components": item.estimate_components,
+            "request_scope": item.request_scope,
+            "actual_input_tokens": item.actual_input_tokens,
+            "estimate_ratio": item.estimate_ratio,
+            "finalize_only": item.finalize_only,
+            "finalize_reason": item.finalize_reason,
+        }
+        for item in state.instrumentation.logs[before_logs:]
+        if item.kind in {"text", "text_not_dispatched"}
+    ]
+    recovered_usage = _aggregate_text_usage(
+        state.instrumentation.logs[before_logs:],
+        state.ledger.active_text_requests,
+        state.ledger.active_tool_calls,
+    )
+    if recovered_usage is not None:
+        usage = recovered_usage
+    return {
+        "message": message,
+        "status": status,
+        "answer": text,
+        "blocks": blocks,
+        "error": error,
+        "error_details": error_details,
+        "solve_error": solve_error,
+        "solve_failure": solve_failure,
+        "duration_ms": int((perf_counter() - started) * 1000),
+        "usage": usage,
+        "budget": state.ledger.snapshot(),
+        "tool_calls": current_events,
+        "model_calls": [asdict(item) for item in state.instrumentation.logs[before_logs:]],
+        "context": {
+            "history_estimated_input_tokens": history_estimate,
+            "input_estimates": input_estimates,
+            "history_turns": len(state.history_turns),
+            "solve_seconds_limit": PER_TURN_SECONDS,
+            "finalize_seconds_limit": FINALIZE_SECONDS,
+            "continuation_mode": "finalize_only",
+        },
+        "finalization": state.instrumentation.finalization_snapshot(),
+        "completion": completion,
+    }, new_history
+
+
 async def run_turn(
     agent: Agent[LoopDeps, DialogueAnswer],
     state: LoopState,
     message: str,
     history: list[ModelMessage],
+    finalizer: Agent[LoopDeps, DialogueAnswer] | None = None,
 ) -> tuple[dict, list[ModelMessage]]:
     """执行一轮；超限、模型失败和 usage 缺失均显式保留。"""
+    finalizer = finalizer or build_finalizer_agent(agent.model)
     history = _without_historical_system_prompts(history)
     history_estimate = estimate_input_tokens(history)
     before_logs = len(state.instrumentation.logs)
@@ -2875,6 +3625,20 @@ async def run_turn(
     solve_error = None
     solve_failure = None
     error_details = None
+    if (
+        state.active_continuation is not None
+        and state.active_continuation.task_type == "finalize_answer"
+    ):
+        return await _run_finalize_continuation(
+            finalizer,
+            state,
+            message,
+            history,
+            history_estimate,
+            before_logs,
+            before_events,
+            started,
+        )
     try:
         if history_estimate > MODEL_INPUT_TOKENS_LIMIT:
             raise BudgetExceeded(
@@ -2904,7 +3668,7 @@ async def run_turn(
         else:
             try:
                 result = await _finalize_once(
-                    agent,
+                    finalizer,
                     state,
                     message,
                     history,
@@ -2932,7 +3696,21 @@ async def run_turn(
         solve_error = f"{type(exc).__name__}: {exc}"
         solve_failure = state.instrumentation.describe_failure(exc, before_logs)
         _mark_budget_stop(state, exc)
-        if not state.instrumentation.context_policy_enabled:
+        budget_reason = _budget_stop_reason(exc)
+        if (
+            budget_reason == "input_hard_limit"
+            and not _reliable_current_records(state)
+            and not state.current_evidence
+        ):
+            state.instrumentation.begin_finalize("input_hard_limit")
+            state.instrumentation.finalize_status = "not_dispatched"
+            state.instrumentation.finalize_error = str(exc)
+            text, blocks = _verified_failure_output(state)
+            status = state.stop_state.status if state.stop_state else TURN_NOT_EXECUTED
+            error = None
+            error_details = solve_failure
+            usage = None
+        elif not state.instrumentation.context_policy_enabled:
             text, blocks = _verified_failure_output(state)
             status = TURN_PARTIAL_COMPLETED
             error = None
@@ -2941,12 +3719,12 @@ async def run_turn(
         else:
             try:
                 result = await _finalize_once(
-                    agent,
+                    finalizer,
                     state,
                     message,
                     history,
                     state.tool_events[before_events:],
-                    _budget_stop_reason(exc),
+                    budget_reason,
                 )
             except Exception:
                 error_details = state.instrumentation.finalize_failure
@@ -2974,7 +3752,7 @@ async def run_turn(
         else:
             try:
                 result = await _finalize_once(
-                    agent,
+                    finalizer,
                     state,
                     message,
                     history,
@@ -3030,7 +3808,18 @@ async def run_turn(
             text = f"{text}\n{notice}" if text else notice
         if status != TURN_FAILED:
             error = None
-    state.remember_turn(message, text, current_events)
+    if await _attach_finalize_continuation(state, message, current_events):
+        status = TURN_PARTIAL_COMPLETED
+        error = None
+        text, blocks = _verified_failure_output(state, state.stop_state)
+    completion = state.completion_snapshot(status)
+    state.remember_turn(
+        message,
+        text,
+        current_events,
+        blocks=blocks,
+        completion=completion,
+    )
     new_history = build_compact_history(state)
     input_estimates = [
         {
@@ -3076,5 +3865,5 @@ async def run_turn(
             "finalize_seconds_limit": FINALIZE_SECONDS,
         },
         "finalization": state.instrumentation.finalization_snapshot(),
-        "completion": state.completion_snapshot(status),
+        "completion": completion,
     }, new_history

@@ -2,6 +2,7 @@
 
 import hashlib
 import json
+from copy import deepcopy
 from decimal import Decimal
 from math import ceil
 from pathlib import Path
@@ -35,9 +36,17 @@ from evals.dialogue_loop.cli import (
 from evals.dialogue_loop.core import (
     BATCH_EMBEDDING_REQUESTS,
     BATCH_TEXT_REQUESTS,
+    HISTORY_ANSWER_CHARS_PER_TURN,
+    HISTORY_INPUT_TOKENS_TARGET,
+    INPUT_ESTIMATE_SOFT_LIMIT,
     INPUT_ESTIMATE_VERSION,
+    MODEL_INPUT_TOKENS_LIMIT,
     PER_TURN_EMBEDDING_REQUESTS,
+    PER_TURN_ENTRY_READS,
+    PER_TURN_EVIDENCE_READS,
+    PER_TURN_SECONDS,
     PER_TURN_TEXT_REQUESTS,
+    PER_TURN_TOOL_CALLS,
     VARIANT_SCENARIOS,
     BudgetExceeded,
     BudgetLedger,
@@ -64,15 +73,18 @@ from evals.dialogue_loop.loop import (
     LoopState,
     _candidate_revision_requested,
     _count_params,
+    _create_finalize_continuation,
     _current_material_history,
     _entry_set,
     _group_params,
     _mark_budget_stop,
     _model_payload,
     _stop_from_events,
+    _validate_finalize_continuation,
     _verified_failure_output,
     build_agent,
     build_compact_history,
+    build_finalizer_agent,
     directory_reference_item,
     list_directory_position_node_id,
     list_position_entry_id,
@@ -553,7 +565,7 @@ def test_compact_history_keeps_order_and_protocol_without_large_body() -> None:
     )
     state.remember_turn(
         "列出两条",
-        "1. 甲\n2. 乙",
+        "概括说明\n1. 甲\n2. 乙\n如需来源可以继续查询",
         [
             {
                 "tool": "query_entries",
@@ -564,6 +576,23 @@ def test_compact_history_keeps_order_and_protocol_without_large_body() -> None:
                 "completeness": "complete",
                 "error": None,
             }
+        ],
+        blocks=[
+            {"kind": "text", "text": "概括说明"},
+            {
+                "kind": "entry",
+                "entry_id": 91,
+                "title": "甲",
+                "content": "正文" * 3_000,
+                "text": "正文" * 3_000,
+            },
+            {
+                "kind": "evidence",
+                "entry_id": 91,
+                "source_id": 66,
+                "text": "Evidence 原文" * 2_000,
+            },
+            {"kind": "text", "text": "如需来源可以继续查询"},
         ],
     )
     history = build_compact_history(state)
@@ -576,6 +605,9 @@ def test_compact_history_keeps_order_and_protocol_without_large_body() -> None:
     assert call.tool_call_id == returned.tool_call_id
     assert [item["entry_id"] for item in returned.content["ordered_items"]] == [91, 17]
     assert "正文正文" not in str(returned.content)
+    assert "Evidence 原文" not in str(history)
+    assert "概括说明" in str(history)
+    assert "如需来源可以继续查询" in str(history)
     assert list_position_entry_id(state, handle, 2) == 17
 
 
@@ -2804,14 +2836,14 @@ async def test_context_over_limit_stops_without_model_call() -> None:
 
     agent = build_agent(FunctionModel(respond))
     turn, _ = await run_turn(agent, state, "继续", ["x" * 50_000])
-    assert turn["status"] == "partial_completed"
+    assert turn["status"] == "not_executed"
     assert turn["completion"]["reason_code"] == "input_hard_limit"
     assert turn["error"] is None
     assert calls == []
 
 
 @pytest.mark.asyncio
-async def test_soft_input_limit_forces_one_budgeted_finalize_request() -> None:
+async def test_first_request_between_soft_and_hard_limits_is_dispatched() -> None:
     state = _state()
     state.instrumentation.context_policy_enabled = True
     calls = []
@@ -2829,18 +2861,19 @@ async def test_soft_input_limit_forces_one_budgeted_finalize_request() -> None:
 
     wrapped = BudgetedModel(FunctionModel(respond), state.instrumentation)
     agent = build_agent(wrapped)
-    history = [ModelRequest(parts=[UserPromptPart(content="甲" * 9_500)])]
-    turn, _ = await run_turn(agent, state, "请总结", history)
+    history = [ModelRequest(parts=[UserPromptPart(content="甲" * 4_000)])]
+    turn, _ = await run_turn(agent, state, "请总结", history, build_finalizer_agent(wrapped))
     assert turn["status"] == "completed"
     assert len(calls) == 1
-    assert calls[0][1].function_tools == []
-    assert calls[0][1].instructions == SYSTEM_PROMPT
+    assert calls[0][1].function_tools
+    assert calls[0][1].instructions.startswith(SYSTEM_PROMPT)
     assert SYSTEM_PROMPT not in str(calls[0][0])
-    assert FINALIZE_INSTRUCTION in str(calls[0][0])
+    assert FINALIZE_INSTRUCTION not in str(calls[0][0])
     assert turn["budget"]["turn"]["text_requests"] == 1
-    assert turn["context"]["input_estimates"][0]["finalize_only"] is True
-    assert turn["finalization"]["status"] == "completed"
-    assert turn["finalization"]["reason"] == "input_soft_limit"
+    estimate = turn["context"]["input_estimates"][0]["estimated_input_tokens"]
+    assert INPUT_ESTIMATE_SOFT_LIMIT <= estimate <= MODEL_INPUT_TOKENS_LIMIT
+    assert turn["context"]["input_estimates"][0]["finalize_only"] is False
+    assert turn["finalization"]["status"] == "not_needed"
 
 
 @pytest.mark.asyncio
@@ -2909,8 +2942,6 @@ async def test_last_batch_text_request_is_reserved_for_finalize() -> None:
 
 @pytest.mark.asyncio
 async def test_tool_action_budget_stop_uses_one_tool_free_finalize() -> None:
-    from evals.dialogue_loop.core import PER_TURN_TOOL_CALLS
-
     state = _state()
     state.instrumentation.context_policy_enabled = True
     for _ in range(PER_TURN_TOOL_CALLS):
@@ -2933,7 +2964,7 @@ async def test_tool_action_budget_stop_uses_one_tool_free_finalize() -> None:
     model = BudgetedModel(FunctionModel(respond), state.instrumentation)
     turn, _ = await run_turn(build_agent(model), state, "继续查询", [])
 
-    assert turn["status"] == "partial_completed"
+    assert turn["status"] == "not_executed"
     assert turn["solve_error"] == "BudgetExceeded: 本轮工具动作预算已耗尽"
     assert turn["finalization"]["reason"] == "tool_action_budget"
     assert turn["finalization"]["attempted"] is True
@@ -2987,7 +3018,7 @@ async def test_material_budget_stops_share_the_single_finalize_path(
 
     turn, _ = await run_turn(agent, state, "继续", [])
 
-    assert turn["status"] == "partial_completed"
+    assert turn["status"] == "not_executed"
     assert turn["solve_error"] == f"BudgetExceeded: {message}"
     assert turn["finalization"]["reason"] == reason
     assert turn["finalization"]["attempted"] is True
@@ -3009,7 +3040,7 @@ async def test_hard_input_limit_does_not_dispatch_finalize_when_input_still_cann
     history = [ModelRequest(parts=[UserPromptPart(content="甲" * 50_000)])]
     turn, _ = await run_turn(build_agent(model), state, "继续", history)
 
-    assert turn["status"] == "partial_completed"
+    assert turn["status"] == "not_executed"
     assert turn["solve_error"].startswith("BudgetExceeded: 压缩后对话上下文")
     assert turn["finalization"]["reason"] == "input_hard_limit"
     assert turn["finalization"]["status"] == "not_dispatched"
@@ -3032,15 +3063,16 @@ async def test_finalize_provider_failure_is_not_retried_and_keeps_verified_resul
             raise RuntimeError("provider unavailable") from exc
 
     agent = build_agent(BudgetedModel(FunctionModel(respond), state.instrumentation))
-    history = [ModelRequest(parts=[UserPromptPart(content="甲" * 9_500)])]
+    await state.ledger.reserve_text()
+    history = [ModelRequest(parts=[UserPromptPart(content="甲" * 4_000)])]
     turn, _ = await run_turn(agent, state, "请总结", history)
 
     assert turn["status"] == "partial_completed"
     assert turn["finalization"]["status"] == "failed"
     assert turn["finalization"]["attempted"] is True
     assert len(calls) == 1
-    assert turn["budget"]["turn"]["text_requests"] == 1
-    assert turn["usage"]["requests"] == 1
+    assert turn["budget"]["turn"]["text_requests"] == 2
+    assert turn["usage"]["requests"] == 2
     assert turn["usage"]["input_tokens"] is None
     assert turn["usage"]["usage_complete"] is False
     assert any(block.get("handle") == handle for block in turn["blocks"])
@@ -3072,14 +3104,15 @@ async def test_finalize_timeout_is_not_retried_and_has_real_deadline(monkeypatch
         await asyncio.sleep(1)
 
     agent = build_agent(BudgetedModel(FunctionModel(respond), state.instrumentation))
-    history = [ModelRequest(parts=[UserPromptPart(content="甲" * 9_500)])]
+    await state.ledger.reserve_text()
+    history = [ModelRequest(parts=[UserPromptPart(content="甲" * 4_000)])]
     turn, _ = await run_turn(agent, state, "请总结", history)
 
     assert turn["status"] == "partial_completed"
     assert turn["solve_error"] is None
     assert turn["finalization"]["status"] == "timed_out"
     assert len(calls) == 1
-    assert turn["budget"]["turn"]["text_requests"] == 1
+    assert turn["budget"]["turn"]["text_requests"] == 2
     assert turn["duration_ms"] < 500
     assert "总数：5" in turn["answer"]
     assert turn["error_details"]["category"] == "timeout"
@@ -3108,13 +3141,14 @@ async def test_invalid_finalize_output_does_not_trigger_model_retry() -> None:
         )
 
     agent = build_agent(BudgetedModel(FunctionModel(respond), state.instrumentation))
-    history = [ModelRequest(parts=[UserPromptPart(content="甲" * 9_500)])]
+    await state.ledger.reserve_text()
+    history = [ModelRequest(parts=[UserPromptPart(content="甲" * 4_000)])]
     turn, _ = await run_turn(agent, state, "请总结", history)
 
     assert turn["status"] == "partial_completed"
     assert turn["finalization"]["status"] == "invalid_output"
     assert len(calls) == 1
-    assert turn["budget"]["turn"]["text_requests"] == 1
+    assert turn["budget"]["turn"]["text_requests"] == 2
     assert any(block.get("handle") == handle for block in turn["blocks"])
     assert turn["error"] is None
     assert "模型收尾状态：invalid_output" in turn["answer"]
@@ -3141,7 +3175,8 @@ async def test_missing_required_output_field_keeps_schema_diagnostic() -> None:
     model = BudgetedModel(
         FunctionModel(respond), state.instrumentation, request_scope="dialogue_agent"
     )
-    history = [ModelRequest(parts=[UserPromptPart(content="甲" * 9_500)])]
+    await state.ledger.reserve_text()
+    history = [ModelRequest(parts=[UserPromptPart(content="甲" * 4_000)])]
     turn, _ = await run_turn(build_agent(model), state, "请总结", history)
 
     assert turn["status"] == "partial_completed"
@@ -3170,7 +3205,8 @@ async def test_length_finish_reason_is_distinct_from_schema_failure() -> None:
     model = BudgetedModel(
         FunctionModel(respond), state.instrumentation, request_scope="dialogue_agent"
     )
-    history = [ModelRequest(parts=[UserPromptPart(content="甲" * 9_500)])]
+    await state.ledger.reserve_text()
+    history = [ModelRequest(parts=[UserPromptPart(content="甲" * 4_000)])]
     turn, _ = await run_turn(build_agent(model), state, "请总结", history)
 
     assert turn["status"] == "partial_completed"
@@ -3304,3 +3340,456 @@ async def test_cancellation_does_not_turn_into_normal_answer() -> None:
     assert calls <= 1
     assert state.instrumentation.finalize_attempted is False
     assert state.instrumentation.finalize_reason is None
+
+
+async def _seed_finalize_material(state: LoopState) -> dict:
+    from app.db.session import async_session_factory
+    from app.models import (
+        Attachment,
+        Entry,
+        EntrySourceEvidence,
+        Node,
+        Project,
+        Source,
+        User,
+        Workspace,
+        WorkspaceMember,
+    )
+
+    async with async_session_factory() as db:
+        user = User(username=f"finalize-{id(state)}", password_hash="test")
+        workspace = Workspace(name="收尾测试空间")
+        db.add_all([user, workspace])
+        await db.flush()
+        db.add(WorkspaceMember(workspace_id=workspace.id, user_id=user.id, role="owner"))
+        project = Project(workspace_id=workspace.id, name="房子装修")
+        db.add(project)
+        await db.flush()
+        node = Node(project_id=project.id, name="环保标准", position=0)
+        source = Source(workspace_id=workspace.id, project_id=project.id, title="国标说明")
+        db.add_all([node, source])
+        await db.flush()
+        attachment = Attachment(
+            source_id=source.id,
+            kind="text",
+            position=0,
+            text_content="ENF 是国标甲醛释放限量等级，检测条件仍需查阅标准原文。",
+        )
+        entry = Entry(
+            project_id=project.id,
+            node_id=node.id,
+            title="甲醛环保等级：国标ENF级",
+            content="ENF 正文：该记录概括了甲醛释放限量等级。",
+            main_type="knowledge",
+        )
+        db.add_all([attachment, entry])
+        await db.flush()
+        relation = EntrySourceEvidence(
+            entry_id=entry.id,
+            source_id=source.id,
+            attachment_id=attachment.id,
+            quote="ENF 是国标甲醛释放限量等级",
+        )
+        db.add(relation)
+        await db.commit()
+        for row in (user, workspace, project, node, source, attachment, entry, relation):
+            await db.refresh(row)
+        seeded = {
+            "user_id": int(user.id),
+            "workspace_id": int(workspace.id),
+            "entry_id": int(entry.id),
+            "source_id": int(source.id),
+            "attachment_id": int(attachment.id),
+            "relation_id": int(relation.id),
+            "title": entry.title,
+            "content": entry.content,
+            "source_title": source.title,
+            "quote": relation.quote,
+        }
+
+    state.user_id = seeded["user_id"]
+    state.workspace_id = seeded["workspace_id"]
+    entry_id = seeded["entry_id"]
+    source_id = seeded["source_id"]
+    list_handle = state.store_result(
+        "list",
+        {
+            "items": [
+                {
+                    "entry_id": entry_id,
+                    "title": seeded["title"],
+                    "project_name": "房子装修",
+                    "relevance_level": "direct",
+                }
+            ]
+        },
+        "completed",
+        "limited",
+        semantics={"relevance_scope": "direct", "project_scope": "all"},
+    )
+    entry_handle = state.store_result(
+        "entries",
+        {
+            "items": [
+                {
+                    "entry_id": entry_id,
+                    "title": seeded["title"],
+                    "content": seeded["content"],
+                    "project_name": "房子装修",
+                    "sources": [
+                        {
+                            "source_id": source_id,
+                            "source_title": seeded["source_title"],
+                            "attachment_id": seeded["attachment_id"],
+                            "quote": seeded["quote"],
+                        }
+                    ],
+                }
+            ]
+        },
+        "completed",
+        "limited",
+    )
+    evidence_handle = "ev-finalize-enf"
+    evidence_item = {
+        "entry_id": entry_id,
+        "source_id": source_id,
+        "source_title": seeded["source_title"],
+        "attachment_id": seeded["attachment_id"],
+        "evidence_handle": evidence_handle,
+        "quote": "ENF 是国标甲醛释放限量等级",
+        "citable": True,
+        "status": "ok",
+    }
+    evidence_result = state.store_result(
+        "evidence", {"items": [evidence_item]}, "completed", "limited"
+    )
+    state.authorized_entry_ids.add(entry_id)
+    state.read_entry_ids.add(entry_id)
+    state.evidence[evidence_handle] = evidence_item
+    state.current_evidence.add(evidence_handle)
+    for tool, handle in (
+        ("select_relevant_entries", list_handle),
+        ("read_entries", entry_handle),
+        ("read_evidence", evidence_result),
+    ):
+        state.tool_events.append(
+            {
+                "tool": tool,
+                "result_handle": handle,
+                "status": "completed",
+                "completeness": "limited",
+                "params": {},
+                "turn_index": state.turn_index,
+            }
+        )
+    return {**seeded, "evidence_handle": evidence_handle, "list_handle": list_handle}
+
+
+def test_history_uses_bounded_structured_summaries_and_keeps_all_user_messages() -> None:
+    state = _state()
+    for index in range(8):
+        state.turn_index = index + 1
+        state.remember_turn(
+            f"用户原话 {index}",
+            "不应使用的渲染答案" * 1_000,
+            [],
+            blocks=[
+                {"kind": "text", "text": f"结论 {index}" + "甲" * 3_000},
+                {"kind": "entry", "entry_id": index + 1, "content": "正文" * 3_000},
+                {"kind": "evidence", "source_id": index + 1, "text": "来源" * 3_000},
+                {"kind": "text", "text": f"后续建议 {index}"},
+            ],
+        )
+
+    history = build_compact_history(state)
+    serialized = str(history)
+
+    assert all(f"用户原话 {index}" in serialized for index in range(8))
+    assert "正文正文" not in serialized
+    assert "来源来源" not in serialized
+    assert "后续建议 7" in serialized
+    assert loop_module.estimate_input_tokens(history) <= HISTORY_INPUT_TOKENS_TARGET
+    assert all(
+        len(turn["answer_summary"]["narrative"]) <= HISTORY_ANSWER_CHARS_PER_TURN + 50
+        for turn in state.history_turns
+    )
+
+
+def test_four_turn_ordinal_context_keeps_enf_as_first_authorized_entry() -> None:
+    state = _state()
+    handle = state.store_result(
+        "list",
+        {
+            "items": [
+                {"entry_id": 7, "title": "甲醛环保等级：国标ENF级"},
+                {"entry_id": 8, "title": "甲醛环保等级：美标NAF级"},
+            ]
+        },
+        "completed",
+        "limited",
+        semantics={"relevance_scope": "direct"},
+    )
+    for index, message in enumerate(
+        (
+            "甲醛是什么",
+            "好的，帮我解释这些等级标准的具体内容",
+            "第二个等级信息可信吗",
+            "那第一条呢，可信吗",
+        ),
+        1,
+    ):
+        state.turn_index = index
+        state.remember_turn(message, f"第 {index} 轮结论", [])
+
+    assert list_position_entry_id(state, handle, 1) == 7
+    assert list_position_entry_id(state, handle, 2) == 8
+    assert all(message in str(build_compact_history(state)) for message in (
+        "甲醛是什么",
+        "好的，帮我解释这些等级标准的具体内容",
+        "第二个等级信息可信吗",
+        "那第一条呢，可信吗",
+    ))
+
+
+@pytest.mark.asyncio
+async def test_subsequent_soft_limit_finalizes_even_without_successful_material() -> None:
+    state = _state()
+    state.instrumentation.context_policy_enabled = True
+    await state.ledger.reserve_text()
+    calls = []
+
+    def respond(messages, info):
+        calls.append((messages, info))
+        return ModelResponse(
+            parts=[
+                ToolCallPart(
+                    info.output_tools[0].name,
+                    {"blocks": [{"kind": "insufficient", "text": "没有已确认材料。"}]},
+                )
+            ]
+        )
+
+    model = BudgetedModel(
+        FunctionModel(respond), state.instrumentation, request_scope="dialogue_agent"
+    )
+    history = [ModelRequest(parts=[UserPromptPart(content="甲" * 4_000)])]
+    turn, _ = await run_turn(
+        build_agent(model), state, "继续查询", history, build_finalizer_agent(model)
+    )
+
+    assert len(calls) == 1
+    assert calls[0][1].function_tools == []
+    assert turn["finalization"]["reason"] == "input_soft_limit"
+    assert turn["status"] == "completed"
+    assert turn["completion"]["continuation"] is None
+
+
+@pytest.mark.asyncio
+async def test_finalize_tool_attempt_is_blocked_and_resume_only_retries_answer() -> None:
+    state = _state()
+    state.instrumentation.context_policy_enabled = True
+    seeded = await _seed_finalize_material(state)
+    await state.ledger.reserve_text()
+    provider_calls = []
+
+    def respond(messages, info):
+        provider_calls.append((messages, info))
+        if len(provider_calls) == 1:
+            return ModelResponse(
+                parts=[
+                    ToolCallPart(
+                        "read_evidence",
+                        {"entry_id": seeded["entry_id"], "source_ids": [seeded["source_id"]]},
+                    )
+                ]
+            )
+        return ModelResponse(
+            parts=[
+                ToolCallPart(
+                    info.output_tools[0].name,
+                    {
+                        "blocks": [
+                            {
+                                "kind": "text",
+                                "text": (
+                                    "这两条来源能支持该记录来自现有材料，但不足以证明已经完成"
+                                    "官方交叉验证。"
+                                ),
+                            },
+                            {
+                                "kind": "evidence",
+                                "evidence_handle": seeded["evidence_handle"],
+                                "note": "已取得来源",
+                            },
+                        ]
+                    },
+                )
+            ]
+        )
+
+    model = BudgetedModel(
+        FunctionModel(respond), state.instrumentation, request_scope="dialogue_agent"
+    )
+    agent = build_agent(model)
+    finalizer = build_finalizer_agent(model)
+    history = [ModelRequest(parts=[UserPromptPart(content="甲" * 4_000)])]
+    events_before = len(state.tool_events)
+
+    failed, history = await run_turn(
+        agent, state, "那第一条呢，可信吗", history, finalizer
+    )
+
+    assert failed["status"] == "partial_completed"
+    assert failed["finalization"]["status"] == "tool_attempted"
+    assert failed["completion"]["reason_code"] == "finalize_tool_attempted"
+    assert failed["completion"]["continuation"]["task_type"] == "finalize_answer"
+    assert "content" not in json.dumps(
+        failed["completion"]["continuation"], ensure_ascii=False
+    )
+    assert "来源已取得，可信度分析尚未完成" in failed["answer"]
+    assert len(state.tool_events) == events_before
+    assert len(provider_calls) == 1
+    assert provider_calls[0][1].function_tools == []
+
+    state.begin_turn(999, "继续")
+    completed, _ = await run_turn(agent, state, "继续", history, finalizer)
+
+    assert completed["status"] == "completed"
+    assert completed["tool_calls"] == []
+    assert completed["context"]["continuation_mode"] == "finalize_only"
+    assert "不足以证明已经完成官方交叉验证" in completed["answer"]
+    assert state.continuation is None
+    assert len(state.tool_events) == events_before
+    assert len(provider_calls) == 2
+
+
+@pytest.mark.asyncio
+async def test_finalize_continuation_rejects_forgery_permission_and_material_changes() -> None:
+    from sqlalchemy import delete, update
+
+    from app.db.session import async_session_factory
+    from app.models import Entry, EntrySourceEvidence, WorkspaceMember
+
+    forged_state = _state()
+    forged = await _seed_finalize_material(forged_state)
+    continuation = await _create_finalize_continuation(
+        forged_state, "那第一条呢，可信吗", []
+    )
+    valid, reason = await _validate_finalize_continuation(forged_state, continuation)
+    assert valid is True and reason is None
+    public_snapshot = json.dumps(continuation.snapshot(), ensure_ascii=False)
+    assert forged["content"] not in public_snapshot
+    assert forged["quote"] not in public_snapshot
+
+    fake_handle = deepcopy(continuation)
+    fake_handle.recoverable_material["record_fingerprints"]["forged"] = "bad"
+    valid, reason = await _validate_finalize_continuation(forged_state, fake_handle)
+    assert valid is False and "句柄" in reason
+
+    changed_state = _state()
+    changed = await _seed_finalize_material(changed_state)
+    changed_continuation = await _create_finalize_continuation(
+        changed_state, "那第一条呢，可信吗", []
+    )
+    async with async_session_factory() as db:
+        await db.execute(
+            update(Entry)
+            .where(Entry.id == changed["entry_id"])
+            .values(content="正文版本已经变化")
+        )
+        await db.commit()
+    valid, reason = await _validate_finalize_continuation(
+        changed_state, changed_continuation
+    )
+    assert valid is False and "版本" in reason
+
+    revoked_state = _state()
+    revoked = await _seed_finalize_material(revoked_state)
+    revoked_continuation = await _create_finalize_continuation(
+        revoked_state, "那第一条呢，可信吗", []
+    )
+    async with async_session_factory() as db:
+        await db.execute(
+            delete(WorkspaceMember).where(
+                WorkspaceMember.workspace_id == revoked["workspace_id"],
+                WorkspaceMember.user_id == revoked["user_id"],
+            )
+        )
+        await db.commit()
+    valid, reason = await _validate_finalize_continuation(
+        revoked_state, revoked_continuation
+    )
+    assert valid is False and "Workspace" in reason
+
+    relation_state = _state()
+    relation = await _seed_finalize_material(relation_state)
+    relation_continuation = await _create_finalize_continuation(
+        relation_state, "那第一条呢，可信吗", []
+    )
+    async with async_session_factory() as db:
+        await db.execute(
+            delete(EntrySourceEvidence).where(
+                EntrySourceEvidence.id == relation["relation_id"]
+            )
+        )
+        await db.commit()
+    valid, reason = await _validate_finalize_continuation(
+        relation_state, relation_continuation
+    )
+    assert valid is False and "来源关系" in reason
+
+
+@pytest.mark.asyncio
+async def test_invalid_continuation_does_not_call_model_and_topic_switch_clears_it() -> None:
+    from sqlalchemy import delete
+
+    from app.db.session import async_session_factory
+    from app.models import Entry
+
+    state = _state()
+    state.instrumentation.context_policy_enabled = True
+    seeded = await _seed_finalize_material(state)
+    continuation = await _create_finalize_continuation(
+        state, "那第一条呢，可信吗", []
+    )
+    state.continuation = continuation
+    state.begin_turn(1_001, "换个话题，聊聊复习方法")
+    assert state.active_continuation is None
+    assert state.continuation is None
+
+    state.continuation = continuation
+    async with async_session_factory() as db:
+        await db.execute(delete(Entry).where(Entry.id == seeded["entry_id"]))
+        await db.commit()
+    state.begin_turn(1_002, "继续")
+    calls = []
+
+    def respond(_messages, _info):
+        calls.append(True)
+        raise AssertionError("材料失效时不得派发模型")
+
+    model = BudgetedModel(
+        FunctionModel(respond), state.instrumentation, request_scope="dialogue_agent"
+    )
+    turn, _ = await run_turn(
+        build_agent(model), state, "继续", [], build_finalizer_agent(model)
+    )
+
+    assert turn["status"] == "not_executed"
+    assert turn["completion"]["reason_code"] == "continuation_material_invalid"
+    assert "重新核验" in turn["answer"]
+    assert calls == []
+    assert state.continuation is None
+
+
+def test_fourth_batch_keeps_all_frozen_budget_values() -> None:
+    assert INPUT_ESTIMATE_SOFT_LIMIT == 9_000
+    assert MODEL_INPUT_TOKENS_LIMIT == 12_000
+    assert PER_TURN_TEXT_REQUESTS == 12
+    assert PER_TURN_TOOL_CALLS == 8
+    assert PER_TURN_ENTRY_READS == 30
+    assert PER_TURN_EVIDENCE_READS == 20
+    assert PER_TURN_SECONDS == 120.0
+    assert BATCH_TEXT_REQUESTS == 192
+    assert BATCH_EMBEDDING_REQUESTS == 64

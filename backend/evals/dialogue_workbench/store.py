@@ -34,6 +34,9 @@ class WorkbenchStore:
                 conversation["recovery_notice"] = "服务已重启，模型运行上下文不可恢复。"
                 for turn in conversation.get("turns", []):
                     turn.setdefault("completion", None)
+                    if turn.get("completion"):
+                        turn["completion"]["can_continue"] = False
+                        turn["completion"]["continuation"] = None
                     if turn.get("status") in {"queued", "running"}:
                         turn["status"] = "interrupted"
                         turn["stage"] = "interrupted"

@@ -256,6 +256,23 @@ async def test_refresh_persistence_feedback_export_and_restart_read_only(tmp_pat
     conversation = await runtime.create_conversation()
     created = await runtime.submit_turn(conversation["id"], "统计正式记录", "request-1001")
     await wait_for_turn(runtime, conversation["id"], created["id"])
+    live_turn = runtime._turn(runtime._conversation(conversation["id"]), created["id"])
+    live_turn["completion"] = {
+        "status": "partial_completed",
+        "reason_code": "finalize_output_invalid",
+        "reason": "最终回答校验失败",
+        "incomplete_steps": ["材料已取得，最终回答尚未完成"],
+        "can_continue": True,
+        "continuation": {
+            "task_type": "finalize_answer",
+            "pending_steps": [{"step": "finalize_answer"}],
+            "material_summary": {"entry_ids": [7], "source_ids": [66]},
+        },
+    }
+    await runtime.persist()
+    refreshed_turn = runtime.public_state()["sessions"][-1]["conversations"][0]["turns"][0]
+    assert refreshed_turn["completion"]["can_continue"] is True
+    assert refreshed_turn["completion"]["continuation"]["task_type"] == "finalize_answer"
     await runtime.save_feedback(conversation["id"], created["id"], "omitted", "漏了项目条件")
 
     persisted = json.loads(runtime.store.path.read_text(encoding="utf-8"))
@@ -270,6 +287,9 @@ async def test_refresh_persistence_feedback_export_and_restart_read_only(tmp_pat
     old_conversation = restarted._conversation(conversation["id"])
     assert old_conversation["read_only"] is True
     assert "不可恢复" in old_conversation["recovery_notice"]
+    old_turn = old_conversation["turns"][0]
+    assert old_turn["completion"]["can_continue"] is False
+    assert old_turn["completion"]["continuation"] is None
     with pytest.raises(PermissionError, match="只能查看和导出"):
         await restarted.save_feedback(conversation["id"], created["id"], "wrong", "修改")
 

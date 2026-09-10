@@ -18,6 +18,8 @@ INPUT_ESTIMATE_METHOD = (
     "OpenAI 兼容请求投影的 JSON UTF-8 字节数除以 3 向上取整，"
     "另加消息、工具和固定协议安全余量"
 )
+HISTORY_ANSWER_CHARS_PER_TURN = 1_200
+HISTORY_INPUT_TOKENS_TARGET = 5_000
 OUTPUT_TOKENS_LIMIT = 2_000
 PER_TURN_TEXT_REQUESTS = 12
 PER_TURN_EMBEDDING_REQUESTS = 4
@@ -163,7 +165,7 @@ class BudgetExceeded(RuntimeError):
 
 @dataclass
 class ContinuationState:
-    """跨轮保存的最小可续任务，不包含正文或历史结果句柄。"""
+    """跨轮保存的可续任务；完整材料只留在当前进程内存。"""
 
     task_type: str
     tool_name: str
@@ -172,9 +174,23 @@ class ContinuationState:
     pending_steps: list[dict] = field(default_factory=list)
     confirmed: list[dict] = field(default_factory=list)
     stop_reason: str | None = None
+    original_question: str | None = None
+    resolved_references: list[dict] = field(default_factory=list)
+    recoverable_material: dict = field(default_factory=dict, repr=False)
+    validation_refs: dict = field(default_factory=dict, repr=False)
 
     def snapshot(self) -> dict:
-        return asdict(self)
+        value = asdict(self)
+        material = value.pop("recoverable_material", {})
+        validation_refs = value.pop("validation_refs", {})
+        value["material_summary"] = {
+            "result_handles": sorted(material.get("records", {})),
+            "evidence_handles": sorted(material.get("evidence", {})),
+            "entry_ids": validation_refs.get("entry_ids", []),
+            "source_ids": validation_refs.get("source_ids", []),
+            "fingerprint_count": len(validation_refs.get("fingerprints", {})),
+        }
+        return value
 
 
 @dataclass
@@ -304,6 +320,8 @@ def frozen_budget(messages_per_batch: int = 24) -> dict:
         "input_estimate_soft_limit": INPUT_ESTIMATE_SOFT_LIMIT,
         "input_estimate_version": INPUT_ESTIMATE_VERSION,
         "input_estimate_method": INPUT_ESTIMATE_METHOD,
+        "history_answer_chars_per_turn": HISTORY_ANSWER_CHARS_PER_TURN,
+        "history_input_tokens_target": HISTORY_INPUT_TOKENS_TARGET,
         "finalize_request_reserved": 1,
         "output_tokens_per_request": OUTPUT_TOKENS_LIMIT,
         "text_requests_per_turn": PER_TURN_TEXT_REQUESTS,

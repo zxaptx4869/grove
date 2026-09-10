@@ -23,6 +23,7 @@ from evals.dialogue_loop.loop import (
     _verified_failure_output,
     build_agent,
     build_compact_history,
+    build_finalizer_agent,
     run_turn,
 )
 
@@ -47,6 +48,7 @@ class UnifiedLoopEngine:
         self.ledger = instrumentation.ledger
         self.instrumentation = instrumentation
         self.agent = build_agent(model)
+        self.finalizer = build_finalizer_agent(model)
         self.provider = str(model.system)
         self.model = model.model_name
         self.database_lock = asyncio.Lock()
@@ -102,7 +104,11 @@ class UnifiedLoopEngine:
         self.instrumentation.activity_callback = stage
         try:
             turn, context.history = await run_turn(
-                self.agent, context.state, message, context.history
+                self.agent,
+                context.state,
+                message,
+                context.history,
+                self.finalizer,
             )
         except asyncio.CancelledError:
             try:
@@ -154,7 +160,13 @@ class UnifiedLoopEngine:
         ]
         tool_calls_known = not (public_parts and not events)
         if not state.history_turns or state.history_turns[-1].get("turn") != state.turn_index:
-            state.remember_turn(message, text, events)
+            state.remember_turn(
+                message,
+                text,
+                events,
+                blocks=blocks,
+                completion=stop.snapshot(),
+            )
         context.history = build_compact_history(state)
         return {
             "message": message,
