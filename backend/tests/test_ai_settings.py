@@ -49,7 +49,7 @@ async def test_get_settings_returns_defaults(client: httpx.AsyncClient) -> None:
     assert response.status_code == 200
     data = response.json()
     assert data["text_provider"] == "deepseek"
-    assert data["text_model"] == "deepseek-chat"
+    assert data["text_model"] == "deepseek-v4-flash"
     assert data["text_configured"] is False
     assert data["vision_provider"] == "doubao"
     assert data["vision_model"] == "doubao-seed-2-0-lite-260428"

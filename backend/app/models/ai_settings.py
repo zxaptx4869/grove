@@ -31,7 +31,9 @@ class AIProviderSettings(Base):
         nullable=False,
     )
     text_provider: Mapped[str] = mapped_column(String(32), default="deepseek", nullable=False)
-    text_model: Mapped[str] = mapped_column(String(128), default="deepseek-chat", nullable=False)
+    text_model: Mapped[str] = mapped_column(
+        String(128), default="deepseek-v4-flash", nullable=False
+    )
     text_key_tail: Mapped[str | None] = mapped_column(String(8), nullable=True)
     text_available: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     vision_provider: Mapped[str] = mapped_column(String(32), default="doubao", nullable=False)

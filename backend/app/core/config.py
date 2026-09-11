@@ -336,7 +336,7 @@ class Settings(BaseSettings):
 
     # 文本模型：产品不提供密钥，用户 BYOK 配置
     text_provider: str = Field(default="deepseek", description="文本模型 Provider")
-    text_model: str = Field(default="deepseek-chat", description="文本模型名")
+    text_model: str = Field(default="deepseek-v4-flash", description="文本模型名")
 
     # 视觉模型：产品不提供密钥，用户 BYOK 配置
     vision_provider: str = Field(default="doubao", description="视觉模型 Provider")
