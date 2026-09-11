@@ -117,3 +117,43 @@
 #### Scenario: 带交付要求的直接写入
 - **WHEN** 用户明确要求直接更新、保存、覆盖或写入知识库，即使同时要求“发给我”
 - **THEN** 系统 MUST 保持只读边界并报告写入不支持，不得因交付表达将其降格为候选稿请求
+
+### Requirement: DeepSeek V4 对话模式必须明确且预算不变
+统一对话循环使用 `deepseek-v4-flash` 时 MUST 在普通求解与独立 finalizer 请求中显式关闭思考模式，以保持旧 `deepseek-chat` 非思考行为；其他模型 MUST NOT 接收 DeepSeek 专用参数。模型名、9000/12000 输入边界、输出、请求、工具、Entry、Evidence、批次和时间预算 MUST 保持不变。
+
+#### Scenario: V4 求解和收尾请求
+- **WHEN** 普通 Agent 和 finalizer 使用模型名 `deepseek-v4-flash`
+- **THEN** 两者的模型设置均包含 `thinking.type=disabled`，且冻结预算快照与本 change 修改前一致
+
+#### Scenario: 非 DeepSeek V4 模型
+- **WHEN** 离线 FunctionModel 或其他模型构造统一对话 Agent
+- **THEN** 程序不附加 DeepSeek 专用 `thinking` 请求体
+
+### Requirement: 续执行提示必须对应真实可恢复状态
+系统 MUST 仅在实际保存合法 continuation 时公开 `can_continue=true`。收到精确的“继续”类表达但没有活动 continuation 时，系统 MUST 返回不可恢复状态，模型和资料工具执行次数均为零；不得把该表达交给普通 Agent、重新搜索或重复读取历史成功材料。
+
+#### Scenario: 有效 continuation 继续
+- **WHEN** 上一轮保存了仍有效的 finalize-only continuation，用户说“继续”
+- **THEN** 系统仍只复验并重试最终回答，`can_continue` 与公开 continuation 一致，不重复搜索、Entry 或 Evidence 读取
+
+#### Scenario: 没有 continuation 的继续
+- **WHEN** 公开状态没有 continuation 而用户单独说“继续”或“下一轮继续”
+- **THEN** 系统返回 `continuation_not_available` 且 `can_continue=false`，文本模型、搜索、Entry 与 Evidence 工具新增执行次数均为零
+
+### Requirement: 收尾格式兼容不得放宽引用边界
+系统 MAY 确定性忽略 text 块最多 500 字的可选备注，但 MUST 继续拒绝错误顶层结构、错误句柄类型、历史结果、伪造引用及未授权或跨 Workspace 材料。Finalizer MUST 被明确要求只输出 `DialogueAnswer.blocks`，不得通过增加模型重试兼容非法输出。
+
+#### Scenario: text 块包含无害备注
+- **WHEN** finalizer 输出合法 text 内容并额外携带不参与展示的 `note`
+- **THEN** 程序忽略该备注并继续按 text 内容校验和渲染，不新增引用、材料或权限
+
+#### Scenario: 错误引用不能被兼容
+- **WHEN** finalizer 把 Entry 结果句柄当作 Evidence、引用历史列表或输出其他错误句柄
+- **THEN** 程序仍拒绝该输出并按现有部分完成或 continuation 机制处理，不自动猜测或转换句柄
+
+### Requirement: 精简候选稿请求不得展开来源原文
+用户在候选稿上下文中明确要求“只输出补充后的知识内容，其他都不用”时，系统 MUST 只展示一个有界 text 块，保留“尚未写入”和模型补充不属于 Source 原文的边界，不得输出或渲染 list、statistic、Entry 正文引用或 Evidence 块。普通候选稿分区和正式 Entry 只读边界保持不变。
+
+#### Scenario: 只输出补充后的内容
+- **WHEN** 用户说“就输出你补充后的知识内容就行，其他的都不用”
+- **THEN** 系统识别为精简候选稿，只返回候选正文与必要边界，不展开已读取 Evidence，不修改正式 Entry

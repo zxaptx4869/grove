@@ -69,6 +69,18 @@ continuation 在收尾失败且存在当前轮可展示材料时建立，唯一 
 
 明确要求 Agent “直接更新知识库”、保存、覆盖或写入正式记录的表达仍优先进入不支持边界；普通的“发给我”本身不足以推断为候选修改。候选路径只允许输出带“尚未写入”、原记录要点、建议补充、候选版本和来源边界的文本，不新增写入工具或数据库事件。模型若在已确定的候选请求中误调用 `report_unsupported`，沿用现有至多一次的合法纠正，不放宽请求、工具或时间预算。
 
+### 8. V4 非思考模式与收尾协议收敛
+
+`deepseek-v4-flash` 的 Chat Completions 默认开启 high 思考，而旧 `deepseek-chat` 兼容名对应非思考模式。统一对话循环在普通 Agent 与独立 finalizer 的请求设置中显式传入 `extra_body.thinking.type=disabled`；只对 DeepSeek V4 模型名生效，其他模型和离线 FunctionModel 不附加 Provider 专用参数。现有 temperature、输出上限、9000/12000 输入边界和请求次数均不改变。
+
+Finalizer 提示明确唯一合法顶层为 `DialogueAnswer.blocks`，禁止自创 `answer_summary`、`completion` 等结构。为兼容已观察到的无权限含义格式偏差，`text` 块允许最多 500 字的可选 `note`，但程序不渲染、不保存为引用且不赋予任何权限；错误句柄、把 Entry 结果冒充 Evidence、历史或跨 Workspace 引用仍原样拒绝，不进行自动转换。
+
+### 9. 续执行真值与精简候选稿
+
+公开 `can_continue` 由 continuation 是否真实存在派生，不再表示“用户可以重新问一次”。收到“继续”类精确表达但本轮没有活动 continuation 时，程序直接返回 `continuation_not_available`，模型调用和资料工具执行都为零，避免把空指令交给普通 Agent 后重新读取历史材料。已有合法 continuation 的复验、只重试回答和材料失效行为保持不变。
+
+候选修改的交付信号增加与修改动作组合使用的“输出”；当用户明确说“只/就输出补充后的知识内容，其他不用”时，程序标记为精简候选稿：只允许一个 text 块，包含候选正文、尚未写入声明和简短来源边界，不输出 list、statistic 或 evidence 块，从而避免渲染器展开完整 Source 原文。普通候选稿仍保留原记录要点、建议补充和修改后候选版本的分区要求。
+
 ## Risks / Trade-offs
 
 - [1200 字符摘要可能遗漏较早回答细节] → 首尾保留并把对象、状态、决定和后续建议独立结构化；完整材料仍在程序侧按需装配。
