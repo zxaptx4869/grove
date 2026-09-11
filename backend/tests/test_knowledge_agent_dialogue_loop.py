@@ -1153,8 +1153,8 @@ def test_agent_exposes_split_statistics_without_composite_arguments() -> None:
     assert group_schema["required"] == ["project_scope", "project_name", "group_by"]
 
 
-def test_candidate_revision_output_requires_sections_and_source_boundary() -> None:
-    """候选稿缺少未写入声明或内容分区时，输出校验必须拒绝。"""
+def test_candidate_revision_output_keeps_hard_boundaries_without_fixed_headings() -> None:
+    """候选稿只校验写入、内容区分和来源边界，不强制固定章节标题。"""
 
     state = _state()
     state.begin_turn(5, "帮我完善一下这条知识")
@@ -1165,11 +1165,31 @@ def test_candidate_revision_output_requires_sections_and_source_boundary() -> No
     errors = output_errors(incomplete, state)
 
     assert errors
-    assert "未写入状态" in errors[0]
-    assert "原记录内容" in errors[0]
-    assert "新增建议" in errors[0]
-    assert "修改后版本" in errors[0]
-    assert "来源边界" in errors[0]
+    assert any("未写入状态" in error for error in errors)
+    assert any("原记录与现有内容" in error for error in errors)
+    assert any("新增建议" in error for error in errors)
+    assert any("来源边界" in error for error in errors)
+
+    natural = DialogueAnswer.model_validate(
+        {
+            "blocks": [
+                {
+                    "kind": "text",
+                    "text": (
+                        "现有内容主要说明墙面材料的选择原则。\n"
+                        "在此基础上，可以增加环保等级和维护成本的判断。\n"
+                        "这只是候选修改稿，尚未写入正式记录；新增分析不等于来源原文。"
+                    ),
+                }
+            ]
+        }
+    )
+    assert output_errors(natural, state) == []
+
+    written = DialogueAnswer.model_validate(
+        {"blocks": [{"kind": "text", "text": "已经帮你更新好了，尚未写入正式记录。"}]}
+    )
+    assert any("不得声称已经写入" in error for error in output_errors(written, state))
 
 
 @pytest.mark.parametrize(
@@ -4114,6 +4134,103 @@ async def test_finalize_tool_attempt_is_blocked_and_resume_only_retries_answer()
     assert state.continuation is None
     assert len(state.tool_events) == events_before
     assert len(provider_calls) == 2
+
+
+@pytest.mark.asyncio
+async def test_candidate_draft_survives_finalize_failure_and_continue_only_reformats() -> None:
+    """候选稿校验或收尾失败时保留原稿，继续只重试候选整理。"""
+
+    state = _state()
+    state.instrumentation.context_policy_enabled = True
+    seeded = await _seed_finalize_material(state)
+    message = "按你的分析，把第一条的知识补充一下，发给我"
+    state.begin_turn(900, message)
+    provider_calls = []
+    events_before = len(state.tool_events)
+
+    def respond(_messages, info):
+        provider_calls.append(info)
+        if len(provider_calls) == 1:
+            return ModelResponse(
+                parts=[
+                    ToolCallPart(
+                        info.output_tools[0].name,
+                        {
+                            "blocks": [
+                                {
+                                    "kind": "text",
+                                    "text": (
+                                        "现有记录说明了人造板的环保等级。\n"
+                                        "在此基础上，可以补充选择和维护建议。\n"
+                                        "这是一版候选修改稿，尚未写入正式记录。"
+                                    ),
+                                }
+                            ]
+                        },
+                    )
+                ]
+            )
+        if len(provider_calls) == 2:
+            return ModelResponse(
+                parts=[
+                    ToolCallPart(
+                        "read_evidence",
+                        {"entry_id": seeded["entry_id"], "source_ids": [seeded["source_id"]]},
+                    )
+                ]
+            )
+        return ModelResponse(
+            parts=[
+                ToolCallPart(
+                    info.output_tools[0].name,
+                    {
+                        "blocks": [
+                            {
+                                "kind": "text",
+                                "text": (
+                                    "现有记录说明了人造板的环保等级。在此基础上，可以补充"
+                                    "选择和维护建议。这是一版候选修改稿，尚未写入正式记录；"
+                                    "新增分析不等于来源原文。"
+                                ),
+                            }
+                        ]
+                    },
+                )
+            ]
+        )
+
+    model = BudgetedModel(
+        FunctionModel(respond, model_name="deepseek-v4-flash"),
+        state.instrumentation,
+        request_scope="dialogue_agent",
+    )
+    history = [ModelRequest(parts=[UserPromptPart(content="甲" * 4_000)])]
+    failed, history = await run_turn(
+        build_agent(model), state, message, history, build_finalizer_agent(model)
+    )
+
+    assert failed["status"] == "partial_completed"
+    assert failed["completion"]["reason_code"] == "finalize_tool_attempted"
+    assert failed["completion"]["continuation"]["task_type"] == "candidate_draft"
+    assert "现有记录说明了人造板的环保等级" in failed["answer"]
+    assert "候选稿" in failed["answer"]
+    assert len(state.tool_events) == events_before
+    assert all(
+        event["tool"] != "read_evidence" for event in state.tool_events[events_before:]
+    )
+
+    state.begin_turn(901, "继续")
+    completed, _ = await run_turn(
+        build_agent(model), state, "继续", history, build_finalizer_agent(model)
+    )
+
+    assert completed["status"] == "completed"
+    assert completed["context"]["continuation_mode"] == "finalize_only"
+    assert len(provider_calls) == 3
+    assert len(state.tool_events) == events_before
+    assert state.continuation is None
+    assert "尚未写入正式记录" in completed["answer"]
+    assert "新增分析不等于来源原文" in completed["answer"]
 
 
 @pytest.mark.asyncio

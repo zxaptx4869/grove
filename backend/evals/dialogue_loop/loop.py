@@ -221,6 +221,20 @@ def _candidate_content_only_requested(message: str) -> bool:
     )
 
 
+def _candidate_request_message(state: LoopState) -> str | None:
+    """在候选稿续执行中继续使用原始候选请求的校验语义。"""
+
+    if _candidate_revision_requested(state.current_message):
+        return state.current_message
+    continuation = state.active_continuation
+    if (
+        continuation is not None
+        and continuation.scope.get("answer_basis") == "candidate_draft"
+    ):
+        return continuation.original_question
+    return None
+
+
 def _dialogue_model_settings(model) -> dict:
     """只为 DeepSeek V4 显式关闭默认思考，其他 Provider 保持原请求。"""
 
@@ -359,6 +373,8 @@ class LoopState:
     queried_directory_parents: set[int | None] = field(default_factory=set)
     semantic_search_results: dict[str, str] = field(default_factory=dict)
     current_message: str = ""
+    candidate_draft: dict | None = field(default=None, repr=False)
+    candidate_draft_errors: list[str] = field(default_factory=list, repr=False)
     _handle_sequence: int = 0
     database_lock: asyncio.Lock = field(default_factory=asyncio.Lock, repr=False)
     semantic_search_lock: asyncio.Lock = field(default_factory=asyncio.Lock, repr=False)
@@ -374,7 +390,7 @@ class LoopState:
         self.tools_allowed = not _knowledge_tools_disabled(message)
         if (
             self.continuation is not None
-            and self.continuation.task_type == "finalize_answer"
+            and self.continuation.task_type in {"finalize_answer", "candidate_draft"}
             and message.strip() not in FINALIZE_CONTINUE_MESSAGES
         ):
             self.continuation = None
@@ -383,11 +399,14 @@ class LoopState:
             if self.continuation is not None
             and (
                 message.strip() in FINALIZE_CONTINUE_MESSAGES
-                if self.continuation.task_type == "finalize_answer"
+                if self.continuation.task_type in {"finalize_answer", "candidate_draft"}
                 else any(pattern in message for pattern in CONTINUE_PATTERNS)
             )
             else None
         )
+        if self.active_continuation is None:
+            self.candidate_draft = None
+            self.candidate_draft_errors.clear()
         if (
             self.active_continuation is not None
             and self.active_continuation.scope.get("answer_basis") == "model_only"
@@ -1597,45 +1616,90 @@ def output_errors(answer: DialogueAnswer, state: LoopState) -> list[str]:
             block.kind == "insufficient" for block in answer.blocks
         ):
             errors.append("定义型问题没有直接相关正式记录时必须明确说明结果不足")
-    if _candidate_revision_requested(state.current_message):
+    candidate_message = _candidate_request_message(state)
+    if candidate_message is not None:
         draft_text = "\n".join(
             block.text for block in answer.blocks if block.kind == "text"
         )
-        content_only = _candidate_content_only_requested(state.current_message)
-        required_sections = (
-            {"未写入状态": ("尚未写入知识库", "尚未写入正式记录")}
-            if content_only
-            else {
-                "未写入状态": ("尚未写入知识库", "尚未写入正式记录"),
-                "原记录内容": ("原记录要点", "原记录已有内容"),
-                "新增建议": ("建议补充", "建议新增"),
-                "修改后版本": ("修改后候选版本", "候选修改稿"),
-            }
+        content_only = _candidate_content_only_requested(candidate_message)
+        unwritten_markers = (
+            "尚未写入",
+            "未写入",
+            "没有写入",
+            "不会写入",
+            "尚未保存",
+            "未保存",
+            "不会保存",
+            "不直接修改",
+            "仅供审核",
+            "供审核",
         )
-        missing = [
-            label
-            for label, markers in required_sections.items()
-            if not any(marker in draft_text for marker in markers)
-        ]
-        source_boundary_phrases = (
-            "不属于原始来源原文",
-            "不是原始来源原文",
-            "并非来自该来源原文",
-            "并非来自原始来源",
-            "不来自原始来源",
-            "没有对应的知识库来源原文",
-            "没有对应来源原文",
-            "没有来源原文",
-            "未提供来源原文",
-            "未取得来源原文",
+        has_unwritten_boundary = any(marker in draft_text for marker in unwritten_markers)
+        write_claims = (
+            "已写入",
+            "已经写入",
+            "已保存",
+            "已经保存",
+            "已更新",
+            "已经更新",
+            "已修改",
+            "已经修改",
+            "更新好了",
+            "写入完成",
         )
-        has_source_boundary = any(
-            phrase in draft_text for phrase in source_boundary_phrases
-        ) or (
-            "来源边界" in draft_text
-            and "来源原文" in draft_text
-            and any(negation in draft_text for negation in ("并非", "不是", "不属于"))
+        has_write_claim = any(
+            claim in draft_text
+            and not any(
+                negation in draft_text[max(0, draft_text.find(claim) - 4) : draft_text.find(claim)]
+                for negation in ("不", "未", "尚未", "没有", "不会")
+            )
+            for claim in write_claims
         )
+        source_terms = ("来源", "原文", "Source")
+        source_negations = (
+            "不是",
+            "并非",
+            "不属于",
+            "不来自",
+            "没有",
+            "未",
+            "无法",
+            "不能",
+            "不等于",
+            "不代表",
+            "仅供",
+        )
+        has_source_boundary = any(term in draft_text for term in source_terms) and any(
+            negation in draft_text for negation in source_negations
+        )
+        missing: list[str] = []
+        if not has_unwritten_boundary:
+            missing.append("未写入状态")
+        if has_write_claim:
+            errors.append("候选修改稿不得声称已经写入或修改正式记录")
+        if not content_only:
+            original_terms = (
+                "原记录",
+                "现有记录",
+                "已有记录",
+                "原内容",
+                "现有内容",
+                "当前记录",
+                "原文",
+            )
+            suggestion_terms = (
+                "建议",
+                "补充",
+                "新增",
+                "可以增加",
+                "可考虑",
+                "候选",
+                "修改后",
+            )
+            if not any(term in draft_text for term in original_terms):
+                missing.append("原记录与现有内容")
+            if not any(term in draft_text for term in suggestion_terms):
+                missing.append("新增建议")
         if not has_source_boundary:
             missing.append("来源边界")
         if content_only and (
@@ -2822,11 +2886,18 @@ def build_agent(model) -> Agent[LoopDeps, DialogueAnswer]:
 
     @agent.output_validator
     async def validate_output(ctx: RunContext[LoopDeps], answer: DialogueAnswer) -> DialogueAnswer:
+        state = ctx.deps.state
+        if (
+            _candidate_revision_requested(state.current_message)
+            and state.instrumentation.phase != "finalize"
+        ):
+            state.candidate_draft = answer.model_dump(mode="json")
         errors = output_errors(answer, ctx.deps.state)
         if errors:
-            ctx.deps.state.instrumentation.finalize_compatibility = None
+            state.candidate_draft_errors = list(errors)
+            state.instrumentation.finalize_compatibility = None
             message = "；".join(errors)
-            ctx.deps.state.instrumentation.record_validation_failure(
+            state.instrumentation.record_validation_failure(
                 "reference_validation", message, answer.model_dump(mode="json")
             )
             raise ModelRetry(message)
@@ -2860,16 +2931,27 @@ def build_finalizer_agent(model) -> Agent[LoopDeps, DialogueAnswer]:
 
     @agent.instructions
     def answer_basis_instruction(ctx: RunContext[LoopDeps]) -> str:
+        draft_instruction = ""
+        if (
+            ctx.deps.state.candidate_draft
+            and _candidate_revision_requested(ctx.deps.state.current_message)
+        ):
+            draft_instruction = (
+                "上一阶段已有候选修改稿。请优先保留其内容，只做最小整理，"
+                "不要因为缺少固定标题而丢弃整篇稿件。"
+            )
         if ctx.deps.state.tools_allowed:
             return (
                 "程序已经取得并核验本轮可用材料。真实统计、列表、正文和来源只能使用"
                 "当前材料中已有且获授权的句柄；不得引用历史轮次的材料句柄。"
+                + draft_instruction
             )
         return (
             "用户明确要求本轮不使用知识库。只能根据模型通用知识和对话中用于识别讨论对象的"
             "有界叙述作答；这些历史叙述不是可引用证据。只能输出 text 或 insufficient 块，"
             "不得输出统计、列表、Entry、Evidence 或任何 Grove 句柄，不得声称查询、读取、"
             "实时核验或得到 Grove 正式记录与 Source 支持。请明确这是模型通用分析及其边界。"
+            + draft_instruction
         )
 
     @agent.instructions
@@ -2880,6 +2962,17 @@ def build_finalizer_agent(model) -> Agent[LoopDeps, DialogueAnswer]:
             "用户只要补充后的候选知识内容。只输出一个 text 块，不得输出或引用 Evidence、"
             "Entry、list、statistic、insufficient；末尾仅保留尚未写入和模型补充不属于"
             "Source 原文的简短边界说明。"
+        )
+
+    @agent.instructions
+    def candidate_draft_recovery_instruction(ctx: RunContext[LoopDeps]) -> str:
+        draft = ctx.deps.state.candidate_draft
+        if not draft or _candidate_request_message(ctx.deps.state) is None:
+            return ""
+        return (
+            "上一阶段已经生成候选修改稿。请优先保留其事实内容，只做必要的最小整理；"
+            "不得重新搜索、读取或引用新的资料，也不得丢弃整篇候选稿。候选稿如下："
+            + json.dumps(draft, ensure_ascii=False, separators=(",", ":"))[:8_000]
         )
 
     @agent.output_validator
@@ -3088,6 +3181,15 @@ def _verified_failure_output(
         }[stop.status]
     )
     requested_blocks: list[dict] = [{"kind": "text", "text": status_text}]
+    candidate_text, candidate_blocks = _render_candidate_draft(state)
+    if candidate_text and _candidate_request_message(state) is not None:
+        requested_blocks.append(
+            {
+                "kind": "text",
+                "text": "已保留上一阶段生成的候选稿，但尚未通过最终边界校验：",
+            }
+        )
+        requested_blocks.extend(candidate_blocks)
     for handle, record in state.result_sets.items():
         if handle not in state.current_handles or record.status not in {
             "completed", "ok", "empty", "partial", "limited"
@@ -3121,12 +3223,15 @@ def _verified_failure_output(
     if (
         stop.can_continue
         and stop.continuation is not None
-        and stop.continuation.task_type == "finalize_answer"
+        and stop.continuation.task_type in {"finalize_answer", "candidate_draft"}
     ):
         continuation_text = (
             "可以在下一轮说“继续”或“下一轮继续”，系统将保持不使用知识库，"
             "只根据已保存的有界对话上下文重试最终回答。"
             if model_only
+            else "可以在下一轮说“继续”或“下一轮继续”，系统将只整理已保存的候选稿，"
+            "不重复查询、来源读取或引入新的 Evidence。"
+            if stop.continuation.scope.get("answer_basis") == "candidate_draft"
             else "可以在下一轮说“继续”或“下一轮继续”，系统将只根据已保存材料"
             "重试最终回答，不会重复已完成的查询或来源读取。"
         )
@@ -3242,6 +3347,48 @@ def _finalize_failure_reason(state: LoopState) -> tuple[str, str]:
         "cancelled": ("finalize_cancelled", "收尾请求被取消"),
     }
     return mapping.get(status, (f"finalize_{status}", "最终回答尚未完成"))
+
+
+def _candidate_draft_answer(state: LoopState) -> DialogueAnswer | None:
+    """读取当前轮已生成的候选稿；非法结构不进入恢复或展示路径。"""
+
+    if not state.candidate_draft:
+        return None
+    try:
+        return DialogueAnswer.model_validate(state.candidate_draft)
+    except (TypeError, ValueError):
+        return None
+
+
+def _render_candidate_draft(state: LoopState) -> tuple[str, list[dict]]:
+    """仅保留候选稿中的安全文本，避免失败收尾展示伪造 Evidence。"""
+
+    answer = _candidate_draft_answer(state)
+    if answer is None:
+        return "", []
+    safe_blocks = []
+    for block in answer.blocks:
+        if block.kind in {"text", "insufficient"}:
+            if block.kind == "text" and (reference := _entry_reference(block.text)):
+                handle, position = reference
+                record = state.result_sets.get(handle)
+                if (
+                    handle not in state.current_handles
+                    or record is None
+                    or record.kind != "entries"
+                    or not 1 <= position <= len(record.payload.get("items", []))
+                    or not record.payload["items"][position - 1].get("content")
+                ):
+                    continue
+            safe_blocks.append(block)
+        elif block.kind == "evidence" and block.evidence_handle in state.current_evidence:
+            safe_blocks.append(block)
+    if not safe_blocks:
+        return "", []
+    safe_answer = DialogueAnswer.model_validate(
+        {"blocks": [block.model_dump(mode="json") for block in safe_blocks]}
+    )
+    return render_answer(safe_answer, state)
 
 
 def _continuation_material(state: LoopState, current_events: list[dict]) -> dict:
@@ -3489,6 +3636,71 @@ async def _create_finalize_continuation(
     message: str,
     current_events: list[dict],
 ) -> ContinuationState:
+    candidate_draft = _candidate_draft_answer(state)
+    if candidate_draft is not None:
+        material = _continuation_material(state, current_events)
+        entry_ids = sorted(
+            {
+                int(item["entry_id"])
+                for record in material["records"].values()
+                for item in record["payload"].get("items", [])
+                if item.get("entry_id") is not None
+            }
+            | {
+                int(item["entry_id"])
+                for item in material["evidence"].values()
+                if item.get("entry_id") is not None
+            }
+        )
+        source_pairs = sorted(
+            {
+                (int(item["entry_id"]), int(item["source_id"]))
+                for item in material["evidence"].values()
+                if item.get("entry_id") is not None and item.get("source_id") is not None
+            }
+        )
+        validation_refs = await _database_material_refs(state, entry_ids, source_pairs)
+        resolved = []
+        for handle, record in material["records"].items():
+            if record["kind"] != "list":
+                continue
+            for position, item in enumerate(record["payload"].get("items", []), 1):
+                if item.get("entry_id") in entry_ids:
+                    resolved.append(
+                        {
+                            "result_handle": handle,
+                            "position": position,
+                            "entry_id": item.get("entry_id"),
+                            "title": item.get("title"),
+                        }
+                    )
+        reason_code, reason = _finalize_failure_reason(state)
+        return ContinuationState(
+            task_type="candidate_draft",
+            tool_name="finalize_answer",
+            scope={
+                "workspace_id": state.workspace_id,
+                "user_id": state.user_id,
+                "answer_basis": "candidate_draft",
+                "authorized_entry_ids": sorted(state.authorized_entry_ids),
+            },
+            completed_steps=[
+                {"step": "candidate_draft_generated"},
+                *[
+                    {"tool": event.get("tool"), "result_handle": event.get("result_handle")}
+                    for event in current_events
+                    if event.get("status") in {"completed", "ok", "limited", "empty"}
+                ],
+            ],
+            pending_steps=[{"step": "finalize_candidate_draft"}],
+            confirmed=[{"entry_id": entry_id} for entry_id in validation_refs["entry_ids"]]
+            + [{"source_id": source_id} for source_id in validation_refs["source_ids"]],
+            stop_reason=f"{reason_code}: {reason}",
+            original_question=message,
+            resolved_references=resolved,
+            recoverable_material={**material, "candidate_draft": state.candidate_draft},
+            validation_refs=validation_refs,
+        )
     if not state.tools_allowed:
         reason_code, reason = _finalize_failure_reason(state)
         return ContinuationState(
@@ -3579,7 +3791,7 @@ async def _create_finalize_continuation(
 async def _validate_finalize_continuation(
     state: LoopState, continuation: ContinuationState
 ) -> tuple[bool, str | None]:
-    if continuation.task_type != "finalize_answer":
+    if continuation.task_type not in {"finalize_answer", "candidate_draft"}:
         return False, "续执行任务类型不匹配"
     if continuation.scope.get("workspace_id") != state.workspace_id:
         return False, "续执行 Workspace 与当前范围不一致"
@@ -3599,9 +3811,20 @@ async def _validate_finalize_continuation(
         if not isinstance(material.get("history_turns"), list):
             return False, "无资料续执行缺少可恢复的对话上下文"
         return True, None
-    if answer_basis != "grove_material":
+    if answer_basis == "candidate_draft":
+        if _candidate_draft_answer(state) is None and not material.get("candidate_draft"):
+            return False, "候选稿续执行缺少可恢复的候选文本"
+        try:
+            DialogueAnswer.model_validate(material.get("candidate_draft"))
+        except (TypeError, ValueError):
+            return False, "候选稿续执行的文本结构已失效"
+    elif answer_basis != "grove_material":
         return False, "续执行回答依据不受支持"
-    if not material.get("records") and not material.get("evidence"):
+    if (
+        not material.get("records")
+        and not material.get("evidence")
+        and not material.get("candidate_draft")
+    ):
         return False, "续执行没有保存可恢复材料"
     for handle, expected in material.get("record_fingerprints", {}).items():
         record = state.result_sets.get(handle)
@@ -3649,6 +3872,7 @@ async def _attach_finalize_continuation(
         state.tools_allowed
         and not _reliable_current_records(state)
         and not state.current_evidence
+        and _candidate_draft_answer(state) is None
     ):
         return False
     try:
@@ -3702,6 +3926,26 @@ def _current_material_history(
         *_without_historical_system_prompts(history),
         ModelRequest(parts=[UserPromptPart(content=message)]),
     ]
+    draft = _candidate_draft_answer(state)
+    if draft is not None:
+        draft_text = "\n".join(
+            block.text
+            for block in draft.blocks
+            if block.kind in {"text", "insufficient"}
+        )
+        if draft_text:
+            messages.append(
+                ModelRequest(
+                    parts=[
+                        UserPromptPart(
+                            content=(
+                                "上一阶段已生成候选修改稿，请在不丢弃其内容的前提下做最小整理：\n"
+                                + draft_text[:4_000]
+                            )
+                        )
+                    ]
+                )
+            )
     for index, event in enumerate(current_events, 1):
         handle = event.get("result_handle")
         if handle not in state.current_handles and event.get("status") not in {
@@ -3804,7 +4048,10 @@ async def _run_finalize_continuation(
     """只复验并重试最终回答，不重新执行已完成的资料步骤。"""
 
     continuation = state.active_continuation
-    assert continuation is not None and continuation.task_type == "finalize_answer"
+    assert continuation is not None and continuation.task_type in {
+        "finalize_answer",
+        "candidate_draft",
+    }
     valid, invalid_reason = await _validate_finalize_continuation(state, continuation)
     solve_error = None
     solve_failure = None
@@ -3830,6 +4077,8 @@ async def _run_finalize_continuation(
         material = continuation.recoverable_material
         state.current_handles.update(material.get("records", {}))
         state.current_evidence.update(material.get("evidence", {}))
+        if continuation.scope.get("answer_basis") == "candidate_draft":
+            state.candidate_draft = material.get("candidate_draft")
         try:
             result = await _finalize_once(
                 finalizer,
@@ -3875,6 +4124,8 @@ async def _run_finalize_continuation(
             state.instrumentation.complete_finalize()
             state.continuation = None
             state.active_continuation = None
+            state.candidate_draft = None
+            state.candidate_draft_errors.clear()
             state.stop_state = None
             status = TURN_COMPLETED
             error = None
@@ -3998,10 +4249,10 @@ async def run_turn(
             "finalization": state.instrumentation.finalization_snapshot(),
             "completion": completion,
         }, build_compact_history(state)
-    if (
-        state.active_continuation is not None
-        and state.active_continuation.task_type == "finalize_answer"
-    ):
+    if state.active_continuation is not None and state.active_continuation.task_type in {
+        "finalize_answer",
+        "candidate_draft",
+    }:
         return await _run_finalize_continuation(
             finalizer,
             state,
@@ -4185,6 +4436,9 @@ async def run_turn(
         status = TURN_PARTIAL_COMPLETED
         error = None
         text, blocks = _verified_failure_output(state, state.stop_state)
+    elif status == TURN_COMPLETED:
+        state.candidate_draft = None
+        state.candidate_draft_errors.clear()
     completion = state.completion_snapshot(status)
     state.remember_turn(
         message,
