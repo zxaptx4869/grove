@@ -75,7 +75,9 @@ continuation 在收尾失败且存在当前轮可展示材料时建立，唯一 
 
 Finalizer 提示明确唯一合法顶层为 `DialogueAnswer.blocks`，禁止自创 `answer_summary`、`completion` 等结构。为兼容已观察到的无权限含义格式偏差，`text` 块允许最多 500 字的可选 `note`，但程序不渲染、不保存为引用且不赋予任何权限。
 
-真实 V4 响应还会在内容和引用已经完整时使用旧式 `answer_summary + completion` 外壳。适配只放在独立 finalizer 的模型响应边界：顶层必须恰好符合受支持旧结构，`answer_summary.narrative` 必须是非空有界文本，`references` 只能转换为既有输出块类型；模型提供的 `completion` 只验证形状后丢弃，公开完成状态仍由程序根据转换后的 `DialogueAnswer` 与当前执行状态计算。转换结果继续经过同一个 `output_errors`，因此错误句柄、把 Entry 结果冒充 Evidence、历史、伪造、未授权或跨 Workspace 引用仍原样拒绝。转换不触发第二次模型请求，也不成为普通 Agent 或其他任意 JSON 的宽松解析器，并记录可观测的兼容事件。
+真实 V4 响应还会在内容和引用已经完整时使用旧式 `answer_summary + completion` 外壳，且该偏差同时出现在普通求解和 finalizer。适配放在两者共用的 `BudgetedModel` 响应边界、框架决定格式重试之前：保留 Provider 原始公开响应，只有单一文本响应、顶层恰好符合受支持旧结构时才转换为唯一输出工具调用。`answer_summary.narrative` 必须是非空有界文本，`references` 只能转换为既有输出块类型；模型提供的 `completion` 只验证形状后丢弃，公开完成状态仍由程序根据转换后的 `DialogueAnswer` 与当前执行状态计算。
+
+转换只负责语法映射，不授予材料权限。Evidence 的模型声明元数据作为待校验声明随兼容事件保留，转换结果继续经过同一个 `output_errors`，由当前轮真实 Evidence 句柄解析权威 Entry/Source 关系；错误句柄、关系不一致、把 Entry 结果冒充 Evidence、历史、伪造、未授权或跨 Workspace 引用仍原样拒绝。每次模型请求前清理上次临时声明，避免跨请求污染。转换不触发第二次模型请求，也不成为资料工具响应或其他任意 JSON 的宽松解析器；旧的 finalizer 事后恢复逻辑收敛到这一处统一边界。
 
 ### 9. 续执行真值与精简候选稿
 
