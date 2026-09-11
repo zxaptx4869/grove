@@ -140,13 +140,15 @@ CONTEXTUAL_SEARCH_FOLLOW_UP_PATTERNS = (
 )
 CANDIDATE_SELF_UPDATE_PATTERNS = (
     "输出给我",
-    "我自己更新",
-    "我去更新",
-    "我自己修改",
     "供我审核",
     "给我审核",
     "候选修改稿",
     "建议草稿",
+)
+CANDIDATE_USER_MANAGED_PATTERNS = (
+    "我自己更新",
+    "我去更新",
+    "我自己修改",
 )
 CANDIDATE_REVISION_ACTION_PATTERNS = (
     "补充",
@@ -188,10 +190,12 @@ def _candidate_revision_requested(message: str) -> bool:
     """组合识别候选修改与文本交付；明确写入和用户自行更新保持原边界。"""
 
     normalized = re.sub(r"[，。！？!?,；;：:\s]", "", message).casefold()
-    if any(pattern in normalized for pattern in CANDIDATE_SELF_UPDATE_PATTERNS):
+    if any(pattern in normalized for pattern in CANDIDATE_USER_MANAGED_PATTERNS):
         return True
     if any(pattern in normalized for pattern in DIRECT_WRITE_PATTERNS):
         return False
+    if any(pattern in normalized for pattern in CANDIDATE_SELF_UPDATE_PATTERNS):
+        return True
     if any(pattern in normalized for pattern in CANDIDATE_REVISION_PATTERNS):
         return True
     has_revision_action = any(

@@ -295,6 +295,7 @@ def test_candidate_revision_wording_is_not_treated_as_direct_write(message: str)
         "替我保存修改",
         "把修改后的内容保存到原记录并覆盖旧内容",
         "直接帮我更新知识库，然后发给我",
+        "直接更新知识库并把结果输出给我审核",
     ],
 )
 def test_direct_write_wording_is_not_treated_as_candidate_revision(message: str) -> None:
