@@ -275,6 +275,9 @@ def test_project_validation_names_the_invalid_field() -> None:
         "把修改后的内容输出给我，我自己更新",
         "帮我整理成可以更新的版本",
         "帮我更新一下，把内容输出给我，我去更新",
+        "按你的分析，帮我把第一条的知识补充一下，发给我",
+        "请把第二条完善一下，给我看看",
+        "结合前面的结论优化这个知识，给我一版",
     ],
 )
 def test_candidate_revision_wording_is_not_treated_as_direct_write(message: str) -> None:
@@ -291,6 +294,7 @@ def test_candidate_revision_wording_is_not_treated_as_direct_write(message: str)
         "写入 Entry",
         "替我保存修改",
         "把修改后的内容保存到原记录并覆盖旧内容",
+        "直接帮我更新知识库，然后发给我",
     ],
 )
 def test_direct_write_wording_is_not_treated_as_candidate_revision(message: str) -> None:
@@ -944,6 +948,7 @@ async def test_no_knowledge_external_verification_remains_unsupported() -> None:
     [
         "帮我补充一下这条知识",
         "把修改后的内容输出给我，我自己更新",
+        "按你的分析，帮我把第一条的知识补充一下，发给我",
     ],
 )
 async def test_candidate_revision_corrects_unsupported_and_outputs_review_draft(

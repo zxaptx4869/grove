@@ -148,6 +148,20 @@ CANDIDATE_SELF_UPDATE_PATTERNS = (
     "候选修改稿",
     "建议草稿",
 )
+CANDIDATE_REVISION_ACTION_PATTERNS = (
+    "补充",
+    "完善",
+    "改写",
+    "修改",
+    "整理",
+    "优化",
+)
+CANDIDATE_DELIVERY_PATTERNS = (
+    "发给我",
+    "发送给我",
+    "给我看看",
+    "给我一版",
+)
 CANDIDATE_REVISION_PATTERNS = (
     "帮我补充",
     "帮我完善",
@@ -171,14 +185,20 @@ DIRECT_WRITE_PATTERNS = (
 
 
 def _candidate_revision_requested(message: str) -> bool:
-    """确定性区分候选文本生成与明确写入；用户自行更新的表达优先。"""
+    """组合识别候选修改与文本交付；明确写入和用户自行更新保持原边界。"""
 
-    normalized = message.strip().lower()
+    normalized = re.sub(r"[，。！？!?,；;：:\s]", "", message).casefold()
     if any(pattern in normalized for pattern in CANDIDATE_SELF_UPDATE_PATTERNS):
         return True
     if any(pattern in normalized for pattern in DIRECT_WRITE_PATTERNS):
         return False
-    return any(pattern in normalized for pattern in CANDIDATE_REVISION_PATTERNS)
+    if any(pattern in normalized for pattern in CANDIDATE_REVISION_PATTERNS):
+        return True
+    has_revision_action = any(
+        pattern in normalized for pattern in CANDIDATE_REVISION_ACTION_PATTERNS
+    )
+    has_delivery = any(pattern in normalized for pattern in CANDIDATE_DELIVERY_PATTERNS)
+    return has_revision_action and has_delivery
 
 
 def _knowledge_tools_disabled(message: str) -> bool:
