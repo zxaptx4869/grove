@@ -10,10 +10,12 @@ from uuid import uuid4
 
 import pytest
 from pydantic_ai import Agent, ModelRetry, RunContext
+from pydantic_ai.exceptions import UnexpectedModelBehavior
 from pydantic_ai.messages import (
     ModelRequest,
     ModelResponse,
     SystemPromptPart,
+    TextPart,
     ThinkingPart,
     ToolCallPart,
     ToolReturnPart,
@@ -1240,6 +1242,146 @@ async def test_finalizer_accepts_harmless_text_note_without_second_request() -> 
     assert text == "这是合法收尾正文。"
     assert blocks == [{"kind": "text", "text": "这是合法收尾正文。"}]
     assert state.instrumentation.finalize_response_received is True
+
+
+@pytest.mark.asyncio
+async def test_finalizer_normalizes_observed_legacy_envelope_once() -> None:
+    """真实 F4 星旧外壳在引用仍合法时一次转换为标准回答。"""
+
+    state = _state()
+    seeded = await _seed_finalize_material(state)
+    state.instrumentation.context_policy_enabled = True
+    provider_calls = 0
+    tool_events_before = len(state.tool_events)
+
+    def respond(_messages, _info):
+        nonlocal provider_calls
+        provider_calls += 1
+        return ModelResponse(
+            parts=[
+                TextPart(
+                    json.dumps(
+                        {
+                            "answer_summary": {
+                                "narrative": "第二条讲的是日本 F4 星级及其认证边界。",
+                                "references": [
+                                    {
+                                        "kind": "evidence",
+                                        "handle": "ev-finalize-enf",
+                                        "entry_id": seeded["entry_id"],
+                                        "source_id": seeded["source_id"],
+                                    }
+                                ],
+                            },
+                            "completion": {
+                                "status": "completed",
+                                "reason_code": "completed",
+                                "reason": "任务已完整完成",
+                                "incomplete_steps": [],
+                                "can_continue": False,
+                            },
+                        },
+                        ensure_ascii=False,
+                    )
+                )
+            ]
+        )
+
+    model = BudgetedModel(
+        FunctionModel(respond, model_name="deepseek-v4-flash"),
+        state.instrumentation,
+        request_scope="dialogue_agent",
+    )
+    result = await loop_module._finalize_once(
+        build_finalizer_agent(model),
+        state,
+        "第二条呢，讲的什么",
+        [],
+        [],
+        "input_soft_limit",
+    )
+    text, blocks = render_answer(result.output, state)
+
+    assert provider_calls == 1
+    assert len(state.tool_events) == tool_events_before
+    assert "第二条讲的是日本 F4 星级" in text
+    assert [block["kind"] for block in blocks] == ["text", "evidence"]
+    assert state.instrumentation.finalize_compatibility == {
+        "kind": "legacy_answer_summary_envelope",
+        "status": "normalized",
+        "discarded_fields": ["completion"],
+        "reference_count": 1,
+    }
+    assert state.instrumentation.logs[-1].response_compatibility == (
+        state.instrumentation.finalize_compatibility
+    )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("invalid_kind", ["relationship", "unknown_top_level"])
+async def test_finalizer_does_not_normalize_unsafe_or_unknown_envelope(
+    invalid_kind: str,
+) -> None:
+    """受限兼容不接受来源关系不一致或未知顶层结构。"""
+
+    state = _state()
+    seeded = await _seed_finalize_material(state)
+    state.instrumentation.context_policy_enabled = True
+    provider_calls = 0
+    tool_events_before = len(state.tool_events)
+    payload = {
+        "answer_summary": {
+            "narrative": "这是结构完整但引用非法的回答。",
+            "references": [
+                {
+                    "kind": "evidence",
+                    "handle": "ev-finalize-enf",
+                    "entry_id": seeded["entry_id"],
+                    "source_id": seeded["source_id"] + 1,
+                }
+            ],
+        },
+        "completion": {
+            "status": "completed",
+            "reason_code": "completed",
+            "reason": "模型自报完成",
+            "incomplete_steps": [],
+            "can_continue": False,
+        },
+    }
+    if invalid_kind == "unknown_top_level":
+        payload["unexpected"] = True
+
+    def respond(_messages, _info):
+        nonlocal provider_calls
+        provider_calls += 1
+        return ModelResponse(
+            parts=[TextPart(json.dumps(payload, ensure_ascii=False))]
+        )
+
+    model = BudgetedModel(
+        FunctionModel(respond, model_name="deepseek-v4-flash"),
+        state.instrumentation,
+        request_scope="dialogue_agent",
+    )
+    with pytest.raises(UnexpectedModelBehavior):
+        await loop_module._finalize_once(
+            build_finalizer_agent(model),
+            state,
+            "请完成回答",
+            [],
+            [],
+            "input_soft_limit",
+        )
+
+    assert provider_calls == 1
+    assert len(state.tool_events) == tool_events_before
+    assert state.instrumentation.finalize_compatibility is None
+    assert state.instrumentation.finalize_status == "invalid_output"
+    if invalid_kind == "relationship":
+        assert state.instrumentation.finalize_failure["category"] == (
+            "reference_validation"
+        )
 
 
 def test_agent_exposes_real_directory_tool_and_separate_position_handles() -> None:

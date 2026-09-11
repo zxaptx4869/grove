@@ -80,6 +80,7 @@ class InvocationLog:
     finish_reason: str | None = None
     public_response: dict | None = None
     response_validation: dict | None = None
+    response_compatibility: dict | None = None
     error_kind: str | None = None
     error_chain: list[dict] = field(default_factory=list)
 
@@ -96,6 +97,7 @@ class Instrumentation:
     finalize_status: str = "not_needed"
     finalize_error: str | None = None
     finalize_failure: dict | None = None
+    finalize_compatibility: dict | None = None
     validation_failures: list[dict] = field(default_factory=list)
     activity_callback: Callable[[str], None] | None = field(default=None, repr=False)
 
@@ -112,6 +114,7 @@ class Instrumentation:
         self.finalize_status = "not_needed"
         self.finalize_error = None
         self.finalize_failure = None
+        self.finalize_compatibility = None
         self.validation_failures.clear()
 
     def begin_finalize(self, reason: str) -> None:
@@ -138,6 +141,18 @@ class Instrumentation:
                 "log_index": max(len(self.logs) - 1, 0),
             }
         )
+
+    def record_finalize_compatibility(self, event: dict) -> None:
+        """记录 finalizer 的确定性响应兼容，不将其伪装成模型原生合规。"""
+
+        bounded = _bounded_public_value(event)
+        self.finalize_compatibility = bounded
+        response_log = next(
+            (item for item in reversed(self.logs) if item.public_response is not None),
+            None,
+        )
+        if response_log is not None:
+            response_log.response_compatibility = bounded
 
     def describe_failure(self, exc: BaseException, log_start: int = 0) -> dict:
         logs = self.logs[log_start:]
@@ -195,6 +210,7 @@ class Instrumentation:
             "status": self.finalize_status,
             "error": self.finalize_error,
             "failure": self.finalize_failure,
+            "compatibility": self.finalize_compatibility,
             "seconds_limit": FINALIZE_SECONDS,
         }
 
