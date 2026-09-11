@@ -173,3 +173,21 @@
 #### Scenario: 只输出补充后的内容
 - **WHEN** 用户说“就输出你补充后的知识内容就行，其他的都不用”
 - **THEN** 系统识别为精简候选稿，只返回候选正文与必要边界，不展开已读取 Evidence，不修改正式 Entry
+
+### Requirement: 候选稿收尾必须保留文本并隔离资料块
+候选修改稿进入 finalizer 时，系统 MUST 只向模型提供原问题和已保存的完整候选稿，并 MUST 只接受普通 text 块作为候选稿。模型同时输出的 Evidence、list、statistic、insufficient 或 Entry 引用 MUST 在硬边界校验前被丢弃，MUST NOT 执行、引用或获得授权。保留文本已满足尚未写入、原记录与新增建议区分、来源边界时，本轮 MUST 由程序标记为 completed，不得因多余资料块转为 partial_completed。
+
+#### Scenario: 完整候选稿附带本轮无效 Evidence
+- **WHEN** finalizer 输出完整合法的候选文本，同时附带一个历史或伪造 Evidence 块
+- **THEN** 系统丢弃该 Evidence 块并记录兼容事件，工具执行数为零，候选文本继续经硬边界校验并完成本轮
+
+#### Scenario: 收尾文本仍缺少硬边界
+- **WHEN** 已保存候选稿，但 finalizer 输出仍缺少未写入、内容区分或来源边界
+- **THEN** 系统保留收尾前的完整候选稿和具体缺口，不用失败的收尾文本覆盖原稿
+
+### Requirement: 候选稿续执行必须可恢复且不重新授权材料
+候选稿收尾失败时，系统 MUST 在进程内 continuation 保存原问题、完整候选稿文本、已发现的校验缺口、唯一待完成步骤和已确认 Entry/Source 关系与指纹。公开快照 MUST NOT 包含完整稿件。用户明确“继续”时，系统 MUST 先复验 Workspace、权限、对象、来源关系和材料版本，再只重试候选稿整理；保存的资料关系 MUST NOT 被重新注入模型上下文或授权为当前轮句柄。成功后 MUST 清理 continuation。
+
+#### Scenario: 继续只修正已保存候选稿
+- **WHEN** 候选稿 continuation 仍有效且用户说“继续”
+- **THEN** 系统使用完整候选文本和缺口完成必要整理，不搜索、不读取 Entry/Evidence、不引入历史无效句柄，完成状态为 completed 且 continuation 被清理
