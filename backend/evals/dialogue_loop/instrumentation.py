@@ -98,6 +98,9 @@ class Instrumentation:
     finalize_error: str | None = None
     finalize_failure: dict | None = None
     finalize_compatibility: dict | None = None
+    legacy_reference_claims: dict[str, dict[str, int]] = field(
+        default_factory=dict, repr=False
+    )
     validation_failures: list[dict] = field(default_factory=list)
     activity_callback: Callable[[str], None] | None = field(default=None, repr=False)
 
@@ -115,6 +118,7 @@ class Instrumentation:
         self.finalize_error = None
         self.finalize_failure = None
         self.finalize_compatibility = None
+        self.legacy_reference_claims.clear()
         self.validation_failures.clear()
 
     def begin_finalize(self, reason: str) -> None:
@@ -141,18 +145,6 @@ class Instrumentation:
                 "log_index": max(len(self.logs) - 1, 0),
             }
         )
-
-    def record_finalize_compatibility(self, event: dict) -> None:
-        """记录 finalizer 的确定性响应兼容，不将其伪装成模型原生合规。"""
-
-        bounded = _bounded_public_value(event)
-        self.finalize_compatibility = bounded
-        response_log = next(
-            (item for item in reversed(self.logs) if item.public_response is not None),
-            None,
-        )
-        if response_log is not None:
-            response_log.response_compatibility = bounded
 
     def describe_failure(self, exc: BaseException, log_start: int = 0) -> dict:
         logs = self.logs[log_start:]
@@ -471,6 +463,101 @@ def _schema_diagnostic(
     return None
 
 
+def _normalize_legacy_answer_response(
+    response: ModelResponse, output_tool_names: list[str]
+) -> tuple[ModelResponse, dict | None, dict[str, dict[str, int]]]:
+    """在框架格式重试前受限转换已观察到的旧式最终回答外壳。"""
+
+    if len(output_tool_names) != 1 or len(response.parts) != 1:
+        return response, None, {}
+    part = response.parts[0]
+    if not isinstance(part, TextPart):
+        return response, None, {}
+    try:
+        payload = json.loads(part.content)
+    except (json.JSONDecodeError, TypeError):
+        return response, None, {}
+    if not isinstance(payload, dict) or set(payload) != {
+        "answer_summary",
+        "completion",
+    }:
+        return response, None, {}
+
+    summary = payload.get("answer_summary")
+    completion = payload.get("completion")
+    if (
+        not isinstance(summary, dict)
+        or set(summary) != {"narrative", "references"}
+        or not isinstance(completion, dict)
+        or set(completion)
+        != {"status", "reason_code", "reason", "incomplete_steps", "can_continue"}
+    ):
+        return response, None, {}
+    narrative = summary.get("narrative")
+    references = summary.get("references")
+    if (
+        not isinstance(narrative, str)
+        or not narrative.strip()
+        or not isinstance(references, list)
+        or not isinstance(completion.get("status"), str)
+        or not isinstance(completion.get("reason_code"), str)
+        or not isinstance(completion.get("reason"), str)
+        or not isinstance(completion.get("incomplete_steps"), list)
+        or not all(
+            isinstance(item, str) for item in completion.get("incomplete_steps", [])
+        )
+        or not isinstance(completion.get("can_continue"), bool)
+    ):
+        return response, None, {}
+
+    blocks: list[dict] = [{"kind": "text", "text": narrative.strip()}]
+    claims: dict[str, dict[str, int]] = {}
+    for reference in references:
+        if (
+            not isinstance(reference, dict)
+            or set(reference) != {"kind", "handle", "entry_id", "source_id"}
+            or reference.get("kind") != "evidence"
+            or not isinstance(reference.get("handle"), str)
+            or isinstance(reference.get("entry_id"), bool)
+            or not isinstance(reference.get("entry_id"), int)
+            or isinstance(reference.get("source_id"), bool)
+            or not isinstance(reference.get("source_id"), int)
+        ):
+            return response, None, {}
+        handle = reference["handle"]
+        claim = {
+            "entry_id": reference["entry_id"],
+            "source_id": reference["source_id"],
+        }
+        if handle in claims and claims[handle] != claim:
+            return response, None, {}
+        claims[handle] = claim
+        blocks.append({"kind": "evidence", "evidence_handle": handle})
+
+    try:
+        answer = DialogueAnswer.model_validate(
+            {"blocks": blocks, "needs_clarification": False}
+        )
+    except (ValidationError, ValueError, TypeError):
+        return response, None, {}
+    event = {
+        "kind": "legacy_answer_summary_envelope",
+        "status": "normalized",
+        "discarded_fields": ["completion"],
+        "reference_count": len(references),
+    }
+    normalized = replace(
+        response,
+        parts=[
+            ToolCallPart(
+                output_tool_names[0],
+                answer.model_dump(mode="json"),
+            )
+        ],
+    )
+    return normalized, event, claims
+
+
 def _finalize_messages(messages):
     return [
         *messages,
@@ -523,6 +610,7 @@ class BudgetedModel(Model):
         return self.wrapped.base_url
 
     async def request(self, messages, model_settings, model_request_parameters):
+        self.state.legacy_reference_claims.clear()
         projected = estimate_input(messages, model_request_parameters)
         estimate = projected.tokens
         turn_requests = self.state.ledger.active_text_requests
@@ -714,10 +802,20 @@ class BudgetedModel(Model):
         if finalize_only:
             self.state.finalize_response_received = True
             self.state.finalize_status = "response_received"
+        original_public_response = _public_response(response)
+        response, response_compatibility, legacy_claims = (
+            _normalize_legacy_answer_response(
+                response,
+                [tool.name for tool in dispatched_parameters.output_tools],
+            )
+        )
+        self.state.legacy_reference_claims.update(legacy_claims)
+        if finalize_only and response_compatibility is not None:
+            self.state.finalize_compatibility = response_compatibility
         usage = _usage_dict(getattr(response, "usage", None))
         actual_input = _actual_input(usage)
         finish_reason = to_jsonable_python(getattr(response, "finish_reason", None))
-        public_response = _public_response(response)
+        public_response = original_public_response
         unexpected_finalize_tools = (
             [
                 part.tool_name
@@ -770,6 +868,7 @@ class BudgetedModel(Model):
                 finish_reason=finish_reason,
                 public_response=public_response,
                 response_validation=response_validation,
+                response_compatibility=response_compatibility,
                 error_kind=(
                     "finalize_tool_attempted"
                     if unexpected_finalize_tools

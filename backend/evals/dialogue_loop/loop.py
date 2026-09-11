@@ -1504,8 +1504,23 @@ def output_errors(answer: DialogueAnswer, state: LoopState) -> list[str]:
                 errors.append(f"{result_handle} 的正文位置越界")
             elif not record.payload["items"][position - 1].get("content"):
                 errors.append(f"{result_handle} 的正文未成功读取")
-        elif block.kind == "evidence" and block.evidence_handle not in state.current_evidence:
-            errors.append(f"{block.evidence_handle} 不是当前轮核验 Evidence")
+        elif block.kind == "evidence":
+            if block.evidence_handle not in state.current_evidence:
+                errors.append(f"{block.evidence_handle} 不是当前轮核验 Evidence")
+                continue
+            claim = state.instrumentation.legacy_reference_claims.get(
+                block.evidence_handle
+            )
+            evidence = state.evidence.get(block.evidence_handle)
+            if claim is not None and (
+                evidence is None
+                or evidence.get("entry_id") != claim["entry_id"]
+                or evidence.get("source_id") != claim["source_id"]
+            ):
+                state.instrumentation.finalize_compatibility = None
+                errors.append(
+                    f"{block.evidence_handle} 的旧式引用声明与当前轮 Evidence 关系不一致"
+                )
     candidate_handles = {
         handle
         for handle, record in state.result_sets.items()
@@ -2804,6 +2819,7 @@ def build_agent(model) -> Agent[LoopDeps, DialogueAnswer]:
     async def validate_output(ctx: RunContext[LoopDeps], answer: DialogueAnswer) -> DialogueAnswer:
         errors = output_errors(answer, ctx.deps.state)
         if errors:
+            ctx.deps.state.instrumentation.finalize_compatibility = None
             message = "；".join(errors)
             ctx.deps.state.instrumentation.record_validation_failure(
                 "reference_validation", message, answer.model_dump(mode="json")
@@ -2821,124 +2837,6 @@ FINALIZER_SYSTEM_PROMPT = """你是 Grove 知识 Agent 的独立收尾执行器�
 AI 回答或候选修改稿不得声称已经写入正式 Entry。
 唯一合法输出顶层是 DialogueAnswer 的 blocks 与 needs_clarification；不要输出 answer_summary、
 completion 或其他自创顶层字段。text 块只填写 kind 与 text，不要添加 note。""".strip()
-
-
-@dataclass(frozen=True)
-class _CompatibleFinalizerResult:
-    """承载经确定性兼容后恢复的最终回答；模型用量已由包装器记录。"""
-
-    output: DialogueAnswer
-    usage: None = None
-
-
-def _legacy_finalizer_answer(
-    state: LoopState, log_start: int
-) -> DialogueAnswer | None:
-    """受限转换 V4 已观察到的 answer_summary 收尾外壳。"""
-
-    response_log = next(
-        (
-            item
-            for item in reversed(state.instrumentation.logs[log_start:])
-            if item.public_response is not None
-        ),
-        None,
-    )
-    if response_log is None:
-        return None
-    parts = response_log.public_response.get("parts") or []
-    if len(parts) != 1 or parts[0].get("kind") != "text":
-        return None
-    raw_text = parts[0].get("text")
-    if not isinstance(raw_text, str):
-        return None
-    try:
-        payload = json.loads(raw_text)
-    except (json.JSONDecodeError, TypeError):
-        return None
-    if not isinstance(payload, dict) or set(payload) != {
-        "answer_summary",
-        "completion",
-    }:
-        return None
-
-    summary = payload.get("answer_summary")
-    completion = payload.get("completion")
-    if (
-        not isinstance(summary, dict)
-        or set(summary) != {"narrative", "references"}
-        or not isinstance(completion, dict)
-        or set(completion)
-        != {"status", "reason_code", "reason", "incomplete_steps", "can_continue"}
-    ):
-        return None
-    narrative = summary.get("narrative")
-    references = summary.get("references")
-    if (
-        not isinstance(narrative, str)
-        or not narrative.strip()
-        or not isinstance(references, list)
-        or not isinstance(completion.get("status"), str)
-        or not isinstance(completion.get("reason_code"), str)
-        or not isinstance(completion.get("reason"), str)
-        or not isinstance(completion.get("incomplete_steps"), list)
-        or not all(
-            isinstance(item, str) for item in completion.get("incomplete_steps", [])
-        )
-        or not isinstance(completion.get("can_continue"), bool)
-    ):
-        return None
-
-    blocks: list[dict] = [{"kind": "text", "text": narrative.strip()}]
-    for reference in references:
-        if (
-            not isinstance(reference, dict)
-            or set(reference) != {"kind", "handle", "entry_id", "source_id"}
-            or reference.get("kind") != "evidence"
-            or not isinstance(reference.get("handle"), str)
-            or not isinstance(reference.get("entry_id"), int)
-            or not isinstance(reference.get("source_id"), int)
-        ):
-            return None
-        handle = reference["handle"]
-        evidence = state.evidence.get(handle)
-        if (
-            evidence is None
-            or evidence.get("entry_id") != reference["entry_id"]
-            or evidence.get("source_id") != reference["source_id"]
-        ):
-            state.instrumentation.record_validation_failure(
-                "reference_validation",
-                f"旧式收尾引用 {handle} 与当前轮 Evidence 关系不一致",
-                payload,
-            )
-            return None
-        blocks.append({"kind": "evidence", "evidence_handle": handle})
-
-    try:
-        answer = DialogueAnswer.model_validate(
-            {"blocks": blocks, "needs_clarification": False}
-        )
-    except (ValueError, TypeError) as exc:
-        state.instrumentation.record_validation_failure(
-            "schema_validation", f"旧式收尾转换失败：{exc}", payload
-        )
-        return None
-    errors = output_errors(answer, state)
-    if errors:
-        state.instrumentation.record_validation_failure(
-            "reference_validation", "；".join(errors), payload
-        )
-        return None
-    state.instrumentation.record_finalize_compatibility(
-        {
-            "kind": "legacy_answer_summary_envelope",
-            "status": "normalized",
-            "discarded_fields": ["completion"],
-            "reference_count": len(references),
-        }
-    )
-    return answer
 
 
 def build_finalizer_agent(model) -> Agent[LoopDeps, DialogueAnswer]:
@@ -2983,6 +2881,7 @@ def build_finalizer_agent(model) -> Agent[LoopDeps, DialogueAnswer]:
     async def validate_output(ctx: RunContext[LoopDeps], answer: DialogueAnswer) -> DialogueAnswer:
         errors = output_errors(answer, ctx.deps.state)
         if errors:
+            ctx.deps.state.instrumentation.finalize_compatibility = None
             message = "；".join(errors)
             ctx.deps.state.instrumentation.record_validation_failure(
                 "reference_validation", message, answer.model_dump(mode="json")
@@ -3869,9 +3768,6 @@ async def _finalize_once(
         )
         raise
     except Exception as exc:
-        compatible_answer = _legacy_finalizer_answer(state, before_logs)
-        if compatible_answer is not None:
-            return _CompatibleFinalizerResult(output=compatible_answer)
         failure = state.instrumentation.describe_failure(exc, before_logs)
         state.instrumentation.finalize_failure = failure
         if isinstance(exc, FinalizeToolAttempted):

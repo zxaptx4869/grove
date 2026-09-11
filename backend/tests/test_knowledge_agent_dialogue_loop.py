@@ -1031,6 +1031,63 @@ async def test_candidate_revision_corrects_unsupported_and_outputs_review_draft(
 
 
 @pytest.mark.asyncio
+async def test_normal_agent_normalizes_legacy_candidate_envelope_without_retry() -> None:
+    """普通 Agent 首次收到旧式候选稿外壳时不再触发格式重试或 finalize。"""
+
+    message = "按你的分析，帮我把第一条的知识补充一下，发给我"
+    state = _state()
+    state.instrumentation.context_policy_enabled = True
+    state.begin_turn(5, message)
+    calls = 0
+
+    def respond(_messages, _info):
+        nonlocal calls
+        calls += 1
+        return ModelResponse(
+            parts=[
+                TextPart(
+                    json.dumps(
+                        {
+                            "answer_summary": {
+                                "narrative": (
+                                    "以下为候选修改稿，尚未写入知识库。\n\n"
+                                    "原记录要点：第一条记录讲的是甲醛环保等级。\n\n"
+                                    "建议补充：补充测试方法和认证核验边界。\n\n"
+                                    "修改后候选版本：应同时核对检测方法、认证证书和检测报告。\n\n"
+                                    "来源边界：新增内容不是原始来源原文。"
+                                ),
+                                "references": [],
+                            },
+                            "completion": {
+                                "status": "completed",
+                                "reason_code": "completed",
+                                "reason": "任务已完整完成",
+                                "incomplete_steps": [],
+                                "can_continue": False,
+                            },
+                        },
+                        ensure_ascii=False,
+                    )
+                )
+            ]
+        )
+
+    model = BudgetedModel(
+        FunctionModel(respond, model_name="deepseek-v4-flash"),
+        state.instrumentation,
+        request_scope="dialogue_agent",
+    )
+    turn, _ = await run_turn(build_agent(model), state, message, [])
+
+    assert turn["status"] == "completed"
+    assert calls == 1
+    assert turn["finalization"]["attempted"] is False
+    assert turn["tool_calls"] == []
+    assert "尚未写入知识库" in turn["answer"]
+    assert state.instrumentation.finalize_compatibility is None
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize(
     "message",
     [
