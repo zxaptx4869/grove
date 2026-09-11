@@ -1711,6 +1711,59 @@ def output_errors(answer: DialogueAnswer, state: LoopState) -> list[str]:
     return errors
 
 
+def _candidate_finalizer_text_only(
+    answer: DialogueAnswer, state: LoopState
+) -> DialogueAnswer:
+    """候选稿收尾只保留普通文本，多余资料块既不引用也不执行。"""
+
+    candidate_message = _candidate_request_message(state)
+    if candidate_message is None or state.instrumentation.phase != "finalize":
+        return answer
+    text_blocks = [
+        block
+        for block in answer.blocks
+        if block.kind == "text" and _entry_reference(block.text) is None
+    ]
+    if not text_blocks:
+        return answer
+    content_only = _candidate_content_only_requested(candidate_message)
+    normalized_blocks = (
+        [
+            {
+                "kind": "text",
+                "text": "\n".join(block.text for block in text_blocks),
+            }
+        ]
+        if content_only
+        else [block.model_dump(mode="json") for block in text_blocks]
+    )
+    if len(normalized_blocks) == len(answer.blocks) and all(
+        block.kind == "text" for block in answer.blocks
+    ):
+        return answer
+    normalized = DialogueAnswer.model_validate(
+        {
+            "blocks": normalized_blocks,
+            "needs_clarification": answer.needs_clarification,
+        }
+    )
+    discarded = [
+        block.kind
+        for block in answer.blocks
+        if block.kind != "text" or _entry_reference(block.text) is not None
+    ]
+    compatibility = {
+        "kind": "candidate_text_only",
+        "status": "normalized",
+        "discarded_blocks": discarded,
+        "preserved_text_blocks": len(normalized.blocks),
+    }
+    state.instrumentation.finalize_compatibility = compatibility
+    if state.instrumentation.logs and state.instrumentation.logs[-1].finalize_only:
+        state.instrumentation.logs[-1].response_compatibility = compatibility
+    return normalized
+
+
 def list_position_entry_id(state: LoopState, result_set_handle: str, position: int) -> int:
     """将会话内有序列表位置解析为真实 Entry id。"""
     record = state.result_sets.get(result_set_handle)
@@ -2931,16 +2984,22 @@ def build_finalizer_agent(model) -> Agent[LoopDeps, DialogueAnswer]:
 
     @agent.instructions
     def answer_basis_instruction(ctx: RunContext[LoopDeps]) -> str:
+        state = ctx.deps.state
         draft_instruction = ""
-        if (
-            ctx.deps.state.candidate_draft
-            and _candidate_revision_requested(ctx.deps.state.current_message)
-        ):
+        candidate_message = _candidate_request_message(state)
+        if state.candidate_draft and candidate_message is not None:
             draft_instruction = (
                 "上一阶段已有候选修改稿。请优先保留其内容，只做最小整理，"
                 "不要因为缺少固定标题而丢弃整篇稿件。"
             )
-        if ctx.deps.state.tools_allowed:
+        if candidate_message is not None:
+            return (
+                "当前是候选稿收尾。只能使用已保存的候选文本，不得输出或引用"
+                "Evidence、Entry、列表、统计或其他 Grove 句柄；保存的对象关系只供程序"
+                "复验，不是模型的当前轮可引用材料。"
+                + draft_instruction
+            )
+        if state.tools_allowed:
             return (
                 "程序已经取得并核验本轮可用材料。真实统计、列表、正文和来源只能使用"
                 "当前材料中已有且获授权的句柄；不得引用历史轮次的材料句柄。"
@@ -2956,7 +3015,10 @@ def build_finalizer_agent(model) -> Agent[LoopDeps, DialogueAnswer]:
 
     @agent.instructions
     def candidate_content_only_instruction(ctx: RunContext[LoopDeps]) -> str:
-        if not _candidate_content_only_requested(ctx.deps.state.current_message):
+        candidate_message = _candidate_request_message(ctx.deps.state)
+        if candidate_message is None or not _candidate_content_only_requested(
+            candidate_message
+        ):
             return ""
         return (
             "用户只要补充后的候选知识内容。只输出一个 text 块，不得输出或引用 Evidence、"
@@ -2971,20 +3033,35 @@ def build_finalizer_agent(model) -> Agent[LoopDeps, DialogueAnswer]:
             return ""
         return (
             "上一阶段已经生成候选修改稿。请优先保留其事实内容，只做必要的最小整理；"
-            "不得重新搜索、读取或引用新的资料，也不得丢弃整篇候选稿。候选稿如下："
+            "不得重新搜索、读取或引用新的资料，也不得丢弃整篇候选稿。只输出 text 块，"
+            "禁止输出 evidence、list、statistic、insufficient 或 Entry 正文引用。候选稿如下："
             + json.dumps(draft, ensure_ascii=False, separators=(",", ":"))[:8_000]
         )
 
     @agent.output_validator
     async def validate_output(ctx: RunContext[LoopDeps], answer: DialogueAnswer) -> DialogueAnswer:
-        errors = output_errors(answer, ctx.deps.state)
+        state = ctx.deps.state
+        previous_draft = state.candidate_draft
+        answer = _candidate_finalizer_text_only(answer, state)
+        errors = output_errors(answer, state)
         if errors:
-            ctx.deps.state.instrumentation.finalize_compatibility = None
+            if _candidate_request_message(state) is not None:
+                state.candidate_draft = previous_draft or answer.model_dump(mode="json")
+            state.candidate_draft_errors = list(errors)
+            if not (
+                state.instrumentation.finalize_compatibility
+                and state.instrumentation.finalize_compatibility.get("kind")
+                == "candidate_text_only"
+            ):
+                state.instrumentation.finalize_compatibility = None
             message = "；".join(errors)
-            ctx.deps.state.instrumentation.record_validation_failure(
+            state.instrumentation.record_validation_failure(
                 "reference_validation", message, answer.model_dump(mode="json")
             )
             raise ModelRetry(message)
+        if _candidate_request_message(state) is not None:
+            state.candidate_draft = answer.model_dump(mode="json")
+        state.candidate_draft_errors.clear()
         return answer
 
     return agent
@@ -3459,6 +3536,63 @@ def _continuation_material(state: LoopState, current_events: list[dict]) -> dict
     }
 
 
+def _candidate_continuation_material(
+    state: LoopState, current_events: list[dict]
+) -> dict:
+    """补入最近一轮已确认关系，仅供候选稿续执行复验。"""
+
+    material = _continuation_material(state, current_events)
+    if not material["evidence"] and state.history_turns:
+        previous = state.history_turns[-1]
+        references = (previous.get("answer_summary") or {}).get("references", [])
+        referenced_pairs: set[tuple[int, int]] = set()
+        for reference in references:
+            if reference.get("kind") != "evidence":
+                continue
+            handle = str(reference.get("handle") or "")
+            evidence = state.evidence.get(handle)
+            if (
+                evidence is None
+                or evidence.get("entry_id") not in state.authorized_entry_ids
+                or evidence.get("source_id") is None
+            ):
+                continue
+            material["evidence"][handle] = evidence
+            referenced_pairs.add(
+                (int(evidence["entry_id"]), int(evidence["source_id"]))
+            )
+        if referenced_pairs:
+            for tool in previous.get("tools", []):
+                handle = str(tool.get("result_handle") or "")
+                record = state.result_sets.get(handle)
+                if record is None or not record.displayable or record.kind != "evidence":
+                    continue
+                record_pairs = {
+                    (int(item["entry_id"]), int(item["source_id"]))
+                    for item in record.payload.get("items", [])
+                    if item.get("entry_id") is not None
+                    and item.get("source_id") is not None
+                }
+                if not (record_pairs & referenced_pairs):
+                    continue
+                serialized = {
+                    "kind": record.kind,
+                    "payload": record.payload,
+                    "status": record.status,
+                    "completeness": record.completeness,
+                    "turn_index": record.turn_index,
+                    "semantics": record.semantics,
+                    "displayable": record.displayable,
+                }
+                material["records"][handle] = serialized
+                material["record_fingerprints"][handle] = _material_fingerprint(
+                    serialized
+                )
+    # 关系与句柄只留给程序复验，不注入候选稿 finalizer。
+    material["events"] = []
+    return material
+
+
 def _model_only_context_turns(state: LoopState) -> list[dict]:
     """复制无资料收尾所需的有界叙述，不携带工具或 Grove 引用元数据。"""
 
@@ -3638,7 +3772,7 @@ async def _create_finalize_continuation(
 ) -> ContinuationState:
     candidate_draft = _candidate_draft_answer(state)
     if candidate_draft is not None:
-        material = _continuation_material(state, current_events)
+        material = _candidate_continuation_material(state, current_events)
         entry_ids = sorted(
             {
                 int(item["entry_id"])
@@ -3698,7 +3832,12 @@ async def _create_finalize_continuation(
             stop_reason=f"{reason_code}: {reason}",
             original_question=message,
             resolved_references=resolved,
-            recoverable_material={**material, "candidate_draft": state.candidate_draft},
+            recoverable_material={
+                **material,
+                "mode": "candidate_draft",
+                "candidate_draft": state.candidate_draft,
+                "candidate_draft_errors": list(state.candidate_draft_errors),
+            },
             validation_refs=validation_refs,
         )
     if not state.tools_allowed:
@@ -3812,6 +3951,8 @@ async def _validate_finalize_continuation(
             return False, "无资料续执行缺少可恢复的对话上下文"
         return True, None
     if answer_basis == "candidate_draft":
+        if material.get("mode") != "candidate_draft":
+            return False, "候选稿续执行的回答依据已失效"
         if _candidate_draft_answer(state) is None and not material.get("candidate_draft"):
             return False, "候选稿续执行缺少可恢复的候选文本"
         try:
@@ -3922,11 +4063,14 @@ def _current_material_history(
     """把求解阶段已取得的当前轮材料重建为合法配对消息。"""
     if not state.tools_allowed:
         return _model_only_history(state, message, model_only_context)
-    messages = [
-        *_without_historical_system_prompts(history),
-        ModelRequest(parts=[UserPromptPart(content=message)]),
-    ]
     draft = _candidate_draft_answer(state)
+    candidate_only = draft is not None and _candidate_request_message(state) is not None
+    messages = [ModelRequest(parts=[UserPromptPart(content=message)])]
+    if not candidate_only:
+        messages = [
+            *_without_historical_system_prompts(history),
+            *messages,
+        ]
     if draft is not None:
         draft_text = "\n".join(
             block.text
@@ -3946,6 +4090,8 @@ def _current_material_history(
                     ]
                 )
             )
+    if candidate_only:
+        current_events = []
     for index, event in enumerate(current_events, 1):
         handle = event.get("result_handle")
         if handle not in state.current_handles and event.get("status") not in {
@@ -3997,6 +4143,8 @@ async def _finalize_once(
         "求解阶段已停止。用户明确要求不使用知识库；请只基于通用知识和有界对话叙述"
         "完成回答，并清楚说明它不是 Grove 材料或外部权威核验。"
         if not state.tools_allowed
+        else "求解阶段已停止。请只根据已保存的候选稿做最小整理。"
+        if _candidate_draft_answer(state) is not None
         else "求解阶段已停止。请只根据本轮已获得并核验的材料收尾。"
     )
     try:
@@ -4075,17 +4223,22 @@ async def _run_finalize_continuation(
         error = None
     else:
         material = continuation.recoverable_material
-        state.current_handles.update(material.get("records", {}))
-        state.current_evidence.update(material.get("evidence", {}))
-        if continuation.scope.get("answer_basis") == "candidate_draft":
+        candidate_only = continuation.scope.get("answer_basis") == "candidate_draft"
+        if candidate_only:
             state.candidate_draft = material.get("candidate_draft")
+            state.candidate_draft_errors = list(
+                material.get("candidate_draft_errors", [])
+            )
+        else:
+            state.current_handles.update(material.get("records", {}))
+            state.current_evidence.update(material.get("evidence", {}))
         try:
             result = await _finalize_once(
                 finalizer,
                 state,
                 continuation.original_question or message,
                 history,
-                list(material.get("events", [])),
+                [] if candidate_only else list(material.get("events", [])),
                 "continuation_finalize_only",
                 model_only_context=(
                     material.get("history_turns", [])

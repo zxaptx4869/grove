@@ -184,6 +184,12 @@ class ContinuationState:
         value = asdict(self)
         material = value.pop("recoverable_material", {})
         validation_refs = value.pop("validation_refs", {})
+        candidate = material.get("candidate_draft") or {}
+        candidate_text_chars = sum(
+            len(str(block.get("text") or ""))
+            for block in candidate.get("blocks", [])
+            if isinstance(block, dict) and block.get("kind") == "text"
+        )
         value["material_summary"] = {
             "answer_basis": material.get("mode", "grove_material"),
             "result_handles": sorted(material.get("records", {})),
@@ -191,6 +197,8 @@ class ContinuationState:
             "entry_ids": validation_refs.get("entry_ids", []),
             "source_ids": validation_refs.get("source_ids", []),
             "fingerprint_count": len(validation_refs.get("fingerprints", {})),
+            "candidate_text_chars": candidate_text_chars,
+            "validation_gaps": list(material.get("candidate_draft_errors", [])),
         }
         return value
 

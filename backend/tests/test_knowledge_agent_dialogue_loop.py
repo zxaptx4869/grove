@@ -4143,13 +4143,30 @@ async def test_candidate_draft_survives_finalize_failure_and_continue_only_refor
     state = _state()
     state.instrumentation.context_policy_enabled = True
     seeded = await _seed_finalize_material(state)
+    state.remember_turn(
+        "你觉得第一条内容可以补充什么呢",
+        "已读取国标说明，并给出了补充建议。",
+        state.tool_events,
+        blocks=[
+            {
+                "kind": "evidence",
+                "handle": seeded["evidence_handle"],
+                "entry_id": seeded["entry_id"],
+                "source_id": seeded["source_id"],
+            },
+            {"kind": "text", "text": "后续可以整理成候选稿。"},
+        ],
+        completion={"status": "completed", "reason_code": "completed"},
+    )
     message = "按你的分析，把第一条的知识补充一下，发给我"
     state.begin_turn(900, message)
     provider_calls = []
     events_before = len(state.tool_events)
 
-    def respond(_messages, info):
-        provider_calls.append(info)
+    def respond(messages, info):
+        provider_calls.append((messages, info))
+        if len(provider_calls) >= 2:
+            assert seeded["evidence_handle"] not in str(messages)
         if len(provider_calls) == 1:
             return ModelResponse(
                 parts=[
@@ -4212,6 +4229,20 @@ async def test_candidate_draft_survives_finalize_failure_and_continue_only_refor
     assert failed["status"] == "partial_completed"
     assert failed["completion"]["reason_code"] == "finalize_tool_attempted"
     assert failed["completion"]["continuation"]["task_type"] == "candidate_draft"
+    material = state.continuation.recoverable_material
+    saved_text = "\n".join(
+        block["text"]
+        for block in material["candidate_draft"]["blocks"]
+        if block["kind"] == "text"
+    )
+    assert "现有记录说明了人造板的环保等级" in saved_text
+    assert material["candidate_draft_errors"] == ["候选修改稿缺少：来源边界"]
+    summary = failed["completion"]["continuation"]["material_summary"]
+    assert summary["answer_basis"] == "candidate_draft"
+    assert summary["entry_ids"] == [seeded["entry_id"]]
+    assert summary["source_ids"] == [seeded["source_id"]]
+    assert summary["candidate_text_chars"] == len(saved_text)
+    assert summary["validation_gaps"] == ["候选修改稿缺少：来源边界"]
     assert "现有记录说明了人造板的环保等级" in failed["answer"]
     assert "候选稿" in failed["answer"]
     assert len(state.tool_events) == events_before
@@ -4231,6 +4262,140 @@ async def test_candidate_draft_survives_finalize_failure_and_continue_only_refor
     assert state.continuation is None
     assert "尚未写入正式记录" in completed["answer"]
     assert "新增分析不等于来源原文" in completed["answer"]
+
+
+@pytest.mark.asyncio
+async def test_candidate_finalizer_discards_invalid_evidence_and_completes() -> None:
+    """回归 20260911-212827 第四轮：无效 Evidence 不得毁掉完整候选稿。"""
+
+    state = _state()
+    state.instrumentation.context_policy_enabled = True
+    message = "结合你分析的，把知识内容补充一下，发给我"
+    state.begin_turn(902, message)
+    provider_calls = []
+
+    def respond(_messages, info):
+        provider_calls.append(info)
+        if len(provider_calls) == 1:
+            return ModelResponse(
+                parts=[
+                    ToolCallPart(
+                        info.output_tools[0].name,
+                        {
+                            "blocks": [
+                                {
+                                    "kind": "text",
+                                    "text": (
+                                        "现有记录说明日本 F4 星级。可以补充认证核验方法。"
+                                        "这是一版候选稿，尚未写入知识库。"
+                                    ),
+                                }
+                            ]
+                        },
+                    )
+                ]
+            )
+        return ModelResponse(
+            parts=[
+                ToolCallPart(
+                    info.output_tools[0].name,
+                    {
+                        "blocks": [
+                            {
+                                "kind": "text",
+                                "text": (
+                                    "现有记录说明日本 F4 星级及其认证要求。\n"
+                                    "建议补充认证编号、检测方法和选购核验步骤。"
+                                ),
+                            },
+                            {
+                                "kind": "text",
+                                "text": (
+                                    "修改后的候选内容已整理完成，但尚未写入知识库；"
+                                    "新增分析不是知识库 Source 原文，采用前仍需核实。"
+                                ),
+                            },
+                            {
+                                "kind": "evidence",
+                                "evidence_handle": "ev-history-invalid",
+                            },
+                        ]
+                    },
+                )
+            ]
+        )
+
+    model = BudgetedModel(
+        FunctionModel(respond, model_name="deepseek-v4-flash"),
+        state.instrumentation,
+        request_scope="dialogue_agent",
+    )
+    history = [ModelRequest(parts=[UserPromptPart(content="甲" * 4_000)])]
+    turn, _ = await run_turn(
+        build_agent(model), state, message, history, build_finalizer_agent(model)
+    )
+
+    assert turn["status"] == "completed"
+    assert turn["completion"]["reason_code"] == "completed"
+    assert turn["completion"]["continuation"] is None
+    assert all(block["kind"] == "text" for block in turn["blocks"])
+    assert "ev-history-invalid" not in turn["answer"]
+    assert turn["tool_calls"] == []
+    assert len(provider_calls) == 2
+    assert provider_calls[1].function_tools == []
+    assert turn["finalization"]["status"] == "completed"
+    assert turn["finalization"]["compatibility"] == {
+        "kind": "candidate_text_only",
+        "status": "normalized",
+        "discarded_blocks": ["evidence"],
+        "preserved_text_blocks": 2,
+    }
+    assert state.continuation is None
+    assert state.candidate_draft is None
+
+
+@pytest.mark.asyncio
+async def test_candidate_finalizer_keeps_original_draft_when_repair_is_invalid() -> None:
+    """收尾文本仍缺硬边界时保留进入收尾前的完整原稿。"""
+
+    state = _state()
+    state.instrumentation.context_policy_enabled = True
+    await _seed_finalize_material(state)
+    message = "按你的分析，把第一条的知识补充一下，发给我"
+    state.begin_turn(903, message)
+    original = (
+        "现有记录说明了人造板的环保等级。\n"
+        "建议补充选购和维护方法。\n"
+        "这是候选修改稿，尚未写入正式记录。"
+    )
+    calls = 0
+
+    def respond(_messages, info):
+        nonlocal calls
+        calls += 1
+        text = original if calls == 1 else "这是一段仍然缺少边界的缩减稿。"
+        return ModelResponse(
+            parts=[
+                ToolCallPart(
+                    info.output_tools[0].name,
+                    {"blocks": [{"kind": "text", "text": text}]},
+                )
+            ]
+        )
+
+    model = BudgetedModel(FunctionModel(respond), state.instrumentation)
+    history = [ModelRequest(parts=[UserPromptPart(content="甲" * 4_000)])]
+    turn, _ = await run_turn(
+        build_agent(model), state, message, history, build_finalizer_agent(model)
+    )
+
+    assert turn["status"] == "partial_completed"
+    assert calls == 2
+    saved = state.continuation.recoverable_material["candidate_draft"]
+    assert saved["blocks"][0]["text"] == original
+    assert "现有记录说明了人造板的环保等级" in turn["answer"]
+    assert "缩减稿" not in turn["answer"]
+    assert state.continuation.recoverable_material["candidate_draft_errors"]
 
 
 @pytest.mark.asyncio
