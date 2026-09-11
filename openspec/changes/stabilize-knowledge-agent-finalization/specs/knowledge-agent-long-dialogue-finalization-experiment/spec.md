@@ -141,11 +141,23 @@
 - **THEN** 系统返回 `continuation_not_available` 且 `can_continue=false`，文本模型、搜索、Entry 与 Evidence 工具新增执行次数均为零
 
 ### Requirement: 收尾格式兼容不得放宽引用边界
-系统 MAY 确定性忽略 text 块最多 500 字的可选备注，但 MUST 继续拒绝错误顶层结构、错误句柄类型、历史结果、伪造引用及未授权或跨 Workspace 材料。Finalizer MUST 被明确要求只输出 `DialogueAnswer.blocks`，不得通过增加模型重试兼容非法输出。
+系统 MAY 确定性忽略 text 块最多 500 字的可选备注，也 MAY 在 finalizer 唯一响应的内容与引用完整时，将已知旧式 `answer_summary + completion` 外壳确定性转换为 `DialogueAnswer`。该转换 MUST 仅接受非空有界叙述与受支持引用类型，MUST 丢弃模型自报的完成状态，并 MUST 将转换结果交给既有当前轮句柄授权、类型、来源和 Workspace 校验。系统 MUST 继续拒绝其他错误顶层结构、错误句柄类型、历史结果、伪造引用及未授权或跨 Workspace 材料。Finalizer MUST 被明确要求只输出 `DialogueAnswer.blocks`，不得通过增加模型重试兼容非法输出。
 
 #### Scenario: text 块包含无害备注
 - **WHEN** finalizer 输出合法 text 内容并额外携带不参与展示的 `note`
 - **THEN** 程序忽略该备注并继续按 text 内容校验和渲染，不新增引用、材料或权限
+
+#### Scenario: 已知旧式收尾外壳包含完整回答
+- **WHEN** finalizer 唯一响应以 `answer_summary.narrative` 提供非空回答，并在 `answer_summary.references` 中引用本轮已确认且获授权的 Evidence，同时额外提供模型自报的 `completion`
+- **THEN** 程序在不追加模型请求的情况下将叙述和引用转换为标准回答块，忽略模型自报完成状态，经既有输出校验通过后由程序判定完成，并记录兼容事件
+
+#### Scenario: 旧式收尾外壳包含非法引用
+- **WHEN** 已知旧式外壳引用历史 Evidence、伪造句柄、错误类型或未授权、跨 Workspace 材料
+- **THEN** 转换后的回答仍被既有输出校验拒绝，不猜测或替换句柄，不执行资料工具且不追加模型请求
+
+#### Scenario: 未知错误顶层结构
+- **WHEN** finalizer 输出既不是 `DialogueAnswer` 也不是受支持的旧式外壳
+- **THEN** 程序保持现有非法输出与 continuation 机制，不将任意 JSON 宽松转换为回答
 
 #### Scenario: 错误引用不能被兼容
 - **WHEN** finalizer 把 Entry 结果句柄当作 Evidence、引用历史列表或输出其他错误句柄

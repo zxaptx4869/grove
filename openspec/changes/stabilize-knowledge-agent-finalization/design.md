@@ -73,7 +73,9 @@ continuation 在收尾失败且存在当前轮可展示材料时建立，唯一 
 
 `deepseek-v4-flash` 的 Chat Completions 默认开启 high 思考，而旧 `deepseek-chat` 兼容名对应非思考模式。统一对话循环在普通 Agent 与独立 finalizer 的请求设置中显式传入 `extra_body.thinking.type=disabled`；只对 DeepSeek V4 模型名生效，其他模型和离线 FunctionModel 不附加 Provider 专用参数。现有 temperature、输出上限、9000/12000 输入边界和请求次数均不改变。
 
-Finalizer 提示明确唯一合法顶层为 `DialogueAnswer.blocks`，禁止自创 `answer_summary`、`completion` 等结构。为兼容已观察到的无权限含义格式偏差，`text` 块允许最多 500 字的可选 `note`，但程序不渲染、不保存为引用且不赋予任何权限；错误句柄、把 Entry 结果冒充 Evidence、历史或跨 Workspace 引用仍原样拒绝，不进行自动转换。
+Finalizer 提示明确唯一合法顶层为 `DialogueAnswer.blocks`，禁止自创 `answer_summary`、`completion` 等结构。为兼容已观察到的无权限含义格式偏差，`text` 块允许最多 500 字的可选 `note`，但程序不渲染、不保存为引用且不赋予任何权限。
+
+真实 V4 响应还会在内容和引用已经完整时使用旧式 `answer_summary + completion` 外壳。适配只放在独立 finalizer 的模型响应边界：顶层必须恰好符合受支持旧结构，`answer_summary.narrative` 必须是非空有界文本，`references` 只能转换为既有输出块类型；模型提供的 `completion` 只验证形状后丢弃，公开完成状态仍由程序根据转换后的 `DialogueAnswer` 与当前执行状态计算。转换结果继续经过同一个 `output_errors`，因此错误句柄、把 Entry 结果冒充 Evidence、历史、伪造、未授权或跨 Workspace 引用仍原样拒绝。转换不触发第二次模型请求，也不成为普通 Agent 或其他任意 JSON 的宽松解析器，并记录可观测的兼容事件。
 
 ### 9. 续执行真值与精简候选稿
 
