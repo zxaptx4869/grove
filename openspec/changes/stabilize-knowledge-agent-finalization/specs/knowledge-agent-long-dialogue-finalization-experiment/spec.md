@@ -130,14 +130,14 @@
 - **THEN** 程序不附加 DeepSeek 专用 `thinking` 请求体
 
 ### Requirement: 续执行提示必须对应真实可恢复状态
-系统 MUST 仅在实际保存合法 continuation 时公开 `can_continue=true`。收到精确的“继续”类表达但没有活动 continuation 时，系统 MUST 返回不可恢复状态，模型和资料工具执行次数均为零；不得把该表达交给普通 Agent、重新搜索或重复读取历史成功材料。
+系统 MUST 仅在实际保存合法 continuation 时公开 `can_continue=true`。上一轮明确失败、未执行或部分完成但没有活动 continuation 时，收到精确的“继续”类表达后系统 MUST 返回不可恢复状态，模型和资料工具执行次数均为零；不得把该表达交给普通 Agent、重新搜索或重复读取历史成功材料。上一轮正常完成时的自然“继续”仍可按普通多轮对话处理。
 
 #### Scenario: 有效 continuation 继续
 - **WHEN** 上一轮保存了仍有效的 finalize-only continuation，用户说“继续”
 - **THEN** 系统仍只复验并重试最终回答，`can_continue` 与公开 continuation 一致，不重复搜索、Entry 或 Evidence 读取
 
 #### Scenario: 没有 continuation 的继续
-- **WHEN** 公开状态没有 continuation 而用户单独说“继续”或“下一轮继续”
+- **WHEN** 上一轮失败、未执行或部分完成且公开状态没有 continuation，用户单独说“继续”或“下一轮继续”
 - **THEN** 系统返回 `continuation_not_available` 且 `can_continue=false`，文本模型、搜索、Entry 与 Evidence 工具新增执行次数均为零
 
 ### Requirement: 收尾格式兼容不得放宽引用边界

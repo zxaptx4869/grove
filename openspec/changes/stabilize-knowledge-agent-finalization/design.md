@@ -77,7 +77,7 @@ Finalizer 提示明确唯一合法顶层为 `DialogueAnswer.blocks`，禁止自�
 
 ### 9. 续执行真值与精简候选稿
 
-公开 `can_continue` 由 continuation 是否真实存在派生，不再表示“用户可以重新问一次”。收到“继续”类精确表达但本轮没有活动 continuation 时，程序直接返回 `continuation_not_available`，模型调用和资料工具执行都为零，避免把空指令交给普通 Agent 后重新读取历史材料。已有合法 continuation 的复验、只重试回答和材料失效行为保持不变。
+公开 `can_continue` 由 continuation 是否真实存在派生，不再表示“用户可以重新问一次”。上一轮明确失败、未执行或部分完成且没有活动 continuation 时，收到“继续”类精确表达后程序直接返回 `continuation_not_available`，模型调用和资料工具执行都为零，避免把空指令交给普通 Agent 后重新读取历史材料；正常完成轮次后的自然“继续”仍可作为普通多轮承接。已有合法 continuation 的复验、只重试回答和材料失效行为保持不变。
 
 候选修改的交付信号增加与修改动作组合使用的“输出”；当用户明确说“只/就输出补充后的知识内容，其他不用”时，程序标记为精简候选稿：只允许一个 text 块，包含候选正文、尚未写入声明和简短来源边界，不输出 list、statistic 或 evidence 块，从而避免渲染器展开完整 Source 原文。普通候选稿仍保留原记录要点、建议补充和修改后候选版本的分区要求。
 

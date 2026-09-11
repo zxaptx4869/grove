@@ -121,6 +121,7 @@ class StrictModel(BaseModel):
 class TextBlock(StrictModel):
     kind: Literal["text"] = "text"
     text: str = Field(min_length=1, max_length=4_000)
+    note: str = Field(default="", max_length=500, exclude=True)
 
 
 class StatisticBlock(StrictModel):
@@ -209,6 +210,8 @@ class StopState:
 
     def snapshot(self) -> dict:
         value = asdict(self)
+        # “可继续”只表示存在可实际恢复的程序状态，不表示用户可以重新发问。
+        value["can_continue"] = self.continuation is not None
         value["continuation"] = (
             self.continuation.snapshot() if self.continuation is not None else None
         )

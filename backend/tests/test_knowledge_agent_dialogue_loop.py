@@ -6,6 +6,7 @@ from copy import deepcopy
 from decimal import Decimal
 from math import ceil
 from pathlib import Path
+from uuid import uuid4
 
 import pytest
 from pydantic_ai import Agent, ModelRetry, RunContext
@@ -278,6 +279,7 @@ def test_project_validation_names_the_invalid_field() -> None:
         "按你的分析，帮我把第一条的知识补充一下，发给我",
         "请把第二条完善一下，给我看看",
         "结合前面的结论优化这个知识，给我一版",
+        "就输出你补充后的知识内容就行，其他的都不用",
     ],
 )
 def test_candidate_revision_wording_is_not_treated_as_direct_write(message: str) -> None:
@@ -300,6 +302,20 @@ def test_candidate_revision_wording_is_not_treated_as_direct_write(message: str)
 )
 def test_direct_write_wording_is_not_treated_as_candidate_revision(message: str) -> None:
     assert _candidate_revision_requested(message) is False
+
+
+def test_deepseek_v4_dialogue_agents_disable_default_thinking() -> None:
+    """V4 求解与收尾显式关闭默认思考，其他模型不接收专用请求体。"""
+
+    v4_model = FunctionModel(lambda _messages, _info: None, model_name="deepseek-v4-flash")
+    for agent in (build_agent(v4_model), build_finalizer_agent(v4_model)):
+        assert agent.model_settings["extra_body"] == {
+            "thinking": {"type": "disabled"}
+        }
+
+    other_model = FunctionModel(lambda _messages, _info: None, model_name="other-model")
+    assert "extra_body" not in build_agent(other_model).model_settings
+    assert "extra_body" not in build_finalizer_agent(other_model).model_settings
 
 
 def test_list_position_uses_actual_order_and_rejects_forgery() -> None:
@@ -1120,6 +1136,62 @@ def test_candidate_revision_accepts_equivalent_source_boundary_wording() -> None
     )
 
     assert output_errors(answer, state) == []
+
+
+def test_content_only_candidate_accepts_one_text_and_rejects_evidence_block() -> None:
+    """精简候选稿只保留正文和必要边界，不允许 Evidence 原文展开。"""
+
+    state = _state()
+    state.begin_turn(5, "就输出你补充后的知识内容就行，其他的都不用")
+    candidate_text = (
+        "国标 ENF 级用于描述人造板甲醛释放量等级。\n"
+        "说明：这是候选内容，尚未写入知识库；模型补充不属于原始来源原文。"
+    )
+    answer = DialogueAnswer.model_validate(
+        {"blocks": [{"kind": "text", "text": candidate_text}]}
+    )
+
+    assert output_errors(answer, state) == []
+
+    state.current_evidence.add("ev-current")
+    state.evidence["ev-current"] = {
+        "entry_id": 7,
+        "source_id": 66,
+        "source_title": "来源",
+        "quote": "来源原文",
+    }
+    with_evidence = DialogueAnswer.model_validate(
+        {
+            "blocks": [
+                {"kind": "text", "text": candidate_text},
+                {"kind": "evidence", "evidence_handle": "ev-current"},
+            ]
+        }
+    )
+
+    assert any(
+        "精简候选稿只能包含一个文本块" in item
+        for item in output_errors(with_evidence, state)
+    )
+
+
+def test_text_block_note_is_ignored_without_changing_rendered_content() -> None:
+    """Provider 多出的无害 note 不进入展示、快照或引用授权。"""
+
+    state = _state()
+    answer = DialogueAnswer.model_validate(
+        {
+            "blocks": [
+                {"kind": "text", "text": "合法正文", "note": "不展示的模型备注"}
+            ]
+        }
+    )
+
+    text, blocks = render_answer(answer, state)
+
+    assert text == "合法正文"
+    assert blocks == [{"kind": "text", "text": "合法正文"}]
+    assert "note" not in answer.model_dump(mode="json")["blocks"][0]
 
 
 def test_agent_exposes_real_directory_tool_and_separate_position_handles() -> None:
@@ -3479,7 +3551,7 @@ async def _seed_finalize_material(state: LoopState) -> dict:
     )
 
     async with async_session_factory() as db:
-        user = User(username=f"finalize-{id(state)}", password_hash="test")
+        user = User(username=f"finalize-{uuid4().hex[:16]}", password_hash="test")
         workspace = Workspace(name="收尾测试空间")
         db.add_all([user, workspace])
         await db.flush()
@@ -3784,6 +3856,71 @@ async def test_finalize_tool_attempt_is_blocked_and_resume_only_retries_answer()
     assert state.continuation is None
     assert len(state.tool_events) == events_before
     assert len(provider_calls) == 2
+
+
+@pytest.mark.asyncio
+async def test_continue_without_continuation_does_not_call_model_or_tools() -> None:
+    """公开状态没有真实 continuation 时，“继续”不得回到普通资料循环。"""
+
+    state = _state()
+    state.remember_turn(
+        "上一轮请求",
+        "上一轮未完成",
+        [],
+        completion={
+            "status": "partial_completed",
+            "reason_code": "output_validation_failed",
+            "reason": "模型输出非法",
+            "incomplete_steps": ["模型未能生成合法回答"],
+            "can_continue": False,
+            "continuation": None,
+        },
+    )
+    state.begin_turn(5, "继续")
+    provider_calls = 0
+
+    def respond(_messages, _info):
+        nonlocal provider_calls
+        provider_calls += 1
+        raise AssertionError("没有 continuation 时不应调用模型")
+
+    turn, _ = await run_turn(
+        build_agent(FunctionModel(respond)),
+        state,
+        "继续",
+        [],
+    )
+
+    assert turn["status"] == "not_executed"
+    assert turn["completion"] == {
+        "status": "not_executed",
+        "reason_code": "continuation_not_available",
+        "reason": "当前没有可恢复的未完成步骤",
+        "incomplete_steps": ["未找到可续执行的最终回答状态"],
+        "can_continue": False,
+        "continuation": None,
+    }
+    assert turn["context"]["continuation_mode"] == "not_available"
+    assert turn["model_calls"] == []
+    assert turn["tool_calls"] == []
+    assert turn["budget"]["turn"]["text_requests"] == 0
+    assert turn["budget"]["turn"]["tool_calls"] == 0
+    assert provider_calls == 0
+
+
+def test_public_can_continue_requires_actual_continuation() -> None:
+    """没有恢复状态时，内部可重问语义不能泄露成公开可续执行。"""
+
+    stop = StopState(
+        status="partial_completed",
+        reason_code="output_validation_failed",
+        reason="输出非法",
+        incomplete_steps=["模型未能生成合法回答"],
+        can_continue=True,
+        continuation=None,
+    )
+
+    assert stop.snapshot()["can_continue"] is False
 
 
 @pytest.mark.asyncio

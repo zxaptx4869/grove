@@ -163,6 +163,7 @@ CANDIDATE_DELIVERY_PATTERNS = (
     "发送给我",
     "给我看看",
     "给我一版",
+    "输出",
 )
 CANDIDATE_REVISION_PATTERNS = (
     "帮我补充",
@@ -203,6 +204,45 @@ def _candidate_revision_requested(message: str) -> bool:
     )
     has_delivery = any(pattern in normalized for pattern in CANDIDATE_DELIVERY_PATTERNS)
     return has_revision_action and has_delivery
+
+
+def _candidate_content_only_requested(message: str) -> bool:
+    """识别候选稿上下文中的精简交付请求，不把普通“输出”单独当作候选。"""
+
+    normalized = re.sub(r"[，。！？!?,；;：:\s]", "", message).casefold()
+    return (
+        _candidate_revision_requested(message)
+        and "内容" in normalized
+        and any(pattern in normalized for pattern in ("只输出", "就输出"))
+        and any(
+            pattern in normalized
+            for pattern in ("其他的都不用", "其他都不用", "其余不用", "只要")
+        )
+    )
+
+
+def _dialogue_model_settings(model) -> dict:
+    """只为 DeepSeek V4 显式关闭默认思考，其他 Provider 保持原请求。"""
+
+    settings: dict = {"temperature": 0, "max_tokens": OUTPUT_TOKENS_LIMIT}
+    if str(getattr(model, "model_name", "")).casefold().startswith("deepseek-v4-"):
+        settings["extra_body"] = {"thinking": {"type": "disabled"}}
+    return settings
+
+
+def _failed_turn_without_continuation(state: LoopState, message: str) -> bool:
+    """只拦截无法恢复的失败续执行，不影响正常已完成对话中的自然“继续”。"""
+
+    if message.strip() not in FINALIZE_CONTINUE_MESSAGES or state.active_continuation:
+        return False
+    if not state.history_turns:
+        return False
+    completion = state.history_turns[-1].get("completion") or {}
+    return completion.get("status") in {
+        TURN_NOT_EXECUTED,
+        TURN_PARTIAL_COMPLETED,
+        TURN_FAILED,
+    } and not completion.get("can_continue")
 
 
 def _knowledge_tools_disabled(message: str) -> bool:
@@ -1546,12 +1586,17 @@ def output_errors(answer: DialogueAnswer, state: LoopState) -> list[str]:
         draft_text = "\n".join(
             block.text for block in answer.blocks if block.kind == "text"
         )
-        required_sections = {
-            "未写入状态": ("尚未写入知识库", "尚未写入正式记录"),
-            "原记录内容": ("原记录要点", "原记录已有内容"),
-            "新增建议": ("建议补充", "建议新增"),
-            "修改后版本": ("修改后候选版本", "候选修改稿"),
-        }
+        content_only = _candidate_content_only_requested(state.current_message)
+        required_sections = (
+            {"未写入状态": ("尚未写入知识库", "尚未写入正式记录")}
+            if content_only
+            else {
+                "未写入状态": ("尚未写入知识库", "尚未写入正式记录"),
+                "原记录内容": ("原记录要点", "原记录已有内容"),
+                "新增建议": ("建议补充", "建议新增"),
+                "修改后版本": ("修改后候选版本", "候选修改稿"),
+            }
+        )
         missing = [
             label
             for label, markers in required_sections.items()
@@ -1573,6 +1618,10 @@ def output_errors(answer: DialogueAnswer, state: LoopState) -> list[str]:
         )
         if not has_source_boundary:
             missing.append("来源边界")
+        if content_only and (
+            len(answer.blocks) != 1 or any(block.kind != "text" for block in answer.blocks)
+        ):
+            missing.append("精简候选稿只能包含一个文本块")
         if missing:
             errors.append(f"候选修改稿缺少：{'、'.join(missing)}")
     return errors
@@ -1929,7 +1978,7 @@ def build_agent(model) -> Agent[LoopDeps, DialogueAnswer]:
         output_type=DialogueAnswer,
         instructions=SYSTEM_PROMPT,
         retries=1,
-        model_settings={"temperature": 0, "max_tokens": OUTPUT_TOKENS_LIMIT},
+        model_settings=_dialogue_model_settings(model),
         max_concurrency=MAX_TOOL_CONCURRENCY,
         tool_timeout=PER_TURN_SECONDS,
     )
@@ -1980,6 +2029,13 @@ def build_agent(model) -> Agent[LoopDeps, DialogueAnswer]:
     def candidate_revision_instruction(ctx: RunContext[LoopDeps]) -> str:
         if not _candidate_revision_requested(ctx.deps.state.current_message):
             return ""
+        if _candidate_content_only_requested(ctx.deps.state.current_message):
+            return (
+                "当前是候选稿的精简交付请求，不是写入正式记录。只调用 final_result 一次，"
+                "且只输出一个 text 块：正文主体为补充后的候选知识内容，末尾用最短说明明确"
+                "尚未写入知识库，并说明模型补充不属于 Source 原文。不要输出 Evidence、Entry、"
+                "list、statistic、insufficient 或其他说明块，不要调用资料或写入工具。"
+            )
         return (
             "当前请求只要求生成候选修改稿，用户将自行审核或更新，不是写入正式记录。"
             "不要调用 report_unsupported 或任何写入工具；直接用 final_result 的 text 块输出，"
@@ -2762,7 +2818,9 @@ FINALIZER_SYSTEM_PROMPT = """你是 Grove 知识 Agent 的独立收尾执行器�
 你只能组织最终 DialogueAnswer，不能调用搜索、目录、Entry 或 Evidence 等任何资料工具，
 也不能声称执行了外部核验。无法支持的结论用 insufficient 明确说明。
 知识库正式记录、Source 原文与模型分析必须区分，读到来源不等于通过官方交叉验证。
-AI 回答或候选修改稿不得声称已经写入正式 Entry。""".strip()
+AI 回答或候选修改稿不得声称已经写入正式 Entry。
+唯一合法输出顶层是 DialogueAnswer 的 blocks 与 needs_clarification；不要输出 answer_summary、
+completion 或其他自创顶层字段。text 块只填写 kind 与 text，不要添加 note。""".strip()
 
 
 def build_finalizer_agent(model) -> Agent[LoopDeps, DialogueAnswer]:
@@ -2774,7 +2832,7 @@ def build_finalizer_agent(model) -> Agent[LoopDeps, DialogueAnswer]:
         output_type=DialogueAnswer,
         instructions=FINALIZER_SYSTEM_PROMPT,
         retries=0,
-        model_settings={"temperature": 0, "max_tokens": OUTPUT_TOKENS_LIMIT},
+        model_settings=_dialogue_model_settings(model),
         max_concurrency=1,
         tool_timeout=FINALIZE_SECONDS,
     )
@@ -2791,6 +2849,16 @@ def build_finalizer_agent(model) -> Agent[LoopDeps, DialogueAnswer]:
             "有界叙述作答；这些历史叙述不是可引用证据。只能输出 text 或 insufficient 块，"
             "不得输出统计、列表、Entry、Evidence 或任何 Grove 句柄，不得声称查询、读取、"
             "实时核验或得到 Grove 正式记录与 Source 支持。请明确这是模型通用分析及其边界。"
+        )
+
+    @agent.instructions
+    def candidate_content_only_instruction(ctx: RunContext[LoopDeps]) -> str:
+        if not _candidate_content_only_requested(ctx.deps.state.current_message):
+            return ""
+        return (
+            "用户只要补充后的候选知识内容。只输出一个 text 块，不得输出或引用 Evidence、"
+            "Entry、list、statistic、insufficient；末尾仅保留尚未写入和模型补充不属于"
+            "Source 原文的简短边界说明。"
         )
 
     @agent.output_validator
@@ -3865,6 +3933,49 @@ async def run_turn(
     solve_error = None
     solve_failure = None
     error_details = None
+    if _failed_turn_without_continuation(state, message):
+        stop = StopState(
+            status=TURN_NOT_EXECUTED,
+            reason_code="continuation_not_available",
+            reason="当前没有可恢复的未完成步骤",
+            incomplete_steps=["未找到可续执行的最终回答状态"],
+            can_continue=False,
+        )
+        state.stop(stop)
+        text, blocks = _verified_failure_output(state, stop)
+        completion = state.completion_snapshot(TURN_NOT_EXECUTED)
+        state.remember_turn(
+            message,
+            text,
+            [],
+            blocks=blocks,
+            completion=completion,
+        )
+        return {
+            "message": message,
+            "status": TURN_NOT_EXECUTED,
+            "answer": text,
+            "blocks": blocks,
+            "error": None,
+            "error_details": None,
+            "solve_error": None,
+            "solve_failure": None,
+            "duration_ms": int((perf_counter() - started) * 1000),
+            "usage": None,
+            "budget": state.ledger.snapshot(),
+            "tool_calls": [],
+            "model_calls": [],
+            "context": {
+                "history_estimated_input_tokens": history_estimate,
+                "input_estimates": [],
+                "history_turns": len(state.history_turns),
+                "solve_seconds_limit": PER_TURN_SECONDS,
+                "finalize_seconds_limit": FINALIZE_SECONDS,
+                "continuation_mode": "not_available",
+            },
+            "finalization": state.instrumentation.finalization_snapshot(),
+            "completion": completion,
+        }, build_compact_history(state)
     if (
         state.active_continuation is not None
         and state.active_continuation.task_type == "finalize_answer"
