@@ -1054,7 +1054,7 @@ async def test_normal_agent_normalizes_legacy_candidate_envelope_without_retry()
                                     "原记录要点：第一条记录讲的是甲醛环保等级。\n\n"
                                     "建议补充：补充测试方法和认证核验边界。\n\n"
                                     "修改后候选版本：应同时核对检测方法、认证证书和检测报告。\n\n"
-                                    "来源边界：新增内容不是原始来源原文。"
+                                    "来源边界说明：新增内容没有对应的知识库来源原文。"
                                 ),
                                 "references": [],
                             },
@@ -1172,8 +1172,19 @@ def test_candidate_revision_output_requires_sections_and_source_boundary() -> No
     assert "来源边界" in errors[0]
 
 
-def test_candidate_revision_accepts_equivalent_source_boundary_wording() -> None:
-    """“并非来自该来源原文”等等价说明不能被固定文案校验误拒绝。"""
+@pytest.mark.parametrize(
+    "boundary",
+    [
+        "来源边界说明：补充分析并非来自该来源原文。",
+        "来源边界说明：补充建议没有对应的知识库来源原文。",
+        "来源边界说明：本轮没有来源原文，补充内容不能视为来源转述。",
+        "来源边界说明：本轮未取得来源原文，补充内容仅供审核。",
+    ],
+)
+def test_candidate_revision_accepts_equivalent_source_boundary_wording(
+    boundary: str,
+) -> None:
+    """等价来源边界说明不能被固定文案校验误拒绝。"""
 
     state = _state()
     state.begin_turn(5, "帮我补充这条知识，把内容输出给我")
@@ -1187,7 +1198,7 @@ def test_candidate_revision_accepts_equivalent_source_boundary_wording() -> None
                         "原记录要点：乳胶漆是默认建议。\n"
                         "建议补充：结合产品和施工判断。\n"
                         "修改后候选版本：按实际条件选择墙面材料。\n"
-                        "来源边界说明：补充分析并非来自该来源原文。"
+                        + boundary
                     ),
                 }
             ]

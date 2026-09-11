@@ -1623,6 +1623,11 @@ def output_errors(answer: DialogueAnswer, state: LoopState) -> list[str]:
             "并非来自该来源原文",
             "并非来自原始来源",
             "不来自原始来源",
+            "没有对应的知识库来源原文",
+            "没有对应来源原文",
+            "没有来源原文",
+            "未提供来源原文",
+            "未取得来源原文",
         )
         has_source_boundary = any(
             phrase in draft_text for phrase in source_boundary_phrases
