@@ -1194,6 +1194,54 @@ def test_text_block_note_is_ignored_without_changing_rendered_content() -> None:
     assert "note" not in answer.model_dump(mode="json")["blocks"][0]
 
 
+@pytest.mark.asyncio
+async def test_finalizer_accepts_harmless_text_note_without_second_request() -> None:
+    """真实收尾路径可忽略 text.note，且仍只使用一次模型请求。"""
+
+    state = _state()
+    state.instrumentation.context_policy_enabled = True
+    provider_calls = 0
+
+    def respond(_messages, info):
+        nonlocal provider_calls
+        provider_calls += 1
+        return ModelResponse(
+            parts=[
+                ToolCallPart(
+                    info.output_tools[0].name,
+                    {
+                        "blocks": [
+                            {
+                                "kind": "text",
+                                "text": "这是合法收尾正文。",
+                                "note": "模型添加但不参与展示的备注",
+                            }
+                        ]
+                    },
+                )
+            ]
+        )
+
+    model = BudgetedModel(
+        FunctionModel(respond, model_name="deepseek-v4-flash"),
+        state.instrumentation,
+    )
+    result = await loop_module._finalize_once(
+        build_finalizer_agent(model),
+        state,
+        "请完成回答",
+        [],
+        [],
+        "input_soft_limit",
+    )
+    text, blocks = render_answer(result.output, state)
+
+    assert provider_calls == 1
+    assert text == "这是合法收尾正文。"
+    assert blocks == [{"kind": "text", "text": "这是合法收尾正文。"}]
+    assert state.instrumentation.finalize_response_received is True
+
+
 def test_agent_exposes_real_directory_tool_and_separate_position_handles() -> None:
     agent = build_agent(FunctionModel(lambda _messages, _info: None))
     tools = agent._function_toolset.tools
