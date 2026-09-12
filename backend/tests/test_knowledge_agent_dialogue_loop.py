@@ -118,6 +118,23 @@ def test_skipped_evidence_event_does_not_make_turn_incomplete() -> None:
     assert _stop_from_events(state, [event]) is None
 
 
+def test_projects_result_handle_is_rendered_as_project_list() -> None:
+    state = _state()
+    handle = state.store_result(
+        "projects",
+        {"projects": [{"id": 1, "name": "项目甲", "status": "active"}]},
+        "completed",
+        "complete",
+    )
+    answer = DialogueAnswer.model_validate(
+        {"blocks": [{"kind": "list", "result_handle": handle, "label": "项目"}]}
+    )
+    assert output_errors(answer, state) == []
+    text, blocks = render_answer(answer, state)
+    assert "项目甲" in text
+    assert blocks[0]["items"][0]["name"] == "项目甲"
+
+
 def _state() -> LoopState:
     ledger = BudgetLedger()
     instrumentation = Instrumentation(ledger)

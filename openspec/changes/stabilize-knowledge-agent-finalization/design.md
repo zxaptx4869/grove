@@ -111,3 +111,5 @@ Finalizer 提示明确唯一合法顶层为 `DialogueAnswer.blocks`，禁止自�
 ## 第四阶段执行决策（2026-09-12）
 
 在现有 `dialogue_loop` 内增加确定性的来源核验意图门控：普通内容追问、Entry 解释和已授权结果复用不派发 `read_evidence`；出现来源、原文、出处、可信度、证据或冲突语义时才允许读取。门控只减少不必要的资料动作，不改变 Evidence 数据模型、句柄校验或 Workspace 复验。预算异常继续由既有 `_mark_budget_stop` 和独立 finalizer 处理，新增回归锁定已确认结果与未执行步骤的状态区分。
+
+项目列表使用独立 `projects` 结果类型，在输出校验与渲染中显式分支，避免与 `list`/`entries` 混用。精简候选收尾在校验前由程序补齐两条最小边界声明，减少 finalizer 对重复章节的依赖；话题切换继续沿用 `begin_turn` 清理活动 continuation。

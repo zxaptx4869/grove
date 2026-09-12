@@ -1529,7 +1529,7 @@ def output_errors(answer: DialogueAnswer, state: LoopState) -> list[str]:
                 errors.append(f"{block.result_handle} 不是当前轮结果")
             elif not record.displayable:
                 errors.append(f"{block.result_handle} 是内部候选，不能进入主答案")
-            elif expected == "list" and record.kind not in {"list", "directories"}:
+            elif expected == "list" and record.kind not in {"list", "directories", "projects"}:
                 errors.append(f"{block.result_handle} 不是列表结果")
             elif expected == "statistic" and record.kind != expected:
                 errors.append(f"{block.result_handle} 不是 statistic 结果")
@@ -3079,6 +3079,20 @@ def build_finalizer_agent(model) -> Agent[LoopDeps, DialogueAnswer]:
         state = ctx.deps.state
         previous_draft = state.candidate_draft
         answer = _candidate_finalizer_text_only(answer, state)
+        candidate_message = _candidate_request_message(state)
+        if (
+            candidate_message is not None
+            and _candidate_content_only_requested(candidate_message)
+            and answer.blocks
+            and all(block.kind == "text" for block in answer.blocks)
+        ):
+            # 精简交付由程序补齐最小边界，避免 finalizer 重复生成原记录章节。
+            text = "\n".join(block.text for block in answer.blocks)
+            if "尚未写入" not in text and "未写入" not in text:
+                text += "\n（以上为候选内容，尚未写入正式 Entry。）"
+            if "Source 原文" not in text and "来源原文" not in text:
+                text += "\n（模型补充不属于 Source 原文。）"
+            answer = DialogueAnswer.model_validate({"blocks": [{"kind": "text", "text": text}]})
         errors = output_errors(answer, state)
         if errors:
             if _candidate_request_message(state) is not None:
@@ -3187,10 +3201,19 @@ def render_answer(answer: DialogueAnswer, state: LoopState) -> tuple[str, list[d
                     else f"{scope}正式记录列表"
                 )
             lines.append(title)
-            items = record.payload.get("items", [])
+            items = (
+                record.payload.get("projects", [])
+                if record.kind == "projects"
+                else record.payload.get("items", [])
+            )
             for index, item in enumerate(items, 1):
                 if record.kind == "directories":
                     lines.append(f"{index}. {item.get('name', '未命名')}（{item.get('path', '')}）")
+                elif record.kind == "projects":
+                    lines.append(
+                        f"{index}. {item.get('name', '未命名项目')}"
+                        f"（{item.get('status', '未知状态')}）"
+                    )
                 else:
                     lines.append(
                         f"{index}. {item.get('title', '未命名')}"

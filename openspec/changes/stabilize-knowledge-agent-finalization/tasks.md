@@ -87,3 +87,9 @@
 - `backend/.venv/bin/ruff check evals/dialogue_loop/loop.py tests/test_knowledge_agent_dialogue_loop.py`：通过。
 - `backend/.venv/bin/pytest -q tests/test_knowledge_agent_dialogue_loop.py tests/test_dialogue_workbench.py`：155 passed。
 - 新增回归覆盖 Evidence 意图门控及 `evidence_not_required` 不触发不完整终态；未发起真实模型评测，人工工作台验收、归档、推送和合并仍待用户处理。
+
+### 最新收尾回归（2026-09-12）
+
+- [x] 区分 projects、entries、directories 等结果句柄并由程序渲染项目列表
+- [x] 精简候选正文收尾自动保留候选稿并补齐最小只读边界
+- [x] 增加两个失败场景的确定性测试并完成全套静态、编译和 OpenSpec 校验
