@@ -191,3 +191,25 @@
 #### Scenario: 继续只修正已保存候选稿
 - **WHEN** 候选稿 continuation 仍有效且用户说“继续”
 - **THEN** 系统使用完整候选文本和缺口完成必要整理，不搜索、不读取 Entry/Evidence、不引入历史无效句柄，完成状态为 completed 且 continuation 被清理
+
+### Requirement: 普通 Entry 追问按需读取 Evidence
+统一对话循环 MUST 将已确认 Entry、正文和普通追问优先交给轻量回答路径；用户未明确要求来源、原文、可信度核验且当前资料未出现冲突时，MUST NOT 强制派发 `read_evidence`，也 MUST NOT 因跳过 Evidence 把本轮标记为失败。用户明确要求来源或冲突核验时，仍 MUST 在当前轮按既有 Workspace、权限和 Source 关系读取 Evidence。
+
+#### Scenario: 普通追问不读取 Evidence
+- **WHEN** 用户继续询问已展示 Entry 的内容、解释或补充，消息没有来源/原文/可信度/冲突核验要求
+- **THEN** 系统复用已授权结果句柄或轻量回答路径，`read_evidence` 不执行，已确认结果仍可回答并保持正式 Entry 只读
+
+#### Scenario: 明确核验仍读取 Evidence
+- **WHEN** 用户要求来源、原文、出处、可信度核验，或系统需要解释冲突
+- **THEN** 系统才派发当前轮 `read_evidence`，并继续执行既有 Evidence 句柄、Workspace 和 Source 可追溯校验
+
+### Requirement: 预算边界保留已确认结果
+达到工具、Entry、Evidence 或文本预算边界时，系统 MUST 停止新增资料动作，不得重置或提高冻结预算；已确认结果 MUST 保留并与未执行步骤分开，依据本轮是否已有可靠结果准确返回 `completed`、`partial_completed` 或 `not_executed`。工具完成后交给独立无工具回答器收尾，收尾阶段 MUST NOT 执行资料工具。
+
+#### Scenario: 预算耗尽但已有结果
+- **WHEN** 新增资料动作因预算耗尽未执行，但本轮已有可靠 Entry、列表、统计或 Evidence
+- **THEN** 系统保留可靠结果，停止新增动作，并返回 `partial_completed`（若回答已完整则返回 `completed`），未执行步骤单独记录
+
+#### Scenario: 预算耗尽且没有结果
+- **WHEN** 首个资料动作即因预算边界未执行且本轮没有可靠结果
+- **THEN** 系统返回 `not_executed`，明确未执行原因，不把空结果伪装成零条，不派发新的资料动作

@@ -61,8 +61,9 @@ SYSTEM_PROMPT = """你是 Grove 知识库的只读对话 Agent。你在一个持
 2. 用户说“知识”泛指 knowledge/method/parameter/reminder 四种正式记录，除非他明确限定类型。
 3. 精确总数必须调用 count_entries，分组统计必须调用 group_entries；不能从语义搜索、
    截断列表或分类数相加推断用户所问总数。分项目统计须包含零条项目。
-4. 查询或列表必须调用 query_entries/search_knowledge。需要正文先读取 Entry；需要来源必须
-   在当前轮调用 read_evidence，历史 Evidence 不能直接引用。
+4. 查询或列表必须调用 query_entries/search_knowledge。需要正文先读取 Entry；只有用户明确要求
+   来源、原文、可信度核验，或资料出现冲突时才在当前轮调用 read_evidence，历史 Evidence
+   不能直接引用。
 5. 列表追问必须使用 open_list_item(result_set_handle, position)，position 从 1 开始。
    不要猜 Entry id。
 6. 工具的 empty、partial、not_executed、error、denied 含义不同。未执行或部分结果不能表达为零条。
@@ -304,6 +305,26 @@ ENTRY_CONTENT_PATTERNS = (
     "展开说说",
     "展开看看",
 )
+
+EVIDENCE_REQUEST_PATTERNS = (
+    "来源",
+    "出处",
+    "原文",
+    "证据",
+    "核验",
+    "引用",
+    "可信",
+    "可靠吗",
+    "冲突",
+    "矛盾",
+    "不一致",
+)
+
+
+def _evidence_requested(message: str) -> bool:
+    """只有来源核验或冲突语义才进入 Evidence 读取路径。"""
+    normalized = message.strip().lower()
+    return any(pattern in normalized for pattern in EVIDENCE_REQUEST_PATTERNS)
 
 
 def _entry_content_requested(message: str) -> bool:
@@ -2851,6 +2872,21 @@ def build_agent(model) -> Agent[LoopDeps, DialogueAnswer]:
         ctx: RunContext[LoopDeps], entry_id: int, source_ids: list[int]
     ) -> dict:
         """当前轮重新核验已发现 Entry 的真实 Source 原文并创建 Evidence。"""
+        if not _evidence_requested(ctx.deps.state.current_message):
+            # 普通 Entry/追问不强制读取 Evidence；保留审计事件，避免模型重试并消费预算。
+            event = {
+                "tool": "read_evidence",
+                "shared_tool": "read_evidence",
+                "status": "not_executed",
+                "completeness": "unknown",
+                "params": {"entry_id": entry_id, "source_ids": source_ids},
+                "error": "普通回答无需来源核验，已跳过 Evidence 读取",
+                "reason_code": "evidence_not_required",
+                "duration_ms": 0,
+                "turn_index": ctx.deps.state.turn_index,
+            }
+            ctx.deps.state.tool_events.append(event)
+            return event
         if entry_id not in ctx.deps.state.authorized_entry_ids:
             raise ModelRetry("read_evidence 只能读取授权展示集合中的 Entry")
         if entry_id not in ctx.deps.state.read_entry_ids:

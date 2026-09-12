@@ -79,6 +79,7 @@ from evals.dialogue_loop.loop import (
     _create_finalize_continuation,
     _current_material_history,
     _entry_set,
+    _evidence_requested,
     _group_params,
     _mark_budget_stop,
     _model_payload,
@@ -97,6 +98,24 @@ from evals.dialogue_loop.loop import (
     run_turn,
 )
 from evals.dialogue_loop.report import _visible_answer, evaluate, evaluation_plan, sanitize
+
+
+def test_evidence_is_requested_only_for_source_or_conflict_questions() -> None:
+    assert _evidence_requested("第二个等级信息可信吗") is True
+    assert _evidence_requested("请给出第一条的来源原文") is True
+    assert _evidence_requested("第二个 Entry 的具体内容是什么") is False
+    assert _evidence_requested("好的，帮我解释这个记录") is False
+
+
+def test_skipped_evidence_event_does_not_make_turn_incomplete() -> None:
+    state = _state()
+    event = {
+        "tool": "read_evidence",
+        "status": "not_executed",
+        "reason_code": "evidence_not_required",
+        "error": "普通回答无需来源核验，已跳过 Evidence 读取",
+    }
+    assert _stop_from_events(state, [event]) is None
 
 
 def _state() -> LoopState:

@@ -107,3 +107,7 @@ Finalizer 提示明确唯一合法顶层为 `DialogueAnswer.blocks`，禁止自�
 ## Open Questions
 
 无。跨服务重启的 continuation 恢复、分页与其他第四批效率事项留在本 change 之外。
+
+## 第四阶段执行决策（2026-09-12）
+
+在现有 `dialogue_loop` 内增加确定性的来源核验意图门控：普通内容追问、Entry 解释和已授权结果复用不派发 `read_evidence`；出现来源、原文、出处、可信度、证据或冲突语义时才允许读取。门控只减少不必要的资料动作，不改变 Evidence 数据模型、句柄校验或 Workspace 复验。预算异常继续由既有 `_mark_budget_stop` 和独立 finalizer 处理，新增回归锁定已确认结果与未执行步骤的状态区分。

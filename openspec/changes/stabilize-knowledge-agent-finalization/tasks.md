@@ -73,3 +73,17 @@
 - [ ] 在第五轮输入“按你的分析，帮我把第一条的知识补充一下，发给我”，确认返回包含原记录要点、建议补充、修改后候选版本与来源边界的候选文本，并明确尚未写入。
 - [ ] 新建 V4 Flash 会话核对不再产生 reasoning tokens；连续对话进入 finalizer 时应在本轮完成，若输出非法则只有真实可恢复材料时才显示“继续”。
 - [ ] 候选稿完成后输入“就输出你补充后的知识内容就行，其他的都不用”，确认只显示候选正文与必要边界，不展开 Evidence；随后无待办时单独输入“继续”，确认零模型、零资料工具且不重复读取。
+
+## 5. 第四阶段稳定性优化（2026-09-12）
+
+- [x] 5.1 将普通 Entry/追问与来源核验意图分开，普通路径跳过 `read_evidence`，明确来源、原文、可信度或冲突时才读取 Evidence
+- [x] 5.2 确保工具完成后只进入无工具 finalizer，预算边界停止新增资料动作并保留已确认结果，准确区分三类终态
+- [x] 5.3 增加离线确定性回归：Evidence 按需门控、工具隔离、continuation 只重组回答、预算边界与 Workspace/Entry/Source 约束
+- [x] 5.4 运行受影响后端测试、ruff、git diff 检查和 OpenSpec 严格校验，完成本地中文 Conventional Commit；保留人工真实对话验收和归档待用户处理
+
+### 第四阶段验证记录（2026-09-12）
+
+- `openspec validate --all --strict`：61 passed、0 failed。
+- `backend/.venv/bin/ruff check evals/dialogue_loop/loop.py tests/test_knowledge_agent_dialogue_loop.py`：通过。
+- `backend/.venv/bin/pytest -q tests/test_knowledge_agent_dialogue_loop.py tests/test_dialogue_workbench.py`：155 passed。
+- 新增回归覆盖 Evidence 意图门控及 `evidence_not_required` 不触发不完整终态；未发起真实模型评测，人工工作台验收、归档、推送和合并仍待用户处理。
