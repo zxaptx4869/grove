@@ -1643,7 +1643,7 @@ def output_errors(answer: DialogueAnswer, state: LoopState) -> list[str]:
         and record.displayable
         and record.semantics.get("result_role") == "authorized"
     }
-    if candidate_handles - selected_candidates:
+    if candidate_handles - selected_candidates and state.instrumentation.phase != "finalize":
         errors.append("语义候选必须先完整调用 select_relevant_entries 形成授权集合")
     answer_text = "\n".join(
         block.text

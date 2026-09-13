@@ -17,6 +17,26 @@ INTRODUCTION = (
 )
 
 
+def test_finalize_allows_authorized_text_when_search_candidate_is_unselected():
+    state = _state()
+    state.instrumentation.phase = "finalize"
+    state.store_result(
+        "list",
+        {"items": [{"entry_id": 999, "title": "不可展示候选"}]},
+        "limited",
+        "limited",
+        displayable=False,
+        semantics={"result_role": "candidate"},
+    )
+    handle = next(iter(state.result_sets))
+    state.current_handles.add(handle)
+    answer = loop.DialogueAnswer.model_validate({"blocks": [{
+        "kind": "text", "text": "根据已确认材料完成的有限概述。",
+    }]})
+    assert all("语义候选必须先完整调用" not in error
+               for error in loop.output_errors(answer, state))
+
+
 def assert_role_received(info):
     # 断言实际模型请求，防止只定义角色常量却漏接主 Agent 或收尾路径。
     assert loop.ASSISTANT_ROLE_PROMPT in info.instructions
