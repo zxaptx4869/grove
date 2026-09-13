@@ -70,7 +70,8 @@ SYSTEM_PROMPT = """你是 Grove 知识库的只读对话 Agent。你在一个持
 7. 用户明确要求不查知识库时不得调用知识库工具，可用通用知识直接回答，也不得伪装成实时外部资料。
 8. 输出 blocks 按希望展示的顺序排列。项目、统计、目录和 Entry 都用 result 块，只填 result_handle，
    来源用 evidence 块；不要在 text 块改写工具数字、伪造引用或隐藏失败。
-   材料不足用 insufficient 块。
+   材料不足用 insufficient 块。统计、项目和目录查询只说明范围、过滤和完整性，
+   不附加无关的官方交叉验证声明；同范围完整精确计数为 0 时直接回答无记录，不再列举。
 9. 只回答用户问题，不输出隐藏推理，不向用户提及预期答案。
 10. main_types 省略或 null 表示全部正式记录。用户泛称“知识”“知识库记录”时不得默认
     筛成内部 knowledge 类型；只有用户明确限定内部类型时才填写对应值。
@@ -1772,10 +1773,18 @@ def _content_only_boundary(answer: DialogueAnswer) -> DialogueAnswer:
                for block in answer.blocks):
         return answer
     text = "\n".join(block.text for block in answer.blocks)
-    if "尚未写入" not in text and "未写入" not in text:
+    source_note = "（模型补充不属于 Source 原文。）"
+    # 只删除程序固定尾注；模型正文中的说明和建议不重写。
+    if text.rstrip().endswith(source_note):
+        prefix = text.rstrip()[:-len(source_note)].rstrip()
+        compact_prefix = re.sub(r"\s+", "", prefix)
+        if re.search(r"(?:不属于|不是|并非|不来自)(?:Source|来源)原文", compact_prefix):
+            text = prefix
+    compact = re.sub(r"\s+", "", text)
+    if "尚未写入" not in compact and "未写入" not in compact:
         text += "\n（以上为候选内容，尚未写入正式 Entry。）"
-    if "Source 原文" not in text and "来源原文" not in text:
-        text += "\n（模型补充不属于 Source 原文。）"
+    if "Source原文" not in compact and "来源原文" not in compact:
+        text += "\n" + source_note
     return DialogueAnswer.model_validate({"blocks": [{"kind": "text", "text": text}]})
 
 
@@ -1955,6 +1964,61 @@ def _entry_directory_scope(
         "node_id": int(item["node_id"]),
         "node_scope": scope or "subtree",
     }
+
+
+def _zero_count_proof(state: LoopState, query_params: dict) -> ResultRecord | None:
+    """精确零值只证明当前轮同结构范围为空，不赋予任何额外读取权限。"""
+    query_set = {**query_params["entry_set"], "semantic_query": None}
+    query_set["main_types"] = sorted(query_set.get("main_types") or [])
+    for event in reversed(state.tool_events):
+        record = state.result_sets.get(event.get("result_handle"))
+        params = event.get("shared_params") or {}
+        if (
+            event.get("turn_index") != state.turn_index
+            or event.get("shared_tool") != "aggregate_entries"
+            or params.get("operation") != "count" or params.get("group_by") is not None
+            or record is None or record.handle not in state.current_handles
+            or record.turn_index != state.turn_index or not record.displayable
+            or record.kind != "statistic" or record.completeness != "complete"
+            or record.status not in {"completed", "empty"}
+            or type(record.payload.get("value")) is not int or record.payload["value"] != 0
+            or record.payload.get("truncated") or record.payload.get("has_more")
+        ):
+            continue
+        count_set = dict(params.get("entry_set") or {})
+        count_set["main_types"] = sorted(count_set.get("main_types") or [])
+        if count_set != query_set:
+            continue
+        if any(params.get(key) != query_params.get(key)
+               for key in ("project_id", "node_id", "node_scope")):
+            continue
+        return record
+    return None
+
+
+async def _reuse_zero_count(state: LoopState, params: dict, audit_params: dict) -> dict | None:
+    proof = _zero_count_proof(state, params) if state.tools_allowed else None
+    if proof is None:
+        return None
+    # 缓存仅在当前轮复用；成员撤权仍须即时拒绝，不把旧结果当作新授权。
+    await _database_material_refs(state, [], [])
+    payload = {"items": [], "total_count": 0, "returned_count": 0, "has_more": False}
+    semantics = {
+        **_result_semantics("query_entries", params, payload),
+        "completeness": "complete", "result_role": "authorized", "has_more": False,
+        "zero_count_handle": proof.handle,
+    }
+    handle = state.store_result("list", payload, "empty", "complete", semantics=semantics)
+    event = {
+        "tool": "query_entries", "result_handle": handle, "status": "empty",
+        "completeness": "complete", "params": audit_params,
+        "reason_code": "zero_count_reused", "zero_count_handle": proof.handle,
+        "error": None, "duration_ms": 0, "turn_index": state.turn_index,
+        "result_summary": {"total_count": 0, "returned_items": 0},
+    }
+    state.tool_events.append(event)
+    return {**event, "payload": payload, "result_role": "authorized",
+            "note": "同范围完整精确总计为 0，列表结论已完成；未执行重复读取或语义搜索。"}
 
 
 async def _dispatch(
@@ -2896,6 +2960,9 @@ def build_agent(model) -> Agent[LoopDeps, DialogueAnswer]:
             "directory_position": directory_position,
             "directory_scope": directory_scope,
         }
+        empty_result = await _reuse_zero_count(ctx.deps.state, params, audit_params)
+        if empty_result is not None:
+            return empty_result
         if semantic_query is not None:
             search_key = _semantic_query_key(
                 project_scope=project_scope,
@@ -3183,7 +3250,8 @@ AI 回答或候选修改稿不得声称已经写入正式 Entry。
 唯一合法输出顶层是 DialogueAnswer 的 blocks 与 needs_clarification；不要输出 answer_summary、
 completion 或其他自创顶层字段。text 块只填写 kind 与 text，不要添加 note。
 结构化材料只选 result 块的 result_handle，程序决定项目、统计、目录或 Entry 展示，
-不要猜类型。""".strip()
+不要猜类型。统计、项目和目录结果只说明范围、过滤和完整性；
+除非用户明确询问来源核验，不附加官方交叉验证免责声明。""".strip()
 
 
 def build_finalizer_agent(model) -> Agent[LoopDeps, DialogueAnswer]:
@@ -3297,9 +3365,42 @@ def build_finalizer_agent(model) -> Agent[LoopDeps, DialogueAnswer]:
     return agent
 
 
+def _clean_structural_boilerplate(answer: DialogueAnswer, state: LoopState) -> DialogueAnswer:
+    """仅清理纯结构查询中已知的独立模板句，不删除范围、错误或来源分析。"""
+    handles = [block.result_handle for block in answer.blocks
+               if block.kind in {"list", "statistic"}]
+    if _evidence_requested(state.current_message):
+        return answer
+    if not handles or any(block.kind not in {"text", "list", "statistic"}
+                          for block in answer.blocks):
+        return answer
+    if any(
+        handle not in state.current_handles or (record := state.result_sets.get(handle)) is None
+        or not record.displayable or record.kind not in {"statistic", "directories", "projects"}
+        or record.status not in {"completed", "empty"} or record.completeness != "complete"
+        for handle in handles
+    ):
+        return answer
+    redundant = {
+        "该统计不代表对记录内容做过官方交叉验证。",
+        "该统计仅为知识库正式记录的计数结果，不代表对记录内容做过官方交叉验证。",
+    }
+    blocks = []
+    for block in answer.blocks:
+        if block.kind == "text":
+            sentences = re.split(r"(?<=[。！？])", block.text)
+            cleaned = "".join(sentence for sentence in sentences
+                              if re.sub(r"\s+", "", sentence) not in redundant).strip()
+            if cleaned:
+                blocks.append(block.model_copy(update={"text": cleaned}))
+        else:
+            blocks.append(block)
+    return answer.model_copy(update={"blocks": blocks})
+
+
 def render_answer(answer: DialogueAnswer, state: LoopState) -> tuple[str, list[dict]]:
     """按模型块顺序以真实工具数据渲染，不接受模型填写数字或原文。"""
-    answer = resolve_answer_results(answer, state)
+    answer = _clean_structural_boilerplate(resolve_answer_results(answer, state), state)
     lines: list[str] = []
     rendered: list[dict] = []
     for block in answer.blocks:

@@ -130,3 +130,22 @@
 - 后端全组 806 项通过；最终对话循环与连续对话定向 166 项通过。前端全组 140 项通过，TypeScript/Vite build 通过；lint 0 error、2 条既有 `DirectoryDraftDialog.tsx` warning。Ruff、Python 编译、Git diff 检查通过；OpenSpec 全库严格校验 61 项通过。
 - 修复只涉及现有实验循环与测试、当前 change 工件。保留项目/统计展示及历史压缩实现，未改正式 Entry/Source、Workspace、权限与第三批相关性规则，未提高预算。
 - 未发起真实模型请求、未操作服务重启、模拟器、推送、合并或归档。人工重新验收仍待用户：新会话中打开第三条 NAF → “你觉得内容上还有哪些可补充的呢” → 根据建议生成候选 → 精简 → 切换主题再返回；核对工具日志和最终文本范围。此处确定性模型只证明交接和执行边界，不能证明真实模型一定选择正确动作或生成正确内容。
+
+## 8. 已授权的低风险整理（155042 会话）
+
+- [x] 8.1 统一边界空白识别及重复程序尾注处理，保留候选正文
+- [x] 8.2 清理纯结构化查询的无关模板话，保留范围与来源核验场景
+- [x] 8.3 同范围完整零值计数覆盖重复列表动作，保留其他目标及边界负例
+- [x] 8.4 确定性回归、相关全组测试与静态检查、OpenSpec 严格校验，检查 diff 后中文本地提交
+- [ ] 8.5 用户真实会话验收；历史指代、编辑对象选择与候选正文取舍不在本轮范围
+
+
+### 低风险整理验证记录（2026-09-13）
+
+- 新增 `test_dialogue_workbench_low_risk.py` 共 26 项确定性用例：Source 原文空白变体、程序重复尾注、未写入与禁止写入声明；纯统计/目录/项目模板清理；明确来源核验、混合 Entry 和部分结果不清理；历史/隐藏/失败/不完整/截断/分组/搜索/布尔/非零/缺失值及不同项目、目录、direct/subtree、类型过滤不能复用零值；成员撤权拒绝缓存。
+- 真实测试数据库中，父目录 direct 完整计数为 0，附带多余目录语义词的重复列表请求复用同范围空结论，没有发起语义搜索；随后 subtree 列表仍实际执行并返回子节点 Entry。整轮 completed，仅 2 次实际资料工具额度、0 次向量请求，其他目标未被提前结束。
+- 后端：`cd backend && .venv/bin/pytest tests/test_knowledge_agent*.py tests/test_dialogue_workbench*.py -o addopts='' -q`，832 passed。
+- 前端：全组 29 个文件、140 项通过；`npm run build` 通过；`npm run lint` 0 error，保留 `DirectoryDraftDialog.tsx:450/495` 两条既有 warning。
+- 静态：`backend/.venv/bin/ruff check backend`、`backend/.venv/bin/python -m compileall -q backend/app backend/evals backend/tests`、`git diff --check` 通过。实施前及收尾 OpenSpec 全库严格校验均为 61 passed、0 failed。
+- 实际边界：零值仅跳过被同范围证明覆盖的资料读取，不强行终止整轮其他问题；只清理已知独立模板句，其他来源解释保留。候选正文、历史指代、当前对象选择和所有预算不调整。
+- 待人工验收：工作台 `http://127.0.0.1:8765/workbench`，确认精简候选不再重复 Source 尾注；统计和目录说明简洁；目录本身为 0 后不因冗余列表动作变成 partial，同时子目录查询正常。未运行真实模型评测、服务重启或模拟器；不推送、不合并、不归档。
