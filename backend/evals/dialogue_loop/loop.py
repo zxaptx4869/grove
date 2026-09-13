@@ -1529,6 +1529,30 @@ def resolve_answer_results(answer: DialogueAnswer, state: LoopState) -> Dialogue
     })
 
 
+_WRITE_CLAIM_PATTERN = r"已(?:经)?(?:写入|保存|更新|修改)|更新好了|写入完成"
+_WRITE_CLAIM_RE = re.compile(_WRITE_CLAIM_PATTERN)
+_STATUS_PATTERN = rf"(?:{_WRITE_CLAIM_PATTERN}|已(?:经)?(?:核验|验证))"
+_NEGATION_PATTERN = r"(?:不代表|不意味着|不等于|不是|并非|没有|不会|尚未|并未|未)"
+_NEGATED_STATUS_RE = re.compile(
+    rf"(?P<negations>(?:{_NEGATION_PATTERN}[ \t]*)+)"
+    rf"{_STATUS_PATTERN}(?:[ \t]*(?:或者|以及|或|和|及|、)[ \t]*{_STATUS_PATTERN})*"
+)
+
+
+def _has_positive_write_claim(text: str) -> bool:
+    """逐处校验完成声明，只豁免明确否定直接支配的紧邻并列状态。"""
+    negated_spans = [
+        match.span()
+        for match in _NEGATED_STATUS_RE.finditer(text)
+        # 嵌套否定不能按一次否定放行；不跨越正文、转折、换行或新主语。
+        if len(re.findall(_NEGATION_PATTERN, match.group("negations"))) == 1
+    ]
+    return any(
+        not any(start <= claim.start() and claim.end() <= end for start, end in negated_spans)
+        for claim in _WRITE_CLAIM_RE.finditer(text)
+    )
+
+
 def output_errors(answer: DialogueAnswer, state: LoopState) -> list[str]:
     """返回句柄边界错误；供一次模型纠正与无模型反例测试共用。"""
     answer = resolve_answer_results(answer, state)
@@ -1691,26 +1715,7 @@ def output_errors(answer: DialogueAnswer, state: LoopState) -> list[str]:
             "供审核",
         )
         has_unwritten_boundary = any(marker in draft_text for marker in unwritten_markers)
-        write_claims = (
-            "已写入",
-            "已经写入",
-            "已保存",
-            "已经保存",
-            "已更新",
-            "已经更新",
-            "已修改",
-            "已经修改",
-            "更新好了",
-            "写入完成",
-        )
-        has_write_claim = any(
-            claim in draft_text
-            and not any(
-                negation in draft_text[max(0, draft_text.find(claim) - 4) : draft_text.find(claim)]
-                for negation in ("不", "未", "尚未", "没有", "不会")
-            )
-            for claim in write_claims
-        )
+        has_write_claim = _has_positive_write_claim(draft_text)
         source_terms = ("来源", "原文", "Source")
         source_negations = (
             "不是",
