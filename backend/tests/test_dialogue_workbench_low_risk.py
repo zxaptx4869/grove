@@ -1,6 +1,7 @@
 """155042 会话：声明去重、纯结构文案和完整零值复用的边界回归。"""
 
 import copy
+from types import SimpleNamespace
 
 import pytest
 from pydantic_ai.messages import ModelResponse, ToolCallPart
@@ -25,6 +26,76 @@ def test_candidate_boundary_whitespace_does_not_add_second_note(source):
     result = loop._content_only_boundary(text_answer(text))
     assert result.blocks[0].text == text
     assert loop._content_only_boundary(result) == result
+
+
+def test_semantic_query_cache_is_cleared_before_each_turn():
+    state = _state()
+    state.semantic_search_results["same"] = "rs-old"
+    state.begin_turn(99, "重新查一下洗碗机")
+    assert state.semantic_search_results == {}
+
+
+@pytest.mark.asyncio
+async def test_semantic_query_reuse_requires_current_turn_handle(monkeypatch):
+    state = _state()
+    state.begin_turn(10, "第一次查询")
+    calls = []
+
+    async def fake_dispatch(ctx, tool_name, params, kind, *, surface_tool, audit_params):
+        calls.append(params)
+        handle = state.store_result(
+            "list", {"items": [{"entry_id": 1}]}, "completed", "complete"
+        )
+        return {"tool": surface_tool, "result_handle": handle, "status": "completed",
+                "completeness": "complete", "payload": {"items": [{"entry_id": 1}]}}
+
+    monkeypatch.setattr(loop, "_dispatch", fake_dispatch)
+    ctx = SimpleNamespace(deps=SimpleNamespace(state=state))
+    first = await loop._semantic_search_dispatch(
+        ctx, search_key="same", dispatch_tool="search_knowledge", params={"q": "x"},
+        surface_tool="search_knowledge", audit_params={"q": "x"},
+    )
+    second = await loop._semantic_search_dispatch(
+        ctx, search_key="same", dispatch_tool="query_entries", params={"q": "x"},
+        surface_tool="query_entries", audit_params={"q": "x"},
+    )
+    assert len(calls) == 1
+    assert second["reason_code"] == "duplicate_semantic_query"
+    assert second["result_handle"] == first["result_handle"]
+
+    state.begin_turn(11, "明确重新查询")
+    third = await loop._semantic_search_dispatch(
+        ctx, search_key="same", dispatch_tool="search_knowledge", params={"q": "x"},
+        surface_tool="search_knowledge", audit_params={"q": "x"},
+    )
+    assert len(calls) == 2
+    assert third["status"] == "completed"
+
+
+@pytest.mark.asyncio
+async def test_semantic_query_does_not_reuse_error_or_not_executed_record(monkeypatch):
+    state = _state()
+    state.begin_turn(10, "查询")
+    calls = []
+
+    async def fake_dispatch(ctx, tool_name, params, kind, *, surface_tool, audit_params):
+        calls.append(params)
+        handle = state.store_result("list", {"items": []}, "error", "limited")
+        return {"tool": surface_tool, "result_handle": handle, "status": "error",
+                "completeness": "limited", "payload": {"items": []}}
+
+    monkeypatch.setattr(loop, "_dispatch", fake_dispatch)
+    ctx = SimpleNamespace(deps=SimpleNamespace(state=state))
+    first = await loop._semantic_search_dispatch(
+        ctx, search_key="same", dispatch_tool="search_knowledge", params={},
+        surface_tool="search_knowledge", audit_params={},
+    )
+    second = await loop._semantic_search_dispatch(
+        ctx, search_key="same", dispatch_tool="search_knowledge", params={},
+        surface_tool="search_knowledge", audit_params={},
+    )
+    assert first["status"] == second["status"] == "error"
+    assert len(calls) == 2
 
 
 def test_only_duplicate_program_note_is_removed_without_rewriting_candidate():

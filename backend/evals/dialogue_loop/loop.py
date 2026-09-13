@@ -112,6 +112,11 @@ SYSTEM_PROMPT = ASSISTANT_ROLE_PROMPT + "\n\n" + ANSWER_PROTOCOL_PROMPT + "\n\n"
 20. 用户明确提到项目名并询问其中的知识时，search_knowledge 必须使用 project_scope=project 和准确
     project_name；只有用户明确询问全部项目时才使用 all。项目范围搜索只返回严格语义相关的正式记录，
     不要把相近主题候选当作墙纸等目标知识。
+21. 用户询问项目概览时，优先调用 list_projects 获取项目名称；只有问题明确要求记录数量、分组或
+    目录时，
+    才分别调用 count_entries、group_entries 或 list_project_directories。
+    不要为普通概览自动并行拉取统计、目录和记录列表；需要展示项目、统计、目录或 Entry 时直接交给程序
+    按结果类型渲染，不自行改写类型。
 """.strip()
 
 NO_KNOWLEDGE_PATTERNS = (
@@ -443,6 +448,8 @@ class LoopState:
         self.editing_content_only = False
         self.current_handles.clear()
         self.current_evidence.clear()
+        # 语义查询去重只服务当前轮；新一轮用户明确查询时必须重新派发。
+        self.semantic_search_results.clear()
         self.stop_state = None
         self.queried_directory_parents.clear()
         self.tools_allowed = not _knowledge_tools_disabled(message)
@@ -2217,7 +2224,14 @@ async def _semantic_search_dispatch(
     async with state.semantic_search_lock:
         existing_handle = state.semantic_search_results.get(search_key)
         existing = state.result_sets.get(existing_handle) if existing_handle else None
-        if existing is not None:
+        reusable = (
+            existing is not None
+            and existing.handle in state.current_handles
+            and existing.turn_index == state.turn_index
+            and existing.status in {"completed", "empty", "limited"}
+            and existing.semantics.get("search_key") == search_key
+        )
+        if reusable:
             state.current_handles.add(existing.handle)
             event = {
                 "tool": surface_tool,
@@ -2251,11 +2265,10 @@ async def _semantic_search_dispatch(
         record = state.result_sets.get(handle)
         if record is not None:
             record.semantics["search_key"] = search_key
-        if record is not None and result.get("status") in {
-            "completed",
-            "empty",
-            "limited",
-        }:
+        if (
+            record is not None
+            and result.get("status") in {"completed", "empty", "limited"}
+        ):
             state.semantic_search_results[search_key] = record.handle
         return result
 
