@@ -342,7 +342,7 @@ async def test_real_group_query_includes_empty_project_and_suspends_draft():
     loop.preserve_editing_draft(state, DialogueAnswer.model_validate({"blocks": [
         {"kind": "text", "text": "旧 ENF 候选稿"},
     ]}))
-    state.current_message = "换个问题，分项目统计，包含空项目"
+    state.begin_turn(80, "换个问题，分项目统计，包含空项目")
     calls = []
 
     def respond(messages, info):
@@ -364,3 +364,150 @@ async def test_real_group_query_includes_empty_project_and_suspends_draft():
     assert buckets == {"房子装修": 1, "空项目": 0}
     assert "旧 ENF 候选稿" in str(state.editing_context.draft)
     assert len(calls) == 2
+
+
+async def naf_discussion_state():
+    """复现 104551 第三轮：此前已经打开 NAF，用户只询问补充方向。"""
+    state = _state()
+    seeded = await pin_seeded_entry(state)
+    async with async_session_factory() as db:
+        entry = await db.get(Entry, seeded["entry_id"])
+        entry.title = "甲醛环保等级：美标NAF级"
+        entry.content = "NAF 现有记录说明认证及无醛板不等于无甲醛。"
+        await db.commit()
+        state.focused_entry = {**state.focused_entry, "title": entry.title,
+                               "content": entry.content}
+    state.focused_entry_refs = await loop._database_material_refs(
+        state, [seeded["entry_id"]], [(seeded["entry_id"], seeded["source_id"])])
+    state.instrumentation.context_policy_enabled = True
+    state.begin_turn(200, "你觉得内容上还有哪些可补充的呢")
+    return state, seeded
+
+
+@pytest.mark.asyncio
+async def test_observed_naf_discussion_hands_off_before_further_search():
+    state, seeded = await naf_discussion_state()
+    calls = []
+
+    def respond(messages, info):
+        calls.append(info)
+        if len(calls) == 1:
+            # 真实第三轮的第一个模型动作，没有要求生成候选稿。
+            return ModelResponse(parts=[ToolCallPart("editing_context", {"action": "edit"})])
+        if len(calls) == 3:
+            return ModelResponse(parts=[ToolCallPart("editing_context", {
+                "action": "edit", "purpose": "candidate", "content_only": True,
+            })])
+        assert not info.function_tools
+        if len(calls) == 4:
+            assert "这条 NAF 可以补充认证体系和适用对象" in str(messages)
+            return output(info, [{"kind": "text", "text": "NAF 候选正文，补充认证体系说明。"}])
+        assert state.editing_purpose == "discussion"
+        assert loop._candidate_request_message(state) is None
+        assert "美标NAF级" in str(messages)
+        assert "国标ENF级" not in str(messages)
+        assert "普通讨论" in info.instructions
+        return output(info, [{"kind": "text", "text": "这条 NAF 可以补充认证体系和适用对象。"}])
+
+    model = BudgetedModel(FunctionModel(respond), state.instrumentation, "dialogue_agent")
+    turn, _ = await loop.run_turn(loop.build_agent(model), state, state.current_message, [])
+    assert turn["status"] == "completed", turn
+    assert turn["finalization"]["reason"] == "current_entry_ready"
+    assert [e["tool"] for e in turn["tool_calls"]] == ["editing_context"]
+    assert state.editing_context.entry["entry_id"] == seeded["entry_id"]
+    assert state.editing_context.draft is None
+    assert len(calls) == 2
+    assert turn["budget"]["turn"]["tool_calls"] == 1
+
+    state.begin_turn(201, "按你刚才的建议整理成版本")
+    turn, _ = await loop.run_turn(loop.build_agent(model), state, state.current_message, [])
+    assert turn["status"] == "completed", turn
+    assert "NAF 候选正文" in str(state.editing_context.draft)
+    assert len(calls) == 4
+
+
+@pytest.mark.asyncio
+async def test_nonideal_naf_finalizer_tool_attempt_preserves_discussion_on_continue():
+    state, seeded = await naf_discussion_state()
+    calls = []
+
+    def respond(messages, info):
+        calls.append(info)
+        if len(calls) == 1:
+            return ModelResponse(parts=[ToolCallPart("editing_context", {"action": "edit"})])
+        assert not info.function_tools
+        assert "美标NAF级" in str(messages)
+        assert "国标ENF级" not in str(messages)
+        if len(calls) == 2:
+            # 保留现场的非理想动作：尝试扩大读取；程序必须阻止实际执行。
+            return ModelResponse(parts=[ToolCallPart("read_entries", {"entry_ids": [7, 9, 10]})])
+        assert state.editing_purpose == "discussion"
+        assert "你觉得内容上还有哪些可补充的呢" in str(messages)
+        return output(info, [{"kind": "text", "text": "只围绕 NAF 补充认证含义和适用范围。"}])
+
+    model = BudgetedModel(FunctionModel(respond), state.instrumentation, "dialogue_agent")
+    agent = loop.build_agent(model)
+    failed, history = await loop.run_turn(agent, state, state.current_message, [])
+    assert failed["status"] == "partial_completed", failed
+    assert failed["finalization"]["status"] == "tool_attempted"
+    assert state.continuation.task_type == "finalize_answer"
+    assert state.continuation.scope["editing_entry_id"] == seeded["entry_id"]
+    assert state.continuation.validation_refs["source_pairs"] == [
+        [seeded["entry_id"], seeded["source_id"]]]
+    assert [e["tool"] for e in failed["tool_calls"]] == ["editing_context"]
+    state.begin_turn(201, "继续")
+    turn, _ = await loop.run_turn(agent, state, "继续", history)
+    assert turn["status"] == "completed", turn
+    assert turn["context"]["continuation_mode"] == "finalize_only"
+    assert turn["tool_calls"] == []
+    assert state.editing_context.draft is None
+    assert len(calls) == 3
+
+
+@pytest.mark.asyncio
+async def test_new_candidate_handoff_has_entry_even_without_previous_draft():
+    state, _ = await naf_discussion_state()
+    state.current_message = "请给出修改后的版本"
+    calls = []
+
+    def respond(messages, info):
+        calls.append(info)
+        if len(calls) == 1:
+            return ModelResponse(parts=[ToolCallPart("editing_context", {
+                "action": "edit", "purpose": "candidate", "content_only": True,
+            })])
+        assert not info.function_tools
+        assert "美标NAF级" in str(messages)
+        assert "生成候选稿" in info.instructions
+        assert "只能使用已保存的候选文本" not in info.instructions
+        return output(info, [{"kind": "text", "text": "NAF 修改后候选正文"}])
+
+    model = BudgetedModel(FunctionModel(respond), state.instrumentation, "dialogue_agent")
+    turn, _ = await loop.run_turn(loop.build_agent(model), state, state.current_message, [])
+    assert turn["status"] == "completed", turn
+    assert "NAF 修改后候选正文" in str(state.editing_context.draft)
+    assert len(calls) == 2
+
+
+def test_finalizer_input_excludes_rejected_candidates_but_validation_stays_strict():
+    state = _state()
+    hidden = state.store_result("list", {"items": [
+        {"entry_id": 8, "title": "美标NAF级"},
+        {"entry_id": 89, "title": "窗帘安装前必须清洗", "excerpt": "内部候选正文"},
+    ]}, "completed", "limited", displayable=False,
+        semantics={"result_role": "candidate"})
+    allowed = state.store_result("list", {"items": [{"entry_id": 8, "title": "美标NAF级"}],
+        "internal_classifications": [{"entry_id": 89, "relevance": "indirect",
+                                      "reason": "窗帘安装前必须清洗"}]},
+        "completed", "limited", semantics={"result_role": "authorized",
+                                             "candidate_result_handle": hidden})
+    events = [{"tool": tool, "result_handle": handle, "status": "completed"}
+              for tool, handle in [("search_knowledge", hidden),
+                                   ("select_relevant_entries", allowed)]]
+    history = loop._current_material_history(state, "有哪些补充点", [], events)
+    assert "美标NAF级" in str(history)
+    assert "窗帘安装前必须清洗" not in str(history)
+    assert "内部候选正文" not in str(history)
+    bad = DialogueAnswer.model_validate({"blocks": [
+        {"kind": "text", "text": "窗帘安装前必须清洗"}]})
+    assert "主答案包含间接相关或不相关候选的标题" in loop.output_errors(bad, state)

@@ -225,7 +225,9 @@ def _candidate_content_only_requested(message: str) -> bool:
 def _candidate_request_message(state: LoopState) -> str | None:
     """在候选稿续执行中继续使用原始候选请求的校验语义。"""
 
-    if state.editing_active or _candidate_revision_requested(state.current_message):
+    if state.editing_active:
+        return state.current_message if state.editing_purpose == "candidate" else None
+    if _candidate_revision_requested(state.current_message):
         return state.current_message
     continuation = state.active_continuation
     if (
@@ -376,6 +378,7 @@ class EditingContext:
     entry: dict
     validation_refs: dict
     draft: dict | None = None
+    discussion: str | None = None
     decisions: list[str] = field(default_factory=list)
 
 
@@ -408,6 +411,7 @@ class LoopState:
     focused_entry: dict | None = field(default=None, repr=False)
     editing_context: EditingContext | None = field(default=None, repr=False)
     editing_active: bool = False
+    editing_purpose: Literal["discussion", "candidate"] = "discussion"
     editing_content_only: bool = False
     candidate_draft: dict | None = field(default=None, repr=False)
     candidate_draft_errors: list[str] = field(default_factory=list, repr=False)
@@ -420,6 +424,7 @@ class LoopState:
         self.run_id = run_id
         self.current_message = message
         self.editing_active = False
+        self.editing_purpose = "discussion"
         self.editing_content_only = False
         self.current_handles.clear()
         self.current_evidence.clear()
@@ -1527,6 +1532,12 @@ def output_errors(answer: DialogueAnswer, state: LoopState) -> list[str]:
     """返回句柄边界错误；供一次模型纠正与无模型反例测试共用。"""
     answer = resolve_answer_results(answer, state)
     errors = []
+    if state.editing_active and any(
+        block.kind not in {"text", "insufficient"}
+        or (block.kind == "text" and _entry_reference(block.text) is not None)
+        for block in answer.blocks
+    ):
+        errors.append("当前对象讨论或候选交付只能输出文本，不得扩展展示其他结果集合")
     if not state.tools_allowed and any(
         block.kind in {"result", "statistic", "list", "evidence"}
         or (block.kind == "text" and _entry_reference(block.text) is not None)
@@ -1964,9 +1975,6 @@ async def _dispatch(
     from app.services.knowledge_agent.tools import RunToolContext
 
     state = ctx.deps.state
-    if tool_name in {"query_entries", "search_knowledge", "aggregate_entries",
-                     "list_project_directories"}:
-        await select_editing_context(state, "suspend")
     state.instrumentation.emit_activity(
         {
             "aggregate_entries": "querying",
@@ -2170,7 +2178,8 @@ async def _semantic_search_dispatch(
 
 
 async def select_editing_context(
-    state: LoopState, action: Literal["edit", "resume", "suspend"], content_only: bool = False
+    state: LoopState, action: Literal["edit", "resume", "suspend"], content_only: bool = False,
+    purpose: Literal["discussion", "candidate"] | None = None,
 ) -> dict:
     """由当前 Agent 表达语义选择，程序固定对象、复验权限并保存用户原始决定。"""
     if action == "suspend":
@@ -2216,20 +2225,27 @@ async def select_editing_context(
         raise ModelRetry(str(exc)) from exc
     state.editing_context = task
     state.editing_active = True
+    state.editing_purpose = purpose or (
+        "candidate" if content_only or _candidate_revision_requested(state.current_message)
+        else "discussion"
+    )
     state.editing_content_only = content_only
-    state.candidate_draft = task.draft
+    state.candidate_draft = task.draft if state.editing_purpose == "candidate" else None
     state.candidate_draft_errors.clear()
     state.continuation = None
     state.active_continuation = None
     if state.current_message not in task.decisions:
         task.decisions.append(state.current_message)
-    return {"status": "completed", "entry": task.entry, "candidate_draft": task.draft,
+    handle = state.store_result("entries", {"items": [task.entry]}, "completed", "limited")
+    return {"status": "completed", "result_handle": handle, "entry": task.entry,
+            "candidate_draft": state.candidate_draft, "purpose": state.editing_purpose,
             "user_decisions": task.decisions, "content_only": content_only}
 
 
 def preserve_editing_draft(state: LoopState, answer: DialogueAnswer) -> None:
     """成功或可修复的候选全文不随本轮结束清理。"""
-    if state.editing_active and state.editing_context is not None:
+    if (state.editing_active and state.editing_context is not None
+            and _candidate_request_message(state) is not None):
         state.editing_context.draft = answer.model_dump(mode="json")
 
 
@@ -2263,8 +2279,11 @@ def build_agent(model) -> Agent[LoopDeps, DialogueAnswer]:
             context.update(candidate_draft=task.draft, user_decisions=task.decisions)
         return (
             "当前对象与最近查询结果是独立状态。围绕当前条目讨论补充时保持同一 Entry，"
-            "不得自行扩大到整套知识。生成或继续候选前用 editing_context(action=edit)；"
-            "明确返回已保存原稿用 resume；查询新主题用 suspend 或正常查询，不套旧候选约束。"
+            "不得自行扩大到整套知识。讨论补充点用 "
+            "editing_context(action=edit, purpose=discussion)，"
+            "生成或继续候选用 purpose=candidate；工具复验后由独立回答器直接回答，不继续资料循环。"
+            "明确要求来源正文核验时先按既有工具取得 Evidence，不把普通讨论当成核验。"
+            "明确返回已保存原稿用 resume；新轮查询新主题不激活旧对象，不套旧候选约束。"
             "用户只要精简正文时设置 content_only=true。选择动作由你理解用户语义，"
             "不得根据历史错误推断用户同意扩大范围。保存的旧材料只是线索，工具复验后才能使用。"
             + json.dumps(context, ensure_ascii=False)
@@ -2274,10 +2293,22 @@ def build_agent(model) -> Agent[LoopDeps, DialogueAnswer]:
     async def editing_context(
         ctx: RunContext[LoopDeps], action: Literal["edit", "resume", "suspend"],
         content_only: bool = False,
+        purpose: Literal["discussion", "candidate"] | None = None,
     ) -> dict:
-        """选择当前 Entry 的编辑任务或挂起/恢复原稿，只保存候选，不写正式记录。"""
-        await ctx.deps.state.ledger.reserve_tool()
-        return await select_editing_context(ctx.deps.state, action, content_only)
+        """复验当前 Entry 后直接收尾：discussion 讨论补充点，candidate 生成候选，不写记录。"""
+        state = ctx.deps.state
+        await state.ledger.reserve_tool()
+        result = await select_editing_context(state, action, content_only, purpose)
+        state.tool_events.append({
+            "tool": "editing_context", "status": "completed", "completeness": "limited",
+            "result_handle": result.get("result_handle"), "turn_index": state.turn_index,
+            "params": {"action": action, "purpose": state.editing_purpose,
+                       "content_only": content_only}, "error": None, "duration_ms": 0,
+        })
+        if action != "suspend":
+            state.instrumentation.begin_finalize("current_entry_ready")
+            raise FinalizeRequired("current_entry_ready")
+        return result
 
     @agent.instructions
     def continuation_instruction(ctx: RunContext[LoopDeps]) -> str:
@@ -2521,7 +2552,6 @@ def build_agent(model) -> Agent[LoopDeps, DialogueAnswer]:
         )
 
         state = ctx.deps.state
-        await select_editing_context(state, "suspend")
         state.instrumentation.emit_activity("querying")
         try:
             await state.ledger.reserve_tool()
@@ -3182,10 +3212,19 @@ def build_finalizer_agent(model) -> Agent[LoopDeps, DialogueAnswer]:
             )
         if candidate_message is not None:
             return (
-                "当前是候选稿收尾。只能使用已保存的候选文本，不得输出或引用"
+                ("当前是候选稿收尾。保留已保存的候选文本，"
+                 if state.candidate_draft else
+                 "根据已复验的当前 Entry、用户决定与要求生成候选稿，")
+                + "不得输出或引用"
                 "Evidence、Entry、列表、统计或其他 Grove 句柄；保存的对象关系只供程序"
                 "复验，不是模型的当前轮可引用材料。"
                 + draft_instruction
+            )
+        if state.editing_active and state.editing_context is not None:
+            return (
+                "本轮是针对当前唯一 Entry 的普通讨论；围绕该条目解释可补充点，"
+                "不要扩展成整个知识库盘点，不要求候选稿章节。材料里的用户决定必须保留。"
+                "只输出 text 或 insufficient；分析不等于来源核验，不能声称已写入。"
             )
         if state.tools_allowed:
             return (
@@ -3248,6 +3287,10 @@ def build_finalizer_agent(model) -> Agent[LoopDeps, DialogueAnswer]:
         if _candidate_request_message(state) is not None:
             state.candidate_draft = answer.model_dump(mode="json")
             preserve_editing_draft(state, answer)
+        elif state.editing_active and state.editing_context is not None:
+            state.editing_context.discussion = "\n".join(
+                block.text for block in answer.blocks if block.kind in {"text", "insufficient"}
+            )
         state.candidate_draft_errors.clear()
         return answer
 
@@ -3684,6 +3727,9 @@ def _continuation_material(state: LoopState, current_events: list[dict]) -> dict
     """复制 finalizer 可恢复材料；完整内容只留在当前进程内存。"""
 
     selected: set[str] = set()
+    focused_id = state.editing_context.entry["entry_id"] if (
+        state.editing_active and state.editing_context is not None
+    ) else None
     target_entry_ids = {
         int(item["entry_id"])
         for handle, item in state.evidence.items()
@@ -3693,13 +3739,18 @@ def _continuation_material(state: LoopState, current_events: list[dict]) -> dict
         record = state.result_sets.get(handle)
         if record is None or not record.displayable:
             continue
+        if focused_id is not None and (
+            record.kind != "entries"
+            or {item.get("entry_id") for item in record.payload.get("items", [])} != {focused_id}
+        ):
+            continue
         selected.add(handle)
         target_entry_ids.update(
             int(item["entry_id"])
             for item in record.payload.get("items", [])
             if item.get("entry_id") is not None
         )
-    if target_entry_ids:
+    if target_entry_ids and focused_id is None:
         for handle, record in state.result_sets.items():
             if not record.displayable or record.kind not in {"list", "entries"}:
                 continue
@@ -3726,7 +3777,7 @@ def _continuation_material(state: LoopState, current_events: list[dict]) -> dict
     evidence = {
         handle: item
         for handle, item in state.evidence.items()
-        if handle in state.current_evidence
+        if handle in state.current_evidence and focused_id is None
     }
     known_events = {
         event.get("result_handle"): event
@@ -3949,6 +4000,18 @@ async def _database_material_refs(
     }
 
 
+def _editing_scope(state: LoopState) -> dict:
+    """只在活动任务中保存交付语义，公开续执行不包含稿件正文。"""
+    if not state.editing_active or state.editing_context is None:
+        return {}
+    return {
+        "editing_active": True,
+        "editing_content_only": state.editing_content_only,
+        "editing_purpose": state.editing_purpose,
+        "editing_entry_id": state.editing_context.entry["entry_id"],
+    }
+
+
 async def _create_finalize_continuation(
     state: LoopState,
     message: str,
@@ -4004,8 +4067,7 @@ async def _create_finalize_continuation(
                 "workspace_id": state.workspace_id,
                 "user_id": state.user_id,
                 "answer_basis": "candidate_draft",
-                "editing_active": state.editing_active,
-                "editing_content_only": state.editing_content_only,
+                **_editing_scope(state),
                 "authorized_entry_ids": sorted(state.authorized_entry_ids),
             },
             completed_steps=[
@@ -4074,6 +4136,10 @@ async def _create_finalize_continuation(
             if item.get("entry_id") is not None and item.get("source_id") is not None
         }
     )
+    if state.editing_active and state.editing_context is not None:
+        entry_ids = state.editing_context.validation_refs["entry_ids"]
+        source_pairs = [tuple(pair) for pair in
+                        state.editing_context.validation_refs["source_pairs"]]
     validation_refs = await _database_material_refs(state, entry_ids, source_pairs)
     resolved = []
     for handle, record in material["records"].items():
@@ -4097,6 +4163,7 @@ async def _create_finalize_continuation(
             "workspace_id": state.workspace_id,
             "user_id": state.user_id,
             "answer_basis": "grove_material",
+            **_editing_scope(state),
             "authorized_entry_ids": sorted(state.authorized_entry_ids),
         },
         completed_steps=[
@@ -4126,6 +4193,11 @@ async def _validate_finalize_continuation(
         return False, "续执行 Workspace 与当前范围不一致"
     if continuation.scope.get("user_id") != state.user_id:
         return False, "续执行用户与当前身份不一致"
+    if continuation.scope.get("editing_active") and (
+        state.editing_context is None
+        or state.editing_context.entry["entry_id"] != continuation.scope.get("editing_entry_id")
+    ):
+        return False, "当前编辑对象与续执行材料不匹配"
     material = continuation.recoverable_material
     answer_basis = continuation.scope.get("answer_basis", "grove_material")
     if answer_basis == "model_only":
@@ -4256,15 +4328,19 @@ def _current_material_history(
     draft = _candidate_draft_answer(state)
     candidate_only = draft is not None and _candidate_request_message(state) is not None
     messages = [ModelRequest(parts=[UserPromptPart(content=message)])]
-    if not candidate_only:
+    focused = state.editing_active and state.editing_context is not None
+    if not candidate_only and not focused:
         messages = [
             *_without_historical_system_prompts(history),
             *messages,
         ]
-    if candidate_only and state.editing_active and state.editing_context is not None:
+    if focused:
         messages.append(ModelRequest(parts=[UserPromptPart(content=json.dumps({
-            "编辑对象": state.editing_context.entry,
+            "当前唯一讨论对象": state.editing_context.entry,
             "用户决定": state.editing_context.decisions,
+            "上次针对该对象的讨论（模型分析）": state.editing_context.discussion,
+            "交付模式": state.editing_purpose,
+            "边界": "仅围绕此 Entry 回答。补充讨论是模型分析，不表示 Source 已核验或已写入。",
         }, ensure_ascii=False))]))
     if draft is not None:
         draft_text = "\n".join(
@@ -4285,7 +4361,7 @@ def _current_material_history(
                     ]
                 )
             )
-    if candidate_only:
+    if candidate_only or focused:
         current_events = []
     for index, event in enumerate(current_events, 1):
         handle = event.get("result_handle")
@@ -4295,10 +4371,12 @@ def _current_material_history(
             "not_executed",
         }:
             continue
+        record = state.result_sets.get(handle)
+        if record is not None and not record.displayable:
+            continue
         tool_name = event.get("tool") or "unknown_tool"
         call_id = f"finalize-{state.turn_index}-{index}"
         content = _history_tool_summary(state, event)
-        record = state.result_sets.get(handle)
         if record is not None:
             content["payload"] = _model_payload(record.kind, record.payload)
         messages.append(
@@ -4419,9 +4497,10 @@ async def _run_finalize_continuation(
     else:
         material = continuation.recoverable_material
         candidate_only = continuation.scope.get("answer_basis") == "candidate_draft"
+        state.editing_active = bool(continuation.scope.get("editing_active"))
+        state.editing_content_only = bool(continuation.scope.get("editing_content_only"))
+        state.editing_purpose = continuation.scope.get("editing_purpose", "discussion")
         if candidate_only:
-            state.editing_active = bool(continuation.scope.get("editing_active"))
-            state.editing_content_only = bool(continuation.scope.get("editing_content_only"))
             state.candidate_draft = material.get("candidate_draft")
             state.candidate_draft_errors = list(
                 material.get("candidate_draft_errors", [])
