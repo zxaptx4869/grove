@@ -586,6 +586,27 @@ def _estimate_ratio(estimate: int, actual: int | None) -> float | None:
     return round(estimate / actual, 6) if actual else None
 
 
+def compact_request_history(messages, parameters):
+    """按完整请求预留空间，仅删除程序标记的可选历史，不碰本轮与必要约束。"""
+    compacted = list(messages)
+    before = estimate_input(compacted, parameters).tokens
+    removed = 0
+    while estimate_input(compacted, parameters).tokens >= INPUT_ESTIMATE_SOFT_LIMIT:
+        index = next((i for i, message in enumerate(compacted)
+                      if (message.metadata or {}).get("grove_optional_history")), None)
+        if index is None:
+            break
+        message = compacted[index]
+        # 框架可能把当前 instructions 放到历史请求上，不能随摘要删掉指令。
+        if isinstance(message, ModelRequest) and message.instructions:
+            compacted[index] = replace(message, parts=[], metadata=None)
+        else:
+            compacted.pop(index)
+        removed += 1
+    return compacted, {"before_tokens": before, "removed_summaries": removed,
+                       "after_tokens": estimate_input(compacted, parameters).tokens}
+
+
 class BudgetedModel(Model):
     """对每次底层 request 派发前预留额度，包括框架结构化重试。"""
 
@@ -611,6 +632,9 @@ class BudgetedModel(Model):
 
     async def request(self, messages, model_settings, model_request_parameters):
         self.state.legacy_reference_claims.clear()
+        compression = None
+        if self.state.context_policy_enabled:
+            messages, compression = compact_request_history(messages, model_request_parameters)
         projected = estimate_input(messages, model_request_parameters)
         estimate = projected.tokens
         turn_requests = self.state.ledger.active_text_requests
@@ -684,6 +708,8 @@ class BudgetedModel(Model):
             else model_request_parameters
         )
         dispatched = estimate_input(dispatched_messages, dispatched_parameters)
+        if compression is not None:
+            dispatched.components["history_compaction"] = compression
         dispatched_estimate = dispatched.tokens
         if self.state.context_policy_enabled and dispatched_estimate > MODEL_INPUT_TOKENS_LIMIT:
             stage_name = "预算收尾" if finalize_only else "完整请求"

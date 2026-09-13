@@ -48,6 +48,7 @@ export interface AnswerBlock {
   text?: string
   label?: string
   handle?: string
+  result_type?: 'projects' | 'list' | 'directories' | 'statistic' | 'entries'
   position?: number
   title?: string
   content?: string
@@ -61,7 +62,7 @@ export interface AnswerBlock {
   source_id?: number
   entry_id?: number
   semantics?: {
-    subject?: 'entries' | 'directories'
+    subject?: 'entries' | 'directories' | 'projects'
     query_object?: string
     project_id?: number | null
     project_name?: string | null

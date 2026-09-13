@@ -93,3 +93,24 @@
 - [x] 区分 projects、entries、directories 等结果句柄并由程序渲染项目列表
 - [x] 精简候选正文收尾自动保留候选稿并补齐最小只读边界
 - [x] 增加两个失败场景的确定性测试并完成全套静态、编译和 OpenSpec 校验
+
+## 6. 连续对话完整链路（220304 会话）
+
+- [x] 6.1 统一合法结果引用与服务端类型投影，修复前端项目卡片和统计展示
+- [x] 6.2 实现完整请求空间预留和确定性历史裁剪，保留完整记录及必要上下文
+- [x] 6.3 保存独立编辑对象、最新候选及用户决定，支持挂起与复验恢复
+- [x] 6.4 确定性跨层、长历史、连续编辑、权限与既有预算回归；后端/前端静态检查及全库严格校验
+- [x] 6.5 检查 diff 并完成中文本地提交，记录实际覆盖与未覆盖
+- [ ] 6.6 用户真实对话验收：第一条 ENF→补充→候选→精简→其他主题→返回原稿；项目与分组统计；13 轮以上对话
+
+
+### 连续对话自动化验证与人工入口（2026-09-13）
+
+- 后端：`cd backend && .venv/bin/pytest tests/test_knowledge_agent*.py tests/test_dialogue_workbench*.py -o addopts='' -q`，802 项通过。覆盖知识 Agent、共享只读工具、相关性授权、目录、Entry/Source、Workspace、continuation 和预算回归。
+- 本轮新增确定性用例 17 项：项目/统计共享 JSON 的后端投影与前端合同；无工具 finalizer 接受真实项目和误声明为列表的统计；非法、历史、隐藏、失败及 Evidence 句柄拒绝；20 条 Entry 正文完整渲染；真实数据库分组包含空项目；真实 `open_list_item`→补充→候选→精简→项目查询→原稿恢复；权限撤销、授权撤销及内容变化拒绝恢复；候选失败 continuation 只收尾并与新话题分离。
+- 长历史测试保存 35 轮完整记录，实际未压缩请求超过 12000，派发前确实移除可选摘要，保留 3600 字最新稿及用户决定，短追问和随后新话题均实际调用 FunctionModel 并完成；40 轮失败文案不进入模型历史。必要决定本身超限时零请求且明确 `not_executed`，未增加任何预算或摘要模型。
+- 前端：`npm run test:run`，29 个文件、140 项通过；`npm run build`（TypeScript/Vite）通过；`npm run lint` 0 error，保留 `DirectoryDraftDialog.tsx:450/495` 两条既有 Hook dependency warning。
+- 静态及工件：`backend/.venv/bin/ruff check backend`、`backend/.venv/bin/python -m compileall -q backend/app backend/evals backend/tests`、`git diff --check` 通过；实施前及收尾 `openspec validate --all --strict` 均为 61 passed、0 failed。
+- 人工入口：现有实验工作台 `http://127.0.0.1:8765/workbench`。新建会话，先打开第一条 ENF，依次讨论补充、生成候选、只要精简正文、查询项目及含空项目的分组统计、查询其他主题、明确返回原稿；延长至 13 轮以上并检查模型请求大小与派发状态。失败后“继续”需核对资料工具不重复执行，正式 Entry 内容始终不变。
+- 未覆盖：未启动真实模型评测，未替代人工浏览器交互与真实自然语言理解验收。FunctionModel 证明程序合同与权限/预算边界，不能证明真实模型始终正确选择编辑动作或保持文本语义。编辑材料仍只保存在当前服务进程，服务重启后的既有会话只读规则不变；必要材料本身超过上限仍明确停止。
+- 本次仅本地提交，人工验收 6.6 保持未完成；不归档、不推送、不合并，也不操作模拟器或服务重启。

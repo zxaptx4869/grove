@@ -3,7 +3,8 @@ import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { WorkbenchApp } from './WorkbenchApp'
 import * as api from './api'
-import type { WorkbenchState } from './types'
+import type { AnswerBlock, WorkbenchState } from './types'
+import resultBlocks from '../../../../backend/tests/fixtures/dialogue-workbench-result-blocks.json'
 
 vi.mock('./api', async () => {
   const actual = await vi.importActual<typeof import('./api')>('./api')
@@ -374,4 +375,18 @@ describe('知识 Agent 实验工作台', () => {
     expect(screen.getByText('查询未执行')).toBeInTheDocument()
     expect(screen.queryByText('部分完成')).not.toBeInTheDocument()
   })
+  it('渲染后端真实类型投影的项目与分组统计，保留空项目', async () => {
+    const projected = structuredClone(state)
+    projected.sessions[0].conversations[0].turns[0].blocks = resultBlocks as AnswerBlock[]
+    vi.mocked(api.bootstrap).mockResolvedValue(projected)
+    render(<WorkbenchApp />)
+    const projects = await screen.findByRole('region', { name: '当前 Workspace 可访问项目' })
+    expect(projects).toHaveTextContent('房子装修')
+    expect(projects).toHaveTextContent('空项目')
+    expect(projects).not.toHaveTextContent('记录 1')
+    const statistics = screen.getByRole('region', { name: '可信统计' })
+    expect(statistics).toHaveTextContent('房子装修4')
+    expect(statistics).toHaveTextContent('空项目0')
+  })
+
 })

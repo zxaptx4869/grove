@@ -1,0 +1,52 @@
+[
+  {
+    "kind": "list",
+    "result_type": "projects",
+    "handle": "rs-3-1",
+    "label": "当前 Workspace 可访问项目",
+    "items": [
+      {
+        "id": 11,
+        "name": "房子装修",
+        "status": "active"
+      },
+      {
+        "id": 12,
+        "name": "空项目",
+        "status": "active"
+      }
+    ],
+    "status": "completed",
+    "completeness": "complete",
+    "semantics": {
+      "subject": "projects"
+    }
+  },
+  {
+    "kind": "statistic",
+    "result_type": "statistic",
+    "handle": "rs-3-2",
+    "text": "全部项目 · 按项目统计：房子装修：4；空项目：0",
+    "value": null,
+    "group_by": "project",
+    "buckets": [
+      {
+        "key": "11",
+        "label": "房子装修",
+        "count": 4
+      },
+      {
+        "key": "12",
+        "label": "空项目",
+        "count": 0
+      }
+    ],
+    "status": "completed",
+    "completeness": "complete",
+    "semantics": {
+      "subject": "entries",
+      "group_by": "project",
+      "group_by_display_name": "项目"
+    }
+  }
+]

@@ -123,6 +123,7 @@ function statisticTitle(block: AnswerBlock) {
 
 function listTitle(block: AnswerBlock) {
   const semantics = block.semantics
+  if (block.result_type === 'projects' || semantics?.subject === 'projects') return '当前 Workspace 可访问项目'
   if (!semantics) return block.label || '知识列表'
   if (semantics?.subject === 'directories') {
     return `${semantics.project_name || '当前项目'} · ${semantics.display_name || '项目目录'}`
@@ -182,7 +183,8 @@ function AnswerBlockView({ block }: { block: AnswerBlock }) {
   }
   if (block.kind === 'list') {
     const semantics = block.semantics
-    const isDirectoryList = semantics?.subject === 'directories'
+    const isDirectoryList = block.result_type === 'directories' || semantics?.subject === 'directories'
+    const isProjectList = block.result_type === 'projects' || semantics?.subject === 'projects'
     const title = listTitle(block)
     const countText = semantics?.total_count != null
       ? `总数 ${semantics.total_count}，本次返回 ${semantics.returned_count ?? block.items?.length ?? 0}`
@@ -198,10 +200,15 @@ function AnswerBlockView({ block }: { block: AnswerBlock }) {
         </div>
         <ol>
           {(block.items ?? []).map((item, index) => (
-            <li key={String(item.node_id ?? item.entry_id ?? index)}>
+            <li key={String(item.node_id ?? item.entry_id ?? item.id ?? index)}>
               <span className="item-index">{index + 1}</span>
               <div>
-                {isDirectoryList ? (
+                {isProjectList ? (
+                  <>
+                    <strong>{String(item.name ?? '未命名项目')}</strong>
+                    <span>{String(item.status ?? '')}</span>
+                  </>
+                ) : isDirectoryList ? (
                   <>
                     <strong>{String(item.name ?? `目录 ${item.node_id ?? index + 1}`)}</strong>
                     <span>{String(item.path ?? '')}</span>

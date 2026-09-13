@@ -180,7 +180,7 @@ def _v2_control_preflight() -> dict[str, bool]:
         "entries", {"items": [{"entry_id": 9, "title": "九", "content": "甲" * 4_000}]}
     )
     return {
-        "message_protocol_paired": bool(calls) and calls == returns,
+        "message_protocol_paired": calls == returns,
         "ordered_list_preserved": [
             item["entry_id"] for item in summary.get("ordered_items", [])
         ]

@@ -655,15 +655,11 @@ def test_compact_history_keeps_order_and_protocol_without_large_body() -> None:
         ],
     )
     history = build_compact_history(state)
-    assert isinstance(history[0].parts[0], UserPromptPart)
-    assert history[0].parts[0].content == "列出两条"
-    call = history[1].parts[0]
-    returned = history[2].parts[0]
-    assert isinstance(call, ToolCallPart)
-    assert isinstance(returned, ToolReturnPart)
-    assert call.tool_call_id == returned.tool_call_id
-    assert [item["entry_id"] for item in returned.content["ordered_items"]] == [91, 17]
-    assert "正文正文" not in str(returned.content)
+    assert "列出两条" in str(history)
+    returned = next(iter(json.loads(history[0].parts[0].content).values()))[0]
+    assert [item["entry_id"] for item in returned["ordered_items"]] == [91, 17]
+    assert "正文正文" not in str(returned)
+    assert not any(isinstance(part, ToolCallPart) for m in history for part in m.parts)
     assert "Evidence 原文" not in str(history)
     assert "概括说明" in str(history)
     assert "如需来源可以继续查询" in str(history)
@@ -737,12 +733,8 @@ async def test_pydantic_ai_accepts_rebuilt_paired_history() -> None:
     assert "select_relevant_entries" in info.instructions
     assert "过期 Grove 规则" not in str(messages)
     assert SYSTEM_PROMPT not in str(messages)
-    assert any(
-        isinstance(part, ToolReturnPart)
-        for message in messages
-        if isinstance(message, ModelRequest)
-        for part in message.parts
-    )
+    assert "ordered_items" in str(messages)
+    assert not any(isinstance(part, ToolReturnPart) for m in messages for part in m.parts)
 
 
 def test_output_rejects_old_or_forged_handles_and_renders_real_values() -> None:
@@ -2888,7 +2880,7 @@ def test_directory_history_keeps_only_ordered_node_metadata() -> None:
         ],
     )
     history = build_compact_history(state)
-    returned = history[2].parts[0].content
+    returned = next(iter(json.loads(history[0].parts[0].content).values()))[0]
     assert returned["directory_items"][1]["node_id"] == 12
     assert returned["directory_total_count"] == 2
     assert "content" not in str(returned)
@@ -3786,8 +3778,10 @@ async def test_provider_shaped_estimate_records_components_scope_and_usage_error
     assert abs(
         log["estimate_components"]["instruction_utf8_bytes"]
         - len(info.instructions.encode("utf-8"))
-    ) <= 2
-    assert log["estimate_components"]["instruction_count"] == 2
+    ) <= 2 * (log["estimate_components"]["instruction_count"] - 1)
+    assert log["estimate_components"]["instruction_count"] == len(
+        info.model_request_parameters.instruction_parts
+    )
     assert log["estimate_components"]["historical_system_count"] == 0
     instruction_payload = "\n".join(
         part.content for part in info.model_request_parameters.instruction_parts
@@ -3994,7 +3988,7 @@ async def _seed_finalize_material(state: LoopState) -> dict:
     return {**seeded, "evidence_handle": evidence_handle, "list_handle": list_handle}
 
 
-def test_history_uses_bounded_structured_summaries_and_keeps_all_user_messages() -> None:
+def test_history_keeps_full_record_but_only_recent_model_summaries() -> None:
     state = _state()
     for index in range(8):
         state.turn_index = index + 1
@@ -4013,7 +4007,8 @@ def test_history_uses_bounded_structured_summaries_and_keeps_all_user_messages()
     history = build_compact_history(state)
     serialized = str(history)
 
-    assert all(f"用户原话 {index}" in serialized for index in range(8))
+    assert "用户原话 7" in serialized
+    assert [t["user"] for t in state.history_turns] == [f"用户原话 {i}" for i in range(8)]
     assert "正文正文" not in serialized
     assert "来源来源" not in serialized
     assert "后续建议 7" in serialized
@@ -4204,6 +4199,8 @@ async def test_candidate_draft_survives_finalize_failure_and_continue_only_refor
         if len(provider_calls) >= 2:
             assert seeded["evidence_handle"] not in str(messages)
         if len(provider_calls) == 1:
+            # 收尾失败夹具明确触发请求预留边界，不依赖旧历史不压缩的偶然长度。
+            state.ledger.active.text_requests = PER_TURN_TEXT_REQUESTS - 1
             return ModelResponse(
                 parts=[
                     ToolCallPart(

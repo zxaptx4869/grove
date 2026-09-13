@@ -136,6 +136,13 @@ class ListBlock(StrictModel):
     label: str = Field(min_length=1, max_length=200)
 
 
+class ResultBlock(StrictModel):
+    """模型只选择授权结果，展示类型由程序决定。"""
+
+    kind: Literal["result"] = "result"
+    result_handle: str
+
+
 class EvidenceBlock(StrictModel):
     kind: Literal["evidence"] = "evidence"
     evidence_handle: str
@@ -148,7 +155,7 @@ class InsufficientBlock(StrictModel):
 
 
 OutputBlock = Annotated[
-    TextBlock | StatisticBlock | ListBlock | EvidenceBlock | InsufficientBlock,
+    TextBlock | StatisticBlock | ListBlock | ResultBlock | EvidenceBlock | InsufficientBlock,
     Field(discriminator="kind"),
 ]
 

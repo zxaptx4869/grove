@@ -68,7 +68,7 @@ SYSTEM_PROMPT = """你是 Grove 知识库的只读对话 Agent。你在一个持
    不要猜 Entry id。
 6. 工具的 empty、partial、not_executed、error、denied 含义不同。未执行或部分结果不能表达为零条。
 7. 用户明确要求不查知识库时不得调用知识库工具，可用通用知识直接回答，也不得伪装成实时外部资料。
-8. 输出 blocks 按希望展示的顺序排列。真实统计用 statistic 块，真实列表用 list 块，
+8. 输出 blocks 按希望展示的顺序排列。项目、统计、目录和 Entry 都用 result 块，只填 result_handle，
    来源用 evidence 块；不要在 text 块改写工具数字、伪造引用或隐藏失败。
    材料不足用 insufficient 块。
 9. 只回答用户问题，不输出隐藏推理，不向用户提及预期答案。
@@ -225,7 +225,7 @@ def _candidate_content_only_requested(message: str) -> bool:
 def _candidate_request_message(state: LoopState) -> str | None:
     """在候选稿续执行中继续使用原始候选请求的校验语义。"""
 
-    if _candidate_revision_requested(state.current_message):
+    if state.editing_active or _candidate_revision_requested(state.current_message):
         return state.current_message
     continuation = state.active_continuation
     if (
@@ -370,6 +370,16 @@ class ResultRecord:
 
 
 @dataclass
+class EditingContext:
+    """与最近查询及失败 continuation 分离的单对象编辑任务。"""
+
+    entry: dict
+    validation_refs: dict
+    draft: dict | None = None
+    decisions: list[str] = field(default_factory=list)
+
+
+@dataclass
 class LoopState:
     workspace_id: int
     user_id: int
@@ -394,6 +404,11 @@ class LoopState:
     queried_directory_parents: set[int | None] = field(default_factory=set)
     semantic_search_results: dict[str, str] = field(default_factory=dict)
     current_message: str = ""
+    focused_entry_refs: dict | None = field(default=None, repr=False)
+    focused_entry: dict | None = field(default=None, repr=False)
+    editing_context: EditingContext | None = field(default=None, repr=False)
+    editing_active: bool = False
+    editing_content_only: bool = False
     candidate_draft: dict | None = field(default=None, repr=False)
     candidate_draft_errors: list[str] = field(default_factory=list, repr=False)
     _handle_sequence: int = 0
@@ -404,6 +419,8 @@ class LoopState:
         self.turn_index += 1
         self.run_id = run_id
         self.current_message = message
+        self.editing_active = False
+        self.editing_content_only = False
         self.current_handles.clear()
         self.current_evidence.clear()
         self.stop_state = None
@@ -1254,6 +1271,8 @@ def _history_tool_summary(state: LoopState, event: dict) -> dict:
             "returned_count", len(payload.get("items", []))
         )
         summary["directory_has_more"] = payload.get("has_more", False)
+    elif record.kind == "projects":
+        summary["projects"] = payload.get("projects", [])
     elif record.kind == "entries":
         summary["items"] = [
             {
@@ -1277,95 +1296,59 @@ def _history_tool_summary(state: LoopState, event: dict) -> dict:
     return summary
 
 
-def _minimal_history_tool_summary(tool: dict) -> dict:
-    """整体历史超目标后，仍保留引用、范围、状态与有序对象映射。"""
-
-    keys = {
-        "tool",
-        "shared_tool",
-        "conditions",
-        "executed_conditions",
-        "status",
-        "completeness",
-        "result_handle",
-        "error",
-        "statistics",
-        "semantics",
-        "ordered_items",
-        "candidate_count",
-        "directory_items",
-        "directory_total_count",
-        "directory_returned_count",
-        "directory_has_more",
-        "items",
-        "sources",
-    }
-    return {key: value for key, value in tool.items() if key in keys}
-
-
-def _history_turn_messages(turn: dict, *, minimal: bool) -> list[ModelMessage]:
-    messages: list[ModelMessage] = [
-        ModelRequest(parts=[UserPromptPart(content=turn["user"])])
-    ]
-    tools = turn["tools"]
-    if tools:
-        call_parts = []
-        return_parts = []
-        for index, original in enumerate(tools, 1):
-            tool = _minimal_history_tool_summary(original) if minimal else original
-            call_id = f"history-{turn['turn']}-{index}"
-            tool_name = tool.get("tool") or "unknown_tool"
-            call_parts.append(
-                ToolCallPart(tool_name, tool.get("conditions", {}), tool_call_id=call_id)
-            )
-            return_parts.append(ToolReturnPart(tool_name, tool, tool_call_id=call_id))
-        messages.append(ModelResponse(parts=call_parts))
-        messages.append(ModelRequest(parts=return_parts))
-    answer_summary = dict(turn.get("answer_summary") or {})
-    if not answer_summary:
-        answer_summary = {
-            "narrative": _shorten_middle(
-                str(turn.get("answer") or ""), HISTORY_ANSWER_CHARS_PER_TURN
+def _recent_history_messages(turns: list[dict]) -> list[ModelMessage]:
+    """近期叙述可裁剪，失败文案不重新进入上下文。"""
+    messages = []
+    for turn in turns[-6:]:
+        summary = turn.get("answer_summary") or {}
+        completion = turn.get("completion") or {}
+        content = {
+            "历史用户原话": turn["user"],
+            "历史回答（非事实依据）": (
+                summary.get("narrative", "")
+                if completion.get("status", "completed") == "completed" else ""
             ),
-            "references": [],
+            "状态": completion.get("status"),
         }
-    if minimal:
-        answer_summary["narrative"] = _shorten_middle(
-            str(answer_summary.get("narrative") or ""), 240
-        )
-    content = {
-        "answer_summary": answer_summary,
-        "completion": turn.get("completion"),
-    }
-    messages.append(
-        ModelResponse(
-            parts=[TextPart(content=json.dumps(content, ensure_ascii=False, separators=(",", ":")))]
-        )
-    )
+        messages.append(ModelResponse(
+            parts=[TextPart(content=json.dumps(content, ensure_ascii=False))],
+            metadata={"grove_optional_history": True, "turn": turn.get("turn")},
+        ))
+    return messages
+
+
+def _trim_optional_history(messages: list[ModelMessage]) -> list[ModelMessage]:
+    """先满足历史目标；完整请求还会按指令与工具定义再预留空间。"""
+    while estimate_input_tokens(messages) > HISTORY_INPUT_TOKENS_TARGET:
+        removable = next((i for i, m in enumerate(messages)
+                          if (m.metadata or {}).get("grove_optional_history")), None)
+        if removable is None:
+            break
+        messages.pop(removable)
     return messages
 
 
 def build_compact_history(state: LoopState) -> list[ModelMessage]:
-    """重建合法配对历史，优先缩减旧回答，不删除用户原话或对象顺序。"""
-
-    minimal_turns: set[int] = set()
-
-    def rebuild() -> list[ModelMessage]:
-        return [
-            message
-            for index, turn in enumerate(state.history_turns)
-            for message in _history_turn_messages(turn, minimal=index in minimal_turns)
+    """完整记录留在 state；模型只接收可裁剪近期叙述和必要对象摘要。"""
+    turns = state.history_turns
+    messages = []
+    # 历史工具轨迹不重放；最近展示的有序集合另存为受保护的指代线索。
+    latest_results = []
+    for turn in reversed(turns):
+        latest_results = [
+            tool for tool in turn.get("tools", [])
+            if tool.get("ordered_items") or tool.get("directory_items")
+            or tool.get("projects") or tool.get("statistics")
         ]
-
-    messages = rebuild()
-    if estimate_input_tokens(messages) <= HISTORY_INPUT_TOKENS_TARGET:
-        return messages
-    for index in range(len(state.history_turns)):
-        minimal_turns.add(index)
-        messages = rebuild()
-        if estimate_input_tokens(messages) <= HISTORY_INPUT_TOKENS_TARGET:
+        if latest_results:
             break
-    return messages
+    if latest_results:
+        messages.append(ModelResponse(parts=[TextPart(content=json.dumps(
+            {"最近展示结果（仅指代线索，引用须本轮复验）": latest_results},
+            ensure_ascii=False, separators=(",", ":"),
+        ))]))
+    messages.extend(_recent_history_messages(turns))
+    return _trim_optional_history(messages)
 
 
 def _without_historical_system_prompts(history: list[ModelMessage]) -> list[ModelMessage]:
@@ -1512,24 +1495,59 @@ def _result_semantics(tool_name: str, params: dict, payload: dict) -> dict:
     return {}
 
 
+def resolve_answer_results(answer: DialogueAnswer, state: LoopState) -> DialogueAnswer:
+    """只映射已授权结果的展示形态，不猜句柄、不将结果变成 Evidence。"""
+    blocks = []
+    for block in answer.blocks:
+        if block.kind not in {"result", "list", "statistic"}:
+            blocks.append(block.model_dump(mode="json"))
+            continue
+        record = state.result_sets.get(block.result_handle)
+        if (
+            record is None or record.handle not in state.current_handles
+            or not record.displayable
+            or record.status not in {"completed", "ok", "empty", "partial", "limited"}
+        ):
+            blocks.append(block.model_dump(mode="json"))
+            continue
+        if record.kind in {"list", "directories", "projects", "statistic", "entries"}:
+            blocks.append({
+                "kind": "statistic" if record.kind == "statistic" else "list",
+                "result_handle": record.handle, "label": "已确认结果",
+            })
+        else:
+            blocks.append(block.model_dump(mode="json"))
+    return DialogueAnswer.model_validate({
+        "blocks": blocks or [{"kind": "insufficient", "text": "结果没有可展示正文"}],
+        "needs_clarification": answer.needs_clarification,
+    })
+
+
 def output_errors(answer: DialogueAnswer, state: LoopState) -> list[str]:
     """返回句柄边界错误；供一次模型纠正与无模型反例测试共用。"""
+    answer = resolve_answer_results(answer, state)
     errors = []
     if not state.tools_allowed and any(
-        block.kind in {"statistic", "list", "evidence"}
+        block.kind in {"result", "statistic", "list", "evidence"}
         or (block.kind == "text" and _entry_reference(block.text) is not None)
         for block in answer.blocks
     ):
         errors.append("本轮明确不使用知识库，回答不得引用 Grove 结果、Entry 或 Evidence")
     for block in answer.blocks:
-        if block.kind in {"statistic", "list"}:
+        if block.kind in {"result", "statistic", "list"}:
             record = state.result_sets.get(block.result_handle)
             expected = block.kind
             if record is None or block.result_handle not in state.current_handles:
                 errors.append(f"{block.result_handle} 不是当前轮结果")
+            elif record.status not in {"completed", "ok", "empty", "partial", "limited"}:
+                errors.append(f"{block.result_handle} 不是可用结果")
+            elif block.kind == "result":
+                errors.append(f"{block.result_handle} 不支持结果展示，不能替代 Evidence")
             elif not record.displayable:
                 errors.append(f"{block.result_handle} 是内部候选，不能进入主答案")
-            elif expected == "list" and record.kind not in {"list", "directories", "projects"}:
+            elif expected == "list" and record.kind not in {
+                "list", "directories", "projects", "entries"
+            }:
                 errors.append(f"{block.result_handle} 不是列表结果")
             elif expected == "statistic" and record.kind != expected:
                 errors.append(f"{block.result_handle} 不是 statistic 结果")
@@ -1612,7 +1630,11 @@ def output_errors(answer: DialogueAnswer, state: LoopState) -> list[str]:
             for handle, record in state.result_sets.items()
         )
         has_entry_block = any(
-            block.kind == "text" and _entry_reference(block.text) for block in answer.blocks
+            (block.kind == "text" and _entry_reference(block.text))
+            or (block.kind == "list"
+                and (record := state.result_sets.get(block.result_handle)) is not None
+                and record.kind == "entries" and record.handle in state.current_handles)
+            for block in answer.blocks
         )
         if has_entry_result and not has_entry_block:
             errors.append("用户要求具体内容时必须提供正文引用，直接展示已读取正文")
@@ -1642,7 +1664,8 @@ def output_errors(answer: DialogueAnswer, state: LoopState) -> list[str]:
         draft_text = "\n".join(
             block.text for block in answer.blocks if block.kind == "text"
         )
-        content_only = _candidate_content_only_requested(candidate_message)
+        content_only = (state.editing_content_only
+                        or _candidate_content_only_requested(candidate_message))
         unwritten_markers = (
             "尚未写入",
             "未写入",
@@ -1732,6 +1755,19 @@ def output_errors(answer: DialogueAnswer, state: LoopState) -> list[str]:
     return errors
 
 
+def _content_only_boundary(answer: DialogueAnswer) -> DialogueAnswer:
+    """精简候选的声明由程序统一补齐，写入声明仍由校验器拒绝。"""
+    if not all(block.kind == "text" and _entry_reference(block.text) is None
+               for block in answer.blocks):
+        return answer
+    text = "\n".join(block.text for block in answer.blocks)
+    if "尚未写入" not in text and "未写入" not in text:
+        text += "\n（以上为候选内容，尚未写入正式 Entry。）"
+    if "Source 原文" not in text and "来源原文" not in text:
+        text += "\n（模型补充不属于 Source 原文。）"
+    return DialogueAnswer.model_validate({"blocks": [{"kind": "text", "text": text}]})
+
+
 def _candidate_finalizer_text_only(
     answer: DialogueAnswer, state: LoopState
 ) -> DialogueAnswer:
@@ -1747,7 +1783,8 @@ def _candidate_finalizer_text_only(
     ]
     if not text_blocks:
         return answer
-    content_only = _candidate_content_only_requested(candidate_message)
+    content_only = (state.editing_content_only
+                        or _candidate_content_only_requested(candidate_message))
     normalized_blocks = (
         [
             {
@@ -1927,6 +1964,9 @@ async def _dispatch(
     from app.services.knowledge_agent.tools import RunToolContext
 
     state = ctx.deps.state
+    if tool_name in {"query_entries", "search_knowledge", "aggregate_entries",
+                     "list_project_directories"}:
+        await select_editing_context(state, "suspend")
     state.instrumentation.emit_activity(
         {
             "aggregate_entries": "querying",
@@ -2129,6 +2169,70 @@ async def _semantic_search_dispatch(
         return result
 
 
+async def select_editing_context(
+    state: LoopState, action: Literal["edit", "resume", "suspend"], content_only: bool = False
+) -> dict:
+    """由当前 Agent 表达语义选择，程序固定对象、复验权限并保存用户原始决定。"""
+    if action == "suspend":
+        state.editing_active = False
+        state.editing_content_only = False
+        state.candidate_draft = None
+        state.candidate_draft_errors.clear()
+        if state.continuation and state.continuation.task_type == "candidate_draft":
+            state.continuation = None
+            state.active_continuation = None
+        return {"status": "completed", "editing": "suspended"}
+    if not state.tools_allowed:
+        raise ModelRetry("本轮不使用知识库，不能恢复正式 Entry 的编辑材料")
+    task = state.editing_context
+    if action == "edit" and state.focused_entry is not None and (
+        task is None or task.entry["entry_id"] != state.focused_entry["entry_id"]
+    ):
+        entry = state.focused_entry
+        if entry["entry_id"] not in state.authorized_entry_ids:
+            raise ModelRetry("编辑对象不在授权结果集合")
+        pairs = [(entry["entry_id"], source["source_id"])
+                 for source in entry.get("sources", []) if source.get("source_id")]
+        refs = await _database_material_refs(state, [entry["entry_id"]], pairs)
+        if state.focused_entry_refs is None or state.focused_entry_refs != refs:
+            raise ModelRetry("已打开对象或来源发生变化，请重新打开核验")
+        task = EditingContext(entry=entry, validation_refs=refs)
+    if task is None:
+        raise ModelRetry("没有已选编辑对象，请先用授权列表位置打开具体 Entry")
+    if task.entry["entry_id"] not in state.authorized_entry_ids:
+        raise ModelRetry("编辑对象已经不在授权集合")
+    try:
+        current = await _database_material_refs(
+            state, task.validation_refs["entry_ids"],
+            [tuple(pair) for pair in task.validation_refs["source_pairs"]],
+        )
+        if current != task.validation_refs:
+            raise ValueError("编辑对象或来源材料已变化，需要重新打开核验")
+    except Exception as exc:
+        state.editing_active = False
+        state.candidate_draft = None
+        state.continuation = None
+        state.active_continuation = None
+        raise ModelRetry(str(exc)) from exc
+    state.editing_context = task
+    state.editing_active = True
+    state.editing_content_only = content_only
+    state.candidate_draft = task.draft
+    state.candidate_draft_errors.clear()
+    state.continuation = None
+    state.active_continuation = None
+    if state.current_message not in task.decisions:
+        task.decisions.append(state.current_message)
+    return {"status": "completed", "entry": task.entry, "candidate_draft": task.draft,
+            "user_decisions": task.decisions, "content_only": content_only}
+
+
+def preserve_editing_draft(state: LoopState, answer: DialogueAnswer) -> None:
+    """成功或可修复的候选全文不随本轮结束清理。"""
+    if state.editing_active and state.editing_context is not None:
+        state.editing_context.draft = answer.model_dump(mode="json")
+
+
 def build_agent(model) -> Agent[LoopDeps, DialogueAnswer]:
     agent = Agent(
         model,
@@ -2140,6 +2244,40 @@ def build_agent(model) -> Agent[LoopDeps, DialogueAnswer]:
         max_concurrency=MAX_TOOL_CONCURRENCY,
         tool_timeout=PER_TURN_SECONDS,
     )
+
+    @agent.instructions
+    def editing_context_instruction(ctx: RunContext[LoopDeps]) -> str:
+        state = ctx.deps.state
+        if not state.tools_allowed:
+            return ""
+        task = state.editing_context
+        context = {
+            "current_entry": {k: state.focused_entry.get(k) for k in ("entry_id", "title")}
+            if state.focused_entry else None,
+            "saved_draft_entry": {k: task.entry.get(k) for k in ("entry_id", "title")}
+            if task else None,
+            "has_saved_draft": bool(task and task.draft),
+            "editing_active": state.editing_active,
+        }
+        if state.editing_active and task is not None:
+            context.update(candidate_draft=task.draft, user_decisions=task.decisions)
+        return (
+            "当前对象与最近查询结果是独立状态。围绕当前条目讨论补充时保持同一 Entry，"
+            "不得自行扩大到整套知识。生成或继续候选前用 editing_context(action=edit)；"
+            "明确返回已保存原稿用 resume；查询新主题用 suspend 或正常查询，不套旧候选约束。"
+            "用户只要精简正文时设置 content_only=true。选择动作由你理解用户语义，"
+            "不得根据历史错误推断用户同意扩大范围。保存的旧材料只是线索，工具复验后才能使用。"
+            + json.dumps(context, ensure_ascii=False)
+        )
+
+    @agent.tool
+    async def editing_context(
+        ctx: RunContext[LoopDeps], action: Literal["edit", "resume", "suspend"],
+        content_only: bool = False,
+    ) -> dict:
+        """选择当前 Entry 的编辑任务或挂起/恢复原稿，只保存候选，不写正式记录。"""
+        await ctx.deps.state.ledger.reserve_tool()
+        return await select_editing_context(ctx.deps.state, action, content_only)
 
     @agent.instructions
     def continuation_instruction(ctx: RunContext[LoopDeps]) -> str:
@@ -2383,6 +2521,7 @@ def build_agent(model) -> Agent[LoopDeps, DialogueAnswer]:
         )
 
         state = ctx.deps.state
+        await select_editing_context(state, "suspend")
         state.instrumentation.emit_activity("querying")
         try:
             await state.ledger.reserve_tool()
@@ -2424,7 +2563,8 @@ def build_agent(model) -> Agent[LoopDeps, DialogueAnswer]:
             ]
         }
         handle = state.store_result(
-            "projects", payload, "completed" if rows else "empty", "complete"
+            "projects", payload, "completed" if rows else "empty", "complete",
+            semantics={"subject": "projects", "query_object": "项目", "completeness": "complete"},
         )
         event = {
             "tool": "list_projects",
@@ -2961,6 +3101,12 @@ def build_agent(model) -> Agent[LoopDeps, DialogueAnswer]:
             "entries", payload, "completed" if output.items else "error", "limited"
         )
         state.read_entry_ids.update(item.entry_id for item in output.items)
+        if output.items:
+            state.focused_entry = payload["items"][0]
+            pairs = [(entry_id, source["source_id"])
+                     for source in state.focused_entry.get("sources", [])
+                     if source.get("source_id")]
+            state.focused_entry_refs = await _database_material_refs(state, [entry_id], pairs)
         event = {
             "tool": "open_list_item",
             "result_handle": handle,
@@ -2976,11 +3122,15 @@ def build_agent(model) -> Agent[LoopDeps, DialogueAnswer]:
     @agent.output_validator
     async def validate_output(ctx: RunContext[LoopDeps], answer: DialogueAnswer) -> DialogueAnswer:
         state = ctx.deps.state
+        if state.editing_active and state.editing_content_only:
+            answer = _content_only_boundary(answer)
         if (
-            _candidate_revision_requested(state.current_message)
+            _candidate_request_message(state) is not None
             and state.instrumentation.phase != "finalize"
         ):
             state.candidate_draft = answer.model_dump(mode="json")
+            preserve_editing_draft(state, answer)
+        answer = resolve_answer_results(answer, state)
         errors = output_errors(answer, ctx.deps.state)
         if errors:
             state.candidate_draft_errors = list(errors)
@@ -3001,7 +3151,9 @@ FINALIZER_SYSTEM_PROMPT = """你是 Grove 知识 Agent 的独立收尾执行器�
 知识库正式记录、Source 原文与模型分析必须区分，读到来源不等于通过官方交叉验证。
 AI 回答或候选修改稿不得声称已经写入正式 Entry。
 唯一合法输出顶层是 DialogueAnswer 的 blocks 与 needs_clarification；不要输出 answer_summary、
-completion 或其他自创顶层字段。text 块只填写 kind 与 text，不要添加 note。""".strip()
+completion 或其他自创顶层字段。text 块只填写 kind 与 text，不要添加 note。
+结构化材料只选 result 块的 result_handle，程序决定项目、统计、目录或 Entry 展示，
+不要猜类型。""".strip()
 
 
 def build_finalizer_agent(model) -> Agent[LoopDeps, DialogueAnswer]:
@@ -3052,8 +3204,9 @@ def build_finalizer_agent(model) -> Agent[LoopDeps, DialogueAnswer]:
     @agent.instructions
     def candidate_content_only_instruction(ctx: RunContext[LoopDeps]) -> str:
         candidate_message = _candidate_request_message(ctx.deps.state)
-        if candidate_message is None or not _candidate_content_only_requested(
-            candidate_message
+        if candidate_message is None or not (
+            ctx.deps.state.editing_content_only
+            or _candidate_content_only_requested(candidate_message)
         ):
             return ""
         return (
@@ -3062,37 +3215,20 @@ def build_finalizer_agent(model) -> Agent[LoopDeps, DialogueAnswer]:
             "Source 原文的简短边界说明。"
         )
 
-    @agent.instructions
-    def candidate_draft_recovery_instruction(ctx: RunContext[LoopDeps]) -> str:
-        draft = ctx.deps.state.candidate_draft
-        if not draft or _candidate_request_message(ctx.deps.state) is None:
-            return ""
-        return (
-            "上一阶段已经生成候选修改稿。请优先保留其事实内容，只做必要的最小整理；"
-            "不得重新搜索、读取或引用新的资料，也不得丢弃整篇候选稿。只输出 text 块，"
-            "禁止输出 evidence、list、statistic、insufficient 或 Entry 正文引用。候选稿如下："
-            + json.dumps(draft, ensure_ascii=False, separators=(",", ":"))[:8_000]
-        )
-
     @agent.output_validator
     async def validate_output(ctx: RunContext[LoopDeps], answer: DialogueAnswer) -> DialogueAnswer:
         state = ctx.deps.state
         previous_draft = state.candidate_draft
         answer = _candidate_finalizer_text_only(answer, state)
+        answer = resolve_answer_results(answer, state)
         candidate_message = _candidate_request_message(state)
         if (
             candidate_message is not None
-            and _candidate_content_only_requested(candidate_message)
+            and (state.editing_content_only or _candidate_content_only_requested(candidate_message))
             and answer.blocks
             and all(block.kind == "text" for block in answer.blocks)
         ):
-            # 精简交付由程序补齐最小边界，避免 finalizer 重复生成原记录章节。
-            text = "\n".join(block.text for block in answer.blocks)
-            if "尚未写入" not in text and "未写入" not in text:
-                text += "\n（以上为候选内容，尚未写入正式 Entry。）"
-            if "Source 原文" not in text and "来源原文" not in text:
-                text += "\n（模型补充不属于 Source 原文。）"
-            answer = DialogueAnswer.model_validate({"blocks": [{"kind": "text", "text": text}]})
+            answer = _content_only_boundary(answer)
         errors = output_errors(answer, state)
         if errors:
             if _candidate_request_message(state) is not None:
@@ -3111,6 +3247,7 @@ def build_finalizer_agent(model) -> Agent[LoopDeps, DialogueAnswer]:
             raise ModelRetry(message)
         if _candidate_request_message(state) is not None:
             state.candidate_draft = answer.model_dump(mode="json")
+            preserve_editing_draft(state, answer)
         state.candidate_draft_errors.clear()
         return answer
 
@@ -3119,6 +3256,7 @@ def build_finalizer_agent(model) -> Agent[LoopDeps, DialogueAnswer]:
 
 def render_answer(answer: DialogueAnswer, state: LoopState) -> tuple[str, list[dict]]:
     """按模型块顺序以真实工具数据渲染，不接受模型填写数字或原文。"""
+    answer = resolve_answer_results(answer, state)
     lines: list[str] = []
     rendered: list[dict] = []
     for block in answer.blocks:
@@ -3164,6 +3302,7 @@ def render_answer(answer: DialogueAnswer, state: LoopState) -> tuple[str, list[d
             rendered.append(
                 {
                     "kind": "statistic",
+                    "result_type": record.kind,
                     "handle": block.result_handle,
                     "text": text,
                     "value": payload.get("value"),
@@ -3176,6 +3315,17 @@ def render_answer(answer: DialogueAnswer, state: LoopState) -> tuple[str, list[d
             )
         elif block.kind == "list":
             record = state.result_sets[block.result_handle]
+            if record.kind == "entries":
+                for position, item in enumerate(record.payload.get("items", []), 1):
+                    if not item.get("content"):
+                        continue
+                    entry_answer = DialogueAnswer.model_validate({"blocks": [{
+                        "kind": "text", "text": f"[[entry:{record.handle}:{position}]]",
+                    }]})
+                    entry_text, entry_blocks = render_answer(entry_answer, state)
+                    lines.append(entry_text)
+                    rendered.extend(entry_blocks)
+                continue
             semantics = record.semantics
             if record.kind == "directories":
                 project_name = semantics.get("project_name") or "当前项目"
@@ -3189,6 +3339,8 @@ def render_answer(answer: DialogueAnswer, state: LoopState) -> tuple[str, list[d
                         title = f"{project_name} · 未找到名为「{query.get('name')}」的目录。"
                 else:
                     title = f"{project_name} · {semantics.get('display_name', '项目目录')}"
+            elif record.kind == "projects":
+                title = "当前 Workspace 可访问项目"
             else:
                 scope = (
                     f"{semantics.get('project_name')} · "
@@ -3222,6 +3374,7 @@ def render_answer(answer: DialogueAnswer, state: LoopState) -> tuple[str, list[d
             rendered.append(
                 {
                     "kind": "list",
+                    "result_type": record.kind,
                     "handle": block.result_handle,
                     "label": title,
                     "items": items,
@@ -3337,7 +3490,7 @@ def _verified_failure_output(
             requested_blocks.append(
                 {"kind": "statistic", "result_handle": handle, "label": "已确认统计"}
             )
-        elif record.kind in {"list", "directories"}:
+        elif record.kind in {"list", "directories", "projects"}:
             requested_blocks.append(
                 {"kind": "list", "result_handle": handle, "label": "已确认列表"}
             )
@@ -3653,26 +3806,18 @@ def _candidate_continuation_material(
 
 
 def _model_only_context_turns(state: LoopState) -> list[dict]:
-    """复制无资料收尾所需的有界叙述，不携带工具或 Grove 引用元数据。"""
-
-    turns = []
-    for turn in state.history_turns:
-        answer_summary = turn.get("answer_summary") or {}
-        turns.append(
-            {
-                "turn": turn.get("turn"),
-                "user": str(turn.get("user") or ""),
-                "answer_summary": {
-                    "narrative": _shorten_middle(
-                        str(answer_summary.get("narrative") or ""),
-                        HISTORY_ANSWER_CHARS_PER_TURN,
-                    ),
-                    "references": [],
-                },
-                "completion": _history_completion_summary(turn.get("completion")),
-            }
-        )
-    return turns
+    """复制无资料收尾所需的近期叙述，不携带工具或 Grove 引用元数据。"""
+    return [
+        {
+            "turn": turn.get("turn"),
+            "user": str(turn.get("user") or ""),
+            "answer_summary": {
+                "narrative": (turn.get("answer_summary") or {}).get("narrative", ""),
+            },
+            "completion": _history_completion_summary(turn.get("completion")),
+        }
+        for turn in state.history_turns[-6:]
+    ]
 
 
 def _model_only_history(
@@ -3680,31 +3825,11 @@ def _model_only_history(
     message: str,
     context_turns: list[dict] | None = None,
 ) -> list[ModelMessage]:
-    """为无资料 finalizer 重建仅含用户话语和回答叙述的有界历史。"""
-
+    """无资料收尾复用同一裁剪协议，当前问题始终受保护。"""
     turns = context_turns if context_turns is not None else _model_only_context_turns(state)
-    minimal_turns: set[int] = set()
-
-    def rebuild() -> list[ModelMessage]:
-        messages = [
-            item
-            for index, turn in enumerate(turns)
-            for item in _history_turn_messages(
-                {**turn, "tools": []}, minimal=index in minimal_turns
-            )
-        ]
-        messages.append(ModelRequest(parts=[UserPromptPart(content=message)]))
-        return messages
-
-    messages = rebuild()
-    if estimate_input_tokens(messages) <= HISTORY_INPUT_TOKENS_TARGET:
-        return messages
-    for index in range(len(turns)):
-        minimal_turns.add(index)
-        messages = rebuild()
-        if estimate_input_tokens(messages) <= HISTORY_INPUT_TOKENS_TARGET:
-            break
-    return messages
+    messages = _recent_history_messages(turns)
+    messages.append(ModelRequest(parts=[UserPromptPart(content=message)]))
+    return _trim_optional_history(messages)
 
 
 async def _database_material_refs(
@@ -3852,6 +3977,10 @@ async def _create_finalize_continuation(
                 if item.get("entry_id") is not None and item.get("source_id") is not None
             }
         )
+        if state.editing_active and state.editing_context is not None:
+            entry_ids = state.editing_context.validation_refs["entry_ids"]
+            source_pairs = [tuple(pair) for pair in
+                            state.editing_context.validation_refs["source_pairs"]]
         validation_refs = await _database_material_refs(state, entry_ids, source_pairs)
         resolved = []
         for handle, record in material["records"].items():
@@ -3875,6 +4004,8 @@ async def _create_finalize_continuation(
                 "workspace_id": state.workspace_id,
                 "user_id": state.user_id,
                 "answer_basis": "candidate_draft",
+                "editing_active": state.editing_active,
+                "editing_content_only": state.editing_content_only,
                 "authorized_entry_ids": sorted(state.authorized_entry_ids),
             },
             completed_steps=[
@@ -4130,6 +4261,11 @@ def _current_material_history(
             *_without_historical_system_prompts(history),
             *messages,
         ]
+    if candidate_only and state.editing_active and state.editing_context is not None:
+        messages.append(ModelRequest(parts=[UserPromptPart(content=json.dumps({
+            "编辑对象": state.editing_context.entry,
+            "用户决定": state.editing_context.decisions,
+        }, ensure_ascii=False))]))
     if draft is not None:
         draft_text = "\n".join(
             block.text
@@ -4143,7 +4279,7 @@ def _current_material_history(
                         UserPromptPart(
                             content=(
                                 "上一阶段已生成候选修改稿，请在不丢弃其内容的前提下做最小整理：\n"
-                                + draft_text[:4_000]
+                                + draft_text
                             )
                         )
                     ]
@@ -4284,6 +4420,8 @@ async def _run_finalize_continuation(
         material = continuation.recoverable_material
         candidate_only = continuation.scope.get("answer_basis") == "candidate_draft"
         if candidate_only:
+            state.editing_active = bool(continuation.scope.get("editing_active"))
+            state.editing_content_only = bool(continuation.scope.get("editing_content_only"))
             state.candidate_draft = material.get("candidate_draft")
             state.candidate_draft_errors = list(
                 material.get("candidate_draft_errors", [])
@@ -4410,6 +4548,8 @@ async def run_turn(
 ) -> tuple[dict, list[ModelMessage]]:
     """执行一轮；超限、模型失败和 usage 缺失均显式保留。"""
     finalizer = finalizer or build_finalizer_agent(agent.model)
+    if state.history_turns:
+        history = build_compact_history(state)
     history = _without_historical_system_prompts(history)
     history_estimate = estimate_input_tokens(history)
     before_logs = len(state.instrumentation.logs)
