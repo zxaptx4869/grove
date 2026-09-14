@@ -75,7 +75,7 @@ SYSTEM_PROMPT = ASSISTANT_ROLE_PROMPT + "\n\n" + ANSWER_PROTOCOL_PROMPT + "\n\n"
 2. 用户说“知识”泛指 knowledge/method/parameter/reminder 四种正式记录，除非他明确限定类型。
 3. 精确总数必须调用 count_entries，分组统计必须调用 group_entries；不能从语义搜索、
    截断列表或分类数相加推断用户所问总数。分项目统计须包含零条项目。
-4. 查询或列表必须调用 query_entries/search_knowledge。需要正文先读取 Entry；只有用户明确要求
+4. 查询正式记录必须调用 query_entries/search_knowledge。需要正文先读取 Entry；只有用户明确要求
    来源、原文、可信度核验，或资料出现冲突时才在当前轮调用 read_evidence，历史 Evidence
    不能直接引用。
 5. 列表追问必须使用 open_list_item(result_set_handle, position)，position 从 1 开始。
@@ -84,7 +84,8 @@ SYSTEM_PROMPT = ASSISTANT_ROLE_PROMPT + "\n\n" + ANSWER_PROTOCOL_PROMPT + "\n\n"
 7. 用户明确要求不查知识库时不得调用知识库工具，可用通用知识直接回答，也不得伪装成实时外部资料。
 8. 输出 blocks 按希望展示的顺序排列。项目、统计、目录和 Entry 都用 result 块，只填 result_handle，
    来源用 evidence 块；不要在 text 块改写工具数字、伪造引用或隐藏失败。
-   材料不足用 insufficient 块。统计、项目和目录查询只说明范围、过滤和完整性，
+   项目介绍可以只输出基于项目材料的 text。
+   材料不足用 insufficient 块。统计、项目枚举和目录查询只说明范围、过滤和完整性，
    不附加无关的官方交叉验证声明；同范围完整精确计数为 0 时直接回答无记录，不再列举。
 9. 只回答用户问题，不输出隐藏推理，不向用户提及预期答案。
 10. main_types 省略或 null 表示全部正式记录。用户泛称“知识”“知识库记录”时不得默认
@@ -112,11 +113,11 @@ SYSTEM_PROMPT = ASSISTANT_ROLE_PROMPT + "\n\n" + ANSWER_PROTOCOL_PROMPT + "\n\n"
 20. 用户明确提到项目名并询问其中的知识时，search_knowledge 必须使用 project_scope=project 和准确
     project_name；只有用户明确询问全部项目时才使用 all。项目范围搜索只返回严格语义相关的正式记录，
     不要把相近主题候选当作墙纸等目标知识。
-21. 用户询问项目概览时，优先调用 list_projects 获取项目名称；只有问题明确要求记录数量、分组或
-    目录时，
-    才分别调用 count_entries、group_entries 或 list_project_directories。
-    不要为普通概览自动并行拉取统计、目录和记录列表；需要展示项目、统计、目录或 Entry 时直接交给程序
-    按结果类型渲染，不自行改写类型。
+21. 列举有哪些项目用 list_projects；介绍具体项目用 read_project_context 读取背景目标和已保存上下文，
+    以自然段概括目的、背景和当前重点。材料依据不等于展示卡片，不自动追加统计、目录和记录列表。
+    用户仅要求改为文本、精简或重述时，复用已有回答调整表达，不新增检索，不声称本轮重新核验。
+    用户明确要求数量、分组、目录或具体知识时才使用对应工具。用户填写与纠正优先，
+    自动上下文只是派生摘要；保留缺失、待刷新、失败和降级边界，不据此猜测实时进展。
 """.strip()
 
 NO_KNOWLEDGE_PATTERNS = (
@@ -958,6 +959,8 @@ def _stop_from_events(state: LoopState, events: list[dict]) -> StopState | None:
             incomplete_steps=["目标对象尚未由工具确认"],
             can_continue=False,
         )
+    if _pending_semantic_candidates(state):
+        return _pending_semantic_stop()
     incomplete = []
     for event in events:
         status = event.get("status")
@@ -1298,6 +1301,9 @@ def _history_tool_summary(state: LoopState, event: dict) -> dict:
             "returned_count", len(payload.get("items", []))
         )
         summary["directory_has_more"] = payload.get("has_more", False)
+    elif record.kind == "project_context":
+        summary["project_name"] = payload.get("project_name")
+        summary["project_id"] = payload.get("project_id")
     elif record.kind == "projects":
         summary["projects"] = payload.get("projects", [])
     elif record.kind == "entries":
@@ -1338,7 +1344,9 @@ def _recent_history_messages(turns: list[dict]) -> list[ModelMessage]:
             "状态": completion.get("status"),
         }
         messages.append(ModelResponse(
-            parts=[TextPart(content=json.dumps(content, ensure_ascii=False))],
+            parts=[TextPart(content=json.dumps(content, ensure_ascii=False),
+                            provider_name="grove-history",
+                            provider_details={"optional_history": True})],
             metadata={"grove_optional_history": True, "turn": turn.get("turn")},
         ))
     return messages
@@ -1370,6 +1378,11 @@ def build_compact_history(state: LoopState) -> list[ModelMessage]:
         if latest_results:
             break
     if latest_results:
+        latest_results = [{key: tool[key] for key in (
+            "result_handle", "ordered_items", "directory_items", "projects",
+            "directory_total_count", "directory_returned_count", "directory_has_more",
+        ) if key in tool} for tool in latest_results if
+            tool.get("ordered_items") or tool.get("directory_items") or tool.get("projects")]
         messages.append(ModelResponse(parts=[TextPart(content=json.dumps(
             {"最近展示结果（仅指代线索，引用须本轮复验）": latest_results},
             ensure_ascii=False, separators=(",", ":"),
@@ -1537,7 +1550,11 @@ def resolve_answer_results(answer: DialogueAnswer, state: LoopState) -> Dialogue
         ):
             blocks.append(block.model_dump(mode="json"))
             continue
-        if record.kind in {"list", "directories", "projects", "statistic", "entries"}:
+        if record.kind == "project_context":
+            from evals.dialogue_loop.project_material import project_material_text
+
+            blocks.append({"kind": "text", "text": project_material_text(record.payload)})
+        elif record.kind in {"list", "directories", "projects", "statistic", "entries"}:
             blocks.append({
                 "kind": "statistic" if record.kind == "statistic" else "list",
                 "result_handle": record.handle, "label": "已确认结果",
@@ -1572,6 +1589,55 @@ def _has_positive_write_claim(text: str) -> bool:
         not any(start <= claim.start() and claim.end() <= end for start, end in negated_spans)
         for claim in _WRITE_CLAIM_RE.finditer(text)
     )
+
+
+async def _project_material_errors(state: LoopState, handles: set[str]) -> list[str]:
+    """发送或恢复项目介绍前复验成员权限和已保存快照，不增加资料工具动作。"""
+    from evals.dialogue_loop.project_material import read_project_material
+
+    errors = []
+    for handle in handles:
+        record = state.result_sets.get(handle)
+        if record is None or record.kind != "project_context":
+            continue
+        try:
+            async with state.database_lock:
+                current = await read_project_material(
+                    state.workspace_id, state.user_id, record.payload["project_name"],
+                )
+            if current != record.payload:
+                errors.append("项目背景或上下文已变化，需要重新读取")
+        except ValueError:
+            errors.append("项目介绍已失去访问权限或项目身份不再唯一")
+    return errors
+
+
+def _pending_semantic_stop() -> StopState:
+    """搜索已执行不等于结果已授权；预算停止不能伪装成查无结果。"""
+    return StopState(
+        status=TURN_PARTIAL_COMPLETED, reason_code="relevance_selection_pending",
+        reason="搜索已执行，但相关性确认尚未完成，不能判断这些候选是否回答当前问题",
+        incomplete_steps=["搜索候选的相关性授权尚未完成"], can_continue=False,
+    )
+
+
+def _pending_semantic_candidates(state: LoopState) -> set[str]:
+    """成功召回但尚未完成三分授权的当前轮候选。"""
+    candidate_handles = {
+        handle
+        for handle, record in state.result_sets.items()
+        if handle in state.current_handles
+        and record.semantics.get("result_role") == "candidate"
+        and record.status in {"completed", "empty", "limited"}
+    }
+    selected_candidates = {
+        record.semantics.get("candidate_result_handle")
+        for handle, record in state.result_sets.items()
+        if handle in state.current_handles
+        and record.displayable
+        and record.semantics.get("result_role") == "authorized"
+    }
+    return candidate_handles - selected_candidates
 
 
 def output_errors(answer: DialogueAnswer, state: LoopState) -> list[str]:
@@ -1636,21 +1702,7 @@ def output_errors(answer: DialogueAnswer, state: LoopState) -> list[str]:
                 errors.append(
                     f"{block.evidence_handle} 的旧式引用声明与当前轮 Evidence 关系不一致"
                 )
-    candidate_handles = {
-        handle
-        for handle, record in state.result_sets.items()
-        if handle in state.current_handles
-        and record.semantics.get("result_role") == "candidate"
-        and record.status in {"completed", "empty", "limited"}
-    }
-    selected_candidates = {
-        record.semantics.get("candidate_result_handle")
-        for handle, record in state.result_sets.items()
-        if handle in state.current_handles
-        and record.displayable
-        and record.semantics.get("result_role") == "authorized"
-    }
-    if candidate_handles - selected_candidates and state.instrumentation.phase != "finalize":
+    if _pending_semantic_candidates(state) and state.instrumentation.phase != "finalize":
         errors.append("语义候选必须先完整调用 select_relevant_entries 形成授权集合")
     answer_text = "\n".join(
         block.text
@@ -2639,6 +2691,55 @@ def build_agent(model) -> Agent[LoopDeps, DialogueAnswer]:
         }
 
     @agent.tool
+    async def read_project_context(ctx: RunContext[LoopDeps], project_name: str) -> dict:
+        """介绍具体项目：只读背景目标、已保存上下文及用户纠正，不生成或刷新，不查记录。"""
+        from app.db.session import async_session_factory
+        from app.services.knowledge_agent.observability import next_tool_sequence, record_tool_call
+        from evals.dialogue_loop.project_material import read_project_material
+
+        state = ctx.deps.state
+        state.instrumentation.emit_activity("querying")
+        try:
+            await state.ledger.reserve_tool()
+        except BudgetExceeded as exc:
+            _mark_budget_stop(state, exc, tool_name="read_project_context",
+                              params={"project_name": project_name})
+            raise
+        event = {"tool": "read_project_context", "params": {"project_name": project_name},
+                 "turn_index": state.turn_index, "duration_ms": 0, "error": None}
+        if not state.tools_allowed:
+            event.update(status="not_executed", reason_code="tools_disallowed_by_user",
+                         error="用户明确要求本轮不查知识库")
+        else:
+            try:
+                async with state.database_lock:
+                    payload = await read_project_material(
+                        state.workspace_id, state.user_id, project_name,
+                    )
+            except ValueError as exc:
+                event.update(status="denied", reason_code="project_context_unavailable",
+                             error=str(exc))
+            else:
+                handle = state.store_result(
+                    "project_context", payload, "completed", "complete",
+                    semantics={"subject": "project_context", "project_name": project_name},
+                )
+                event.update(status="completed", completeness="complete", result_handle=handle)
+        async with state.database_lock:
+            async with async_session_factory() as db:
+                await record_tool_call(
+                    db, run_id=state.run_id, sequence=await next_tool_sequence(db, state.run_id),
+                    tool_name="read_project_context", status=event["status"],
+                    result_summary=("只读项目介绍" if event["status"] == "completed"
+                                    else event["error"]),
+                )
+                await db.commit()
+        state.tool_events.append(event)
+        if event.get("result_handle"):
+            return {**event, "payload": payload}
+        return event
+
+    @agent.tool
     async def list_projects(ctx: RunContext[LoopDeps]) -> dict:
         """列出当前认证 Workspace 中可访问的 Project；这不是目录或 Entry 列表。"""
         from app.db.session import async_session_factory
@@ -3262,6 +3363,7 @@ def build_agent(model) -> Agent[LoopDeps, DialogueAnswer]:
             preserve_editing_draft(state, answer)
         answer = resolve_answer_results(answer, state)
         errors = output_errors(answer, ctx.deps.state)
+        errors.extend(await _project_material_errors(state, state.current_handles))
         if errors:
             state.candidate_draft_errors = list(errors)
             state.instrumentation.finalize_compatibility = None
@@ -3285,7 +3387,8 @@ AI 回答或候选修改稿不得声称已经写入正式 Entry。
 唯一合法输出顶层是 DialogueAnswer 的 blocks 与 needs_clarification；不要输出 answer_summary、
 completion 或其他自创顶层字段。text 块只填写 kind 与 text，不要添加 note。
 结构化材料只选 result 块的 result_handle，程序决定项目、统计、目录或 Entry 展示，
-不要猜类型。统计、项目和目录结果只说明范围、过滤和完整性；
+不要猜类型。统计、项目枚举和目录结果只说明范围、过滤和完整性；
+项目介绍使用背景目标和已保存上下文，以自然段概括，不必把依据逐个展示成列表。
 除非用户明确询问来源核验，不附加官方交叉验证免责声明。""".strip()
 )
 
@@ -3373,6 +3476,7 @@ def build_finalizer_agent(model) -> Agent[LoopDeps, DialogueAnswer]:
         ):
             answer = _content_only_boundary(answer)
         errors = output_errors(answer, state)
+        errors.extend(await _project_material_errors(state, state.current_handles))
         if errors:
             if _candidate_request_message(state) is not None:
                 state.candidate_draft = previous_draft or answer.model_dump(mode="json")
@@ -4366,6 +4470,9 @@ async def _validate_finalize_continuation(
         and not material.get("candidate_draft")
     ):
         return False, "续执行没有保存可恢复材料"
+    project_errors = await _project_material_errors(state, set(material.get("records", {})))
+    if project_errors:
+        return False, "；".join(project_errors)
     for handle, expected in material.get("record_fingerprints", {}).items():
         record = state.result_sets.get(handle)
         if record is None or not record.displayable:
@@ -4406,6 +4513,8 @@ async def _attach_finalize_continuation(
     message: str,
     current_events: list[dict],
 ) -> bool:
+    if _pending_semantic_candidates(state):
+        return False
     if state.instrumentation.finalize_status in {"not_needed", "completed", "cancelled"}:
         return False
     if (
@@ -4466,9 +4575,12 @@ def _current_material_history(
     candidate_only = draft is not None and _candidate_request_message(state) is not None
     messages = [ModelRequest(parts=[UserPromptPart(content=message)])]
     focused = state.editing_active and state.editing_context is not None
-    if not candidate_only and not focused:
+    if not candidate_only and not focused and state.history_turns:
         messages = [
-            *_without_historical_system_prompts(history),
+            ModelRequest(parts=[UserPromptPart(content=json.dumps({
+                "近期用户问题（仅理解指代，不是本轮查询材料）":
+                    [turn["user"] for turn in state.history_turns[-3:]],
+            }, ensure_ascii=False))]),
             *messages,
         ]
     if focused:
@@ -4542,6 +4654,9 @@ async def _finalize_once(
     """在独立时间窗内用当前轮已核验材料做唯一一次无工具收尾。"""
     state.instrumentation.begin_finalize(reason)
     before_logs = len(state.instrumentation.logs)
+    project_errors = await _project_material_errors(state, state.current_handles)
+    if project_errors:
+        raise ValueError("；".join(project_errors))
     material_history = _current_material_history(
         state,
         message,
@@ -4846,7 +4961,13 @@ async def run_turn(
             )
     except FinalizeRequired:
         deterministic = render_directory_not_found(state)
-        if deterministic is not None:
+        if _pending_semantic_candidates(state):
+            stop = _pending_semantic_stop()
+            state.stop(stop)
+            state.instrumentation.finalize_status = "not_needed"
+            text, blocks = _verified_failure_output(state, stop)
+            status, error, usage = stop.status, None, None
+        elif deterministic is not None:
             # 目录定位的完整空结果已经是服务端确定性结论，不需要再派发收尾模型。
             state.instrumentation.phase = "solve"
             state.instrumentation.finalize_reason = None
@@ -4982,7 +5103,8 @@ async def run_turn(
     if event_stop is not None:
         state.stop(event_stop)
         status = event_stop.status
-        if status in {TURN_NOT_EXECUTED, TURN_UNSUPPORTED, TURN_DENIED, TURN_FAILED}:
+        if (status in {TURN_NOT_EXECUTED, TURN_UNSUPPORTED, TURN_DENIED, TURN_FAILED}
+                or event_stop.reason_code == "relevance_selection_pending"):
             text, blocks = _verified_failure_output(state, event_stop)
         elif not any(block.get("kind") == "insufficient" for block in blocks):
             continuation_text = (

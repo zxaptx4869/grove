@@ -4682,8 +4682,6 @@ async def test_finalize_continuation_rejects_forgery_permission_and_material_cha
 
 @pytest.mark.asyncio
 async def test_invalid_continuation_does_not_call_model_and_topic_switch_clears_it() -> None:
-    from sqlalchemy import delete
-
     from app.db.session import async_session_factory
     from app.models import Entry
 
@@ -4700,7 +4698,8 @@ async def test_invalid_continuation_does_not_call_model_and_topic_switch_clears_
 
     state.continuation = continuation
     async with async_session_factory() as db:
-        await db.execute(delete(Entry).where(Entry.id == seeded["entry_id"]))
+        # 测试 SQLite 未启用外键级联；走 ORM 删除，避免悬空来源关系污染下一个复用 ID 的夹具。
+        await db.delete(await db.get(Entry, seeded["entry_id"]))
         await db.commit()
     state.begin_turn(1_002, "继续")
     calls = []

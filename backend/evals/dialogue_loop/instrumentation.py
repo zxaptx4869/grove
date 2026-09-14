@@ -592,14 +592,19 @@ def compact_request_history(messages, parameters):
     before = estimate_input(compacted, parameters).tokens
     removed = 0
     while estimate_input(compacted, parameters).tokens >= INPUT_ESTIMATE_SOFT_LIMIT:
-        index = next((i for i, message in enumerate(compacted)
-                      if (message.metadata or {}).get("grove_optional_history")), None)
-        if index is None:
+        # 框架会合并相邻消息且丢失消息 metadata。只删除程序标记的 TextPart，
+        # 不能因合并把必要对象、当前用户输入、工具结果或 instructions 一起删掉。
+        target = next(((i, j) for i, message in enumerate(compacted)
+                       for j, part in enumerate(message.parts)
+                       if isinstance(part, TextPart) and part.provider_name == "grove-history"
+                       and (part.provider_details or {}).get("optional_history") is True), None)
+        if target is None:
             break
+        index, part_index = target
         message = compacted[index]
-        # 框架可能把当前 instructions 放到历史请求上，不能随摘要删掉指令。
-        if isinstance(message, ModelRequest) and message.instructions:
-            compacted[index] = replace(message, parts=[], metadata=None)
+        parts = [part for j, part in enumerate(message.parts) if j != part_index]
+        if parts or (isinstance(message, ModelRequest) and message.instructions):
+            compacted[index] = replace(message, parts=parts)
         else:
             compacted.pop(index)
         removed += 1
