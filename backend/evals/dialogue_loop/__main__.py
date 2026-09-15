@@ -22,7 +22,7 @@ def main() -> int:
     args = parser().parse_args()
     if args.regrade:
         return regrade_report(args.regrade)
-    if args.internal_preflight or args.internal_arm:
+    if args.internal_preflight or args.internal_run:
         if not args.db or not args.original or not args.result:
             raise ValueError("内部隔离进程缺少路径参数")
         # 必须发生在任何 app 数据库模块导入之前。
@@ -50,7 +50,6 @@ def main() -> int:
                     args.db,
                     args.original,
                     password,
-                    args.internal_arm,
                     args.scenario,
                     args.text_used,
                     args.embedding_used,
@@ -63,7 +62,6 @@ def main() -> int:
                     args.db,
                     args.original,
                     password,
-                    args.internal_arm,
                     args.scenario,
                     args.text_used,
                     args.embedding_used,
@@ -76,7 +74,7 @@ def main() -> int:
         (
             args.preflight,
             args.rehearsal,
-            args.compare,
+            args.live,
             args.regrade,
             args.save_demo_password,
             args.forget_demo_password,

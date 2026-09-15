@@ -98,9 +98,7 @@ class Instrumentation:
     finalize_error: str | None = None
     finalize_failure: dict | None = None
     finalize_compatibility: dict | None = None
-    legacy_reference_claims: dict[str, dict[str, int]] = field(
-        default_factory=dict, repr=False
-    )
+    legacy_reference_claims: dict[str, dict[str, int]] = field(default_factory=dict, repr=False)
     validation_failures: list[dict] = field(default_factory=list)
     activity_callback: Callable[[str], None] | None = field(default=None, repr=False)
 
@@ -264,9 +262,7 @@ def _project_messages(messages, model_request_parameters=None) -> tuple[list[dic
                     )
         elif isinstance(message, ModelResponse):
             response: dict[str, Any] = {"role": "assistant"}
-            text = "".join(
-                part.content for part in message.parts if isinstance(part, TextPart)
-            )
+            text = "".join(part.content for part in message.parts if isinstance(part, TextPart))
             calls = [
                 {
                     "id": part.tool_call_id,
@@ -294,17 +290,13 @@ def _project_messages(messages, model_request_parameters=None) -> tuple[list[dic
             if len(response) > 1:
                 projected.append(response)
         else:
-            projected.append(
-                {"role": "unknown", "content": to_jsonable_python(message)}
-            )
+            projected.append({"role": "unknown", "content": to_jsonable_python(message)})
     return projected, instruction_bytes
 
 
 def estimate_input(messages, model_request_parameters=None) -> InputEstimate:
     """估算实际 Provider 请求形状，并保留不含正文的长度组件。"""
-    projected_messages, instruction_bytes = _project_messages(
-        messages, model_request_parameters
-    )
+    projected_messages, instruction_bytes = _project_messages(messages, model_request_parameters)
     instruction_contents = (
         [part.content for part in model_request_parameters.instruction_parts or []]
         if model_request_parameters is not None
@@ -503,9 +495,7 @@ def _normalize_legacy_answer_response(
         or not isinstance(completion.get("reason_code"), str)
         or not isinstance(completion.get("reason"), str)
         or not isinstance(completion.get("incomplete_steps"), list)
-        or not all(
-            isinstance(item, str) for item in completion.get("incomplete_steps", [])
-        )
+        or not all(isinstance(item, str) for item in completion.get("incomplete_steps", []))
         or not isinstance(completion.get("can_continue"), bool)
     ):
         return response, None, {}
@@ -535,9 +525,7 @@ def _normalize_legacy_answer_response(
         blocks.append({"kind": "evidence", "evidence_handle": handle})
 
     try:
-        answer = DialogueAnswer.model_validate(
-            {"blocks": blocks, "needs_clarification": False}
-        )
+        answer = DialogueAnswer.model_validate({"blocks": blocks, "needs_clarification": False})
     except (ValidationError, ValueError, TypeError):
         return response, None, {}
     event = {
@@ -594,10 +582,17 @@ def compact_request_history(messages, parameters):
     while estimate_input(compacted, parameters).tokens >= INPUT_ESTIMATE_SOFT_LIMIT:
         # 框架会合并相邻消息且丢失消息 metadata。只删除程序标记的 TextPart，
         # 不能因合并把必要对象、当前用户输入、工具结果或 instructions 一起删掉。
-        target = next(((i, j) for i, message in enumerate(compacted)
-                       for j, part in enumerate(message.parts)
-                       if isinstance(part, TextPart) and part.provider_name == "grove-history"
-                       and (part.provider_details or {}).get("optional_history") is True), None)
+        target = next(
+            (
+                (i, j)
+                for i, message in enumerate(compacted)
+                for j, part in enumerate(message.parts)
+                if isinstance(part, TextPart)
+                and part.provider_name == "grove-history"
+                and (part.provider_details or {}).get("optional_history") is True
+            ),
+            None,
+        )
         if target is None:
             break
         index, part_index = target
@@ -608,16 +603,17 @@ def compact_request_history(messages, parameters):
         else:
             compacted.pop(index)
         removed += 1
-    return compacted, {"before_tokens": before, "removed_summaries": removed,
-                       "after_tokens": estimate_input(compacted, parameters).tokens}
+    return compacted, {
+        "before_tokens": before,
+        "removed_summaries": removed,
+        "after_tokens": estimate_input(compacted, parameters).tokens,
+    }
 
 
 class BudgetedModel(Model):
     """对每次底层 request 派发前预留额度，包括框架结构化重试。"""
 
-    def __init__(
-        self, wrapped: Model, state: Instrumentation, request_scope: str = "unknown"
-    ):
+    def __init__(self, wrapped: Model, state: Instrumentation, request_scope: str = "unknown"):
         super().__init__(settings=wrapped.settings, profile=wrapped.profile)
         self.wrapped = wrapped
         self.state = state
@@ -650,8 +646,7 @@ class BudgetedModel(Model):
         elif turn_requests > 0 and estimate >= INPUT_ESTIMATE_SOFT_LIMIT:
             reason = "input_soft_limit"
         elif (
-            turn_requests >= PER_TURN_TEXT_REQUESTS - 1
-            or batch_requests >= BATCH_TEXT_REQUESTS - 1
+            turn_requests >= PER_TURN_TEXT_REQUESTS - 1 or batch_requests >= BATCH_TEXT_REQUESTS - 1
         ):
             reason = "text_request_budget"
         finalize_only = self.state.context_policy_enabled and reason is not None
@@ -834,11 +829,9 @@ class BudgetedModel(Model):
             self.state.finalize_response_received = True
             self.state.finalize_status = "response_received"
         original_public_response = _public_response(response)
-        response, response_compatibility, legacy_claims = (
-            _normalize_legacy_answer_response(
-                response,
-                [tool.name for tool in dispatched_parameters.output_tools],
-            )
+        response, response_compatibility, legacy_claims = _normalize_legacy_answer_response(
+            response,
+            [tool.name for tool in dispatched_parameters.output_tools],
         )
         self.state.legacy_reference_claims.update(legacy_claims)
         if finalize_only and response_compatibility is not None:
@@ -852,8 +845,7 @@ class BudgetedModel(Model):
                 part.tool_name
                 for part in response.parts
                 if isinstance(part, ToolCallPart)
-                and part.tool_name
-                not in {tool.name for tool in dispatched_parameters.output_tools}
+                and part.tool_name not in {tool.name for tool in dispatched_parameters.output_tools}
             ]
             if finalize_only
             else []
@@ -862,21 +854,20 @@ class BudgetedModel(Model):
             {
                 "category": "finalize_tool_attempted",
                 "message": (
-                    "独立收尾响应尝试调用未注册资料工具："
-                    + "、".join(unexpected_finalize_tools)
+                    "独立收尾响应尝试调用未注册资料工具：" + "、".join(unexpected_finalize_tools)
                 ),
                 "errors": [{"tool_name": name} for name in unexpected_finalize_tools],
             }
             if unexpected_finalize_tools
             else (
-            _schema_diagnostic(
-                response,
-                {tool.name for tool in dispatched_parameters.output_tools},
-                {tool.name for tool in dispatched_parameters.function_tools},
-                dispatched_parameters.allow_text_output,
-            )
-            if self.request_scope == "dialogue_agent"
-            else None
+                _schema_diagnostic(
+                    response,
+                    {tool.name for tool in dispatched_parameters.output_tools},
+                    {tool.name for tool in dispatched_parameters.function_tools},
+                    dispatched_parameters.allow_text_output,
+                )
+                if self.request_scope == "dialogue_agent"
+                else None
             )
         )
         self.state.logs.append(
@@ -928,13 +919,13 @@ class BudgetedModel(Model):
 
 
 def install_instrumentation(state: Instrumentation) -> dict:
-    """导入旧执行链后替换其局部函数引用，返回覆盖核对摘要。"""
+    """导入统一循环使用的模型模块并替换局部函数引用，返回覆盖核对摘要。"""
     ai_models = importlib.import_module("app.services.ai_models")
     embedding = importlib.import_module("app.services.embedding")
     original_get_text_model = ai_models.get_text_model
     original_encode_text = embedding.encode_text
 
-    # 旧流程按开关动态导入；预先加载所有可能的模型模块，之后统一替换已绑定引用。
+    # 工具和上下文模块可能动态导入；预先加载后统一替换已绑定引用。
     module_names = (
         "app.agents.basis",
         "app.agents.composite_answer",
@@ -946,7 +937,6 @@ def install_instrumentation(state: Instrumentation) -> dict:
         "app.agents.semantic",
         "app.agents.structured_query",
         "app.services.vector_search",
-        "app.services.knowledge_agent.runner",
     )
     for name in module_names:
         importlib.import_module(name)
