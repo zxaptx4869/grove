@@ -23,4 +23,10 @@
 - [x] 4.1 增加无真实模型的适配器、状态映射、结果类型、隔离、幂等和 continuation 测试。
 - [x] 4.2 增加 API 短链路彩排：身份、项目列表、主题搜索、列表位置追问、当前 Entry 补充、候选稿。
 - [x] 4.3 运行后端相关测试、静态检查和 `openspec validate --all --strict`；记录实验台行为与正式 API 行为的差异。
-- [ ] 4.4 在适配器自动验证完成后停止，交由用户进行真实模型人工验收；本任务不接入 Web 页面。
+- [x] 4.4 完成真实模型人工验收并记录 provider/model、工具顺序、候选-only 与统计结果；本任务不接入 Web 页面。
+
+### 收尾验证记录
+
+- 真实 demo Workspace 使用 `deepseek/deepseek-v4-flash` 完成 9 轮正式 API 短链路；无离线 fallback。
+- `not_dispatched` 不再污染 `fallback_summary.has_fallback`，确定性 fallback 仍可识别。
+- `claimed_at IS NULL` 的历史 processing Run 明确失败收尾；旧 Worker 测试意图迁移到统一 dialogue-loop Worker 测试。

@@ -31,6 +31,11 @@ from app.models.knowledge_agent import (
     RUN_PARTIAL,
 )
 from app.services.knowledge_agent.observability import (
+    MODEL_CALL_FAILED,
+    MODEL_DETERMINISTIC_FALLBACK,
+    MODEL_NOT_DISPATCHED,
+    MODEL_OFFLINE_TEST,
+    MODEL_SUCCESS,
     StageMeta,
     record_model_invocation,
     run_fallback_summary,
@@ -299,7 +304,7 @@ async def _record_model_logs(
     if not logs:
         logs = [
             {
-                "kind": "text_not_dispatched",
+                "kind": "deterministic_fallback" if fallback else "text_not_dispatched",
                 "provider": "offline" if isinstance(model, TestModel) else "unknown",
                 "model": getattr(model, "model_name", None),
                 "duration_ms": 0,
@@ -308,6 +313,22 @@ async def _record_model_logs(
             }
         ]
     for log in logs:
+        kind = str(log.get("kind") or "")
+        if kind in {"text_not_dispatched", "not_dispatched"}:
+            outcome = MODEL_NOT_DISPATCHED
+        elif fallback or isinstance(model, TestModel) or kind in {
+            "deterministic_fallback",
+            "offline_test_model",
+        }:
+            outcome = (
+                MODEL_OFFLINE_TEST
+                if isinstance(model, TestModel)
+                else MODEL_DETERMINISTIC_FALLBACK
+            )
+        elif log.get("error"):
+            outcome = MODEL_CALL_FAILED
+        else:
+            outcome = MODEL_SUCCESS
         await record_model_invocation(
             db,
             run_id=run.id,
@@ -315,10 +336,15 @@ async def _record_model_logs(
                 purpose=str(log.get("request_scope") or log.get("kind") or "dialogue_agent"),
                 provider=str(log.get("provider") or "unknown"),
                 model=log.get("model"),
-                is_fallback=fallback or isinstance(model, TestModel) or bool(log.get("error")),
+                is_fallback=outcome in {
+                    MODEL_DETERMINISTIC_FALLBACK,
+                    MODEL_OFFLINE_TEST,
+                    MODEL_CALL_FAILED,
+                },
                 error=log.get("error"),
                 duration_ms=int(log.get("duration_ms") or 0),
                 usage=log.get("usage"),
+                outcome=outcome,
             ),
             prompt_version="dialogue-loop-v3",
         )

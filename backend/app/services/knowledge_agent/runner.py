@@ -83,6 +83,7 @@ from app.services.knowledge_agent.follow_up import (
 )
 from app.services.knowledge_agent.investigation import resolve_answer_mode
 from app.services.knowledge_agent.observability import (
+    MODEL_DETERMINISTIC_FALLBACK,
     StageMeta,
     record_model_invocation,
     record_reference_validation,
@@ -131,6 +132,7 @@ async def _record_server_fallback(
             provider="server",
             model=None,
             is_fallback=True,
+            outcome=MODEL_DETERMINISTIC_FALLBACK,
             error=error[:500],
             duration_ms=0,
         )
@@ -1065,6 +1067,7 @@ async def execute_run(db: AsyncSession, run: KnowledgeAgentRun) -> None:
                             provider="server",
                             model=None,
                             is_fallback=True,
+                            outcome=MODEL_DETERMINISTIC_FALLBACK,
                             error=f"共享执行图编译/初始化失败：{str(exc)[:500]}",
                             duration_ms=0,
                         )

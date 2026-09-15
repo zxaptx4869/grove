@@ -1047,6 +1047,9 @@ class KnowledgeAgentModelInvocation(Base):
     prompt_version: Mapped[str] = mapped_column(String(32), nullable=False)
     provider: Mapped[str] = mapped_column(String(32), nullable=False)
     model: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    outcome: Mapped[str] = mapped_column(
+        String(32), default="model_success", server_default="model_success", nullable=False
+    )
     is_fallback: Mapped[bool] = mapped_column(
         Boolean, default=False, server_default="0", nullable=False
     )

@@ -5,7 +5,7 @@ import json
 import logging
 from datetime import UTC, datetime
 
-from sqlalchemy import func, select, text, update
+from sqlalchemy import func, or_, select, text, update
 
 from app.core.config import get_settings
 from app.db.session import async_session_factory, engine
@@ -147,12 +147,16 @@ async def _finalize_cancelled_after_interrupt(run_id: int) -> None:
 def _stale_claimed_expr(lease_seconds: int):
     """数据库侧过期租约判定表达式，兼容 SQLite 与 MySQL 8。"""
     if engine.dialect.name == "sqlite":
-        return KnowledgeAgentRun.claimed_at <= func.datetime(
+        expired = KnowledgeAgentRun.claimed_at <= func.datetime(
             "now", f"-{lease_seconds} seconds"
         )
-    return KnowledgeAgentRun.claimed_at <= func.date_sub(
-        func.now(), text(f"INTERVAL {lease_seconds} SECOND")
-    )
+    else:
+        expired = KnowledgeAgentRun.claimed_at <= func.date_sub(
+            func.now(), text(f"INTERVAL {lease_seconds} SECOND")
+        )
+    # 正常领取一定会写入 claimed_at；NULL processing Run 是历史脏状态，
+    # 必须进入不可恢复收尾而不能被遗漏。
+    return or_(KnowledgeAgentRun.claimed_at.is_(None), expired)
 
 
 async def recover_stale_runs() -> int:
@@ -170,6 +174,13 @@ async def recover_stale_runs() -> int:
             )
         ).scalars().all()
         for run in rows:
+            if run.claimed_at is None:
+                await mark_run_failed(
+                    db,
+                    run,
+                    "历史 processing Run 缺少 claimed_at，无法安全恢复；已停止重试",
+                )
+                continue
             if run.current_step == "dialogue_loop":
                 try:
                     state = json.loads(run.dialogue_loop_state_json or "null")

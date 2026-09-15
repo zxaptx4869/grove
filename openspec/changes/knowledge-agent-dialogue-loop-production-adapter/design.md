@@ -45,6 +45,15 @@
 
 该字段是 continuation 跨服务重启安全恢复所需的最小迁移，迁移编号为 `fd4e5f6a7b8c`，不新增任何 Entry、Source 或权限字段。
 
+### 7. 可观测结果分类与历史 Run 收尾
+
+模型调用审计在保留原有 `is_fallback` 字段的同时增加 `outcome`：
+`model_success`、`not_dispatched`、`deterministic_fallback`、`offline_test_model` 和
+`model_call_failed`。预算停止点产生的未派发请求仍记录原因，但不把真实模型已成功完成的阶段标记为 fallback。
+
+Worker 将 `processing` 且缺少 `claimed_at` 的历史 Run 视为不可安全恢复，明确标记 `failed` 并释放活动槽；
+该路径不重新执行旧规划图、模型或工具，也不修改正式 Entry。
+
 ## Risks / Trade-offs
 
 - [持久化字段不足] → 已确认无法在不污染旧合同的前提下复用现有字段，采用 `dialogue_loop_state_json` 最小快照迁移，不复制实验 JSON。

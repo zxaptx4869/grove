@@ -3,11 +3,14 @@
 import json
 
 import pytest
+from pydantic_ai.models.function import FunctionModel
+from sqlalchemy import select
 
 from app.db.session import async_session_factory
-from app.models import KnowledgeAgentRun, KnowledgeMessage
+from app.models import KnowledgeAgentModelInvocation, KnowledgeAgentRun, KnowledgeMessage
 from app.schemas.knowledge_agent import KnowledgeConversationCreate, KnowledgeRunSubmitRequest
 from app.services.knowledge_agent.conversations import create_conversation
+from app.services.knowledge_agent.observability import MODEL_NOT_DISPATCHED
 from app.services.knowledge_agent.production_adapter import (
     _answer_status,
     _continuation_from_snapshot,
@@ -176,6 +179,85 @@ async def test_execute_persists_structured_blocks_and_candidate_only_result(monk
         assert saved.status == "completed"
         state = json.loads(saved.dialogue_loop_state_json)
         assert state["blocks"][0]["kind"] == "candidate"
+        fallback = json.loads(saved.fallback_summary)
+        assert fallback["has_fallback"] is True
+        assert fallback["stages"][0]["outcome"] == "deterministic_fallback"
         assistant = await db.get(KnowledgeMessage, saved.assistant_message_id)
         assert assistant is not None
         assert assistant.content == "这是候选内容。"
+
+
+@pytest.mark.asyncio
+async def test_real_model_not_dispatched_is_not_reported_as_fallback(monkeypatch) -> None:
+    """真实模型成功后，预算停止点只记录未派发，不污染 fallback 摘要。"""
+    async with async_session_factory() as db:
+        user = await create_user(db, "真实模型审计")
+        workspace = await create_workspace(db, user)
+        conversation = await create_conversation(
+            db,
+            workspace.id,
+            user.id,
+            KnowledgeConversationCreate(scope_type="workspace"),
+        )
+        _, run = await submit_message(
+            db,
+            conversation,
+            KnowledgeRunSubmitRequest(
+                client_message_id="production-observability-1",
+                message="列出项目",
+            ),
+        )
+        run.status = "processing"
+        run.current_step = "claim"
+        await db.commit()
+
+        def _respond(_messages, _info):
+            raise AssertionError("fake FunctionModel 不应被 run_turn 调用")
+
+        async def _get_text_model(_db, _workspace_id):
+            return FunctionModel(_respond, model_name="deepseek-v4-flash")
+
+        monkeypatch.setattr("app.services.ai_models.get_text_model", _get_text_model)
+
+        async def fake_turn(agent, state, message, history):
+            return (
+                {
+                    "status": "completed",
+                    "answer": "已完成真实模型阶段。",
+                    "blocks": [{"kind": "text", "text": "已完成真实模型阶段。"}],
+                    "completion": {"status": "completed", "can_continue": False},
+                    "model_calls": [
+                        {
+                            "kind": "text_not_dispatched",
+                            "provider": "deepseek",
+                            "model": "deepseek-v4-flash",
+                            "error": "达到求解停止点，当前求解请求未派发",
+                            "duration_ms": 0,
+                        }
+                    ],
+                    "tool_calls": [],
+                    "error": None,
+                },
+                [],
+            )
+
+        monkeypatch.setattr(
+            "app.services.knowledge_agent.production_adapter.run_turn", fake_turn
+        )
+        await execute_dialogue_loop_run(db, run)
+        await db.commit()
+        await db.refresh(run)
+
+        summary = json.loads(run.fallback_summary)
+        assert summary["has_fallback"] is False
+        assert summary["stages"][0]["outcome"] == MODEL_NOT_DISPATCHED
+        assert summary["stages"][0]["is_fallback"] is False
+        invocation = (
+            await db.execute(
+                select(KnowledgeAgentModelInvocation).where(
+                    KnowledgeAgentModelInvocation.run_id == run.id
+                )
+            )
+        ).scalar_one()
+        assert invocation.outcome == MODEL_NOT_DISPATCHED
+        assert invocation.is_fallback is False

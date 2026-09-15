@@ -6,8 +6,6 @@ from datetime import UTC, datetime, timedelta
 import pytest
 from sqlalchemy import select
 
-from app.agents.structured_query import StructuredQueryPlanDraft
-from app.core.config import get_settings
 from app.db.session import async_session_factory
 from app.knowledge_agent_worker import (
     claim_next_run,
@@ -47,14 +45,14 @@ from app.services.knowledge_agent.composite_answer_types import (
     CompositeExecutionInputSnapshot,
     CompositeToolFact,
 )
-from app.services.knowledge_agent.follow_up import ContextDecisionResult
 from app.services.knowledge_agent.observability import StageMeta
 from app.services.knowledge_agent.read_tools import ReadToolBudget, dispatch_read_tool
+from app.services.knowledge_agent.runner import RunCancelled
 from app.services.knowledge_agent.runs import submit_message
 from app.services.knowledge_agent.structured_query_tools import (
     STRUCTURED_QUERY_TOOL_REGISTRY,
 )
-from app.services.knowledge_agent.tools import RunToolContext, SearchToolOutput
+from app.services.knowledge_agent.tools import RunToolContext
 from app.services.knowledge_agent.working_set import (
     get_active_context_version,
     get_conversation_context_versions,
@@ -393,65 +391,25 @@ async def test_tool_call_fingerprint_reuses_committed_aggregate_result() -> None
 async def test_structured_query_cancel_during_plan_discards_late_plan(
     monkeypatch,
 ) -> None:
-    """规划期间取消后，迟到计划不固化且 Worker 原子释放活动槽。"""
-
-    async def _decide(db, **kwargs):
-        del db
-        message = kwargs["current_message"]
-        return ContextDecisionResult(
-            decision="new_topic",
-            standalone_query=message,
-            topic_label=message,
-            clarify_question=None,
-            degraded=False,
-            history_message_ids=[],
-            meta=StageMeta(
-                purpose="context_decision",
-                provider="server",
-                model=None,
-                is_fallback=False,
-                error=None,
-                duration_ms=0,
-            ),
-        )
-
-    async def _planner(db, workspace_id, **kwargs):
-        del db, workspace_id, kwargs
-        async with async_session_factory() as other:
-            row = await other.get(KnowledgeAgentRun, run_id)
-            assert row is not None
-            row.cancel_requested = True
-            await other.commit()
-        return (
-            StructuredQueryPlanDraft.model_validate(
-                {"entry_set": {}, "outputs": [{"kind": "count"}]}
-            ),
-            StageMeta(
-                purpose="structured_query_plan",
-                provider="test",
-                model="test-model",
-                is_fallback=False,
-                error=None,
-                duration_ms=1,
-            ),
-        )
-
-    monkeypatch.setattr("app.services.knowledge_agent.runner.decide_context", _decide)
-    monkeypatch.setattr(
-        "app.services.knowledge_agent.structured_query.run_structured_query_planner",
-        _planner,
-    )
-    monkeypatch.setattr(
-        get_settings(), "knowledge_agent_structured_query_enabled", True
-    )
+    """统一 dialogue-loop 在取消边界命中后不固化迟到结果。"""
     async with async_session_factory() as db:
         user = await create_user(db, "规划取消")
         workspace = await create_workspace(db, user)
-        _conversation, run = await _conversation_and_run(db, user, workspace, "统计知识")
-        run.request_result_mode = "entries"
+        _conversation, run = await _conversation_and_run(db, user, workspace)
         run_id = run.id
         await db.commit()
         await _cancel_other_waiting_runs(db, keep_run_id=run_id)
+
+    async def _adapter(db, current_run):
+        async with async_session_factory() as other:
+            row = await other.get(KnowledgeAgentRun, current_run.id)
+            row.cancel_requested = True
+            await other.commit()
+        raise RunCancelled("统一循环取消")
+
+    monkeypatch.setattr(
+        "app.knowledge_agent_worker.execute_dialogue_loop_run", _adapter
+    )
 
     assert await process_one_run() is True
     async with async_session_factory() as db:
@@ -459,8 +417,7 @@ async def test_structured_query_cancel_during_plan_discards_late_plan(
         assert final is not None
         assert final.status == RUN_CANCELLED
         assert final.active_slot is None
-        assert final.structured_query_plan_json is None
-        assert final.entry_result_json is None
+        assert final.answer_json is None
 
 
 async def _cancel_other_waiting_runs(
@@ -605,6 +562,45 @@ async def test_recover_stale_run_requeues_once_then_fails() -> None:
 
 
 @pytest.mark.asyncio
+async def test_recover_processing_run_without_claimed_at_marks_historical_run_failed() -> None:
+    """没有领取租约的历史 processing Run 不重试旧执行图，直接明确失败。"""
+    async with async_session_factory() as db:
+        user = await create_user(db, "历史脏数据")
+        workspace = await create_workspace(db, user)
+        conversation = KnowledgeConversation(
+            workspace_id=workspace.id,
+            owner_user_id=user.id,
+            scope_type=SCOPE_WORKSPACE,
+            title="历史恢复",
+        )
+        db.add(conversation)
+        await db.flush()
+        historical = KnowledgeAgentRun(
+            conversation_id=conversation.id,
+            workspace_id=workspace.id,
+            owner_user_id=user.id,
+            scope_type=SCOPE_WORKSPACE,
+            status=RUN_PROCESSING,
+            active_slot="active",
+            claimed_at=None,
+            current_step="context_decision",
+            run_kind="answer",
+            answer_json='{"answer":"不应重复执行"}',
+        )
+        db.add(historical)
+        await db.commit()
+
+        recovered = await recover_stale_runs()
+
+        assert recovered == 0
+        await db.refresh(historical)
+        assert historical.status == RUN_FAILED
+        assert historical.active_slot is None
+        assert historical.answer_json == '{"answer":"不应重复执行"}'
+        assert "缺少 claimed_at" in (historical.error or "")
+
+
+@pytest.mark.asyncio
 async def test_process_cancelled_run_releases_slot() -> None:
     """取消请求在领取后被处理：Run 标记 cancelled 且不写入回答。"""
     async with async_session_factory() as db:
@@ -639,25 +635,17 @@ async def test_cancel_from_other_session_during_processing(monkeypatch) -> None:
         await _cancel_other_waiting_runs(db, keep_run_id=run.id)
     run_id = run.id
 
-    async def _search_sets_cancel(
-        db,
-        ctx,
-        query,
-        *,
-        recall_limit,
-        context_limit,
-        seed_entries=None,
-    ):
-        """模拟 Worker 持有 run 对象期间，另一个会话提交取消请求。"""
+    async def _adapter(db, current_run):
+        """模拟统一循环持有 Run 期间，另一个会话提交取消请求。"""
         async with async_session_factory() as other:
-            other_run = await other.get(KnowledgeAgentRun, run_id)
+            other_run = await other.get(KnowledgeAgentRun, current_run.id)
             other_run.cancel_requested = True
             await other.commit()
-        return SearchToolOutput(items=[])
+        raise RunCancelled("跨会话取消")
 
     monkeypatch.setattr(
-        "app.services.knowledge_agent.runner.search_confirmed_knowledge",
-        _search_sets_cancel,
+        "app.knowledge_agent_worker.execute_dialogue_loop_run",
+        _adapter,
     )
     assert await process_one_run() is True
 
@@ -672,129 +660,80 @@ async def test_cancel_from_other_session_during_processing(monkeypatch) -> None:
 
 @pytest.mark.asyncio
 async def test_crash_recovery_requeues_and_retries_successfully(monkeypatch) -> None:
-    """执行中异常：Run 重新入队一次且不留下半成品回答；重试后正常完成。"""
+    """统一循环异常：Run 重新入队一次，重试后正常完成。"""
+    calls = 0
+
+    async def _adapter(db, run):
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            raise RuntimeError("模拟 dialogue-loop 进程崩溃")
+        run.status = RUN_COMPLETED
+        run.current_step = None
+        run.active_slot = None
+        run.error = None
+        run.answer_json = json.dumps(
+            {"answer": "统一循环恢复完成。", "status": "completed"},
+            ensure_ascii=False,
+        )
+        assistant = await db.get(KnowledgeMessage, run.assistant_message_id)
+        assistant.content = "统一循环恢复完成。"
+
+    monkeypatch.setattr(
+        "app.knowledge_agent_worker.execute_dialogue_loop_run", _adapter
+    )
     async with async_session_factory() as db:
         user = await create_user(db, "崩溃恢复")
         workspace = await create_workspace(db, user)
-        project = await create_project(db, workspace, "恢复项目")
-        node = await create_child_node(db, project, "施工")
-        source, attachment = await create_source_attachment(
-            db,
-            workspace,
-            project,
-            text_content="闭水试验通常持续 24 小时。",
-        )
-        await create_entry_with_evidence(
-            db,
-            project,
-            node,
-            source,
-            attachment,
-            title="闭水试验",
-            content="闭水试验通常持续 24 小时。",
-            quote="闭水试验通常持续 24 小时",
-        )
         _conversation, run = await _conversation_and_run(db, user, workspace)
         await db.commit()
         await _cancel_other_waiting_runs(db, keep_run_id=run.id)
+        run_id = run.id
 
-        # 第一次执行：构建引用阶段模拟崩溃
-        async def _boom(db, run_id, draft, **kwargs):
-            raise RuntimeError("模拟进程崩溃")
+    assert await process_one_run() is True
 
-        with monkeypatch.context() as ctx:
-            ctx.setattr(
-                "app.services.knowledge_agent.runner.build_validated_answer",
-                _boom,
-            )
-            assert await process_one_run() is True
+    async with async_session_factory() as db:
+        run = await db.get(KnowledgeAgentRun, run_id)
+        assert run.status == RUN_WAITING
+        assert run.retry_count == 1
+        assert run.answer_json is None
 
-        async with async_session_factory() as db:
-            run = await db.get(KnowledgeAgentRun, run.id)
-            assert run.status == RUN_WAITING
-            assert run.retry_count == 1
-            assert run.claimed_at is None
-            assert run.answer_json is None
-            assistant = await db.get(KnowledgeMessage, run.assistant_message_id)
-            assert assistant.content == ""
-
-        # 第二次执行：正常完成
-        async with async_session_factory() as db:
-            run = await db.get(KnowledgeAgentRun, run.id)
-            ctx2 = RunToolContext(
-                run_id=run.id,
-                workspace_id=workspace.id,
-                owner_user_id=user.id,
-                scope_type=SCOPE_WORKSPACE,
-                project_id=None,
-                project_name=None,
-            )
-            verified = await _evidence_for_run(db, ctx2)
-            handle = verified[0].evidence_handle
-            await db.commit()
-        monkeypatch.setattr(
-            "app.services.knowledge_agent.runner.run_knowledge_answer_agent",
-            _fake_answer_agent(
-                KnowledgeAnswerDraft(
-                    answer="闭水试验通常持续 24 小时。",
-                    citations=[KnowledgeCitationDraft(evidence_handle=handle)],
-                )
-            ),
-        )
-        assert await process_one_run() is True
-        async with async_session_factory() as db:
-            run = await db.get(KnowledgeAgentRun, run.id)
-            assert run.status == RUN_PARTIAL
-            assert run.active_slot is None
-            answer = json.loads(run.answer_json)
-            assert answer["citations"][0]["quote"] == "闭水试验通常持续 24 小时"
+    assert await process_one_run() is True
+    async with async_session_factory() as db:
+        run = await db.get(KnowledgeAgentRun, run_id)
+        assert run.status == RUN_COMPLETED
+        assert run.active_slot is None
+        assert calls == 2
+        assert json.loads(run.answer_json)["status"] == "completed"
 
 
 @pytest.mark.asyncio
 async def test_retry_limit_exhausted_marks_failed(monkeypatch) -> None:
-    """超过恢复上限：Run 进入 failed 终态并释放活动槽。"""
+    """统一循环持续失败且超过重试上限：Run 进入 failed 终态。"""
+    async def _boom(db, run):
+        raise RuntimeError("持续失败")
+
+    monkeypatch.setattr(
+        "app.knowledge_agent_worker.execute_dialogue_loop_run", _boom
+    )
     async with async_session_factory() as db:
         user = await create_user(db, "超限")
         workspace = await create_workspace(db, user)
-        project = await create_project(db, workspace, "超限项目")
-        node = await create_child_node(db, project, "施工")
-        source, attachment = await create_source_attachment(
-            db,
-            workspace,
-            project,
-            text_content="闭水试验通常持续 24 小时。",
-        )
-        await create_entry_with_evidence(
-            db,
-            project,
-            node,
-            source,
-            attachment,
-            title="闭水试验",
-            content="闭水试验通常持续 24 小时。",
-            quote="闭水试验通常持续 24 小时",
-        )
         _conversation, run = await _conversation_and_run(db, user, workspace)
         run.max_retries = 0
         await db.commit()
         await _cancel_other_waiting_runs(db, keep_run_id=run.id)
-
-        async def _boom(db, run_id, draft, **kwargs):
-            raise RuntimeError("持续失败")
-
-        monkeypatch.setattr(
-            "app.services.knowledge_agent.runner.build_validated_answer",
-            _boom,
-        )
-        assert await process_one_run() is True
-        async with async_session_factory() as db:
-            run = await db.get(KnowledgeAgentRun, run.id)
-            assert run.status == RUN_FAILED
-            assert run.active_slot is None
-            assert "超过恢复上限" in (run.error or "")
-            assert run.answer_json is None
+        run_id = run.id
+    assert await process_one_run() is True
+    async with async_session_factory() as db:
+        run = await db.get(KnowledgeAgentRun, run_id)
+        assert run.status == RUN_FAILED
+        assert run.active_slot is None
+        assert "超过恢复上限" in (run.error or "")
+        assert run.answer_json is None
 
 
+@pytest.mark.skip(reason="旧规划图意图已迁移到统一 dialogue-loop 测试")
 @pytest.mark.asyncio
 async def test_crash_recovery_reuses_input_version_without_duplicates(
     monkeypatch,
@@ -949,6 +888,7 @@ async def test_crash_recovery_reuses_input_version_without_duplicates(
             assert assistant.content == "闭水试验验收前不得提前放水。"
 
 
+@pytest.mark.skip(reason="旧依据规划图意图已迁移到统一 dialogue-loop 测试")
 @pytest.mark.asyncio
 async def test_basis_crash_recovery_reuses_plan_without_replan(monkeypatch) -> None:
     """依据规划已提交后崩溃：恢复复用同一策略，不重复调用规划器。"""
@@ -1099,6 +1039,7 @@ def _open_fake_answer_agent(handle: str):
     return _fake
 
 
+@pytest.mark.skip(reason="旧开放回答图意图已迁移到统一 dialogue-loop 测试")
 @pytest.mark.asyncio
 async def test_cancelled_open_run_does_not_commit_late_answer_or_basis(
     monkeypatch,
@@ -1194,3 +1135,87 @@ async def test_cancelled_open_run_does_not_commit_late_answer_or_basis(
         assert run.answer_basis_json is None
         # 规划检查点已提交：策略保留供审计，未漂移为其他模式
         assert run.planned_basis_strategy == "model_first"
+
+
+@pytest.mark.asyncio
+async def test_dialogue_loop_retry_reuses_same_run_without_duplicate_messages(monkeypatch) -> None:
+    """统一循环崩溃重试复用同一 Run，不重复创建消息。"""
+    calls: list[int] = []
+
+    async def _adapter(db, run):
+        calls.append(run.id)
+        if len(calls) == 1:
+            raise RuntimeError("统一循环中途崩溃")
+        run.status = RUN_COMPLETED
+        run.current_step = None
+        run.active_slot = None
+        run.answer_json = json.dumps({"answer": "恢复成功", "status": "completed"})
+
+    monkeypatch.setattr(
+        "app.knowledge_agent_worker.execute_dialogue_loop_run", _adapter
+    )
+    async with async_session_factory() as db:
+        user = await create_user(db, "统一循环重试")
+        workspace = await create_workspace(db, user)
+        conversation, run = await _conversation_and_run(db, user, workspace)
+        run_id = run.id
+        await db.commit()
+        await _cancel_other_waiting_runs(db, keep_run_id=run_id)
+
+    assert await process_one_run() is True
+    async with async_session_factory() as db:
+        waiting = await db.get(KnowledgeAgentRun, run_id)
+        assert waiting.status == RUN_WAITING
+        messages = (
+            await db.execute(
+                select(KnowledgeMessage).where(
+                    KnowledgeMessage.conversation_id == conversation.id
+                )
+            )
+        ).scalars().all()
+        assert len(messages) == 2
+
+    assert await process_one_run() is True
+    async with async_session_factory() as db:
+        completed = await db.get(KnowledgeAgentRun, run_id)
+        assert completed.status == RUN_COMPLETED
+        assert calls == [run_id, run_id]
+        messages = (
+            await db.execute(
+                select(KnowledgeMessage).where(
+                    KnowledgeMessage.conversation_id == conversation.id
+                )
+            )
+        ).scalars().all()
+        assert len(messages) == 2
+
+
+@pytest.mark.asyncio
+async def test_dialogue_loop_cancel_discards_late_answer(monkeypatch) -> None:
+    """统一循环取消边界丢弃迟到回答，不固化旧规划状态。"""
+    async def _adapter(db, run):
+        async with async_session_factory() as other:
+            row = await other.get(KnowledgeAgentRun, run.id)
+            row.cancel_requested = True
+            await other.commit()
+        raise RunCancelled("统一循环取消")
+
+    monkeypatch.setattr(
+        "app.knowledge_agent_worker.execute_dialogue_loop_run", _adapter
+    )
+    async with async_session_factory() as db:
+        user = await create_user(db, "统一循环取消")
+        workspace = await create_workspace(db, user)
+        _conversation, run = await _conversation_and_run(db, user, workspace)
+        run_id = run.id
+        await db.commit()
+        await _cancel_other_waiting_runs(db, keep_run_id=run_id)
+
+    assert await process_one_run() is True
+    async with async_session_factory() as db:
+        cancelled = await db.get(KnowledgeAgentRun, run_id)
+        assert cancelled.status == RUN_CANCELLED
+        assert cancelled.active_slot is None
+        assert cancelled.answer_json is None
+        assistant = await db.get(KnowledgeMessage, cancelled.assistant_message_id)
+        assert assistant.content == ""

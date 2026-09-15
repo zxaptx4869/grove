@@ -33,6 +33,14 @@ AFFECTED_TOOL_STATUSES = {
     TOOL_CANCELLED,
 }
 
+# 模型调用结果分类。`is_fallback` 继续作为兼容字段表示是否影响结果可信度，
+# outcome 用于区分真实降级、未派发和模型失败等不同原因。
+MODEL_SUCCESS = "model_success"
+MODEL_NOT_DISPATCHED = "not_dispatched"
+MODEL_DETERMINISTIC_FALLBACK = "deterministic_fallback"
+MODEL_OFFLINE_TEST = "offline_test_model"
+MODEL_CALL_FAILED = "model_call_failed"
+
 
 @dataclass
 class StageMeta:
@@ -45,6 +53,7 @@ class StageMeta:
     error: str | None
     duration_ms: int
     usage: dict | None = None
+    outcome: str = MODEL_SUCCESS
 
 
 def serialize_model_usage(usage: dict | None) -> str | None:
@@ -113,6 +122,14 @@ async def record_model_invocation(
 ) -> None:
     """持久化一次 embedding / 重排 / 回答模型调用。"""
     resolved_usage = usage if usage is not None else meta.usage
+    outcome = meta.outcome
+    if outcome == MODEL_SUCCESS and meta.is_fallback:
+        if meta.provider == "offline" or meta.model == "offline":
+            outcome = MODEL_OFFLINE_TEST
+        elif meta.error:
+            outcome = MODEL_CALL_FAILED
+        else:
+            outcome = MODEL_DETERMINISTIC_FALLBACK
     db.add(
         KnowledgeAgentModelInvocation(
             run_id=run_id,
@@ -121,6 +138,7 @@ async def record_model_invocation(
             provider=meta.provider,
             model=meta.model,
             is_fallback=meta.is_fallback,
+            outcome=outcome,
             error=meta.error,
             duration_ms=meta.duration_ms,
             usage_json=serialize_model_usage(resolved_usage),
@@ -147,6 +165,7 @@ async def record_reference_validation(
             prompt_version="server",
             provider="server",
             model=None,
+            outcome=MODEL_DETERMINISTIC_FALLBACK,
             is_fallback=True,
             error=(
                 f"{note}（请求 {stats.requested_count} / 有效 {stats.valid_count} / "
@@ -181,6 +200,11 @@ async def run_fallback_summary(
         {
             "purpose": item.purpose,
             "is_fallback": item.is_fallback,
+            "outcome": (
+                _legacy_model_outcome(item)
+                if item.is_fallback and item.outcome == MODEL_SUCCESS
+                else item.outcome or _legacy_model_outcome(item)
+            ),
             "provider": item.provider,
             "model": item.model,
             "error": item.error,
@@ -195,9 +219,23 @@ async def run_fallback_summary(
             {
                 "purpose": f"tool:{item.tool_name}",
                 "is_fallback": True,
+                "outcome": MODEL_CALL_FAILED,
                 "provider": None,
                 "model": None,
                 "error": item.error or item.status,
             }
         )
     return {"has_fallback": any(stage["is_fallback"] for stage in stages), "stages": stages}
+
+
+def _legacy_model_outcome(item: KnowledgeAgentModelInvocation) -> str:
+    """为迁移前没有 outcome 的记录提供稳定分类。"""
+    if item.is_fallback:
+        if item.provider == "offline" or item.model == "offline":
+            return MODEL_OFFLINE_TEST
+        if item.error:
+            return MODEL_CALL_FAILED
+        return MODEL_DETERMINISTIC_FALLBACK
+    if item.error:
+        return MODEL_NOT_DISPATCHED
+    return MODEL_SUCCESS

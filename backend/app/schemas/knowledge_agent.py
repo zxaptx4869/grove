@@ -527,6 +527,7 @@ class FallbackStageOut(BaseModel):
 
     purpose: str
     is_fallback: bool
+    outcome: str = "unknown"
     provider: str | None = None
     model: str | None = None
     error: str | None = None
@@ -873,6 +874,7 @@ class KnowledgeModelInvocationOut(BaseModel):
     prompt_version: str
     provider: str
     model: str | None = None
+    outcome: str = "unknown"
     is_fallback: bool = False
     error: str | None = None
     duration_ms: int

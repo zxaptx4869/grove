@@ -731,6 +731,7 @@ async def get_run_observability_endpoint(
                 prompt_version=item.prompt_version,
                 provider=item.provider,
                 model=item.model,
+                outcome=item.outcome,
                 is_fallback=item.is_fallback,
                 error=item.error,
                 duration_ms=item.duration_ms,
