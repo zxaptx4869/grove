@@ -8,6 +8,7 @@ import {
   FolderTree,
   House,
   Inbox,
+  MessageCircle,
   KeyRound,
   ListChecks,
   LogOut,
@@ -82,6 +83,12 @@ function GlobalNavItems() {
         className={({ isActive }) => `flex min-h-[38px] items-center gap-[9px] rounded-md px-2.5 text-body ${isActive ? 'bg-brand-soft font-semibold text-brand' : 'text-muted-foreground hover:bg-muted hover:text-foreground'}`}
       >
         <Inbox className="size-4" />收集箱
+      </NavLink>
+      <NavLink
+        to="/agent"
+        className={({ isActive }) => `flex min-h-[38px] items-center gap-[9px] rounded-md px-2.5 text-body ${isActive ? 'bg-brand-soft font-semibold text-brand' : 'text-muted-foreground hover:bg-muted hover:text-foreground'}`}
+      >
+        <MessageCircle className="size-4" />知识 Agent
       </NavLink>
       <NavLink
         to="/search"

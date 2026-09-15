@@ -20,6 +20,9 @@ const ReviewPage = lazy(() =>
 const InboxPage = lazy(() =>
   import('@/pages/InboxPage').then((module) => ({ default: module.InboxPage })),
 )
+const KnowledgeAgentPage = lazy(() =>
+  import('@/pages/KnowledgeAgentPage').then((module) => ({ default: module.KnowledgeAgentPage })),
+)
 const SourceHistoryPage = lazy(() =>
   import('@/pages/SourceHistoryPage').then((module) => ({ default: module.SourceHistoryPage })),
 )
@@ -73,6 +76,7 @@ export default function App() {
           <Route path="/projects/:projectId" element={<Suspense fallback={<PageFallback />}><ProjectPage /></Suspense>} />
           <Route path="/projects/:projectId/review" element={<Suspense fallback={<PageFallback />}><ReviewPage /></Suspense>} />
           <Route path="/inbox" element={<Suspense fallback={<PageFallback />}><InboxPage /></Suspense>} />
+          <Route path="/agent" element={<Suspense fallback={<PageFallback />}><KnowledgeAgentPage /></Suspense>} />
           <Route path="/sources" element={<Suspense fallback={<PageFallback />}><SourceHistoryPage /></Suspense>} />
           <Route path="/search" element={<Suspense fallback={<PageFallback />}><SearchPage /></Suspense>} />
           <Route path="/settings/ai" element={<Suspense fallback={<PageFallback />}><AISettingsPage /></Suspense>} />

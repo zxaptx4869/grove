@@ -57,6 +57,15 @@ function renderShell(initialPath: string) {
 }
 
 describe('AppShell 项目切换下拉', () => {
+  it('全局导航显示知识 Agent 入口', async () => {
+    stubFetch()
+    renderShell('/projects')
+
+    const link = await screen.findByRole('link', { name: '知识 Agent' })
+    expect(link).toHaveAttribute('href', '/agent')
+    vi.unstubAllGlobals()
+  })
+
   it('项目工作台项目名可展开下拉，按状态分组展示全部非归档项目', async () => {
     stubFetch()
     renderShell('/projects/1')

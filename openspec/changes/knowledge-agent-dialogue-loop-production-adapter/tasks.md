@@ -30,3 +30,18 @@
 - 真实 demo Workspace 使用 `deepseek/deepseek-v4-flash` 完成 9 轮正式 API 短链路；无离线 fallback。
 - `not_dispatched` 不再污染 `fallback_summary.has_fallback`，确定性 fallback 仍可识别。
 - `claimed_at IS NULL` 的历史 processing Run 明确失败收尾；旧 Worker 测试意图迁移到统一 dialogue-loop Worker 测试。
+
+## 5. Grove Web 薄壳接入
+
+- [x] 5.1 在 Grove AppShell 增加知识 Agent 入口和正式 Conversation/Message/Run API 客户端，不接入实验台服务或存储。
+- [x] 5.2 实现会话列表、消息去重、发送、轮询、停止、新建会话、刷新恢复和 continuation 继续操作。
+- [x] 5.3 按正式 `dialogue_blocks` 类型渲染 text/list/statistic/entry/evidence/candidate/insufficient，并移除右侧运行状态面板。
+- [x] 5.4 增加前端确定性测试，覆盖入口、会话、消息、处理中/停止、结构化结果、partial/continue、刷新、空结果和错误结果。
+- [x] 5.5 运行前端测试、typecheck、lint、相关后端测试和 OpenSpec 严格校验；人工浏览器验收另行记录。
+
+### Web 阶段验证记录
+
+- 前端全量测试：30 个测试文件、144 个测试通过。
+- `npm run typecheck`、`npm run build` 通过；`npm run lint` 无错误，仅保留既有 `DirectoryDraftDialog.tsx` hooks warning。
+- 相关后端 Agent 测试通过，`openspec validate --all --strict` 通过 62 项。
+- 仍待人工浏览器验收：登录后的 `/agent` 入口、真实 DeepSeek 对话、长对话滚动与 1024/1280/1440/1600px 布局。

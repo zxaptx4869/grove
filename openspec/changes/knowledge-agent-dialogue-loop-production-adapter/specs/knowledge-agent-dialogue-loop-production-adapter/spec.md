@@ -83,3 +83,40 @@
 
 - **WHEN** 统一循环无法完成模型调用并使用确定性兜底
 - **THEN** 运行记录标记 fallback 及原因，API 状态或可审计记录可识别该降级
+
+### Requirement: Grove Web SHALL be a thin client of the formal Agent API
+
+Grove Web SHALL use the formal Conversation, Message, Run, cancel and observability APIs; it SHALL NOT call the experiment workbench service, persist experiment JSON, or implement a second orchestration path.
+
+#### Scenario: Agent entry opens a formal conversation
+
+- **WHEN** authenticated user opens the Knowledge Agent entry in the Grove sidebar
+- **THEN** the page lists or creates a formal Workspace conversation and restores its messages through the formal API
+
+#### Scenario: Active Run is polled without duplicate messages
+
+- **WHEN** a submitted Run is waiting or processing
+- **THEN** the client refreshes the formal message page until a terminal state and renders each user/assistant message once by server IDs
+
+### Requirement: Web SHALL render result blocks and terminal states by contract
+
+The Web client SHALL render `text`, `list`, `statistic`, Entry, Evidence, candidate and insufficient blocks from API type fields, and SHALL expose completed, partial, not-executed, unsupported, failed and continuation states without inferring from titles, natural language or handles.
+
+#### Scenario: Structured results keep their types
+
+- **WHEN** a Run returns a project list, statistic, Entry, Evidence or candidate block
+- **THEN** the corresponding result view is rendered and project lists, statistics, Entries and candidates remain visibly distinct
+
+#### Scenario: Continuation is explicit
+
+- **WHEN** a terminal Run returns `can_continue=true`
+- **THEN** the assistant message exposes a Continue action that submits a formal next message; it does not copy or mutate continuation state in the browser
+
+### Requirement: Web SHALL remove the diagnostic side rail
+
+The formal Grove Agent page SHALL omit the experiment workbench right-side runtime status panel while retaining backend observability and showing only compact per-message execution details where useful.
+
+#### Scenario: No right runtime panel is rendered
+
+- **WHEN** the Agent page is rendered
+- **THEN** only the Grove app shell, conversation list and chat area are shown; provider, budget, snapshot and runtime diagnostics are not rendered as a side panel

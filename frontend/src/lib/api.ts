@@ -1065,3 +1065,179 @@ export const submitDirectoryDraftMessage = (
       body: JSON.stringify({ content }),
     },
   )
+
+export type KnowledgeRunStatus =
+  | 'waiting'
+  | 'processing'
+  | 'completed'
+  | 'partial'
+  | 'failed'
+  | 'cancelled'
+
+export type KnowledgeBlockKind =
+  | 'text'
+  | 'list'
+  | 'statistic'
+  | 'entry'
+  | 'evidence'
+  | 'candidate'
+  | 'candidate_text_only'
+  | 'insufficient'
+
+export interface KnowledgeAnswerBlock {
+  kind: KnowledgeBlockKind
+  text?: string
+  label?: string
+  title?: string
+  content?: string
+  project_name?: string | null
+  node_path?: string | null
+  source_id?: number | null
+  source_title?: string | null
+  entry_id?: number | null
+  entry_title?: string | null
+  value?: number | string | null
+  result_type?: string | null
+  completeness?: string | null
+  items?: Array<Record<string, unknown>>
+  buckets?: Array<{ key?: string; label?: string; count?: number }>
+  semantics?: {
+    subject?: string
+    query_object?: string
+    project_name?: string | null
+    display_name?: string
+    total_count?: number | null
+    returned_count?: number | null
+    completeness?: string
+    result_role?: 'candidate' | 'authorized'
+    relevance_scope?: string
+    group_by?: string | null
+    group_by_display_name?: string | null
+  }
+}
+
+export interface KnowledgeConversationPayload {
+  id: number
+  title: string
+  scope_type: 'workspace' | 'project'
+  project_id: number | null
+  project_name: string | null
+  recent_run_id: number | null
+  recent_run_status: KnowledgeRunStatus | null
+  recent_run_current_step: string | null
+  recent_run_updated_at: string | null
+  last_activity_at: string
+  created_at: string
+}
+
+export interface KnowledgeMessagePayload {
+  id: number
+  conversation_id: number
+  role: 'user' | 'assistant' | 'system'
+  message_type: 'user' | 'assistant' | 'scope_change'
+  content: string
+  client_message_id: string | null
+  run_id: number | null
+  scope_type: 'workspace' | 'project'
+  project_id: number | null
+  project_name: string | null
+  created_at: string
+}
+
+export interface KnowledgeRunPayload {
+  id: number
+  conversation_id: number
+  status: KnowledgeRunStatus
+  current_step: string | null
+  user_message_id: number | null
+  assistant_message_id: number | null
+  error: string | null
+  dialogue_loop_status: string | null
+  dialogue_blocks: KnowledgeAnswerBlock[]
+  can_continue: boolean
+  continuation: Record<string, unknown> | null
+  answer: { answer?: string | null } | null
+  created_at: string
+  updated_at: string
+}
+
+export interface KnowledgeMessagePagePayload {
+  items: KnowledgeMessagePayload[]
+  next_cursor: string | null
+  runs: KnowledgeRunPayload[]
+}
+
+export interface KnowledgeRunSubmitPayload {
+  user_message: KnowledgeMessagePayload
+  run: KnowledgeRunPayload
+}
+
+export interface KnowledgeToolCallPayload {
+  id: number
+  sequence: number
+  tool_name: string
+  status: string
+  error: string | null
+  duration_ms: number
+}
+
+export interface KnowledgeModelInvocationPayload {
+  id: number
+  purpose: string
+  provider: string
+  model: string | null
+  outcome: string
+  is_fallback: boolean
+  error: string | null
+  duration_ms: number
+}
+
+export interface KnowledgeObservabilityPayload {
+  run_id: number
+  tool_calls: KnowledgeToolCallPayload[]
+  model_invocations: KnowledgeModelInvocationPayload[]
+}
+
+export const listKnowledgeConversations = () =>
+  request<KnowledgeConversationPayload[]>('/api/knowledge-agent/conversations')
+
+export const createKnowledgeConversation = () =>
+  request<KnowledgeConversationPayload>('/api/knowledge-agent/conversations', {
+    method: 'POST',
+    body: JSON.stringify({ scope_type: 'workspace' }),
+  })
+
+export const fetchKnowledgeMessages = (conversationId: number) =>
+  request<KnowledgeMessagePagePayload>(
+    `/api/knowledge-agent/conversations/${conversationId}/messages?limit=100`,
+  )
+
+export const submitKnowledgeMessage = (
+  conversationId: number,
+  message: string,
+  clientMessageId: string,
+) =>
+  request<KnowledgeRunSubmitPayload>(
+    `/api/knowledge-agent/conversations/${conversationId}/messages`,
+    {
+      method: 'POST',
+      body: JSON.stringify({
+        message,
+        client_message_id: clientMessageId,
+        context_mode: 'auto',
+        answer_mode: 'auto',
+        result_mode: 'auto',
+        basis_mode: 'knowledge_only',
+      }),
+    },
+  )
+
+export const cancelKnowledgeRun = (runId: number) =>
+  request<KnowledgeRunPayload>(`/api/knowledge-agent/runs/${runId}/cancel`, {
+    method: 'POST',
+  })
+
+export const fetchKnowledgeRunObservability = (runId: number) =>
+  request<KnowledgeObservabilityPayload>(
+    `/api/knowledge-agent/runs/${runId}/observability`,
+  )

@@ -15,7 +15,7 @@
 
 - 不把实验台运行时直接作为生产服务依赖。
 - 不保留旧多级规划链作为同请求的隐式 fallback。
-- 不在本 change 接入前端页面或移动端。
+- 不接入移动端页面；本阶段 Web 只实现 Grove 桌面应用壳内的薄展示层。
 
 ## Decisions
 
@@ -53,6 +53,12 @@
 
 Worker 将 `processing` 且缺少 `claimed_at` 的历史 Run 视为不可安全恢复，明确标记 `failed` 并释放活动槽；
 该路径不重新执行旧规划图、模型或工具，也不修改正式 Entry。
+
+### 8. Grove Web 薄壳接入
+
+Web 页面复用现有 AppShell，在全局导航增加知识 Agent 入口；页面内部只保留会话列表和对话区，不再渲染实验台右侧运行状态栏。会话、消息、Run、取消和可观测记录全部通过正式 `/api/knowledge-agent` 接口读取，前端不持有实验台进程内状态，也不解析实验台 JSON。
+
+消息按正式 API 返回的消息 ID 和 Run ID 去重。轮询只刷新活动 Run，终态后读取最新消息、`dialogue_blocks` 和 observability；结构化块由 `kind` 与结果语义直接映射到展示组件。`can_continue` 只显示“继续”操作，点击后提交普通正式消息，由后端恢复 continuation。
 
 ## Risks / Trade-offs
 
