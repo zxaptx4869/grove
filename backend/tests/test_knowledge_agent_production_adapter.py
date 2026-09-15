@@ -1,0 +1,181 @@
+"""正式 dialogue-loop 适配器的确定性边界测试。"""
+
+import json
+
+import pytest
+
+from app.db.session import async_session_factory
+from app.models import KnowledgeAgentRun, KnowledgeMessage
+from app.schemas.knowledge_agent import KnowledgeConversationCreate, KnowledgeRunSubmitRequest
+from app.services.knowledge_agent.conversations import create_conversation
+from app.services.knowledge_agent.production_adapter import (
+    _answer_status,
+    _continuation_from_snapshot,
+    _continuation_snapshot,
+    _restore_state,
+    _run_status,
+    _state_snapshot,
+    execute_dialogue_loop_run,
+)
+from app.services.knowledge_agent.runs import submit_message
+from evals.dialogue_loop.core import BudgetLedger, ContinuationState
+from evals.dialogue_loop.instrumentation import Instrumentation
+from evals.dialogue_loop.loop import LoopState
+from tests._knowledge_agent_fixtures import create_user, create_workspace
+
+
+def _state() -> LoopState:
+    ledger = BudgetLedger()
+    state = LoopState(
+        workspace_id=11,
+        user_id=22,
+        conversation_id=33,
+        ledger=ledger,
+        instrumentation=Instrumentation(ledger),
+        scope_type="project",
+        project_id=44,
+        project_name="项目甲",
+    )
+    state.begin_turn(55, "列出项目记录")
+    return state
+
+
+def test_production_state_round_trip_preserves_scope_results_and_continuation() -> None:
+    state = _state()
+    handle = state.store_result(
+        "list",
+        {"items": [{"entry_id": 7, "title": "记录"}]},
+        "completed",
+        "limited",
+        semantics={"project_name": "项目甲"},
+    )
+    state.evidence["ev-1"] = {"entry_id": 7, "source_id": 8}
+    state.continuation = ContinuationState(
+        task_type="finalize_answer",
+        tool_name="finalize_answer",
+        scope={"workspace_id": 11, "user_id": 22, "authorized_entry_ids": [7]},
+        pending_steps=[{"step": "finalize_answer"}],
+        recoverable_material={
+            "mode": "grove_material",
+            "records": {
+                handle: {
+                    "kind": "list",
+                    "payload": {"items": [{"entry_id": 7, "title": "记录"}]},
+                    "status": "completed",
+                    "completeness": "limited",
+                    "turn_index": 1,
+                    "semantics": {"project_name": "项目甲"},
+                    "displayable": True,
+                }
+            },
+            "evidence": state.evidence,
+            "events": [],
+        },
+        validation_refs={"entry_ids": [7], "source_ids": [8]},
+    )
+    snapshot = _state_snapshot(
+        state,
+        {
+            "status": "partial_completed",
+            "answer": "已读取记录，等待收尾。",
+            "blocks": [{"kind": "entry", "entry_id": 7}],
+            "completion": {
+                "status": "partial_completed",
+                "can_continue": True,
+                "continuation": _continuation_snapshot(state.continuation),
+            },
+            "model_calls": [],
+        },
+        loop_status="partial_completed",
+    )
+    restored = _state()
+    _restore_state(restored, json.loads(json.dumps(snapshot, ensure_ascii=False)))
+    assert restored.project_id == 44
+    assert restored.authorized_entry_ids == {7}
+    assert restored.result_sets[handle].payload["items"][0]["entry_id"] == 7
+    assert restored.continuation is not None
+    assert restored.continuation.pending_steps == [{"step": "finalize_answer"}]
+    assert restored.continuation.validation_refs["source_ids"] == [8]
+
+
+def test_terminal_and_answer_status_mapping_is_programmatic() -> None:
+    assert _run_status("completed") == "completed"
+    assert _run_status("partial_completed") == "partial"
+    assert _run_status("unsupported") == "failed"
+    assert _answer_status("completed", [{"kind": "list"}]) == "completed"
+    assert _answer_status("completed", [{"kind": "insufficient", "text": "缺口"}]) == "insufficient"
+    assert _answer_status("partial_completed", []) == "partial"
+
+
+def test_continuation_snapshot_is_separate_from_public_material_summary() -> None:
+    continuation = ContinuationState(
+        task_type="finalize_answer",
+        tool_name="finalize_answer",
+        recoverable_material={"records": {"rs-1": {"payload": {"items": []}}}},
+    )
+    snapshot = _continuation_snapshot(continuation)
+    assert snapshot is not None
+    assert "recoverable_material" in snapshot
+    assert "recoverable_material" not in continuation.snapshot()
+    assert _continuation_from_snapshot(snapshot).task_type == "finalize_answer"
+
+
+@pytest.mark.asyncio
+async def test_execute_persists_structured_blocks_and_candidate_only_result(monkeypatch) -> None:
+    """适配器写正式 Run/Message；循环结果不会触碰 Entry 写入服务。"""
+    async with async_session_factory() as db:
+        user = await create_user(db, "生产适配")
+        workspace = await create_workspace(db, user)
+        conversation = await create_conversation(
+            db,
+            workspace.id,
+            user.id,
+            KnowledgeConversationCreate(scope_type="workspace"),
+        )
+        _, run = await submit_message(
+            db,
+            conversation,
+            KnowledgeRunSubmitRequest(
+                client_message_id="production-adapter-1",
+                message="整理成候选稿",
+                basis_mode="auto",
+            ),
+        )
+        run.status = "processing"
+        run.current_step = "claim"
+        await db.commit()
+
+        async def fake_turn(agent, state, message, history):
+            state.begin_turn(run.id, message)
+            return (
+                {
+                    "status": "completed",
+                    "answer": "这是候选内容。",
+                    "blocks": [{"kind": "candidate", "text": "这是候选内容。"}],
+                    "completion": {
+                        "status": "completed",
+                        "can_continue": False,
+                        "continuation": None,
+                    },
+                    "model_calls": [],
+                    "tool_calls": [],
+                    "error": None,
+                },
+                [],
+            )
+
+        monkeypatch.setattr(
+            "app.services.knowledge_agent.production_adapter.run_turn", fake_turn
+        )
+        await execute_dialogue_loop_run(db, run)
+        await db.commit()
+
+    async with async_session_factory() as db:
+        saved = await db.get(KnowledgeAgentRun, run.id)
+        assert saved is not None
+        assert saved.status == "completed"
+        state = json.loads(saved.dialogue_loop_state_json)
+        assert state["blocks"][0]["kind"] == "candidate"
+        assistant = await db.get(KnowledgeMessage, saved.assistant_message_id)
+        assert assistant is not None
+        assert assistant.content == "这是候选内容。"

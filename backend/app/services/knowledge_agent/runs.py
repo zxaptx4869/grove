@@ -449,6 +449,21 @@ def _parse_investigation_summary(
 
 def run_out(run: KnowledgeAgentRun) -> KnowledgeRunOut:
     """组装 Run 响应。"""
+    dialogue_status = None
+    dialogue_blocks: list[dict] = []
+    can_continue = False
+    continuation = None
+    if run.dialogue_loop_state_json:
+        try:
+            dialogue_state = json.loads(run.dialogue_loop_state_json)
+            if isinstance(dialogue_state, dict):
+                dialogue_status = dialogue_state.get("loop_status")
+                dialogue_blocks = dialogue_state.get("blocks") or []
+                completion = dialogue_state.get("completion") or {}
+                can_continue = bool(completion.get("can_continue"))
+                continuation = completion.get("continuation")
+        except (json.JSONDecodeError, TypeError):
+            logger.warning("Run %s 的 dialogue-loop 状态快照无法解析", run.id)
     context_degraded = False
     if run.context_meta_json:
         try:
@@ -502,6 +517,10 @@ def run_out(run: KnowledgeAgentRun) -> KnowledgeRunOut:
         composite_answer_coverage=composite_coverage,
         answer=_parse_answer(run.answer_json),
         entry_result=_parse_entry_result(run.entry_result_json),
+        dialogue_loop_status=dialogue_status,
+        dialogue_blocks=dialogue_blocks,
+        can_continue=can_continue,
+        continuation=continuation,
         created_at=run.created_at,
         updated_at=run.updated_at,
     )

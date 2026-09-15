@@ -6,6 +6,7 @@ import asyncio
 import hashlib
 import json
 import re
+from collections.abc import Awaitable, Callable
 from dataclasses import asdict, dataclass, field, replace
 from decimal import Decimal, InvalidOperation
 from time import perf_counter
@@ -410,6 +411,10 @@ class LoopState:
     conversation_id: int
     ledger: BudgetLedger
     instrumentation: Instrumentation
+    scope_type: str = "workspace"
+    project_id: int | None = None
+    project_name: str | None = None
+    cancel_check: Callable[[], Awaitable[None]] | None = field(default=None, repr=False)
     discovered_entry_ids: set[int] = field(default_factory=set)
     authorized_entry_ids: set[int] = field(default_factory=set)
     read_entry_ids: set[int] = field(default_factory=set)
@@ -2171,7 +2176,8 @@ async def _dispatch(
     )
 
     async def not_cancelled() -> None:
-        return None
+        if state.cancel_check is not None:
+            await state.cancel_check()
 
     started = perf_counter()
     # 真实只读工具仍会写审计或 Evidence。SQLite 延迟事务若在并行读取后同时
@@ -2183,9 +2189,9 @@ async def _dispatch(
                 run_id=state.run_id,
                 workspace_id=state.workspace_id,
                 owner_user_id=state.user_id,
-                scope_type="workspace",
-                project_id=None,
-                project_name=None,
+                scope_type=state.scope_type,
+                project_id=state.project_id,
+                project_name=state.project_name,
                 discovered_entry_ids=state.discovered_entry_ids,
             )
             result = await dispatch_read_tool(

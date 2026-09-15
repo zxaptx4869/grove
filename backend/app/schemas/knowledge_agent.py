@@ -597,6 +597,11 @@ class KnowledgeRunOut(BaseModel):
     composite_answer_coverage: KnowledgeCompositeAnswerCoverageOut | None = None
     answer: KnowledgeAnswerOut | None = None
     entry_result: KnowledgeEntryResultSnapshotOut | None = None
+    # dialogue-loop 生产适配器合同：客户端按程序类型渲染，不从标题或句柄猜测。
+    dialogue_loop_status: str | None = None
+    dialogue_blocks: list[dict] = []
+    can_continue: bool = False
+    continuation: dict | None = None
     created_at: datetime
     updated_at: datetime
 

@@ -611,6 +611,8 @@ class KnowledgeAgentRun(Base):
     coverage_repair_execution_json: Mapped[str | None] = mapped_column(Text, nullable=True)
     coverage_repair_graph_json: Mapped[str | None] = mapped_column(Text, nullable=True)
     coverage_repair_graph_state_json: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # dialogue-loop 生产适配器的有界状态快照；不保存实验台 JSON 或原始 prompt。
+    dialogue_loop_state_json: Mapped[str | None] = mapped_column(Text, nullable=True)
     error: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False

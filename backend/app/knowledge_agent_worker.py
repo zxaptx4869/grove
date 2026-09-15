@@ -1,6 +1,7 @@
 """知识 Agent 进程内异步 Worker：原子领取、租约恢复、重试上限与取消。"""
 
 import asyncio
+import json
 import logging
 from datetime import UTC, datetime
 
@@ -20,7 +21,8 @@ from app.models.knowledge_agent import (
 )
 from app.services.knowledge_agent.candidate import execute_draft_candidate_run
 from app.services.knowledge_agent.entry_revision import execute_entry_revision_run
-from app.services.knowledge_agent.runner import RunCancelled, execute_run
+from app.services.knowledge_agent.production_adapter import execute_dialogue_loop_run
+from app.services.knowledge_agent.runner import RunCancelled
 from app.services.knowledge_agent.runs import (
     finalize_cancelled,
     mark_run_failed,
@@ -107,7 +109,9 @@ async def process_one_run() -> bool:
             elif run.run_kind == RUN_KIND_ENTRY_REVISION:
                 await execute_entry_revision_run(db, run)
             else:
-                await execute_run(db, run)
+                # 正式 answer Run 只允许统一 dialogue-loop 编排；旧 runner 保留给
+                # 历史兼容测试和显式回滚，不作为 Web 请求的隐式路径。
+                await execute_dialogue_loop_run(db, run)
             await db.commit()
     except RunCancelled:
         await _finalize_cancelled_after_interrupt(run_id)
@@ -166,6 +170,18 @@ async def recover_stale_runs() -> int:
             )
         ).scalars().all()
         for run in rows:
+            if run.current_step == "dialogue_loop":
+                try:
+                    state = json.loads(run.dialogue_loop_state_json or "null")
+                except (json.JSONDecodeError, TypeError):
+                    state = None
+                if not isinstance(state, dict) or state.get("loop_status") == "processing":
+                    await mark_run_failed(
+                        db,
+                        run,
+                        "服务重启后缺少可安全恢复的 dialogue-loop 状态",
+                    )
+                    continue
             if run.retry_count < run.max_retries:
                 run.retry_count += 1
                 run.status = RUN_WAITING
