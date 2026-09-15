@@ -23,7 +23,7 @@
 - [x] 4.1 增加无真实模型的适配器、状态映射、结果类型、隔离、幂等和 continuation 测试。
 - [x] 4.2 增加 API 短链路彩排：身份、项目列表、主题搜索、列表位置追问、当前 Entry 补充、候选稿。
 - [x] 4.3 运行后端相关测试、静态检查和 `openspec validate --all --strict`；记录实验台行为与正式 API 行为的差异。
-- [x] 4.4 完成真实模型人工验收并记录 provider/model、工具顺序、候选-only 与统计结果；本任务不接入 Web 页面。
+- [x] 4.4 完成真实模型人工验收并记录 provider/model、工具顺序、候选-only 与统计结果。
 
 ### 收尾验证记录
 
@@ -44,4 +44,5 @@
 - 前端全量测试：30 个测试文件、144 个测试通过。
 - `npm run typecheck`、`npm run build` 通过；`npm run lint` 无错误，仅保留既有 `DirectoryDraftDialog.tsx` hooks warning。
 - 相关后端 Agent 测试通过，`openspec validate --all --strict` 通过 62 项。
-- 仍待人工浏览器验收：登录后的 `/agent` 入口、真实 DeepSeek 对话、长对话滚动与 1024/1280/1440/1600px 布局。
+- Web 真实人工验收已完成：登录后的 `/agent` 入口、真实 DeepSeek 对话、项目/统计/Entry 连续追问、候选-only、项目切换和消息去重均正常；桌面视口及 1024px 以下电脑端提示已走查。
+- 本次验收观察：无直接相关结果时不会展示间接条目，但仍会提示间接线索数量；该体验问题已登记到 `docs/discussions/Grove后续优化清单.md`，不在本 change 内修复。

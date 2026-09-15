@@ -60,6 +60,8 @@ Web 页面复用现有 AppShell，在全局导航增加知识 Agent 入口；页
 
 消息按正式 API 返回的消息 ID 和 Run ID 去重。轮询只刷新活动 Run，终态后读取最新消息、`dialogue_blocks` 和 observability；结构化块由 `kind` 与结果语义直接映射到展示组件。`can_continue` 只显示“继续”操作，点击后提交普通正式消息，由后端恢复 continuation。
 
+真实 DeepSeek Web 验收已覆盖身份、项目列表、统计、主题搜索、Entry 位置追问、当前 Entry 补充、候选稿和项目切换。宽主题“除甲醛”验证为 direct=0、indirect=6，间接结果未进入主结果、正文读取或 Web 列表；“洗碗机”查询仍返回 3 条 direct 结果，连续位置追问正常。验收发现无直接结果时提示间接线索数量会造成边界期待不清，已登记为后续优化，不改变本 change 的结果集合规则。
+
 ## Risks / Trade-offs
 
 - [持久化字段不足] → 已确认无法在不污染旧合同的前提下复用现有字段，采用 `dialogue_loop_state_json` 最小快照迁移，不复制实验 JSON。
