@@ -19,6 +19,7 @@ from pydantic_ai.messages import (
 )
 from pydantic_ai.models.function import FunctionModel
 from pydantic_ai.models.test import TestModel
+from pydantic_core import to_jsonable_python
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -53,7 +54,9 @@ STATE_BYTES_LIMIT = 240_000
 
 
 def _json(value: Any) -> str:
-    return json.dumps(value, ensure_ascii=False, separators=(",", ":"))
+    return json.dumps(
+        to_jsonable_python(value), ensure_ascii=False, separators=(",", ":")
+    )
 
 
 def _bounded_state(value: dict) -> dict:
@@ -71,7 +74,21 @@ def _bounded_state(value: dict) -> dict:
         # 结果 payload 已由循环工具限制大小；无法安全保存时明确不可恢复。
         reduced["records"] = {}
         reduced["evidence"] = {}
+        completion = dict(reduced.get("completion") or {})
+        completion["can_continue"] = False
+        completion["continuation"] = None
+        reduced["completion"] = completion
+        reduced["continuation"] = None
         reduced["truncated"] = True
+    if len(_json(reduced).encode("utf-8")) > STATE_BYTES_LIMIT:
+        reduced = {
+            "version": STATE_VERSION,
+            "loop_status": reduced.get("loop_status", "failed"),
+            "answer": str(reduced.get("answer") or "")[:4000],
+            "blocks": reduced.get("blocks", [])[:12],
+            "completion": {"can_continue": False, "continuation": None},
+            "truncated": True,
+        }
     return reduced
 
 
