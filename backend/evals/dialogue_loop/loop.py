@@ -113,7 +113,9 @@ SYSTEM_PROMPT = ASSISTANT_ROLE_PROMPT + "\n\n" + ANSWER_PROTOCOL_PROMPT + "\n\n"
     不得再从项目根调用 children 逐层遍历，也不得把定位空结果改写成权限错误。
 20. 用户明确提到项目名并询问其中的知识时，search_knowledge 必须使用 project_scope=project 和准确
     project_name；只有用户明确询问全部项目时才使用 all。项目范围搜索只返回严格语义相关的正式记录，
-    不要把相近主题候选当作墙纸等目标知识。
+    不要把相近主题候选当作目标知识。判断严格语义相关时以候选正文是否明确回答用户所问的对象、
+    动作或结果为准；材料、选材、等级、背景场景、可能影响因素以及检索命中词只能作为间接参考，
+    不能单独授权为 direct。
 21. 列举有哪些项目用 list_projects；介绍具体项目用 read_project_context 读取背景目标和已保存上下文，
     以自然段概括目的、背景和当前重点。材料依据不等于展示卡片，不自动追加统计、目录和记录列表。
     用户仅要求改为文本、精简或重述时，复用已有回答调整表达，不新增检索，不声称本轮重新核验。
@@ -374,7 +376,12 @@ class LegacySort(StrictModel):
 
 
 class RelevanceDecision(StrictModel):
-    """同一对话 Agent 对真实候选作出的有界相关性分类。"""
+    """同一对话 Agent 对真实候选作出的有界相关性分类。
+
+    分类必须依据候选标题和正文与用户问题的实际关系，而不是检索命中词或主题背景：
+    direct 要求正文明确回答所问对象、动作或结果；只涉及材料、选材、等级、场景或
+    可能影响因素的记录属于 indirect；只有弱语义相似且不能回答问题的记录属于 unrelated。
+    """
 
     entry_id: int
     relevance: Literal["direct", "indirect", "unrelated"]
@@ -523,6 +530,7 @@ class LoopState:
         displayable: bool = True,
     ) -> str:
         self._handle_sequence += 1
+        result_semantics = semantics or {}
         handle = f"rs-{self.conversation_id}-{self._handle_sequence}"
         self.result_sets[handle] = ResultRecord(
             handle,
@@ -531,10 +539,14 @@ class LoopState:
             status,
             completeness,
             self.turn_index,
-            semantics or {},
+            result_semantics,
             displayable,
         )
-        if kind == "list" and displayable:
+        if (
+            kind == "list"
+            and displayable
+            and result_semantics.get("result_role", "authorized") != "candidate"
+        ):
             self.authorized_entry_ids.update(
                 int(item["entry_id"])
                 for item in payload.get("items", [])
@@ -2480,7 +2492,11 @@ def build_agent(model) -> Agent[LoopDeps, DialogueAnswer]:
             return ""
         return (
             "语义候选先用 select_relevant_entries 全量三分；仅 direct 授权句柄可展示或读取，"
-            "无 direct 不凑数。同义查询只用一个搜索入口，查询后再选择和读取。"
+            "无 direct 不凑数。分类必须逐项阅读候选标题和正文：direct 只表示正文明确回答用户"
+            "所问对象、动作或结果；只讨论相关材料、选材、等级、背景场景或可能影响因素的是"
+            "indirect；只有弱语义相似且不能回答问题的是 unrelated。检索命中词、matched_fields、"
+            "项目背景或共享主题词本身都不足以判定 direct。同义查询只用一个搜索入口，查询后再"
+            "选择和读取。"
             "定义问题先答概念再列直接记录，并区分通用知识、正式记录与 Source。"
         )
 
@@ -2585,8 +2601,10 @@ def build_agent(model) -> Agent[LoopDeps, DialogueAnswer]:
     ) -> dict:
         """把语义候选逐项分为 direct/indirect/unrelated，并只授权 direct。
 
-        必须覆盖候选中的每个 entry_id 且不得新增或重复。direct 表示标题或正文明确回答
-        当前主题；indirect 只涉及相关材料、场景或风险；unrelated 只有弱语义相似。
+        必须覆盖候选中的每个 entry_id 且不得新增或重复。direct 要求候选正文明确回答
+        用户所问的对象、动作或结果；只涉及相关材料、选材、等级、背景场景或可能影响
+        因素的内容必须是 indirect；只有弱语义相似且不能回答问题的内容是 unrelated。
+        检索命中词、matched_fields 或项目背景不能单独证明 direct。
         """
 
         state = ctx.deps.state

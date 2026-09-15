@@ -189,7 +189,10 @@ def _restore_state(state: LoopState, snapshot: dict) -> None:
         )
         state.result_sets[record.handle] = record
         state.current_handles.add(record.handle)
-        if record.kind == "list":
+        if (
+            record.kind == "list"
+            and record.semantics.get("result_role", "authorized") != "candidate"
+        ):
             state.authorized_entry_ids.update(
                 int(item["entry_id"])
                 for item in record.payload.get("items", [])

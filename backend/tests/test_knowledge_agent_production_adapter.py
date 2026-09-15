@@ -101,6 +101,29 @@ def test_production_state_round_trip_preserves_scope_results_and_continuation() 
     assert restored.continuation.validation_refs["source_ids"] == [8]
 
 
+def test_production_restore_does_not_authorize_candidate_list() -> None:
+    state = _state()
+    handle = state.store_result(
+        "list",
+        {"items": [{"entry_id": 99, "title": "间接候选"}]},
+        "completed",
+        "limited",
+        semantics={"result_role": "candidate"},
+        displayable=True,
+    )
+    snapshot = _state_snapshot(
+        state,
+        {"status": "completed", "answer": "", "blocks": [], "model_calls": []},
+        loop_status="completed",
+    )
+    restored = _state()
+    _restore_state(restored, json.loads(json.dumps(snapshot, ensure_ascii=False)))
+
+    assert handle in restored.result_sets
+    assert restored.result_sets[handle].semantics["result_role"] == "candidate"
+    assert restored.authorized_entry_ids == set()
+
+
 def test_terminal_and_answer_status_mapping_is_programmatic() -> None:
     assert _run_status("completed") == "completed"
     assert _run_status("partial_completed") == "partial"

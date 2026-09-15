@@ -1723,28 +1723,34 @@ async def test_semantic_selection_aligns_search_read_and_rendered_direct_set(
     candidates = [
         {
             "entry_id": 11,
-            "title": "甲醛的定义与特征",
+            "title": "窗帘安装前必须清洗",
             "project_name": "房子装修",
-            "excerpt": "甲醛是一种挥发性有机物。",
+            "excerpt": "安装前清洗窗帘，能去除大部分甲醛和灰尘。",
         },
         {
             "entry_id": 22,
-            "title": "窗帘清洗注意事项",
+            "title": "墙面材料选乳胶漆优于壁纸/墙布",
             "project_name": "房子装修",
-            "excerpt": "装修后清洗窗帘。",
+            "excerpt": "墙面材料选环保乳胶漆，避免胶水带来的甲醛释放。",
         },
         {
             "entry_id": 33,
+            "title": "甲醛环保等级：国标ENF级",
+            "project_name": "房子装修",
+            "excerpt": "ENF 是板材环保等级，说明甲醛释放限量。",
+        },
+        {
+            "entry_id": 44,
             "title": "客厅灯光搭配",
             "project_name": "房子装修",
-            "excerpt": "色温与照度。",
+            "excerpt": "色温与照度的搭配建议。",
         },
     ]
 
     async def fake_dispatch(ctx, tool_name, params, kind, **kwargs):
         dispatched.append((tool_name, params, kwargs))
         if tool_name == "query_entries":
-            payload = {"items": candidates, "returned_count": 3, "has_more": False}
+            payload = {"items": candidates, "returned_count": 4, "has_more": False}
             semantics = loop_module._result_semantics(tool_name, params, payload)
             semantics["result_role"] = "candidate"
             handle = ctx.deps.state.store_result(
@@ -1762,7 +1768,7 @@ async def test_semantic_selection_aligns_search_read_and_rendered_direct_set(
                 "status": "limited",
                 "completeness": "limited",
                 "params": kwargs.get("audit_params") or params,
-                "result_summary": {"returned_count": 3, "has_more": False},
+                "result_summary": {"returned_count": 4, "has_more": False},
                 "error": None,
                 "turn_index": state.turn_index,
             }
@@ -1774,8 +1780,8 @@ async def test_semantic_selection_aligns_search_read_and_rendered_direct_set(
             "items": [
                 {
                     "entry_id": 11,
-                    "title": "甲醛的定义与特征",
-                    "content": "甲醛是一种挥发性有机物。",
+                    "title": "窗帘安装前必须清洗",
+                    "content": "安装前清洗窗帘，能去除大部分甲醛和灰尘。",
                     "project_name": "房子装修",
                     "node_path": "材料 / 环保",
                     "sources": [],
@@ -1813,7 +1819,7 @@ async def test_semantic_selection_aligns_search_read_and_rendered_direct_set(
                         {
                             "project_scope": "project",
                             "project_name": "房子装修",
-                            "query": "甲醛",
+                            "query": "除甲醛",
                         },
                     )
                 ]
@@ -1831,9 +1837,26 @@ async def test_semantic_selection_aligns_search_read_and_rendered_direct_set(
                         {
                             "candidate_result_handle": candidate,
                             "classifications": [
-                                {"entry_id": 11, "relevance": "direct", "reason": "正文定义"},
-                                {"entry_id": 22, "relevance": "indirect", "reason": "相关场景"},
-                                {"entry_id": 33, "relevance": "unrelated", "reason": "弱相似"},
+                                {
+                                    "entry_id": 11,
+                                    "relevance": "direct",
+                                    "reason": "正文明确描述去除甲醛的处理动作",
+                                },
+                                {
+                                    "entry_id": 22,
+                                    "relevance": "indirect",
+                                    "reason": "只讨论装修选材和可能的甲醛影响",
+                                },
+                                {
+                                    "entry_id": 33,
+                                    "relevance": "indirect",
+                                    "reason": "只讨论材料环保等级，不是除甲醛处理动作",
+                                },
+                                {
+                                    "entry_id": 44,
+                                    "relevance": "unrelated",
+                                    "reason": "只有装修场景相似，正文与甲醛处理无关",
+                                },
                             ],
                         },
                     )
@@ -1869,7 +1892,7 @@ async def test_semantic_selection_aligns_search_read_and_rendered_direct_set(
         )
 
     turn, _ = await run_turn(
-        build_agent(FunctionModel(respond)), state, "甲醛是什么？", []
+        build_agent(FunctionModel(respond)), state, "房子装修项目中，有除甲醛的知识吗", []
     )
 
     assert turn["status"] == "completed", turn
@@ -1877,14 +1900,24 @@ async def test_semantic_selection_aligns_search_read_and_rendered_direct_set(
     assert [item["entry_id"] for item in list_block["items"]] == [11]
     assert list_block["semantics"]["classification_counts"] == {
         "direct": 1,
-        "indirect": 1,
+        "indirect": 2,
         "unrelated": 1,
     }
     assert [item[1] for item in dispatched if item[0] == "read_entries"] == [
         {"entry_ids": [11]}
     ]
-    assert "窗帘清洗" not in turn["answer"]
-    assert "客厅灯光" not in turn["answer"]
+    selected_handle = next(
+        handle
+        for handle in state.current_handles
+        if state.result_sets[handle].semantics.get("relevance_scope") == "direct"
+    )
+    assert list_position_entry_id(state, selected_handle, 1) == 11
+    with pytest.raises(ValueError):
+        list_position_entry_id(state, selected_handle, 2)
+    assert "窗帘安装前必须清洗" in turn["answer"]
+    assert "墙面材料选乳胶漆" not in turn["answer"]
+    assert "甲醛环保等级" not in turn["answer"]
+    assert state.authorized_entry_ids == {11}
     assert turn["blocks"][0]["kind"] == "text"
 
 
