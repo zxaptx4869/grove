@@ -14,10 +14,10 @@
 
 - [x] 3.1 删除只验证已退役执行图的测试，并将 Web API、Candidate、Entry Revision、Workspace、权限、幂等与取消测试的旧 runner 夹具迁移到统一循环确定性边界
 - [x] 3.2 运行 dialogue_loop、production_adapter、Worker、实验台、Candidate、Entry Revision 与历史恢复测试，对照实施前 35 项基线失败逐项归因
-- [ ] 3.3 运行后端受影响静态检查与测试、`git diff --check`、移动端未改动检查及正式调用链/旧导入静态扫描
+- [x] 3.3 运行后端受影响静态检查与测试、`git diff --check`、移动端未改动检查及正式调用链/旧导入静态扫描
 
 ## 4. 验证记录与收尾
 
-- [ ] 4.1 运行 `openspec validate --all --strict`，在 change 中记录自动化结果、基线差异、实际兼容残留和未执行的付费模型人工验收
-- [ ] 4.2 提供普通问答、搜索后追问、候选稿、Entry Revision、取消与刷新恢复的人工复测清单；不自行调用付费模型
-- [ ] 4.3 完成本地阶段提交并报告提交哈希；不推送、不合并、不归档
+- [x] 4.1 运行 `openspec validate --all --strict`，在 change 中记录自动化结果、基线差异、实际兼容残留和未执行的付费模型人工验收
+- [x] 4.2 提供普通问答、搜索后追问、候选稿、Entry Revision、取消与刷新恢复的人工复测清单；不自行调用付费模型
+- [x] 4.3 完成本地阶段提交并报告提交哈希；不推送、不合并、不归档
