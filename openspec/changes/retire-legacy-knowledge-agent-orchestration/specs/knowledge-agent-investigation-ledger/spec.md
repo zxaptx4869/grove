@@ -23,4 +23,3 @@
 ### Requirement: 候选分配可恢复且可审计
 **Reason**: 旧 investigation 候选池执行状态不再恢复。
 **Migration**: 历史审计数据保留；不自动重放或转换。
-

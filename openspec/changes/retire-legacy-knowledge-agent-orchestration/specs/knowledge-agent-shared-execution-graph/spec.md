@@ -27,4 +27,3 @@
 ### Requirement: 补查只扩展严格新增的共享只读节点
 **Reason**: 旧共享图 coverage 扩展退役。
 **Migration**: 不恢复或扩展历史图。
-

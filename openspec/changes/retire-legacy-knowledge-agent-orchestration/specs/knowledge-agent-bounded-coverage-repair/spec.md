@@ -35,4 +35,3 @@
 ### Requirement: 补查保持 Run 范围隔离、可观测和无写入副作用
 **Reason**: 旧 repair 执行器不再运行。
 **Migration**: 统一循环继续遵守 Workspace、可观测和只读工具边界。
-

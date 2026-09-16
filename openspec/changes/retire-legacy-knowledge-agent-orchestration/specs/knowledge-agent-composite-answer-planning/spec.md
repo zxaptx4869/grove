@@ -31,4 +31,3 @@
 ### Requirement: 首次 coverage 可以触发一次受控缺口补查
 **Reason**: 旧 coverage repair 入口退役。
 **Migration**: 不对历史 coverage 启动补查。
-

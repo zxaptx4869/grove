@@ -92,4 +92,3 @@ Worker MUST 通过数据库原子操作领取待执行 Run，并记录领取时�
 ### Requirement: quick Run 持久化一次覆盖补查决策与检查点
 **Reason**: 旧 coverage-repair 执行器退役。
 **Migration**: 历史补查字段继续可读，不生成、恢复或转换旧补查检查点。
-

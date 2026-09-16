@@ -27,4 +27,3 @@
 ### Requirement: 深度查找必须执行真实 Grove 调查并遵守依据限制
 **Reason**: 旧独立 investigate 模式退役。
 **Migration**: 统一 dialogue-loop 继续通过现行 Grove 只读工具、来源边界和候选-only 合同回答。
-

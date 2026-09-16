@@ -30,4 +30,3 @@ The Worker MUST distinguish current unified-loop recovery state from retired exe
 
 - **WHEN** a Candidate or Entry Revision Run exceeds its lease within the existing retry limit
 - **THEN** Worker retains the existing idempotent operation recovery behavior
-
