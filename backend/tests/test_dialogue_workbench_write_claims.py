@@ -13,13 +13,68 @@ from tests.test_dialogue_workbench_continuity import output, pin_seeded_entry
 from tests.test_knowledge_agent_dialogue_loop import _state
 
 WRITE_ERROR = "候选修改稿不得声称已经写入或修改正式记录"
-# 保留现场导致误判的开头、结尾；正文使用测试材料，避免依赖私人会话文件。
-DRAFT = (
-    "以下属于基于当前条目与其所引来源的分析性补充，"
-    "不是官方标准原文核验结果，也没有写入正式条目。\n"
-    "原记录概括 ENF 等级。建议补充适用范围和检测条件，具体数值待核验。\n"
-    "上述补充稿为候选内容，不代表已核验或已写入正式条目。"
+PROGRAM_UNWRITTEN_NOTE = "（以上为候选内容，尚未写入正式 Entry。）"
+# 脱敏保留 f4bc9a82 会话第 6、7 轮候选的结构和触发误判的原句。
+CANDIDATE_BODY = (
+    "下面是一份候选修改稿，供你判断是否采纳。\n\n"
+    "【候选修改稿】\n"
+    "现有记录概括了材料等级。建议补充适用范围和检测条件，具体数值待核验。\n\n"
+    "【说明】\n"
+    "以上是基于现有记录和来源材料的整理，属于候选稿。"
+    "模型补充不是来源原文核验结果。"
 )
+DRAFT = CANDIDATE_BODY + "我没有改动正式记录，是否采纳、怎么改由你决定。"
+
+
+@pytest.mark.parametrize("statement", [
+    "我没有改动正式记录。",
+    "我并未覆盖正式条目。",
+    "以上尚未写入正式记录。",
+])
+def test_shared_candidate_boundary_keeps_existing_unwritten_statement(statement):
+    answer = DialogueAnswer.model_validate({"blocks": [{
+        "kind": "text", "text": CANDIDATE_BODY + statement,
+    }]})
+    bounded = loop._candidate_boundary(answer, content_only=False)
+    assert bounded == answer
+    assert PROGRAM_UNWRITTEN_NOTE not in bounded.blocks[0].text
+
+
+def test_shared_candidate_boundary_adds_missing_statement_once_without_rewriting():
+    answer = DialogueAnswer.model_validate({"blocks": [{
+        "kind": "text", "text": CANDIDATE_BODY,
+    }]})
+    bounded = loop._candidate_boundary(answer, content_only=False)
+    text = bounded.blocks[0].text
+    assert text.startswith(CANDIDATE_BODY)
+    assert text.count(PROGRAM_UNWRITTEN_NOTE) == 1
+    assert loop._candidate_boundary(bounded, content_only=False) == bounded
+
+
+def test_shared_candidate_boundary_keeps_positive_write_claim_invalid():
+    state = _state()
+    state.editing_active = True
+    state.editing_purpose = "candidate"
+    text = CANDIDATE_BODY + "我已经覆盖正式记录。"
+    answer = DialogueAnswer.model_validate({"blocks": [{
+        "kind": "text", "text": text,
+    }]})
+    bounded = loop._candidate_boundary(answer, content_only=False)
+    assert text in bounded.blocks[0].text
+    assert PROGRAM_UNWRITTEN_NOTE in bounded.blocks[0].text
+    assert WRITE_ERROR in loop.output_errors(bounded, state)
+
+
+def test_content_only_candidate_uses_same_unwritten_boundary():
+    answer = DialogueAnswer.model_validate({"blocks": [{
+        "kind": "text", "text": "精简候选正文",
+    }]})
+    bounded = loop._candidate_boundary(answer, content_only=True)
+    text = bounded.blocks[0].text
+    assert text.startswith("精简候选正文")
+    assert text.count(PROGRAM_UNWRITTEN_NOTE) == 1
+    assert text.count("模型补充不属于 Source 原文") == 1
+    assert loop._candidate_boundary(bounded, content_only=True) == bounded
 
 
 @pytest.mark.parametrize("statement", [
@@ -39,7 +94,7 @@ def test_negated_statuses_pass_shared_candidate_validation(statement):
     state.editing_active = True
     state.editing_purpose = "candidate"
     answer = DialogueAnswer.model_validate({"blocks": [{
-        "kind": "text", "text": DRAFT + "\n" + statement,
+        "kind": "text", "text": CANDIDATE_BODY + "\n" + statement,
     }]})
     assert loop.output_errors(answer, state) == []
 
@@ -53,6 +108,8 @@ def test_negated_statuses_pass_shared_candidate_validation(statement):
     "已经更新了正式记录。",
     "已修改正式记录。",
     "已经修改正式记录。",
+    "已覆盖正式记录。",
+    "已经覆盖正式记录。",
     "更新好了。",
     "写入完成。",
     "不代表已写入，但我已写入正式记录。",

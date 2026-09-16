@@ -1,22 +1,19 @@
-"""隔离子进程中的身份校验、新旧路径执行与真实审计收集。"""
+"""隔离子进程中的身份校验、统一循环执行与真实审计收集。"""
 
 from __future__ import annotations
 
 import asyncio
 import json
 from collections.abc import Callable
-from dataclasses import asdict
 from datetime import UTC, datetime
 from decimal import Decimal
 from pathlib import Path
-from time import perf_counter
 
 from sqlalchemy import select
 
 from evals.dialogue_loop.core import (
     ALL_SCENARIOS,
     EXPERIMENT_VERSION,
-    PER_TURN_SECONDS,
     PROMPT_VERSION,
     BudgetLedger,
 )
@@ -97,7 +94,7 @@ async def child_preflight(db_path: Path, original_path: Path, password: str) -> 
         "app.agents.semantic",
     }
     if not required_text_modules.issubset(set(coverage["text_modules"])):
-        blockers.append("旧流程文本模型调用无法完整纳入实验计数")
+        blockers.append("统一循环文本模型调用无法完整纳入实验计数")
     if "app.services.vector_search" not in coverage["embedding_modules"]:
         blockers.append("向量调用无法纳入实验计数")
     if not all(v2_controls.values()):
@@ -181,9 +178,7 @@ def _v2_control_preflight() -> dict[str, bool]:
     )
     return {
         "message_protocol_paired": calls == returns,
-        "ordered_list_preserved": [
-            item["entry_id"] for item in summary.get("ordered_items", [])
-        ]
+        "ordered_list_preserved": [item["entry_id"] for item in summary.get("ordered_items", [])]
         == [9, 3],
         "history_body_removed": "content" not in json.dumps(summary, ensure_ascii=False),
         "current_body_bounded": len(model_payload["items"][0]["content"]) < 4_000,
@@ -300,7 +295,7 @@ def _is_sqlite_lock(exc: BaseException) -> bool:
     return "database is locked" in message or "database table is locked" in message
 
 
-async def run_new_scenario(
+async def run_scenario(
     scenario_id: str,
     identity: dict,
     ledger: BudgetLedger,
@@ -314,9 +309,7 @@ async def run_new_scenario(
     scenario = next(item for item in ALL_SCENARIOS if item.id == scenario_id)
     database_lock = asyncio.Lock()
     async with database_lock:
-        conversation_id = await _create_conversation(
-            identity["workspace_id"], identity["user_id"]
-        )
+        conversation_id = await _create_conversation(identity["workspace_id"], identity["user_id"])
     async with async_session_factory() as db:
         model = await get_text_model(db, identity["workspace_id"])
     if isinstance(model, BudgetedModel):
@@ -352,7 +345,6 @@ async def run_new_scenario(
             if checkpoint:
                 checkpoint(
                     {
-                        "arm": "new",
                         "scenario": scenario_id,
                         "title": scenario.title,
                         "turns": turns,
@@ -369,7 +361,6 @@ async def run_new_scenario(
         if checkpoint:
             checkpoint(
                 {
-                    "arm": "new",
                     "scenario": scenario_id,
                     "title": scenario.title,
                     "turns": turns,
@@ -377,156 +368,12 @@ async def run_new_scenario(
             )
         if scenario_id in {"C", "E"} and turn_number == 1:
             list_ready = any(block.get("kind") == "list" for block in turn["blocks"])
-    return {"arm": "new", "scenario": scenario_id, "title": scenario.title, "turns": turns}
-
-
-async def _old_turn(
-    conversation_id: int, message: str, turn_number: int, instrumentation: Instrumentation
-) -> dict:
-    from app.db.session import async_session_factory
-    from app.models import KnowledgeAgentModelInvocation, KnowledgeAgentRun, KnowledgeAgentToolCall
-    from app.services.knowledge_agent.runner import execute_run
-    from app.services.knowledge_agent.runs import mark_run_failed, run_out
-
-    run_id = await _submit_turn(conversation_id, message, turn_number)
-    before = len(instrumentation.logs)
-    started = perf_counter()
-    error = None
-    try:
-        async with async_session_factory() as db:
-            run = await db.get(KnowledgeAgentRun, run_id)
-            async with asyncio.timeout(PER_TURN_SECONDS):
-                await execute_run(db, run)
-            await db.commit()
-    except Exception as exc:
-        error = f"{type(exc).__name__}: {exc}"
-        async with async_session_factory() as db:
-            run = await db.get(KnowledgeAgentRun, run_id)
-            await mark_run_failed(db, run, error)
-            await db.commit()
-    async with async_session_factory() as db:
-        run = await db.get(KnowledgeAgentRun, run_id)
-        public = run_out(run).model_dump(mode="json")
-        tools = (
-            (
-                await db.execute(
-                    select(KnowledgeAgentToolCall)
-                    .where(KnowledgeAgentToolCall.run_id == run_id)
-                    .order_by(KnowledgeAgentToolCall.sequence, KnowledgeAgentToolCall.id)
-                )
-            )
-            .scalars()
-            .all()
-        )
-        invocations = (
-            (
-                await db.execute(
-                    select(KnowledgeAgentModelInvocation)
-                    .where(KnowledgeAgentModelInvocation.run_id == run_id)
-                    .order_by(KnowledgeAgentModelInvocation.id)
-                )
-            )
-            .scalars()
-            .all()
-        )
-    answer = (public.get("answer") or {}).get("answer") or ""
-    tool_rows = [
-        {
-            "tool": item.tool_name,
-            "status": item.status,
-            "params_summary": item.params_summary,
-            "result_summary": item.result_summary,
-            "error": item.error,
-            "duration_ms": item.duration_ms,
-        }
-        for item in tools
-    ]
-    model_rows = [
-        {
-            "purpose": item.purpose,
-            "provider": item.provider,
-            "model": item.model,
-            "is_fallback": item.is_fallback,
-            "error": item.error,
-            "duration_ms": item.duration_ms,
-            "usage": json.loads(item.usage_json) if item.usage_json else None,
-        }
-        for item in invocations
-    ]
-    model_rows.extend(asdict(item) for item in instrumentation.logs[before:])
-    return {
-        "message": message,
-        "status": public["status"] if error is None else "failed",
-        "answer": answer,
-        "public_run": public,
-        "error": error or public.get("error"),
-        "duration_ms": int((perf_counter() - started) * 1000),
-        "usage": None,
-        "budget": instrumentation.ledger.snapshot(),
-        "tool_calls": tool_rows,
-        "model_calls": model_rows,
-    }
-
-
-async def run_old_scenario(
-    scenario_id: str,
-    identity: dict,
-    ledger: BudgetLedger,
-    instrumentation: Instrumentation,
-    checkpoint: Callable[[dict], None] | None = None,
-) -> dict:
-    scenario = next(item for item in ALL_SCENARIOS if item.id == scenario_id)
-    conversation_id = await _create_conversation(identity["workspace_id"], identity["user_id"])
-    turns = []
-    list_ready = True
-    for turn_number, message in enumerate(scenario.turns, 1):
-        dependency = scenario_id in {"C", "E"} and turn_number in {2, 4}
-        if dependency and not list_ready:
-            turns.append(
-                {
-                    "message": message,
-                    "status": "blocked",
-                    "answer": "",
-                    "error": "依赖的首轮列表未产生",
-                    "duration_ms": 0,
-                    "usage": None,
-                    "tool_calls": [],
-                    "model_calls": [],
-                }
-            )
-            if checkpoint:
-                checkpoint(
-                    {
-                        "arm": "old",
-                        "scenario": scenario_id,
-                        "title": scenario.title,
-                        "turns": turns,
-                    }
-                )
-            continue
-        ledger.start_turn()
-        turn = await _old_turn(conversation_id, message, turn_number, instrumentation)
-        turns.append(turn)
-        if checkpoint:
-            checkpoint(
-                {
-                    "arm": "old",
-                    "scenario": scenario_id,
-                    "title": scenario.title,
-                    "turns": turns,
-                }
-            )
-        if scenario_id in {"C", "E"} and turn_number == 1:
-            snapshot = (turn.get("public_run") or {}).get("entry_result") or {}
-            list_ready = bool(snapshot.get("items"))
-    return {"arm": "old", "scenario": scenario_id, "title": scenario.title, "turns": turns}
 
 
 async def child_run(
     db_path: Path,
     original_path: Path,
     password: str,
-    arm: str,
     scenario_id: str,
     text_used: int,
     embedding_used: int,
@@ -538,7 +385,7 @@ async def child_run(
         db_path, identity["workspace_id"], attachment_root=original_path.parent
     )
     ledger = BudgetLedger(text_used, embedding_used)
-    instrumentation = Instrumentation(ledger, context_policy_enabled=arm == "new")
+    instrumentation = Instrumentation(ledger, context_policy_enabled=True)
     coverage = install_instrumentation(instrumentation)
 
     def checkpoint(partial: dict) -> None:
@@ -556,10 +403,7 @@ async def child_run(
         )
         checkpoint_path.chmod(0o600)
 
-    if arm == "new":
-        result = await run_new_scenario(scenario_id, identity, ledger, instrumentation, checkpoint)
-    else:
-        result = await run_old_scenario(scenario_id, identity, ledger, instrumentation, checkpoint)
+    result = await run_scenario(scenario_id, identity, ledger, instrumentation, checkpoint)
     after = domain_fingerprint(
         db_path, identity["workspace_id"], attachment_root=original_path.parent
     )
@@ -578,7 +422,6 @@ async def child_run(
 
 
 def _rehearsal_scenario(
-    arm: str,
     scenario_id: str,
     checkpoint: Callable[[dict], None],
 ) -> dict:
@@ -604,7 +447,10 @@ def _rehearsal_scenario(
                 "budget": {
                     "batch_text_requests": 0,
                     "batch_embedding_requests": 0,
-                    "turn": {"entry_reads": {turn_number}, "history": (arm, scenario_id)},
+                    "turn": {
+                        "entry_reads": {turn_number},
+                        "history": ("dialogue_loop", scenario_id),
+                    },
                 },
                 "tool_calls": [
                     {
@@ -629,20 +475,18 @@ def _rehearsal_scenario(
         )
         checkpoint(
             {
-                "arm": arm,
                 "scenario": scenario_id,
                 "title": scenario.title,
                 "turns": turns,
             }
         )
-    return {"arm": arm, "scenario": scenario_id, "title": scenario.title, "turns": turns}
+    return {"scenario": scenario_id, "title": scenario.title, "turns": turns}
 
 
 async def child_rehearsal(
     db_path: Path,
     original_path: Path,
     password: str,
-    arm: str,
     scenario_id: str,
     text_used: int,
     embedding_used: int,
@@ -668,7 +512,7 @@ async def child_rehearsal(
         )
         checkpoint_path.chmod(0o600)
 
-    result = _rehearsal_scenario(arm, scenario_id, checkpoint)
+    result = _rehearsal_scenario(scenario_id, checkpoint)
     after = domain_fingerprint(
         db_path, identity["workspace_id"], attachment_root=original_path.parent
     )

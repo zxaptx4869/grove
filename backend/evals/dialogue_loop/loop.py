@@ -1584,7 +1584,10 @@ def resolve_answer_results(answer: DialogueAnswer, state: LoopState) -> Dialogue
     })
 
 
-_WRITE_CLAIM_PATTERN = r"已(?:经)?(?:写入|保存|更新|修改)|更新好了|写入完成"
+_WRITE_ACTION_PATTERN = r"(?:写入|保存|更新|修改|改动|覆盖)"
+_WRITE_CLAIM_PATTERN = (
+    rf"已(?:经)?{_WRITE_ACTION_PATTERN}|(?:写入|保存|更新|修改|覆盖)(?:好了|完成)"
+)
 _WRITE_CLAIM_RE = re.compile(_WRITE_CLAIM_PATTERN)
 _STATUS_PATTERN = rf"(?:{_WRITE_CLAIM_PATTERN}|已(?:经)?(?:核验|验证))"
 _NEGATION_PATTERN = r"(?:不代表|不意味着|不等于|不是|并非|没有|不会|尚未|并未|未)"
@@ -1592,6 +1595,25 @@ _NEGATED_STATUS_RE = re.compile(
     rf"(?P<negations>(?:{_NEGATION_PATTERN}[ \t]*)+)"
     rf"{_STATUS_PATTERN}(?:[ \t]*(?:或者|以及|或|和|及|、)[ \t]*{_STATUS_PATTERN})*"
 )
+_DIRECT_WRITE_NEGATION_PATTERN = r"(?:并没有|没有|不会|尚未|并未|从未|未曾|不曾|未|不)"
+_NEGATED_WRITE_RE = re.compile(
+    rf"(?P<negations>(?:{_DIRECT_WRITE_NEGATION_PATTERN}[ \t]*)+)"
+    rf"(?:实际|直接|擅自|主动|自动|替你|为你|已经|已)*[ \t]*{_WRITE_ACTION_PATTERN}"
+)
+_PROGRAM_UNWRITTEN_NOTE = "（以上为候选内容，尚未写入正式 Entry。）"
+
+
+def _single_negation(match: re.Match, pattern: str = _NEGATION_PATTERN) -> bool:
+    """嵌套否定不能被当作安全边界。"""
+    return len(re.findall(pattern, match.group("negations"))) == 1
+
+
+def _has_unwritten_boundary(text: str) -> bool:
+    """识别模型已有的否定写入声明；漏识别时由程序补齐固定声明。"""
+    return any(_single_negation(match) for match in _NEGATED_STATUS_RE.finditer(text)) or any(
+        _single_negation(match, _DIRECT_WRITE_NEGATION_PATTERN)
+        for match in _NEGATED_WRITE_RE.finditer(text)
+    )
 
 
 def _has_positive_write_claim(text: str) -> bool:
@@ -1600,7 +1622,7 @@ def _has_positive_write_claim(text: str) -> bool:
         match.span()
         for match in _NEGATED_STATUS_RE.finditer(text)
         # 嵌套否定不能按一次否定放行；不跨越正文、转折、换行或新主语。
-        if len(re.findall(_NEGATION_PATTERN, match.group("negations"))) == 1
+        if _single_negation(match)
     ]
     return any(
         not any(start <= claim.start() and claim.end() <= end for start, end in negated_spans)
@@ -1792,19 +1814,7 @@ def output_errors(answer: DialogueAnswer, state: LoopState) -> list[str]:
         )
         content_only = (state.editing_content_only
                         or _candidate_content_only_requested(candidate_message))
-        unwritten_markers = (
-            "尚未写入",
-            "未写入",
-            "没有写入",
-            "不会写入",
-            "尚未保存",
-            "未保存",
-            "不会保存",
-            "不直接修改",
-            "仅供审核",
-            "供审核",
-        )
-        has_unwritten_boundary = any(marker in draft_text for marker in unwritten_markers)
+        has_unwritten_boundary = _has_unwritten_boundary(draft_text)
         has_write_claim = _has_positive_write_claim(draft_text)
         source_terms = ("来源", "原文", "Source")
         source_negations = (
@@ -1862,11 +1872,24 @@ def output_errors(answer: DialogueAnswer, state: LoopState) -> list[str]:
     return errors
 
 
-def _content_only_boundary(answer: DialogueAnswer) -> DialogueAnswer:
-    """精简候选的声明由程序统一补齐，写入声明仍由校验器拒绝。"""
+def _candidate_boundary(
+    answer: DialogueAnswer, *, content_only: bool
+) -> DialogueAnswer:
+    """统一补齐候选未写入声明；精简候选另外收敛为单文本块并补来源边界。"""
     if not all(block.kind == "text" and _entry_reference(block.text) is None
                for block in answer.blocks):
         return answer
+    if not answer.blocks:
+        return answer
+    if not content_only:
+        if _has_unwritten_boundary("\n".join(block.text for block in answer.blocks)):
+            return answer
+        payload = answer.model_dump(mode="json")
+        payload["blocks"][-1]["text"] = (
+            payload["blocks"][-1]["text"].rstrip() + "\n" + _PROGRAM_UNWRITTEN_NOTE
+        )
+        return DialogueAnswer.model_validate(payload)
+
     text = "\n".join(block.text for block in answer.blocks)
     source_note = "（模型补充不属于 Source 原文。）"
     # 只删除程序固定尾注；模型正文中的说明和建议不重写。
@@ -1875,12 +1898,20 @@ def _content_only_boundary(answer: DialogueAnswer) -> DialogueAnswer:
         compact_prefix = re.sub(r"\s+", "", prefix)
         if re.search(r"(?:不属于|不是|并非|不来自)(?:Source|来源)原文", compact_prefix):
             text = prefix
+    if not _has_unwritten_boundary(text):
+        text += "\n" + _PROGRAM_UNWRITTEN_NOTE
     compact = re.sub(r"\s+", "", text)
-    if "尚未写入" not in compact and "未写入" not in compact:
-        text += "\n（以上为候选内容，尚未写入正式 Entry。）"
     if "Source原文" not in compact and "来源原文" not in compact:
         text += "\n" + source_note
-    return DialogueAnswer.model_validate({"blocks": [{"kind": "text", "text": text}]})
+    return DialogueAnswer.model_validate({
+        "blocks": [{"kind": "text", "text": text}],
+        "needs_clarification": answer.needs_clarification,
+    })
+
+
+def _content_only_boundary(answer: DialogueAnswer) -> DialogueAnswer:
+    """兼容既有精简候选调用点。"""
+    return _candidate_boundary(answer, content_only=True)
 
 
 def _candidate_finalizer_text_only(
@@ -3377,10 +3408,17 @@ def build_agent(model) -> Agent[LoopDeps, DialogueAnswer]:
     @agent.output_validator
     async def validate_output(ctx: RunContext[LoopDeps], answer: DialogueAnswer) -> DialogueAnswer:
         state = ctx.deps.state
-        if state.editing_active and state.editing_content_only:
-            answer = _content_only_boundary(answer)
+        candidate_message = _candidate_request_message(state)
+        if candidate_message is not None:
+            answer = _candidate_boundary(
+                answer,
+                content_only=(
+                    state.editing_content_only
+                    or _candidate_content_only_requested(candidate_message)
+                ),
+            )
         if (
-            _candidate_request_message(state) is not None
+            candidate_message is not None
             and state.instrumentation.phase != "finalize"
         ):
             state.candidate_draft = answer.model_dump(mode="json")
@@ -3492,13 +3530,14 @@ def build_finalizer_agent(model) -> Agent[LoopDeps, DialogueAnswer]:
         answer = _candidate_finalizer_text_only(answer, state)
         answer = resolve_answer_results(answer, state)
         candidate_message = _candidate_request_message(state)
-        if (
-            candidate_message is not None
-            and (state.editing_content_only or _candidate_content_only_requested(candidate_message))
-            and answer.blocks
-            and all(block.kind == "text" for block in answer.blocks)
-        ):
-            answer = _content_only_boundary(answer)
+        if candidate_message is not None:
+            answer = _candidate_boundary(
+                answer,
+                content_only=(
+                    state.editing_content_only
+                    or _candidate_content_only_requested(candidate_message)
+                ),
+            )
         errors = output_errors(answer, state)
         errors.extend(await _project_material_errors(state, state.current_handles))
         if errors:

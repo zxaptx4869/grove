@@ -33,7 +33,7 @@ from evals.dialogue_loop.cli import (
     InfrastructureFailure,
     _conclusion,
     _input_estimation_by_scope,
-    _resource_by_arm,
+    _resource_summary,
     parser,
 )
 from evals.dialogue_loop.core import (
@@ -97,7 +97,7 @@ from evals.dialogue_loop.loop import (
     render_directory_not_found,
     run_turn,
 )
-from evals.dialogue_loop.report import _visible_answer, evaluate, evaluation_plan, sanitize
+from evals.dialogue_loop.report import evaluate, evaluation_plan, sanitize
 
 
 def test_evidence_is_requested_only_for_source_or_conflict_questions() -> None:
@@ -3013,47 +3013,10 @@ def test_child_result_writer_serializes_decimal(tmp_path: Path) -> None:
     assert result_path.stat().st_mode & 0o777 == 0o600
 
 
-def test_rehearsal_mode_is_separate_from_live_comparison() -> None:
+def test_rehearsal_mode_uses_only_unified_loop() -> None:
     assert parser().parse_args(["--rehearsal"]).rehearsal is True
     with pytest.raises(SystemExit):
-        parser().parse_args(["--rehearsal", "--compare", "--live"])
-
-
-def test_old_structured_results_are_evaluated_as_public_output() -> None:
-    oracle = {
-        "projects": [
-            {"id": 1, "name": "项目甲", "entry_count": 2},
-            {"id": 2, "name": "项目乙", "entry_count": 0},
-        ],
-        "entries": [],
-    }
-    count = {
-        "answer": "",
-        "status": "completed",
-        "public_run": {"entry_result": {"count": {"value": 2}}},
-    }
-    groups = {
-        "answer": "",
-        "status": "completed",
-        "public_run": {
-            "entry_result": {
-                "group_counts": [
-                    {
-                        "group_by": "project",
-                        "buckets": [
-                            {"label": "项目甲", "count": 2},
-                            {"label": "项目乙", "count": 0},
-                        ],
-                    }
-                ]
-            }
-        },
-    }
-    result = evaluate(
-        [{"arm": "old", "scenario": "A", "turns": [count, groups, count, groups]}],
-        oracle,
-    )
-    assert [item["status"] for item in result["turns"]] == ["pass"] * 4
+        parser().parse_args(["--rehearsal", "--compare"])
 
 
 def test_new_total_cannot_pass_by_summing_category_buckets() -> None:
@@ -3074,7 +3037,7 @@ def test_new_total_cannot_pass_by_summing_category_buckets() -> None:
         ],
     }
     turns = [grouped_only, grouped_only, grouped_only, grouped_only]
-    result = evaluate([{"arm": "new", "scenario": "A", "turns": turns}], oracle)
+    result = evaluate([{"scenario": "A", "turns": turns}], oracle)
     assert result["turns"][0]["status"] == "fail"
     assert result["turns"][0]["reasons"] == ["公开结果未展示期望精确值 5"]
     assert result["dialogues"][0]["status"] == "fail"
@@ -3089,7 +3052,7 @@ def test_not_executed_turn_is_not_sent_to_manual_content_review() -> None:
     }
 
     result = evaluate(
-        [{"arm": "new", "scenario": "A", "turns": [turn]}],
+        [{"scenario": "A", "turns": [turn]}],
         oracle,
     )
 
@@ -3122,39 +3085,14 @@ def test_project_bucket_scoring_checks_name_count_pairs() -> None:
         ],
     }
     result = evaluate(
-        [{"arm": "new", "scenario": "A", "turns": [count, swapped, count, swapped]}],
+        [{"scenario": "A", "turns": [count, swapped, count, swapped]}],
         oracle,
     )
     assert result["turns"][1]["status"] == "fail"
     assert set(result["turns"][1]["reasons"][0]) >= {"甲", "乙"}
 
 
-def test_old_record_list_does_not_require_evidence_before_grove_only_turn() -> None:
-    oracle = {"projects": [], "entries": []}
-    visible_list = {
-        "answer": "",
-        "status": "completed",
-        "public_run": {"entry_result": {"items": [{"entry_id": 1}]}},
-    }
-    result = evaluate(
-        [{"arm": "old", "scenario": "B", "turns": [visible_list] * 4}],
-        oracle,
-    )
-    assert result["turns"][2]["status"] == "review"
-    assert result["turns"][3]["status"] == "fail"
-
-
-def test_old_structured_result_is_rendered_as_public_answer() -> None:
-    turn = {
-        "answer": "",
-        "public_run": {"entry_result": {"count": {"value": 102}}},
-    }
-    rendered = _visible_answer(turn, "old")
-    assert "公开结构化结果" in rendered
-    assert '"value": 102' in rendered
-
-
-def test_list_reference_uses_each_arm_actual_displayed_third_item() -> None:
+def test_list_reference_uses_actual_displayed_third_item() -> None:
     oracle = {
         "projects": [{"id": 1, "name": "房子装修", "entry_count": 5}],
         "entries": [
@@ -3180,7 +3118,7 @@ def test_list_reference_uses_each_arm_actual_displayed_third_item() -> None:
             "blocks": [{"kind": "evidence", "items": [{"entry_id": 92}]}],
         },
     ]
-    result = evaluate([{"arm": "new", "scenario": "C", "turns": turns}], oracle)
+    result = evaluate([{"scenario": "C", "turns": turns}], oracle)
     assert result["turns"][0]["status"] == "fail"
     assert result["turns"][1]["status"] == "review"
     assert result["turns"][3]["status"] == "review"
@@ -3189,7 +3127,6 @@ def test_list_reference_uses_each_arm_actual_displayed_third_item() -> None:
 def test_denied_tool_request_is_not_reported_as_shared_tool_failure() -> None:
     results = [
         {
-            "arm": "new",
             "scenario": "A",
             "turns": [
                 {
@@ -3203,17 +3140,16 @@ def test_denied_tool_request_is_not_reported_as_shared_tool_failure() -> None:
     ]
     conclusion = _conclusion(
         results,
-        {"turns": [{"arm": "new", "scenario": "A", "status": "pass"}]},
+        {"turns": [{"scenario": "A", "status": "pass"}]},
         None,
     )
     assert "未识别到" in conclusion["shared_tools"]
     assert "边界拒绝 1 次" in conclusion["architecture"]
 
 
-def test_resource_summary_separates_arms_and_keeps_unknown_cost() -> None:
+def test_resource_summary_keeps_unknown_cost() -> None:
     results = [
         {
-            "arm": "new",
             "scenario": "A",
             "turns": [
                 {
@@ -3234,11 +3170,10 @@ def test_resource_summary_separates_arms_and_keeps_unknown_cost() -> None:
             ],
         }
     ]
-    summary = _resource_by_arm(results)
-    assert summary["new"]["text_requests"] == 1
-    assert summary["new"]["input_tokens"] == 10
-    assert summary["new"]["cost_available"] is False
-    assert summary["old"]["user_messages"] == 0
+    summary = _resource_summary(results)
+    assert summary["text_requests"] == 1
+    assert summary["input_tokens"] == 10
+    assert summary["cost_available"] is False
 
 
 def test_estimate_summary_separates_dispatched_usage_from_unknown_blocked_request() -> None:
@@ -3274,7 +3209,7 @@ def test_rehearsal_writes_four_json_safe_checkpoints() -> None:
     def checkpoint(value: dict) -> None:
         checkpoints.append(json.loads(json.dumps(sanitize(value))))
 
-    result = _rehearsal_scenario("new", "A", checkpoint)
+    result = _rehearsal_scenario("A", checkpoint)
     assert len(checkpoints) == 4
     assert [len(item["turns"]) for item in checkpoints] == [1, 2, 3, 4]
     assert result["turns"][0]["model_calls"][0]["kind"] == "pipeline_fixture"
@@ -3290,8 +3225,8 @@ def test_v2_control_preflight_is_entirely_deterministic_and_passes() -> None:
 def test_next_batch_variants_are_frozen_outside_system_prompt() -> None:
     plan = evaluation_plan()
     assert [item.id for item in VARIANT_SCENARIOS] == ["D", "E"]
-    assert plan["maximum_user_messages"] == 40
-    assert plan["status"] == "awaiting_user_approval"
+    assert plan["maximum_user_messages"] == 20
+    assert plan["status"] == "active_unified_loop"
     assert all(
         turn not in SYSTEM_PROMPT for scenario in VARIANT_SCENARIOS for turn in scenario.turns
     )
