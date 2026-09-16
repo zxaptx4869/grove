@@ -463,6 +463,35 @@ def _normalize_legacy_answer_response(
     if len(output_tool_names) != 1 or len(response.parts) != 1:
         return response, None, {}
     part = response.parts[0]
+    if isinstance(part, ToolCallPart) and part.tool_name == output_tool_names[0]:
+        try:
+            wrapper = part.args_as_dict()
+        except (ValueError, TypeError):
+            return response, None, {}
+        if set(wrapper) != {"INVALID_JSON"} or not isinstance(
+            wrapper.get("INVALID_JSON"), str
+        ):
+            return response, None, {}
+        try:
+            payload = json.loads(wrapper["INVALID_JSON"])
+            answer = DialogueAnswer.model_validate(payload)
+        except (json.JSONDecodeError, ValidationError, ValueError, TypeError):
+            return response, None, {}
+        normalized = replace(
+            response,
+            parts=[
+                ToolCallPart(
+                    output_tool_names[0],
+                    answer.model_dump(mode="json"),
+                    tool_call_id=part.tool_call_id,
+                )
+            ],
+        )
+        return (
+            normalized,
+            {"kind": "strict_invalid_json_envelope", "status": "normalized"},
+            {},
+        )
     if not isinstance(part, TextPart):
         return response, None, {}
     try:

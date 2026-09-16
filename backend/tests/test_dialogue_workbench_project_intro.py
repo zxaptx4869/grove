@@ -191,11 +191,29 @@ async def test_pending_search_at_real_soft_boundary_is_partial_without_old_resul
     dispatches = fake_search(monkeypatch, state, padding=450)
     calls = []
 
+    async def material_refs(_state, entry_ids, _pairs):
+        return {
+            "workspace_id": state.workspace_id,
+            "user_id": state.user_id,
+            "entry_ids": entry_ids,
+            "source_ids": [],
+            "source_pairs": [],
+            "fingerprints": {
+                f"entry:{entry_id}": f"fingerprint-{entry_id}"
+                for entry_id in entry_ids
+            },
+        }
+
+    monkeypatch.setattr(loop, "_database_material_refs", material_refs)
+
     def respond(messages, info):
         calls.append(info)
-        assert info.function_tools
-        return ModelResponse(parts=[ToolCallPart("search_knowledge", {
-            "project_scope": "project", "project_name": "房子装修", "query": "洗碗机",
+        if info.function_tools:
+            return ModelResponse(parts=[ToolCallPart("search_knowledge", {
+                "project_scope": "project", "project_name": "房子装修", "query": "洗碗机",
+            })])
+        return ModelResponse(parts=[ToolCallPart(info.output_tools[0].name, {
+            "blocks": [{"kind": "insufficient", "text": "候选尚未完成相关性筛选。"}],
         })])
 
     model = BudgetedModel(FunctionModel(respond), state.instrumentation, "dialogue_agent")
@@ -204,11 +222,12 @@ async def test_pending_search_at_real_soft_boundary_is_partial_without_old_resul
     assert turn["completion"]["reason_code"] == "relevance_selection_pending"
     assert "搜索已执行" in turn["answer"] and "尚未完成" in turn["answer"]
     assert "92" not in turn["answer"] and "洗碗机安装要点" not in turn["answer"]
-    assert not turn["completion"]["can_continue"] and state.continuation is None
-    assert len(dispatches) == len(calls) == 1
+    assert turn["completion"]["can_continue"] and state.continuation is not None
+    assert state.continuation.task_type == "relevance_selection"
+    assert len(dispatches) == 1 and len(calls) == 2
     transition = next(m for m in turn["model_calls"] if m["kind"] == "finalize_transition")
     assert transition["projected_input_tokens"] >= 9000
-    assert not turn["finalization"]["attempted"]
+    assert turn["finalization"]["attempted"]
 
 
 @pytest.mark.asyncio

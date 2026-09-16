@@ -67,7 +67,10 @@ from evals.dialogue_loop.execution import _rehearsal_scenario, _v2_control_prefl
 from evals.dialogue_loop.instrumentation import (
     FINALIZE_INSTRUCTION,
     BudgetedModel,
+    InputEstimate,
     Instrumentation,
+    InvocationLog,
+    _normalize_legacy_answer_response,
 )
 from evals.dialogue_loop.isolation import assert_isolated, backup_database
 from evals.dialogue_loop.loop import (
@@ -105,6 +108,48 @@ def test_evidence_is_requested_only_for_source_or_conflict_questions() -> None:
     assert _evidence_requested("请给出第一条的来源原文") is True
     assert _evidence_requested("第二个 Entry 的具体内容是什么") is False
     assert _evidence_requested("好的，帮我解释这个记录") is False
+
+
+def test_invalid_json_wrapper_only_accepts_strict_dialogue_answer() -> None:
+    valid = json.dumps(
+        {"blocks": [{"kind": "text", "text": "可严格解析的回答。"}]},
+        ensure_ascii=False,
+    )
+    response = ModelResponse(
+        parts=[ToolCallPart("final_result", {"INVALID_JSON": valid})]
+    )
+
+    normalized, compatibility, _ = _normalize_legacy_answer_response(
+        response, ["final_result"]
+    )
+
+    assert normalized.parts[0].args_as_dict() == {
+        "blocks": [{"kind": "text", "text": "可严格解析的回答。"}],
+        "needs_clarification": False,
+    }
+    assert compatibility == {
+        "kind": "strict_invalid_json_envelope",
+        "status": "normalized",
+    }
+
+
+def test_real_damaged_invalid_json_is_not_repaired_or_extracted() -> None:
+    raw = (
+        Path(__file__).parent / "fixtures" / "dialogue-invalid-json-six-point.txt"
+    ).read_text(encoding="utf-8").rstrip("\n")
+    with pytest.raises(json.JSONDecodeError):
+        json.loads(raw)
+    response = ModelResponse(
+        parts=[ToolCallPart("final_result", {"INVALID_JSON": raw})]
+    )
+
+    normalized, compatibility, claims = _normalize_legacy_answer_response(
+        response, ["final_result"]
+    )
+
+    assert normalized is response
+    assert compatibility is None
+    assert claims == {}
 
 
 def test_skipped_evidence_event_does_not_make_turn_incomplete() -> None:
@@ -4054,6 +4099,468 @@ async def test_subsequent_soft_limit_finalizes_even_without_successful_material(
     assert turn["finalization"]["reason"] == "input_soft_limit"
     assert turn["status"] == "completed"
     assert turn["completion"]["continuation"] is None
+
+
+@pytest.mark.asyncio
+async def test_run13_soft_limit_finalizes_without_exposing_five_candidates(
+    monkeypatch,
+) -> None:
+    """Run 13：8295 成功后，9290 停止资料动作但保留无工具回答出口。"""
+
+    state = _state()
+    state.instrumentation.context_policy_enabled = True
+    candidates = [
+        {"entry_id": entry_id, "title": f"未筛选候选 {entry_id}"}
+        for entry_id in (6, 2, 7, 5, 1)
+    ]
+    candidate_handle = state.store_result(
+        "list",
+        {"items": candidates, "returned_count": 5, "has_more": False},
+        "limited",
+        "limited",
+        semantics={"result_role": "candidate", "project_name": "AGENT学习"},
+        displayable=False,
+    )
+    state.tool_events.append(
+        {
+            "tool": "query_entries",
+            "result_handle": candidate_handle,
+            "status": "limited",
+            "completeness": "limited",
+            "result_summary": {"returned_count": 5, "has_more": False},
+        }
+    )
+    await state.ledger.reserve_text()
+    state.instrumentation.logs.append(
+        InvocationLog(
+            kind="text",
+            provider="deepseek",
+            model="deepseek-v4-flash",
+            duration_ms=1,
+            usage={"input_tokens": 6151},
+            error=None,
+            projected_input_tokens=8295,
+        )
+    )
+    monkeypatch.setattr(
+        "evals.dialogue_loop.instrumentation.estimate_input",
+        lambda *_args, **_kwargs: InputEstimate(
+            tokens=9290, components={"version": "run13-fixture"}
+        ),
+    )
+    calls = 0
+
+    def respond(_messages, info):
+        nonlocal calls
+        calls += 1
+        return ModelResponse(
+            parts=[
+                ToolCallPart(
+                    info.output_tools[0].name,
+                    {
+                        "blocks": [
+                            {
+                                "kind": "text",
+                                "text": (
+                                    "我不能直接保存正式 Entry，但可以根据已确认对话"
+                                    "提供候选稿；这里没有使用未筛选搜索候选。"
+                                ),
+                            }
+                        ]
+                    },
+                )
+            ]
+        )
+
+    model = BudgetedModel(
+        FunctionModel(respond, model_name="deepseek-v4-flash"),
+        state.instrumentation,
+        request_scope="dialogue_agent",
+    )
+    turn, _ = await run_turn(
+        build_agent(model),
+        state,
+        "整理成一条知识记录存进 AGENT学习 项目",
+        [],
+        build_finalizer_agent(model),
+    )
+
+    assert calls == 1
+    assert turn["status"] == "completed"
+    assert "不能直接保存正式 Entry" in turn["answer"]
+    assert not any(block["kind"] == "list" for block in turn["blocks"])
+    assert all(item["title"] not in turn["answer"] for item in candidates)
+    assert [call["projected_input_tokens"] for call in turn["model_calls"][:2]] == [
+        9290,
+        9290,
+    ]
+
+
+def test_unfiltered_candidates_cannot_be_reported_as_zero_results() -> None:
+    state = _state()
+    state.store_result(
+        "list",
+        {"items": [{"entry_id": 1, "title": "内部候选"}]},
+        "limited",
+        "limited",
+        semantics={"result_role": "candidate"},
+        displayable=False,
+    )
+    state.instrumentation.phase = "finalize"
+    answer = DialogueAnswer.model_validate(
+        {"blocks": [{"kind": "text", "text": "没有找到直接相关正式记录。"}]}
+    )
+
+    assert "未筛选语义候选不能表达为零条、查无结果或不存在记录" in output_errors(
+        answer, state
+    )
+
+
+@pytest.mark.asyncio
+async def test_soft_limit_candidate_dependent_answer_saves_selection_continuation(
+    monkeypatch,
+) -> None:
+    state = _state()
+    state.instrumentation.context_policy_enabled = True
+    candidate_handle = state.store_result(
+        "list",
+        {
+            "items": [
+                {"entry_id": entry_id, "title": f"候选 {entry_id}"}
+                for entry_id in (6, 2, 7, 5, 1)
+            ],
+            "returned_count": 5,
+            "has_more": False,
+        },
+        "limited",
+        "limited",
+        semantics={"result_role": "candidate", "project_name": "AGENT学习"},
+        displayable=False,
+    )
+    state.tool_events.append(
+        {
+            "tool": "query_entries",
+            "result_handle": candidate_handle,
+            "status": "limited",
+            "completeness": "limited",
+            "params": {"query": "完整 Agent 的组成部分"},
+            "result_summary": {"returned_count": 5, "has_more": False},
+        }
+    )
+    await state.ledger.reserve_text()
+    monkeypatch.setattr(
+        "evals.dialogue_loop.instrumentation.estimate_input",
+        lambda *_args, **_kwargs: InputEstimate(
+            tokens=9290, components={"version": "run13-fixture"}
+        ),
+    )
+    async def fake_material_refs(_state, entry_ids, _pairs):
+        return {
+            "workspace_id": 1,
+            "user_id": 2,
+            "entry_ids": entry_ids,
+            "source_ids": [],
+            "source_pairs": [],
+            "fingerprints": {
+                f"entry:{entry_id}": f"fingerprint-{entry_id}"
+                for entry_id in entry_ids
+            },
+        }
+
+    monkeypatch.setattr(loop_module, "_database_material_refs", fake_material_refs)
+
+    def respond(_messages, info):
+        return ModelResponse(
+            parts=[
+                ToolCallPart(
+                    info.output_tools[0].name,
+                    {
+                        "blocks": [
+                            {
+                                "kind": "insufficient",
+                                "text": "必须先完成候选相关性筛选才能回答。",
+                            }
+                        ]
+                    },
+                )
+            ]
+        )
+
+    model = BudgetedModel(
+        FunctionModel(respond), state.instrumentation, request_scope="dialogue_agent"
+    )
+    turn, _ = await run_turn(
+        build_agent(model), state, "这些候选中哪些直接相关？", [], build_finalizer_agent(model)
+    )
+
+    assert turn["status"] == "partial_completed"
+    assert turn["completion"]["reason_code"] == "relevance_selection_pending"
+    assert turn["completion"]["can_continue"] is True
+    assert turn["completion"]["continuation"]["task_type"] == "relevance_selection"
+    assert not any(block["kind"] == "list" for block in turn["blocks"])
+
+
+@pytest.mark.asyncio
+async def test_relevance_continuation_reuses_candidates_without_repeating_query() -> None:
+    state = _state()
+    state.instrumentation.context_policy_enabled = True
+    seeded = await _seed_finalize_material(state)
+    state.begin_turn(430, "哪些候选直接回答了问题？")
+    candidate_handle = state.store_result(
+        "list",
+        {
+            "items": [
+                {
+                    "entry_id": seeded["entry_id"],
+                    "title": seeded["title"],
+                    "content": seeded["content"],
+                }
+            ],
+            "returned_count": 1,
+            "has_more": False,
+        },
+        "limited",
+        "limited",
+        semantics={"result_role": "candidate"},
+        displayable=False,
+    )
+    state.tool_events.append(
+        {
+            "tool": "search_knowledge",
+            "result_handle": candidate_handle,
+            "status": "limited",
+            "completeness": "limited",
+        }
+    )
+    continuation = await loop_module._create_relevance_continuation(
+        state, state.current_message, state.tool_events
+    )
+    state.continuation = continuation
+    state.begin_turn(431, "继续")
+    calls = 0
+
+    def respond(messages, info):
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            assert seeded["title"] in str(messages)
+            return ModelResponse(
+                parts=[
+                    ToolCallPart(
+                        "select_relevant_entries",
+                        {
+                            "candidate_result_handle": candidate_handle,
+                            "classifications": [
+                                {
+                                    "entry_id": seeded["entry_id"],
+                                    "relevance": "direct",
+                                    "reason": "正文直接回答问题",
+                                }
+                            ],
+                        },
+                    )
+                ]
+            )
+        authorized = next(
+            handle
+            for handle, record in state.result_sets.items()
+            if record.semantics.get("candidate_result_handle") == candidate_handle
+        )
+        return ModelResponse(
+            parts=[
+                ToolCallPart(
+                    info.output_tools[0].name,
+                    {
+                        "blocks": [
+                            {"kind": "list", "result_handle": authorized, "label": "直接相关"}
+                        ]
+                    },
+                )
+            ]
+        )
+
+    model = BudgetedModel(
+        FunctionModel(respond), state.instrumentation, request_scope="dialogue_agent"
+    )
+    turn, _ = await run_turn(
+        build_agent(model), state, "继续", [], build_finalizer_agent(model)
+    )
+
+    assert turn["status"] == "completed"
+    assert turn["context"]["continuation_mode"] == "relevance_selection"
+    assert [event["tool"] for event in turn["tool_calls"]] == [
+        "select_relevant_entries"
+    ]
+    assert all(
+        event["tool"] not in {"search_knowledge", "query_entries", "read_entries"}
+        for event in turn["tool_calls"]
+    )
+    assert state.continuation is None
+    assert calls == 2
+
+
+@pytest.mark.asyncio
+async def test_relevance_continuation_rejects_invalid_handle_before_model() -> None:
+    state = _state()
+    seeded = await _seed_finalize_material(state)
+    state.begin_turn(432, "筛选候选")
+    candidate_handle = state.store_result(
+        "list",
+        {"items": [{"entry_id": seeded["entry_id"], "title": seeded["title"]}]},
+        "limited",
+        "limited",
+        semantics={"result_role": "candidate"},
+        displayable=False,
+    )
+    continuation = await loop_module._create_relevance_continuation(
+        state, state.current_message, []
+    )
+    continuation.recoverable_material["record_fingerprints"][candidate_handle] = "forged"
+    state.continuation = continuation
+    state.begin_turn(433, "继续")
+    calls = []
+
+    def respond(_messages, _info):
+        calls.append(True)
+        raise AssertionError("失效候选不得派发模型")
+
+    model = BudgetedModel(FunctionModel(respond), state.instrumentation)
+    turn, _ = await run_turn(
+        build_agent(model), state, "继续", [], build_finalizer_agent(model)
+    )
+
+    assert turn["status"] == "not_executed"
+    assert turn["completion"]["reason_code"] == "continuation_material_invalid"
+    assert calls == []
+    assert state.continuation is None
+
+
+@pytest.mark.asyncio
+async def test_validation_retry_preserves_safe_general_text_for_soft_finalizer(
+    monkeypatch,
+) -> None:
+    state = _state()
+    state.instrumentation.context_policy_enabled = True
+    candidate_handle = state.store_result(
+        "list",
+        {"items": [{"entry_id": 9, "title": "未筛选内部候选"}]},
+        "limited",
+        "limited",
+        semantics={"result_role": "candidate"},
+        displayable=False,
+    )
+
+    def estimate(*_args, **_kwargs):
+        tokens = (
+            8_000
+            if state.instrumentation.phase == "finalize"
+            else 8_295
+            if state.ledger.active_text_requests == 0
+            else 9_290
+        )
+        return InputEstimate(tokens=tokens, components={"version": "validation-retry"})
+
+    monkeypatch.setattr("evals.dialogue_loop.instrumentation.estimate_input", estimate)
+    calls = 0
+    preserved = "以下属于模型通用知识，不是 Grove 正式记录或 Source 原文。"
+
+    def respond(messages, info):
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            return ModelResponse(
+                parts=[
+                    ToolCallPart(
+                        info.output_tools[0].name,
+                        {
+                            "blocks": [
+                                {"kind": "text", "text": preserved},
+                                {
+                                    "kind": "list",
+                                    "result_handle": candidate_handle,
+                                    "label": "未经筛选",
+                                },
+                            ]
+                        },
+                    )
+                ]
+            )
+        assert preserved in str(messages)
+        assert "未筛选内部候选" not in str(messages)
+        return ModelResponse(
+            parts=[
+                ToolCallPart(
+                    info.output_tools[0].name,
+                    {"blocks": [{"kind": "text", "text": preserved}]},
+                )
+            ]
+        )
+
+    model = BudgetedModel(FunctionModel(respond), state.instrumentation)
+    turn, _ = await run_turn(
+        build_agent(model), state, "解释一般原则", [], build_finalizer_agent(model)
+    )
+
+    assert turn["status"] == "completed"
+    assert preserved in turn["answer"]
+    assert "未筛选内部候选" not in turn["answer"]
+    assert not any(block["kind"] == "list" for block in turn["blocks"])
+    assert calls == 2
+
+
+@pytest.mark.asyncio
+async def test_real_damaged_invalid_json_keeps_finalize_only_continuation(
+    monkeypatch,
+) -> None:
+    state = _state()
+    state.instrumentation.context_policy_enabled = True
+    await _seed_finalize_material(state)
+    raw = (
+        Path(__file__).parent / "fixtures" / "dialogue-invalid-json-six-point.txt"
+    ).read_text(encoding="utf-8").rstrip("\n")
+    await state.ledger.reserve_text()
+    monkeypatch.setattr(
+        "evals.dialogue_loop.instrumentation.estimate_input",
+        lambda *_args, **_kwargs: InputEstimate(
+            tokens=9_290, components={"version": "invalid-json-recovery"}
+        ),
+    )
+    calls = 0
+
+    def respond(_messages, info):
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            return ModelResponse(
+                parts=[ToolCallPart(info.output_tools[0].name, {"INVALID_JSON": raw})]
+            )
+        return ModelResponse(
+            parts=[
+                ToolCallPart(
+                    info.output_tools[0].name,
+                    {"blocks": [{"kind": "text", "text": "已仅重试最终回答。"}]},
+                )
+            ]
+        )
+
+    model = BudgetedModel(FunctionModel(respond), state.instrumentation)
+    agent = build_agent(model)
+    finalizer = build_finalizer_agent(model)
+    failed, history = await run_turn(agent, state, "整理六点", [], finalizer)
+
+    assert failed["status"] == "partial_completed"
+    assert failed["completion"]["reason_code"] == "finalize_output_invalid"
+    assert failed["completion"]["continuation"]["task_type"] == "finalize_answer"
+    events_before = len(state.tool_events)
+
+    state.begin_turn(434, "继续")
+    completed, _ = await run_turn(agent, state, "继续", history, finalizer)
+
+    assert completed["status"] == "completed"
+    assert completed["context"]["continuation_mode"] == "finalize_only"
+    assert completed["tool_calls"] == []
+    assert len(state.tool_events) == events_before
+    assert calls == 2
 
 
 @pytest.mark.asyncio

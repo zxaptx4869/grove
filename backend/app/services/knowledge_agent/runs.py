@@ -451,6 +451,7 @@ def _parse_investigation_summary(
 def run_out(run: KnowledgeAgentRun) -> KnowledgeRunOut:
     """组装 Run 响应。"""
     dialogue_status = None
+    dialogue_stage = None
     dialogue_blocks: list[dict] = []
     can_continue = False
     continuation = None
@@ -459,6 +460,8 @@ def run_out(run: KnowledgeAgentRun) -> KnowledgeRunOut:
             dialogue_state = json.loads(run.dialogue_loop_state_json)
             if isinstance(dialogue_state, dict):
                 dialogue_status = dialogue_state.get("loop_status")
+                if run.status in {"waiting", "processing"}:
+                    dialogue_stage = dialogue_state.get("stage")
                 dialogue_blocks = dialogue_state.get("blocks") or []
                 completion = dialogue_state.get("completion") or {}
                 can_continue = bool(completion.get("can_continue"))
@@ -519,6 +522,7 @@ def run_out(run: KnowledgeAgentRun) -> KnowledgeRunOut:
         answer=_parse_answer(run.answer_json),
         entry_result=_parse_entry_result(run.entry_result_json),
         dialogue_loop_status=dialogue_status,
+        dialogue_stage=dialogue_stage,
         dialogue_blocks=dialogue_blocks,
         can_continue=can_continue,
         continuation=continuation,

@@ -6,6 +6,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 from typing import Any
@@ -20,15 +21,17 @@ from pydantic_ai.messages import (
 from pydantic_ai.models.function import FunctionModel
 from pydantic_ai.models.test import TestModel
 from pydantic_core import to_jsonable_python
-from sqlalchemy import select
+from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.db.session import async_session_factory
 from app.models import KnowledgeAgentRun, KnowledgeMessage
 from app.models.knowledge_agent import (
     RUN_CANCELLED,
     RUN_COMPLETED,
     RUN_FAILED,
     RUN_PARTIAL,
+    RUN_PROCESSING,
 )
 from app.services.knowledge_agent.observability import (
     MODEL_CALL_FAILED,
@@ -59,12 +62,89 @@ logger = logging.getLogger(__name__)
 STATE_VERSION = 1
 HISTORY_LIMIT = 32
 STATE_BYTES_LIMIT = 240_000
+_DIALOGUE_STAGES = {
+    "organizing",
+    "querying",
+    "reading_entries",
+    "reading_sources",
+    "finalizing",
+}
+_STAGE_QUEUE_END = object()
 
 
 def _json(value: Any) -> str:
     return json.dumps(
         to_jsonable_python(value), ensure_ascii=False, separators=(",", ":")
     )
+
+
+class _DialogueStagePublisher:
+    """按真实阶段变化短事务持久化，不占用 Worker 主会话。"""
+
+    def __init__(self, run_id: int) -> None:
+        self.run_id = run_id
+        self.queue: asyncio.Queue[str | object] = asyncio.Queue()
+        self.last_queued: str | None = None
+        self.task = asyncio.create_task(self._run())
+
+    def publish(self, stage: str) -> None:
+        if stage not in _DIALOGUE_STAGES or stage == self.last_queued:
+            return
+        self.last_queued = stage
+        self.queue.put_nowait(stage)
+
+    async def close(self) -> None:
+        self.queue.put_nowait(_STAGE_QUEUE_END)
+        await self.task
+
+    async def _run(self) -> None:
+        last_persisted = None
+        while True:
+            value = await self.queue.get()
+            if value is _STAGE_QUEUE_END:
+                return
+            stage = str(value)
+            if stage == last_persisted:
+                continue
+            try:
+                async with async_session_factory() as stage_db:
+                    saved = await stage_db.get(KnowledgeAgentRun, self.run_id)
+                    if (
+                        saved is None
+                        or saved.status != RUN_PROCESSING
+                        or saved.current_step != "dialogue_loop"
+                    ):
+                        continue
+                    try:
+                        snapshot = json.loads(saved.dialogue_loop_state_json or "{}")
+                    except (json.JSONDecodeError, TypeError):
+                        snapshot = {}
+                    if not isinstance(snapshot, dict):
+                        snapshot = {}
+                    snapshot.update(
+                        version=STATE_VERSION,
+                        loop_status="processing",
+                        stage=stage,
+                    )
+                    await stage_db.execute(
+                        update(KnowledgeAgentRun)
+                        .where(
+                            KnowledgeAgentRun.id == self.run_id,
+                            KnowledgeAgentRun.status == RUN_PROCESSING,
+                            KnowledgeAgentRun.current_step == "dialogue_loop",
+                        )
+                        .values(dialogue_loop_state_json=_json(snapshot))
+                    )
+                    await stage_db.commit()
+            except Exception:  # noqa: BLE001
+                logger.warning(
+                    "知识 Agent Run %s 阶段 %s 持久化失败",
+                    self.run_id,
+                    stage,
+                    exc_info=True,
+                )
+            else:
+                last_persisted = stage
 
 
 def _bounded_state(value: dict) -> dict:
@@ -315,7 +395,11 @@ async def _record_model_logs(
         ]
     for log in logs:
         kind = str(log.get("kind") or "")
-        if kind in {"text_not_dispatched", "not_dispatched"}:
+        if kind in {
+            "text_not_dispatched",
+            "not_dispatched",
+            "finalize_transition",
+        }:
             outcome = MODEL_NOT_DISPATCHED
         elif fallback or isinstance(model, TestModel) or kind in {
             "deterministic_fallback",
@@ -423,6 +507,8 @@ async def execute_dialogue_loop_run(db: AsyncSession, run: KnowledgeAgentRun) ->
         }
     )
     await db.commit()
+    stage_publisher = _DialogueStagePublisher(run.id)
+    instrumentation.activity_callback = stage_publisher.publish
 
     try:
         turn, _ = await run_turn(agent, state, message, history)
@@ -460,6 +546,9 @@ async def execute_dialogue_loop_run(db: AsyncSession, run: KnowledgeAgentRun) ->
             }
         )
         return
+    finally:
+        instrumentation.activity_callback = None
+        await stage_publisher.close()
 
     loop_status = str(turn.get("status") or TURN_FAILED)
     state_snapshot = _state_snapshot(state, turn, loop_status=loop_status)
