@@ -6,14 +6,14 @@
 
 ## 2. 旧执行编排退役
 
-- [ ] 2.1 依据静态调用、动态导入、脚本入口和公开接口核对结果，删除旧 runner、investigation、composite、coverage、shared graph 及只服务于它们的 Agent/服务模块
-- [ ] 2.2 清理 dialogue-loop 预检与插桩中的旧模块动态导入，保留当前统一循环实际使用的插桩能力
-- [ ] 2.3 保留历史 Run/Investigation API、数据库模型与字段、Alembic 历史迁移和 composite 历史投影，并用读取测试证明兼容
+- [x] 2.1 依据静态调用、动态导入、脚本入口和公开接口核对结果，删除旧 runner、investigation、composite、coverage、shared graph 及只服务于它们的 Agent/服务模块
+- [x] 2.2 清理 dialogue-loop 预检与插桩中的旧模块动态导入，保留当前统一循环实际使用的插桩能力
+- [x] 2.3 保留历史 Run/Investigation API、数据库模型与字段、Alembic 历史迁移和 composite 历史投影，并用读取测试证明兼容
 
 ## 3. 测试迁移
 
-- [ ] 3.1 删除只验证已退役执行图的测试，并将 Web API、Candidate、Entry Revision、Workspace、权限、幂等与取消测试的旧 runner 夹具迁移到统一循环确定性边界
-- [ ] 3.2 运行 dialogue_loop、production_adapter、Worker、实验台、Candidate、Entry Revision 与历史恢复测试，对照实施前 35 项基线失败逐项归因
+- [x] 3.1 删除只验证已退役执行图的测试，并将 Web API、Candidate、Entry Revision、Workspace、权限、幂等与取消测试的旧 runner 夹具迁移到统一循环确定性边界
+- [x] 3.2 运行 dialogue_loop、production_adapter、Worker、实验台、Candidate、Entry Revision 与历史恢复测试，对照实施前 35 项基线失败逐项归因
 - [ ] 3.3 运行后端受影响静态检查与测试、`git diff --check`、移动端未改动检查及正式调用链/旧导入静态扫描
 
 ## 4. 验证记录与收尾

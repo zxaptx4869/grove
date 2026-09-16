@@ -12,11 +12,11 @@ from app.main import create_app
 from app.models import Attachment, KnowledgeAgentEvidence, KnowledgeAgentRun
 from app.models.knowledge_agent import SCOPE_PROJECT
 from app.services.knowledge_agent.tools import RunToolContext
-from tests.test_knowledge_agent_runner import (
+from tests.knowledge_agent_test_helpers import (
     KnowledgeAnswerDraft,
     KnowledgeCitationDraft,
-    _evidence_for_run,
-    _fake_answer_agent,
+    complete_answer_run,
+    evidence_for_run,
 )
 from tests.test_knowledge_agent_worker import _cancel_other_waiting_runs
 
@@ -113,22 +113,20 @@ async def _completed_answer_run(
             project_id=project_id,
             project_name=None,
         )
-        verified = await _evidence_for_run(db, ctx)
+        verified = await evidence_for_run(db, ctx)
         assert verified
         handle = verified[0].evidence_handle
-        await db.commit()
-
-    import app.services.knowledge_agent.runner as runner_module
-
-    runner_module.run_knowledge_answer_agent = _fake_answer_agent(
-        KnowledgeAnswerDraft(
+        await complete_answer_run(
+            db,
+            run,
+            KnowledgeAnswerDraft(
             answer="闭水试验通常持续 24 小时，验收前不得放水。",
             citations=[KnowledgeCitationDraft(evidence_handle=handle)],
             core_question_answered=True,
             coverage_complete=True,
+            ),
         )
-    )
-    assert await process_one_run() is True
+        await db.commit()
     return run_id, handle
 
 

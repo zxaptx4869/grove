@@ -3,13 +3,6 @@
 import pytest
 from sqlalchemy import select
 
-from app.agents.knowledge_agent import (
-    KnowledgeAnswerDraft,
-    KnowledgeAnswerPointDraft,
-    KnowledgeCitationDraft,
-    KnowledgeConflictDraft,
-    KnowledgeEvidenceSummaryDraft,
-)
 from app.db.session import async_session_factory
 from app.models import (
     EntrySourceEvidence,
@@ -18,6 +11,13 @@ from app.models import (
     KnowledgeConversation,
 )
 from app.models.knowledge_agent import RUN_PROCESSING
+from app.services.knowledge_agent.answer_draft import (
+    KnowledgeAnswerDraft,
+    KnowledgeAnswerPointDraft,
+    KnowledgeCitationDraft,
+    KnowledgeConflictDraft,
+    KnowledgeEvidenceSummaryDraft,
+)
 from app.services.knowledge_agent.evidence import (
     attachment_fingerprint,
     build_validated_answer,

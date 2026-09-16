@@ -927,13 +927,6 @@ def install_instrumentation(state: Instrumentation) -> dict:
 
     # 工具和上下文模块可能动态导入；预先加载后统一替换已绑定引用。
     module_names = (
-        "app.agents.basis",
-        "app.agents.composite_answer",
-        "app.agents.coverage_repair",
-        "app.agents.investigation",
-        "app.agents.knowledge_agent",
-        "app.agents.knowledge_context",
-        "app.agents.result_mode",
         "app.agents.semantic",
         "app.agents.structured_query",
         "app.services.vector_search",

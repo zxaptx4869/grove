@@ -1,5 +1,4 @@
 """有界正式 Entry 查找服务：受控召回 → 去重排序 → 快照装配 → 原子提交。
-
 只读执行图约束：
 - 范围只来自 Run 固化的 owner / Workspace / 可选项目；模型或客户端不能指定
   Workspace、Project、Node、Entry id 或目录节点级范围；
@@ -14,28 +13,19 @@ import hashlib
 import hmac
 import json
 import logging
-from datetime import UTC, datetime
-from time import perf_counter
 
 from fastapi import HTTPException, status
 from pydantic import ValidationError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.agents.semantic import run_semantic_agent
 from app.core.config import get_settings
 from app.models import Entry
 from app.models.knowledge_agent import (
-    PURPOSE_RERANK,
     RESULT_COMPLETENESS_COMPLETE,
     RESULT_COMPLETENESS_LIMITED,
     RESULT_COMPLETENESS_UNKNOWN,
     RESULT_MODE_ENTRIES,
-    RUN_COMPLETED,
-    RUN_PARTIAL,
     SCOPE_PROJECT,
-    STEP_ENTRY_ASSEMBLE,
-    STEP_ENTRY_SEARCH,
-    STEP_FINALIZE,
 )
 from app.schemas.knowledge_agent import (
     KnowledgeEntryResultItemOut,
@@ -44,21 +34,6 @@ from app.schemas.knowledge_agent import (
 )
 from app.services.entry import entry_baseline, entry_fingerprint
 from app.services.knowledge_agent.evidence import build_node_path_map
-from app.services.knowledge_agent.observability import (
-    StageMeta,
-    record_model_invocation,
-    run_fallback_summary,
-)
-from app.services.knowledge_agent.run_control import check_run_cancelled
-from app.services.knowledge_agent.runs import (
-    finalize_entry_run,
-    update_run_step,
-)
-from app.services.knowledge_agent.tools import (
-    _load_scope_entries,
-    record_tool_result,
-)
-from app.services.vector_search import hybrid_recall_by_query_with_meta
 
 logger = logging.getLogger(__name__)
 
@@ -501,222 +476,3 @@ async def _assemble_items(
             )
         )
     return items, unavailable
-
-
-async def execute_structured_entry_search(
-    db: AsyncSession,
-    run,
-    decision,
-    ctx,
-) -> None:
-    """执行有界结构化 Entry 查找：终态一次性提交结果快照。"""
-    settings = get_settings()
-    query = (decision.standalone_query or "").strip()
-    # 重排输入使用剥离框架词后的核心查询，避免「相关的知识点」稀释相关性判断
-    match_query = _strip_query_frames(query)
-    # 快照时间使用应用时钟：Run.updated_at 带 onupdate，提交后读取会触发
-    # ORM 惰性刷新（async 下 MissingGreenlet），且快照时间只作展示元数据。
-    snapshot_updated_at = datetime.now(UTC)
-
-    # 步骤 1：加载范围内正式 Entry 并混合召回
-    await check_run_cancelled(run.id)
-    await update_run_step(run.id, STEP_ENTRY_SEARCH)
-    scope_entries = await _load_scope_entries(db, ctx.workspace_id, ctx.project_id)
-    scope_total = len(scope_entries)
-    candidates: list[Entry] = []
-    embedding_meta = None
-    if scope_entries and query:
-        started = perf_counter()
-        candidates, _cosine, embedding_meta = await hybrid_recall_by_query_with_meta(
-            db,
-            ctx.workspace_id,
-            scope_entries,
-            query,
-            settings.knowledge_agent_result_candidate_limit,
-        )
-        recall_duration = int((perf_counter() - started) * 1000)
-    else:
-        recall_duration = 0
-    # 结束主会话的读事务：SQLite 读锁会阻塞独立会话的步骤更新
-    await db.commit()
-
-    # 步骤 2/3：重排、去重与快照装配（主会话在提交前完成全部 ORM 读取）
-    await check_run_cancelled(run.id)
-    await update_run_step(run.id, STEP_ENTRY_ASSEMBLE)
-    rerank_meta = None
-    ordered: list[Entry] = []
-    rerank_duration = 0
-    rerank_kept = 0
-    if candidates:
-        started = perf_counter()
-        draft, provider, model, is_fallback, error = await run_semantic_agent(
-            db,
-            ctx.workspace_id,
-            match_query,
-            candidates,
-            strict=True,
-        )
-        rerank_meta = StageMeta(
-            purpose=PURPOSE_RERANK,
-            provider=provider,
-            model=model,
-            is_fallback=is_fallback,
-            error=error,
-            duration_ms=int((perf_counter() - started) * 1000),
-        )
-        # 只采用重排模型明确保留的候选；模型输出被截断/降级时按召回顺序兜底，
-        # 不再把模型明确排除的条目重新加回（避免重排过滤被静默撤销）。
-        by_id = {entry.id: entry for entry in candidates}
-        ordered = []
-        kept_ids: set[int] = set()
-        for item in draft.results:
-            entry = by_id.get(item.entry_id)
-            if entry is not None and entry.id not in kept_ids:
-                ordered.append(entry)
-                kept_ids.add(entry.id)
-            if len(ordered) >= settings.knowledge_agent_result_persist_limit:
-                break
-        rerank_kept = len(ordered)
-        if not ordered and (is_fallback or error is not None):
-            ordered = candidates[: settings.knowledge_agent_result_persist_limit]
-        rerank_duration = int((perf_counter() - started) * 1000)
-    if embedding_meta:
-        await record_model_invocation(
-            db,
-            run_id=run.id,
-            meta=embedding_meta,
-            prompt_version=ENTRY_SEARCH_PROMPT_VERSION,
-        )
-    if rerank_meta:
-        await record_model_invocation(
-            db,
-            run_id=run.id,
-            meta=rerank_meta,
-            prompt_version=ENTRY_SEARCH_PROMPT_VERSION,
-        )
-    # 步骤边界提交可观测记录：run_semantic_agent 可能惰性写入 Provider 配置，
-    # 必须先提交释放 SQLite 写锁，再进行装配（expire_on_commit=False 保持属性可读）。
-    await db.commit()
-    unique: list[Entry] = []
-    seen: set[int] = set()
-    for entry in ordered:
-        if entry.id in seen:
-            continue
-        seen.add(entry.id)
-        unique.append(entry)
-    assembly_started = perf_counter()
-    items, unavailable = await _assemble_items(
-        db,
-        ctx,
-        unique,
-        query,
-        excerpt_chars=settings.knowledge_agent_result_excerpt_chars,
-        node_path_chars=settings.knowledge_agent_result_node_path_chars,
-        match_hint_chars=settings.knowledge_agent_result_match_hint_chars,
-    )
-    assembly_duration = int((perf_counter() - assembly_started) * 1000)
-
-    # 字节上限：序列化前拒绝超限（确定性移除末尾项）
-    persisted = list(items)
-    warning: str | None = None
-    bytes_limit = settings.knowledge_agent_result_json_bytes_limit
-    while persisted:
-        candidate_snapshot = KnowledgeEntryResultSnapshotOut(
-            query=query,
-            status=RUN_COMPLETED,
-            completeness=RESULT_COMPLETENESS_LIMITED,
-            items=persisted,
-            returned_count=len(persisted),
-            candidate_limit=settings.knowledge_agent_result_candidate_limit,
-            warning=warning,
-            snapshot_updated_at=snapshot_updated_at,
-        )
-        if len(candidate_snapshot.model_dump_json().encode("utf-8")) <= bytes_limit:
-            break
-        persisted = persisted[:-1]
-        warning = "结果容量超出限制，已按服务端上限保留"
-
-    keyword_verified = bool(persisted) and all(
-        item.matched_fields for item in persisted
-    )
-    assembly_failed = len(unavailable) > 0
-    capacity_truncated = len(persisted) < len(items)
-    status = RUN_PARTIAL if assembly_failed else RUN_COMPLETED
-    completeness = _completeness_for(
-        scope_total=scope_total,
-        candidates_count=len(candidates),
-        persist_count=len(persisted),
-        recall_limit=settings.knowledge_agent_result_candidate_limit,
-        persist_limit=settings.knowledge_agent_result_persist_limit,
-        keyword_verified=keyword_verified,
-        embedding_meta=embedding_meta,
-        assembly_failed=assembly_failed,
-        capacity_truncated=capacity_truncated,
-    )
-    if assembly_failed:
-        warning = "部分匹配对象当前不可用，结果可能不完整"
-    elif capacity_truncated:
-        # 字节上限循环已写入容量提示，保持不变
-        warning = warning or "结果容量超出限制，已按服务端上限保留"
-    elif len(persisted) >= settings.knowledge_agent_result_persist_limit:
-        warning = "结果达到数量上限，可能还有更多"
-
-    snapshot = KnowledgeEntryResultSnapshotOut(
-        query=query,
-        status=status,
-        completeness=completeness,
-        items=persisted,
-        returned_count=len(persisted),
-        candidate_limit=settings.knowledge_agent_result_candidate_limit,
-        warning=warning,
-        snapshot_updated_at=snapshot_updated_at,
-    )
-    await record_tool_result(
-        db,
-        run_id=run.id,
-        tool_name="structured_entry_search",
-        params={"query": query[:200]},
-        result={
-            "total": len(persisted),
-            "scope_total": scope_total,
-            "candidates": len(candidates),
-            "rerank_kept": rerank_kept,
-            "persisted": len(persisted),
-            "denied": 0,
-            "unavailable": len(unavailable),
-            "completeness": completeness,
-            "truncated": bool(
-                scope_total > settings.knowledge_agent_result_candidate_limit
-                or len(candidates) > settings.knowledge_agent_result_persist_limit
-            ),
-        },
-        duration_ms=recall_duration + rerank_duration + assembly_duration,
-    )
-    await db.commit()
-
-    # 步骤 4：终态原子提交（不创建输出工作集版本）
-    await check_run_cancelled(run.id)
-    await update_run_step(run.id, STEP_FINALIZE)
-    if persisted:
-        assistant_text = (
-            f"找到 {len(persisted)} 条相关正式知识，"
-            "请使用支持结构化结果的客户端查看。"
-        )
-    else:
-        assistant_text = "当前范围没有找到匹配的正式知识。"
-    summary = await run_fallback_summary(db, run.id)
-    await finalize_entry_run(
-        db,
-        run,
-        status=status,
-        entry_snapshot=snapshot,
-        fallback_summary=summary,
-        assistant_text=assistant_text,
-    )
-    logger.info(
-        "结构化查找完成 run=%s status=%s completeness=%s items=%s",
-        run.id,
-        status,
-        completeness,
-        len(persisted),
-    )

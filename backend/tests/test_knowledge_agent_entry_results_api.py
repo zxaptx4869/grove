@@ -1,15 +1,27 @@
 """结构化 Entry 结果分页 API 测试：游标、越权、历史恢复与快照稳定。"""
 
 import uuid
+from datetime import UTC, datetime
 
 import httpx
 import pytest
 
+from app.core.config import get_settings
 from app.db.session import async_session_factory
-from app.knowledge_agent_worker import process_one_run
 from app.main import create_app
 from app.models import KnowledgeAgentRun
-from app.services.knowledge_agent.entry_search import _encode_result_cursor
+from app.models.knowledge_agent import (
+    RESULT_COMPLETENESS_COMPLETE,
+    RUN_COMPLETED,
+    RUN_PROCESSING,
+)
+from app.schemas.knowledge_agent import KnowledgeEntryResultSnapshotOut
+from app.services.knowledge_agent.entry_search import (
+    _assemble_items,
+    _encode_result_cursor,
+)
+from app.services.knowledge_agent.runs import finalize_entry_run
+from app.services.knowledge_agent.tools import RunToolContext, _load_scope_entries
 
 
 @pytest.fixture
@@ -95,7 +107,49 @@ async def _submit_entries_run(
     )
     assert response.status_code == 201
     run = response.json()["run"]
-    assert await process_one_run() is True
+    async with async_session_factory() as db:
+        stored = await db.get(KnowledgeAgentRun, run["id"])
+        assert stored is not None
+        settings = get_settings()
+        ctx = RunToolContext(
+            run_id=stored.id,
+            workspace_id=stored.workspace_id,
+            owner_user_id=stored.owner_user_id,
+            scope_type=stored.scope_type,
+            project_id=stored.project_id,
+            project_name=stored.project_name,
+        )
+        entries = await _load_scope_entries(db, stored.workspace_id, stored.project_id)
+        items, unavailable = await _assemble_items(
+            db,
+            ctx,
+            entries,
+            message,
+            excerpt_chars=settings.knowledge_agent_result_excerpt_chars,
+            node_path_chars=settings.knowledge_agent_result_node_path_chars,
+            match_hint_chars=settings.knowledge_agent_result_match_hint_chars,
+        )
+        assert not unavailable
+        snapshot = KnowledgeEntryResultSnapshotOut(
+            query=message,
+            status=RUN_COMPLETED,
+            completeness=RESULT_COMPLETENESS_COMPLETE,
+            items=items,
+            returned_count=len(items),
+            candidate_limit=settings.knowledge_agent_result_candidate_limit,
+            snapshot_updated_at=datetime.now(UTC),
+        )
+        stored.status = RUN_PROCESSING
+        stored.active_slot = "active"
+        await finalize_entry_run(
+            db,
+            stored,
+            status=RUN_COMPLETED,
+            entry_snapshot=snapshot,
+            fallback_summary={"has_fallback": False, "items": []},
+            assistant_text=f"找到 {len(items)} 条相关正式知识。",
+        )
+        await db.commit()
     polled = (await client.get(f"/api/knowledge-agent/runs/{run['id']}")).json()
     assert polled["status"] in {"completed", "partial"}
     return polled
@@ -169,12 +223,12 @@ async def test_pagination_does_not_rerun_search(monkeypatch, client: httpx.Async
     ).json()
     assert first["has_more"] is True
 
-    async def _explode_search(db, run, decision, ctx):
-        raise AssertionError("分页不得重新执行搜索")
+    async def _explode_assembly(*args, **kwargs):
+        raise AssertionError("分页不得重新装配或执行搜索")
 
     monkeypatch.setattr(
-        "app.services.knowledge_agent.entry_search.execute_structured_entry_search",
-        _explode_search,
+        "app.services.knowledge_agent.entry_search._assemble_items",
+        _explode_assembly,
     )
     second = await client.get(
         f"/api/knowledge-agent/runs/{run['id']}/entry-results"
@@ -263,9 +317,8 @@ async def test_non_entries_run_and_unauth_status(client: httpx.AsyncClient) -> N
     )
     assert response.status_code == 201
     run = response.json()["run"]
-    assert await process_one_run() is True
     polled = (await client.get(f"/api/knowledge-agent/runs/{run['id']}")).json()
-    assert polled["status"] in {"completed", "partial", "failed"}
+    assert polled["status"] == "waiting"
     results = await client.get(f"/api/knowledge-agent/runs/{run['id']}/entry-results")
     assert results.status_code == 404
 

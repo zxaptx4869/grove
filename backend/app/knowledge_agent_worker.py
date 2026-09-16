@@ -111,8 +111,7 @@ async def process_one_run() -> bool:
             elif run.run_kind == RUN_KIND_ENTRY_REVISION:
                 await execute_entry_revision_run(db, run)
             else:
-                # 正式 answer Run 只允许统一 dialogue-loop 编排；旧 runner 保留给
-                # 历史兼容测试和显式回滚，不作为 Web 请求的隐式路径。
+                # 正式 answer Run 只允许统一 dialogue-loop 编排。
                 await execute_dialogue_loop_run(db, run)
             await db.commit()
     except RunCancelled:

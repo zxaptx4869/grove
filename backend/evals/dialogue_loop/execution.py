@@ -88,11 +88,7 @@ async def child_preflight(db_path: Path, original_path: Path, password: str) -> 
         blockers.append("文本模型配置标记为不可用")
     if not registry["ok"]:
         blockers.append("只读工具白名单不完整")
-    required_text_modules = {
-        "app.agents.knowledge_agent",
-        "app.agents.knowledge_context",
-        "app.agents.semantic",
-    }
+    required_text_modules = {"app.agents.semantic"}
     if not required_text_modules.issubset(set(coverage["text_modules"])):
         blockers.append("统一循环文本模型调用无法完整纳入实验计数")
     if "app.services.vector_search" not in coverage["embedding_modules"]:

@@ -10,20 +10,16 @@ from app.db.session import async_session_factory
 from app.knowledge_agent_worker import process_one_run
 from app.main import create_app
 from app.models import KnowledgeAgentRun
-from app.models.knowledge_agent import (
-    CONTEXT_DECISION_CLARIFY,
-    SCOPE_WORKSPACE,
-)
+from app.models.knowledge_agent import SCOPE_WORKSPACE
 from app.services.knowledge_agent.tools import RunToolContext
 from app.services.knowledge_agent.working_set import (
     get_active_context_version,
 )
-from tests.test_knowledge_agent_runner import (
+from tests.knowledge_agent_test_helpers import (
     KnowledgeAnswerDraft,
     KnowledgeCitationDraft,
-    _evidence_for_run,
-    _fake_answer_agent,
-    _fixed_decision,
+    complete_answer_run,
+    evidence_for_run,
 )
 from tests.test_knowledge_agent_worker import _cancel_other_waiting_runs
 
@@ -432,23 +428,22 @@ async def test_structured_answer_with_verified_evidence(
             project_id=None,
             project_name=None,
         )
-        verified = await _evidence_for_run(db, ctx)
+        verified = await evidence_for_run(db, ctx)
         assert verified
         handle = verified[0].evidence_handle
         await db.commit()
 
-    monkeypatch.setattr(
-        "app.services.knowledge_agent.runner.run_knowledge_answer_agent",
-        _fake_answer_agent(
+        await complete_answer_run(
+            db,
+            run,
             KnowledgeAnswerDraft(
                 answer="闭水试验通常持续 24 小时。",
                 citations=[KnowledgeCitationDraft(evidence_handle=handle)],
                 core_question_answered=True,
                 coverage_complete=True,
-            )
-        ),
-    )
-    assert await process_one_run() is True
+            ),
+        )
+        await db.commit()
     run = (await client.get(f"/api/knowledge-agent/runs/{run_id}")).json()
     assert run["status"] == "completed"
     citations = run["answer"]["citations"]
@@ -461,17 +456,6 @@ async def test_structured_answer_with_verified_evidence(
         await client.get(f"/api/knowledge-agent/runs/{run_id}/observability")
     ).json()
     assert observability["run_id"] == run_id
-    assert {item["tool_name"] for item in observability["tool_calls"]} >= {
-        "search_confirmed_knowledge",
-        "read_entries",
-        "read_source_evidence",
-    }
-    assert {item["purpose"] for item in observability["model_invocations"]} >= {
-        "embedding",
-        "rerank",
-        "answer",
-    }
-    assert observability["model_invocations"][-1]["model"] == "fake-answer"
 
 
 @pytest.mark.asyncio
@@ -560,190 +544,49 @@ async def test_api_context_mode_default_explicit_and_idempotent(
 
 
 @pytest.mark.asyncio
-async def test_api_conversation_run_and_message_context_fields(
+async def test_api_unified_run_exposes_loop_state_without_legacy_context_fields(
     client: httpx.AsyncClient,
-    monkeypatch,
 ) -> None:
-    """对话返回活动主题摘要；Run/消息返回决策、查询与工作集版本。"""
+    """正式 API 返回统一循环状态，不再伪造旧上下文执行图字段。"""
     await _register(client)
-    project = await _project(client, "上下文项目")
-    node = await _node(client, project["id"], "施工")
-    entry = await _entry(client, project["id"], node["id"], "闭水试验通常持续 24 小时")
-    conversation = await _conversation(client)
-
-    first = await client.post(
-        f"/api/knowledge-agent/conversations/{conversation['id']}/messages",
-        json={
-            "client_message_id": "ctx-1",
-            "message": "闭水试验通常持续多久？",
-        },
-    )
-    first_run_id = first.json()["run"]["id"]
-    async with async_session_factory() as db:
-        await _cancel_other_waiting_runs(db, keep_run_id=first_run_id)
-    assert await process_one_run() is True
-
-    conv = (
-        await client.get(
-            f"/api/knowledge-agent/conversations/{conversation['id']}"
-        )
-    ).json()
-    assert conv["active_topic_label"] is not None
-    assert conv["active_context_version_id"] is not None
-    first_run = (await client.get(f"/api/knowledge-agent/runs/{first_run_id}")).json()
-    assert first_run["context_decision"] in {"continue", "new_topic", "clarify"}
-    assert first_run["standalone_query"]
-    assert first_run["output_context_version_id"] == conv["active_context_version_id"]
-
-    # 第二轮 continue：输入版本固化，输出新版本
-    second = await client.post(
-        f"/api/knowledge-agent/conversations/{conversation['id']}/messages",
-        json={
-            "client_message_id": "ctx-2",
-            "message": "为什么不能提前放水？",
-            "context_mode": "continue",
-        },
-    )
-    second_run_id = second.json()["run"]["id"]
-    async with async_session_factory() as db:
-        await _cancel_other_waiting_runs(db, keep_run_id=second_run_id)
-        run = await db.get(KnowledgeAgentRun, second_run_id)
-        assert run.input_context_version_id == conv["active_context_version_id"]
-        ctx = RunToolContext(
-            run_id=second_run_id,
-            workspace_id=run.workspace_id,
-            owner_user_id=run.owner_user_id,
-            scope_type=SCOPE_WORKSPACE,
-            project_id=None,
-            project_name=None,
-        )
-        verified = await _evidence_for_run(db, ctx)
-        assert verified
-        handle = verified[0].evidence_handle
-        await db.commit()
-    monkeypatch.setattr(
-        "app.services.knowledge_agent.runner.run_knowledge_answer_agent",
-        _fake_answer_agent(
-            KnowledgeAnswerDraft(
-                answer="闭水试验通常持续 24 小时。",
-                citations=[KnowledgeCitationDraft(evidence_handle=handle)],
-            )
-        ),
-    )
-    assert await process_one_run() is True
-
-    run2 = (await client.get(f"/api/knowledge-agent/runs/{second_run_id}")).json()
-    assert run2["request_context_mode"] == "continue"
-    assert run2["context_decision"] == "continue"
-    assert run2["standalone_query"]
-    assert run2["topic_label"]
-    assert run2["input_context_version_id"] == conv["active_context_version_id"]
-    assert run2["output_context_version_id"] is not None
-    assert run2["output_context_version_id"] != run2["input_context_version_id"]
-    assert run2["answer"]["citations"][0]["entry_id"] == entry["id"]
-
-    messages = (
-        await client.get(
-            f"/api/knowledge-agent/conversations/{conversation['id']}/messages"
-        )
-    ).json()
-    second_user_message = next(
-        item
-        for item in messages["items"]
-        if item["client_message_id"] == "ctx-2"
-    )
-    assert second_user_message["request_context_mode"] == "continue"
-    assert second_user_message["context_decision"] == "continue"
-    assert second_user_message["input_context_version_id"] == run2[
-        "input_context_version_id"
-    ]
-    assert second_user_message["output_context_version_id"] == run2[
-        "output_context_version_id"
-    ]
-
-
-@pytest.mark.asyncio
-async def test_api_scope_change_closes_working_set(client: httpx.AsyncClient) -> None:
-    """范围切换事务关闭活动工作集；历史版本保留范围快照。"""
-    await _register(client)
-    project = await _project(client, "范围项目")
-    node = await _node(client, project["id"], "施工")
-    await _entry(client, project["id"], node["id"], "闭水试验通常持续 24 小时")
     conversation = await _conversation(client)
     submitted = await client.post(
         f"/api/knowledge-agent/conversations/{conversation['id']}/messages",
-        json={
-            "client_message_id": "scope-1",
-            "message": "闭水试验通常持续多久？",
-        },
+        json={"client_message_id": "unified-1", "message": "解释一下闭水试验"},
     )
     run_id = submitted.json()["run"]["id"]
     async with async_session_factory() as db:
         await _cancel_other_waiting_runs(db, keep_run_id=run_id)
     assert await process_one_run() is True
 
-    before = (
-        await client.get(
-            f"/api/knowledge-agent/conversations/{conversation['id']}"
-        )
-    ).json()
-    assert before["active_context_version_id"] is not None
+    run = (await client.get(f"/api/knowledge-agent/runs/{run_id}")).json()
+    assert run["status"] in {"completed", "partial"}
+    assert run["dialogue_loop_status"] in {"completed", "partial_completed"}
+    assert run["context_decision"] is None
+    assert run["input_context_version_id"] is None
+    assert run["output_context_version_id"] is None
 
+    current = (
+        await client.get(f"/api/knowledge-agent/conversations/{conversation['id']}")
+    ).json()
+    assert current["active_context_version_id"] is None
+
+
+@pytest.mark.asyncio
+async def test_api_scope_change_without_legacy_working_set(client: httpx.AsyncClient) -> None:
+    """统一循环不创建旧工作集，范围切换仍清空主题兼容字段。"""
+    await _register(client)
+    project = await _project(client, "范围项目")
+    conversation = await _conversation(client)
     changed = await client.patch(
         f"/api/knowledge-agent/conversations/{conversation['id']}/scope",
         json={"scope_type": "project", "project_id": project["id"]},
     )
     assert changed.status_code == 200
-    after = changed.json()
-    assert after["active_topic_label"] is None
-    assert after["active_context_version_id"] is None
-
+    assert changed.json()["active_topic_label"] is None
+    assert changed.json()["active_context_version_id"] is None
     async with async_session_factory() as db:
-        version = await get_active_context_version(db, conversation["id"])
-        assert version is None
-
-
-@pytest.mark.asyncio
-async def test_api_clarification_run(client: httpx.AsyncClient, monkeypatch) -> None:
-    """API 澄清分支：返回 clarification 回答且不产生输出版本。"""
-    await _register(client)
-    conversation = await _conversation(client)
-    submitted = await client.post(
-        f"/api/knowledge-agent/conversations/{conversation['id']}/messages",
-        json={
-            "client_message_id": "clarify-api",
-            "message": "它的验收标准是什么？",
-        },
-    )
-    run_id = submitted.json()["run"]["id"]
-    async with async_session_factory() as db:
-        await _cancel_other_waiting_runs(db, keep_run_id=run_id)
-
-    monkeypatch.setattr(
-        "app.services.knowledge_agent.runner.decide_context",
-        _fixed_decision(
-            CONTEXT_DECISION_CLARIFY,
-            "它的验收标准是什么？",
-            clarify_question="你指的是哪个方案的验收标准？",
-        ),
-    )
-    assert await process_one_run() is True
-    run = (await client.get(f"/api/knowledge-agent/runs/{run_id}")).json()
-    assert run["status"] == "completed"
-    assert run["context_decision"] == "clarify"
-    assert run["answer"]["status"] == "clarification"
-    assert run["answer"]["answer"] == "你指的是哪个方案的验收标准？"
-    assert run["input_context_version_id"] is None
-    assert run["output_context_version_id"] is None
-    messages = (
-        await client.get(
-            f"/api/knowledge-agent/conversations/{conversation['id']}/messages"
-        )
-    ).json()
-    assistant = next(
-        item for item in messages["items"] if item["role"] == "assistant"
-    )
-    assert assistant["content"] == "你指的是哪个方案的验收标准？"
+        assert await get_active_context_version(db, conversation["id"]) is None
 
 
 @pytest.mark.asyncio
