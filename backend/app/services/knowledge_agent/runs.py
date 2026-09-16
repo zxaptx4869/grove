@@ -345,7 +345,8 @@ async def submit_message(
         conversation.title = title + ("…" if len(message_text) > 30 else "")
     conversation.last_activity_at = datetime.now(UTC)
     await db.flush()
-    # 刷新服务端生成的 updated_at，避免组装响应时在 async 上下文触发惰性加载
+    # 刷新服务端生成的时间字段，避免组装响应时在 async 上下文触发惰性加载
+    await db.refresh(user_message)
     await db.refresh(run)
     return user_message, run
 
