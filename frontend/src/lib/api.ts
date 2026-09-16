@@ -1149,6 +1149,7 @@ export interface KnowledgeRunPayload {
   conversation_id: number
   status: KnowledgeRunStatus
   current_step: string | null
+  dialogue_stage: string | null
   user_message_id: number | null
   assistant_message_id: number | null
   error: string | null

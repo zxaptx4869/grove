@@ -50,6 +50,14 @@ const STATUS_LABELS: Record<string, string> = {
   cancelled: '已停止',
 }
 
+const DIALOGUE_STAGE_LABELS: Record<string, string> = {
+  organizing: '组织回答中',
+  querying: '查询知识库中',
+  reading_entries: '读取记录中',
+  reading_sources: '核验来源中',
+  finalizing: '整理回答中',
+}
+
 function formatTime(value: string) {
   return new Intl.DateTimeFormat('zh-CN', {
     month: '2-digit',
@@ -251,6 +259,11 @@ function AssistantMessage({
 }) {
   const status = runDisplayStatus(run)
   const running = Boolean(run && ACTIVE_RUN_STATUSES.has(run.status))
+  const activeStage = run?.dialogue_stage
+    ? DIALOGUE_STAGE_LABELS[run.dialogue_stage]
+    : run?.status === 'waiting'
+      ? '等待执行'
+      : '正在准备本轮回答'
   const blocks = run?.dialogue_blocks || []
   const fallbackText = blocks.length === 0 ? run?.answer?.answer || message.content : null
   return (
@@ -262,18 +275,24 @@ function AssistantMessage({
         <div className="flex min-h-7 flex-wrap items-center gap-2">
           <strong className="text-sm">知识 Agent</strong>
           <Badge variant="outline" className={`h-6 rounded-full px-2 text-[11px] ${statusClasses(status)}`}>
-            {running ? <LoaderCircle className="size-3 animate-spin" aria-hidden="true" /> : null}
-            {STATUS_LABELS[status] || status}
+            {running ? <LoaderCircle className="size-3 animate-spin motion-reduce:animate-none" aria-hidden="true" /> : null}
+            {running ? activeStage : STATUS_LABELS[status] || status}
           </Badge>
           {run?.updated_at ? <time className="ml-auto text-xs text-muted-foreground">{formatTime(run.updated_at)}</time> : null}
         </div>
         <div className="mt-2 grid gap-2">
           {blocks.map((block, index) => <AnswerBlockView block={block} key={`${block.kind}-${index}`} />)}
           {fallbackText ? <p className="whitespace-pre-wrap text-sm leading-7">{fallbackText}</p> : null}
-          {running && !blocks.length ? (
-            <div className="flex items-center gap-2 rounded-md bg-muted/60 px-3 py-2 text-sm text-muted-foreground" role="status">
-              <LoaderCircle className="size-4 animate-spin" aria-hidden="true" />
-              <span>{run?.current_step === 'dialogue_loop' ? '统一对话循环处理中…' : '正在准备本轮回答…'}</span>
+          {running ? (
+            <div
+              className="flex min-h-9 items-center gap-2 rounded-md bg-muted/60 px-3 py-2 text-sm text-muted-foreground"
+              role="status"
+              aria-live="polite"
+              aria-atomic="true"
+              data-testid="agent-active-stage"
+            >
+              <LoaderCircle className="size-4 animate-spin motion-reduce:animate-none" aria-hidden="true" />
+              <span>{activeStage}</span>
             </div>
           ) : null}
           {run && ['partial_completed', 'not_executed', 'unsupported', 'failed'].includes(status) ? (

@@ -55,6 +55,7 @@ function makeRun(overrides: Partial<KnowledgeRunPayload> = {}): KnowledgeRunPayl
     conversation_id: 1,
     status: 'completed',
     current_step: null,
+    dialogue_stage: null,
     user_message_id: 1,
     assistant_message_id: 2,
     error: null,
@@ -152,11 +153,40 @@ describe('KnowledgeAgentPage', () => {
     renderPage()
 
     const stop = await screen.findByTestId('agent-stop')
-    expect(screen.getByText('正在处理')).toBeInTheDocument()
+    expect(screen.getByTestId('agent-active-stage')).toHaveTextContent('正在准备本轮回答')
     await userEvent.click(stop)
     await waitFor(() => expect(screen.queryByTestId('agent-stop')).not.toBeInTheDocument())
     await userEvent.click(screen.getByTestId('agent-new-conversation'))
     expect(await screen.findAllByTestId('agent-conversation-item')).toHaveLength(2)
+  })
+
+  it('按服务端真实阶段展示提示并支持减少动画', async () => {
+    setupFetch(makeRun({
+      status: 'processing',
+      dialogue_loop_status: 'processing',
+      current_step: 'dialogue_loop',
+      dialogue_stage: 'reading_entries',
+    }))
+    renderPage()
+
+    const stage = await screen.findByTestId('agent-active-stage')
+    expect(stage).toHaveTextContent('读取记录中')
+    expect(stage).toHaveAttribute('aria-live', 'polite')
+    expect(stage.querySelector('svg')).toHaveClass('motion-reduce:animate-none')
+  })
+
+  it('终态即使收到旧阶段字段也不残留动效', async () => {
+    setupFetch(makeRun({
+      status: 'completed',
+      dialogue_loop_status: 'completed',
+      dialogue_stage: 'finalizing',
+      dialogue_blocks: [{ kind: 'text', text: '回答完成' }],
+    }))
+    renderPage()
+
+    expect(await screen.findByText('回答完成')).toBeInTheDocument()
+    expect(screen.queryByTestId('agent-active-stage')).not.toBeInTheDocument()
+    expect(screen.queryByText('整理回答中')).not.toBeInTheDocument()
   })
 
   it('partial completed 提供继续操作并使用正式消息提交', async () => {
