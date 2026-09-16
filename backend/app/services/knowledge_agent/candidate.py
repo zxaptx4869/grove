@@ -52,7 +52,6 @@ from app.models.knowledge_agent import (
     RUN_KIND_ANSWER,
     RUN_KIND_DRAFT_CANDIDATE,
     RUN_PARTIAL,
-    RUN_PROCESSING,
     RUN_WAITING,
     SCOPE_PROJECT,
     STEP_DRAFT_GENERATE,
@@ -87,11 +86,8 @@ from app.services.knowledge_agent.observability import (
     record_tool_call,
     run_fallback_summary,
 )
-from app.services.knowledge_agent.runner import RunCancelled
-from app.services.knowledge_agent.runs import (
-    read_run_cancel_state,
-    update_run_step,
-)
+from app.services.knowledge_agent.run_control import check_run_cancelled
+from app.services.knowledge_agent.runs import update_run_step
 from app.services.knowledge_agent.tools import record_tool_result
 from app.services.routing import route_source
 
@@ -619,13 +615,6 @@ async def submit_draft_candidate(
     return user_message, run, draft
 
 
-async def _check_cancelled(run_id: int) -> None:
-    """步骤边界检查取消请求：用独立短会话读取最新状态。"""
-    cancel_requested, status_value = await read_run_cancel_state(run_id)
-    if cancel_requested and status_value == RUN_PROCESSING:
-        raise RunCancelled()
-
-
 async def _source_question(db: AsyncSession, source_run: KnowledgeAgentRun) -> str:
     """读取来源回答的问题文本。"""
     if source_run.user_message_id is None:
@@ -653,7 +642,7 @@ async def execute_draft_candidate_run(db: AsyncSession, run: KnowledgeAgentRun) 
         await db.flush()
         return
 
-    await _check_cancelled(run.id)
+    await check_run_cancelled(run.id)
     await update_run_step(run.id, STEP_DRAFT_VERIFY_EVIDENCE)
     source_run = (
         await db.get(KnowledgeAgentRun, draft.source_run_id) if draft.source_run_id else None
@@ -686,7 +675,7 @@ async def execute_draft_candidate_run(db: AsyncSession, run: KnowledgeAgentRun) 
     )
     await db.commit()
 
-    await _check_cancelled(run.id)
+    await check_run_cancelled(run.id)
     await update_run_step(run.id, STEP_DRAFT_GENERATE)
     question = await _source_question(db, source_run)
     original_answer = answer.answer if answer else ""
@@ -736,7 +725,7 @@ async def execute_draft_candidate_run(db: AsyncSession, run: KnowledgeAgentRun) 
         return
     await db.commit()
 
-    await _check_cancelled(run.id)
+    await check_run_cancelled(run.id)
     await update_run_step(run.id, STEP_DRAFT_VALIDATE)
     draft.title = draft_output.title
     draft.content = draft_output.content

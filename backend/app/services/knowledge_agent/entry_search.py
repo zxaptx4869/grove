@@ -49,7 +49,7 @@ from app.services.knowledge_agent.observability import (
     record_model_invocation,
     run_fallback_summary,
 )
-from app.services.knowledge_agent.runner import check_run_cancelled
+from app.services.knowledge_agent.run_control import check_run_cancelled
 from app.services.knowledge_agent.runs import (
     finalize_entry_run,
     update_run_step,

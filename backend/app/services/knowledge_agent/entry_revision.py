@@ -98,11 +98,11 @@ from app.services.knowledge_agent.observability import (
     record_tool_call,
     run_fallback_summary,
 )
-from app.services.knowledge_agent.runner import RunCancelled
-from app.services.knowledge_agent.runs import (
-    read_run_cancel_state,
-    update_run_step,
+from app.services.knowledge_agent.run_control import (
+    RunCancelled,
+    check_run_cancelled,
 )
+from app.services.knowledge_agent.runs import update_run_step
 
 logger = logging.getLogger(__name__)
 
@@ -936,13 +936,6 @@ async def cancel_revision_draft(
     return draft
 
 
-async def _check_cancelled(run_id: int) -> None:
-    """步骤边界检查取消请求：用独立短会话读取最新状态。"""
-    cancel_requested, status = await read_run_cancel_state(run_id)
-    if cancel_requested and status == RUN_PROCESSING:
-        raise RunCancelled()
-
-
 async def _source_question(db: AsyncSession, source_run: KnowledgeAgentRun) -> str:
     """读取来源回答的用户问题。"""
     if source_run.user_message_id is None:
@@ -1053,7 +1046,7 @@ async def execute_entry_revision_run(
     if draft is None or run.status != RUN_PROCESSING:
         return
 
-    await _check_cancelled(run.id)
+    await check_run_cancelled(run.id)
     await update_run_step(run.id, STEP_REVISION_VERIFY_EVIDENCE)
     target_entry = (
         await db.get(Entry, draft.target_entry_id)
@@ -1103,7 +1096,7 @@ async def execute_entry_revision_run(
     )
     await db.commit()
 
-    await _check_cancelled(run.id)
+    await check_run_cancelled(run.id)
     await update_run_step(run.id, STEP_REVISION_GENERATE)
     base = _parse_base_entry(draft.base_entry_json)
     source_run = (
@@ -1169,7 +1162,7 @@ async def execute_entry_revision_run(
         return
     await db.commit()
 
-    await _check_cancelled(run.id)
+    await check_run_cancelled(run.id)
     await update_run_step(run.id, STEP_REVISION_VALIDATE)
     if not _revision_has_actual_change(
         base,

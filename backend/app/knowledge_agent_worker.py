@@ -13,6 +13,7 @@ from app.models import KnowledgeAgentRun, KnowledgeInvestigation
 from app.models.knowledge_agent import (
     INVESTIGATION_STATUS_ACTIVE,
     INVESTIGATION_STATUS_CANCELLED,
+    RUN_KIND_ANSWER,
     RUN_KIND_DRAFT_CANDIDATE,
     RUN_KIND_ENTRY_REVISION,
     RUN_PROCESSING,
@@ -22,7 +23,7 @@ from app.models.knowledge_agent import (
 from app.services.knowledge_agent.candidate import execute_draft_candidate_run
 from app.services.knowledge_agent.entry_revision import execute_entry_revision_run
 from app.services.knowledge_agent.production_adapter import execute_dialogue_loop_run
-from app.services.knowledge_agent.runner import RunCancelled
+from app.services.knowledge_agent.run_control import RunCancelled
 from app.services.knowledge_agent.runs import (
     finalize_cancelled,
     mark_run_failed,
@@ -31,6 +32,7 @@ from app.services.knowledge_agent.runs import (
 logger = logging.getLogger(__name__)
 
 POLL_INTERVAL_SECONDS = 0.5
+_SAFE_ANSWER_RECOVERY_STEPS = {"claim", "recovered", "dialogue_loop"}
 
 
 async def claim_next_run() -> int | None:
@@ -179,6 +181,16 @@ async def recover_stale_runs() -> int:
                     db,
                     run,
                     "历史 processing Run 缺少 claimed_at，无法安全恢复；已停止重试",
+                )
+                continue
+            if (
+                run.run_kind == RUN_KIND_ANSWER
+                and run.current_step not in _SAFE_ANSWER_RECOVERY_STEPS
+            ):
+                await mark_run_failed(
+                    db,
+                    run,
+                    "旧或未知 answer 执行快照无法安全恢复；已停止重试",
                 )
                 continue
             if run.current_step == "dialogue_loop":

@@ -1,8 +1,8 @@
 ## 1. 公共运行控制与恢复边界
 
-- [ ] 1.1 新建无 answer 编排职责的 Run 取消控制模块，迁移 Worker、production adapter、Candidate、Entry Revision 与搜索调用方，并验证取消异常和短会话检查语义不变
-- [ ] 1.2 为 Worker 增加 answer Run 恢复白名单：允许当前领取/统一循环安全状态，拒绝旧步骤和未知快照；保留 operation Run 的现有幂等恢复
-- [ ] 1.3 补充公共取消与历史恢复回归测试，覆盖取消、重试上限、活动槽释放、旧快照不进入统一循环
+- [x] 1.1 新建无 answer 编排职责的 Run 取消控制模块，迁移 Worker、production adapter、Candidate、Entry Revision 与搜索调用方，并验证取消异常和短会话检查语义不变
+- [x] 1.2 为 Worker 增加 answer Run 恢复白名单：允许当前领取/统一循环安全状态，拒绝旧步骤和未知快照；保留 operation Run 的现有幂等恢复
+- [x] 1.3 补充公共取消与历史恢复回归测试，覆盖取消、重试上限、活动槽释放、旧快照不进入统一循环
 
 ## 2. 旧执行编排退役
 

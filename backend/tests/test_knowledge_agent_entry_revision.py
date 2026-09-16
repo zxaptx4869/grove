@@ -692,7 +692,7 @@ async def test_execute_revision_run_cancelled_before_generate(monkeypatch) -> No
         await db.commit()
 
         # 直接执行会在首个取消边界抛出 RunCancelled；这里验证取消标志使执行器停止
-        from app.services.knowledge_agent.runner import RunCancelled
+        from app.services.knowledge_agent.run_control import RunCancelled
 
         with pytest.raises(RunCancelled):
             await execute_entry_revision_run(db, run)
@@ -765,7 +765,7 @@ async def test_execute_revision_finalize_does_not_overwrite_concurrent_cancel(
         "app.services.knowledge_agent.entry_revision.run_fallback_summary",
         _cancel_during_summary,
     )
-    from app.services.knowledge_agent.runner import RunCancelled
+    from app.services.knowledge_agent.run_control import RunCancelled
 
     async with async_session_factory() as db:
         user = await create_user(db, "终态取消竞态")

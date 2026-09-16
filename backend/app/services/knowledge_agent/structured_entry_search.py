@@ -21,7 +21,7 @@ from app.schemas.knowledge_agent import (
 )
 from app.services.knowledge_agent.conversations import scope_label
 from app.services.knowledge_agent.observability import run_fallback_summary
-from app.services.knowledge_agent.runner import check_run_cancelled
+from app.services.knowledge_agent.run_control import check_run_cancelled
 from app.services.knowledge_agent.runs import finalize_entry_run, update_run_step
 from app.services.knowledge_agent.structured_query import (
     plan_and_persist_structured_query,

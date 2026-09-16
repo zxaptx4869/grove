@@ -47,7 +47,7 @@ from app.services.knowledge_agent.composite_answer_types import (
 )
 from app.services.knowledge_agent.observability import StageMeta
 from app.services.knowledge_agent.read_tools import ReadToolBudget, dispatch_read_tool
-from app.services.knowledge_agent.runner import RunCancelled
+from app.services.knowledge_agent.run_control import RunCancelled
 from app.services.knowledge_agent.runs import submit_message
 from app.services.knowledge_agent.structured_query_tools import (
     STRUCTURED_QUERY_TOOL_REGISTRY,
@@ -518,6 +518,7 @@ async def test_recover_stale_run_requeues_once_then_fails() -> None:
             claimed_at=datetime.now(UTC) - timedelta(days=1),
             retry_count=0,
             max_retries=1,
+            current_step="claim",
             coverage_repair_json="frozen-control",
             coverage_repair_plan_json="frozen-plan",
             coverage_repair_execution_json="frozen-execution",
@@ -534,6 +535,7 @@ async def test_recover_stale_run_requeues_once_then_fails() -> None:
             claimed_at=datetime.now(UTC) - timedelta(days=1),
             retry_count=1,
             max_retries=1,
+            current_step="claim",
         )
         db.add(stale)
         db.add(exhausted)
@@ -559,6 +561,48 @@ async def test_recover_stale_run_requeues_once_then_fails() -> None:
         # 重新入队后可再次领取
         claimed_id = await claim_next_run()
         assert claimed_id == stale.id
+
+
+@pytest.mark.asyncio
+async def test_recover_stale_legacy_answer_snapshot_fails_without_requeue() -> None:
+    """有租约的旧 answer 步骤也不得被重新入队后交给统一循环。"""
+    async with async_session_factory() as db:
+        user = await create_user(db, "旧快照")
+        workspace = await create_workspace(db, user)
+        conversation = KnowledgeConversation(
+            workspace_id=workspace.id,
+            owner_user_id=user.id,
+            scope_type=SCOPE_WORKSPACE,
+            title="旧快照恢复",
+        )
+        db.add(conversation)
+        await db.flush()
+        legacy = KnowledgeAgentRun(
+            conversation_id=conversation.id,
+            workspace_id=workspace.id,
+            owner_user_id=user.id,
+            scope_type=SCOPE_WORKSPACE,
+            status=RUN_PROCESSING,
+            active_slot="active",
+            claimed_at=datetime.now(UTC) - timedelta(days=1),
+            current_step="composite_answer_execute",
+            run_kind="answer",
+            retry_count=0,
+            max_retries=1,
+            composite_answer_execution_json='{"status":"processing"}',
+        )
+        db.add(legacy)
+        await db.commit()
+
+        recovered = await recover_stale_runs()
+
+        assert recovered == 0
+        await db.refresh(legacy)
+        assert legacy.status == RUN_FAILED
+        assert legacy.active_slot is None
+        assert legacy.retry_count == 0
+        assert legacy.composite_answer_execution_json == '{"status":"processing"}'
+        assert "旧或未知 answer 执行快照" in (legacy.error or "")
 
 
 @pytest.mark.asyncio

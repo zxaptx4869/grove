@@ -40,7 +40,10 @@ from app.services.knowledge_agent.observability import (
     record_model_invocation,
     run_fallback_summary,
 )
-from app.services.knowledge_agent.runner import RunCancelled
+from app.services.knowledge_agent.run_control import (
+    RunCancelled,
+    check_run_cancelled,
+)
 from evals.dialogue_loop.core import (
     TURN_COMPLETED,
     TURN_FAILED,
@@ -208,12 +211,7 @@ def _restore_state(state: LoopState, snapshot: dict) -> None:
 
 
 async def _cancel_check(run_id: int) -> None:
-    from app.db.session import async_session_factory
-
-    async with async_session_factory() as db:
-        row = await db.get(KnowledgeAgentRun, run_id)
-        if row is not None and row.cancel_requested:
-            raise RunCancelled("运行中被取消")
+    await check_run_cancelled(run_id)
 
 
 async def _history_for_run(db: AsyncSession, run: KnowledgeAgentRun) -> list:
