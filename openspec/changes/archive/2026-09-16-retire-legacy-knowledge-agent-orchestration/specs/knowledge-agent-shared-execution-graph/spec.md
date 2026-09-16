@@ -27,3 +27,14 @@
 ### Requirement: 补查只扩展严格新增的共享只读节点
 **Reason**: 旧共享图 coverage 扩展退役。
 **Migration**: 不恢复或扩展历史图。
+
+## ADDED Requirements
+
+### Requirement: 旧共享图退役后保留历史只读快照
+
+系统 MUST 保留共享图与节点执行快照及既有只读投影，继续遵守现有用户权限与 Workspace 隔离；新 answer Run MUST 使用统一 dialogue-loop，不得再创建、执行或恢复本规格已退役的执行编排。数据库字段与历史迁移 MUST 保持不变。
+
+#### Scenario: 读取退役前记录
+- **WHEN** 有权限的用户通过既有读取入口访问共享图与节点执行快照
+- **THEN** 系统继续提供历史数据，不启动旧执行器、不转换或重放旧快照
+- **AND** 无权限或跨 Workspace 访问仍按既有合同拒绝

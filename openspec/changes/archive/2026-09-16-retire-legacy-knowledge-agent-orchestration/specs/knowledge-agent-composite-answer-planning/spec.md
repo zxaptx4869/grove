@@ -31,3 +31,14 @@
 ### Requirement: 首次 coverage 可以触发一次受控缺口补查
 **Reason**: 旧 coverage repair 入口退役。
 **Migration**: 不对历史 coverage 启动补查。
+
+## ADDED Requirements
+
+### Requirement: 旧复合编排退役后保留历史只读结果
+
+系统 MUST 保留复合计划、执行与覆盖快照及既有只读投影，继续遵守现有用户权限与 Workspace 隔离；新 answer Run MUST 使用统一 dialogue-loop，不得再创建、执行或恢复本规格已退役的执行编排。数据库字段与历史迁移 MUST 保持不变。
+
+#### Scenario: 读取退役前记录
+- **WHEN** 有权限的用户通过既有读取入口访问复合计划、执行与覆盖快照
+- **THEN** 系统继续提供历史数据，不启动旧执行器、不转换或重放旧快照
+- **AND** 无权限或跨 Workspace 访问仍按既有合同拒绝

@@ -7,9 +7,14 @@ Worker MUST 通过数据库原子操作领取待执行 Run，并记录领取时�
 - **WHEN** 两个 Worker 同时尝试领取同一个 `waiting` Run
 - **THEN** 只有一个 Worker 获得执行权且不会提交两份助手回答或重复 operation 结果
 
-#### Scenario: 统一循环安全恢复
+#### Scenario: Worker 重启后恢复
 - **WHEN** answer Run 在领取后、进入循环前退出，或统一 dialogue-loop 留下允许恢复的持久化状态并超过租约
 - **THEN** 系统在重试上限内重新入队同一 Run，并继续使用统一循环
+
+#### Scenario: investigation Worker 重启后恢复
+- **WHEN** 历史 investigation answer Run 超过租约且停留在旧调查执行步骤
+- **THEN** 系统将 Run 标记为 `failed`、释放活动槽并说明旧快照不可安全恢复
+- **AND** 已有轮次与账本保持可读，不重放旧执行器或送入统一循环
 
 #### Scenario: 旧执行快照停止恢复
 - **WHEN** answer Run 在旧 context、basis、result-mode、investigation、composite、coverage 或 shared-graph 步骤超过租约
@@ -31,9 +36,14 @@ Worker MUST 通过数据库原子操作领取待执行 Run，并记录领取时�
 - **WHEN** 用户取消尚未领取的 `waiting` Run
 - **THEN** 系统将其标记为 `cancelled`、释放活动槽且 Worker 不再执行
 
-#### Scenario: 取消处理中的 answer Run
+#### Scenario: 取消处理中的 Run
 - **WHEN** 用户取消正在统一 dialogue-loop 中处理的 answer Run
 - **THEN** 系统记录取消请求，并在下一个可中断点识别取消、丢弃未提交结果且不更新工作集
+
+#### Scenario: 取消处理中的调查 Run
+- **WHEN** 所有者请求取消仍处于 `processing` 的历史调查 Run
+- **THEN** 系统保留取消入口及历史审计，并按既有取消收尾逻辑释放活动槽
+- **AND** 不重新启动旧调查控制器、不进入下一轮调查或生成正常回答
 
 #### Scenario: 取消 operation Run
 - **WHEN** 用户取消正在生成 Candidate 或 Entry Revision 的 Run

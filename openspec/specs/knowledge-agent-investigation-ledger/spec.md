@@ -3,97 +3,12 @@
 ## Purpose
 TBD - created by archiving change add-knowledge-agent-bounded-investigation. Update Purpose after archive.
 ## Requirements
-### Requirement: 调查账本归属当前 Run 且隔离
-系统 MUST 将 Investigation、Round、Query 和账本对象永久归属到一个 Run，并冗余或可验证当前用户与 Workspace；所有读取 MUST 复验对话、Run、用户和 Workspace 所有权，项目范围账本 MUST NOT 包含其他项目对象。
+### Requirement: 旧调查账本退役后保留历史只读记录
 
-#### Scenario: 读取当前 Run 调查详情
-- **WHEN** 对话所有者在当前 Workspace 读取调查 Run
-- **THEN** 系统返回该 Run 的轮次、查询和受限账本摘要
+系统 MUST 保留调查账本、轮次与查询记录及既有只读投影，继续遵守现有用户权限与 Workspace 隔离；新 answer Run MUST 使用统一 dialogue-loop，不得再创建、执行或恢复本规格已退役的执行编排。数据库字段与历史迁移 MUST 保持不变。
 
-#### Scenario: 读取其他用户或 Workspace 调查
-- **WHEN** 用户请求不属于当前用户或 Workspace 的调查详情
-- **THEN** 系统返回 404 且不暴露调查是否存在
-
-#### Scenario: 项目范围结果越界
-- **WHEN** 某轮工具结果包含不再属于 Run 固化项目的对象
-- **THEN** 账本拒绝加入该对象并记录不可用结果
-
-### Requirement: 轮次与查询过程完整留痕
-系统 MUST 按稳定轮次和顺序保存控制器动作、合法查询、查询规范化指纹、执行状态、每条 Query 自身的命中/新增 Entry/新增 Evidence/拒绝/不可用计数、Round 累计增量、覆盖/缺口/冲突摘要及相关模型/工具调用归属；同一调查的轮次号和规范化查询 MUST 唯一，Query 计数 MUST NOT 混入同轮其他查询的累计结果。
-
-#### Scenario: 成功提交调查轮次
-- **WHEN** 一轮控制器和多个查询执行完成
-- **THEN** 系统原子保存该轮动作、实际查询、Round 汇总增量、观察摘要与调用归属
-
-#### Scenario: 每条查询保存自身增量
-- **WHEN** 同一轮第一条查询新增 2 条 Entry、第二条新增 1 条
-- **THEN** 两条 Query 分别记录 2 和 1，Round 记录总计 3，不把第二条写成累计 3
-
-#### Scenario: 重复写入同一查询
-- **WHEN** 恢复或并发路径尝试在同一调查写入相同规范化查询
-- **THEN** 唯一约束或应用幂等逻辑阻止重复记录和重复计数
-
-#### Scenario: 工具部分失败
-- **WHEN** 某查询的批量工具调用部分成功、部分失败
-- **THEN** 该 Query 记录自身成功增量、不可用对象和 partial 状态，Round 汇总所有查询结果但不把整轮伪装成完全正常
-
-### Requirement: 已发现集合跨轮次去重并可重建
-系统 MUST 基于已提交查询结果和 Evidence 重建当前 Run 的已发现集合，并按 Entry、Source/Attachment 与 Evidence 身份去重；后续轮次 MUST 能使用先前轮次发现的合法 Entry，但 MUST 重新复验其当前范围与可用性。
-
-#### Scenario: 后续轮次读取先前 Entry
-- **WHEN** 第二轮需要读取第一轮搜索发现且仍在范围内的 Entry
-- **THEN** 系统将该 Entry 视为当前 Run 已发现对象并允许受控读取
-
-#### Scenario: 多个查询命中同一 Entry
-- **WHEN** 同轮或不同轮查询返回相同 Entry
-- **THEN** 账本只计一个不同 Entry，同时保留必要的查询命中归属
-
-#### Scenario: 恢复时重建集合
-- **WHEN** Worker 根据已完成轮次恢复调查
-- **THEN** 系统确定性重建已查询、已发现 Entry、Evidence 和剩余预算
-
-#### Scenario: 先前发现对象后来失效
-- **WHEN** 已发现 Entry 在后续读取前被删除、移出范围或来源不可用
-- **THEN** 系统不继续使用其内容，账本记录不可用并从有效集合排除
-
-### Requirement: 账本事实只能来自当前 Run Evidence
-系统 MUST 只把当前 Run 重新读取并核验的 Evidence 作为最终事实依据；历史消息、历史工作集内容、历史 Run Evidence、控制器摘要和搜索片段 MUST NOT 被提升为可引用事实。
-
-#### Scenario: 历史回答包含相关结论
-- **WHEN** 控制器在有限历史中看到上一轮助手结论
-- **THEN** 该结论只能辅助理解问题，不进入当前账本的可引用 Evidence 集合
-
-#### Scenario: 工作集带来历史 Entry
-- **WHEN** 调查使用输入工作集 Entry 作为种子
-- **THEN** 系统重新读取其当前 Source/Attachment 并为当前 Run 生成 Evidence 后才能支持结论
-
-#### Scenario: 控制器摘要提到新事实
-- **WHEN** 控制器在 coverage 或 conflict 摘要中写入没有当前 Run Evidence 支持的事实
-- **THEN** 最终综合不得把该摘要当作事实引用
-
-### Requirement: 账本内容紧凑且不是正式知识
-系统 MUST 对账本中的查询、覆盖、缺口、冲突和对象摘要实施数量与长度限制，只保存恢复与审计所需的 ID、指纹、状态和短摘要；调查账本 MUST NOT 创建或覆盖 Entry、Source、目录或其他正式知识。
-
-#### Scenario: Attachment 内容很长
-- **WHEN** 调查读取大体积 Attachment
-- **THEN** 账本只保存 Evidence 定位与受限摘要，不复制整份原文
-
-#### Scenario: 控制器返回超长摘要
-- **WHEN** coverage、gaps 或 conflicts 超过服务端长度上限
-- **THEN** 系统拒绝非法结构或确定性截断并记录该处理
-
-#### Scenario: 调查正常完成
-- **WHEN** Investigation 进入完成或不足终态
-- **THEN** 系统只提交回答、引用和 Run 内审计状态，不自动写入正式知识
-
-### Requirement: 候选分配可恢复且可审计
-系统 MUST 为每轮保存或可确定性重建查询候选、规范化去重键、全局选择顺序、限额/去重拒绝原因和实际读取的 Evidence；恢复 MUST 使用已经提交的候选分配结果或同一稳定规则，不得因重新执行改变预算归属。账本 MUST 继续只保存当前 Run 证据与过程元数据，不得把候选或过程摘要写入正式 Entry。
-
-#### Scenario: 恢复已形成候选池的轮次
-- **WHEN** Worker 在候选选择后、部分 Evidence 读取前中断并恢复
-- **THEN** 系统从已提交账本重建剩余候选与预算，不重复读取或重复计费，最终计数不超过快照
-
-#### Scenario: 审计重复和限额拒绝
-- **WHEN** 候选因同 Entry/等价 quote/重复来源或单项限额未被接纳
-- **THEN** 对应 Query/Round 审计可识别拒绝类别和实际增量，但仍可追溯其原始查询与对象关联
+#### Scenario: 读取退役前记录
+- **WHEN** 有权限的用户通过既有读取入口访问调查账本、轮次与查询记录
+- **THEN** 系统继续提供历史数据，不启动旧执行器、不转换或重放旧快照
+- **AND** 无权限或跨 Workspace 访问仍按既有合同拒绝
 

@@ -34,38 +34,53 @@
 - **THEN** 系统拒绝转换且保留原终态
 
 ### Requirement: Run 领取与崩溃恢复
-Worker MUST 通过数据库原子操作领取待执行 Run，并记录领取时间与重试次数；超过租约阈值的 `processing` Run MUST 在重试上限内恢复，quick Run MUST 安全重放单轮执行图，investigate Run MUST 复用已完成轮次与账本并从下一未完成步骤继续；超过上限 MUST 进入可解释的失败终态。
+Worker MUST 通过数据库原子操作领取待执行 Run，并记录领取时间与重试次数。Candidate 与 Entry Revision operation Run MUST 在既有重试上限内保持幂等恢复；普通 answer Run MUST 仅恢复尚未进入编排的领取阶段，或通过现有安全状态检查的统一 dialogue-loop 阶段。旧执行步骤、未知步骤、损坏状态和超过上限的 Run MUST 进入可解释的失败终态，不得被送入统一循环。
 
 #### Scenario: 两个 Worker 竞争领取
 - **WHEN** 两个 Worker 同时尝试领取同一个 `waiting` Run
-- **THEN** 只有一个 Worker 获得执行权且不会提交两份助手回答或重复调查轮次
+- **THEN** 只有一个 Worker 获得执行权且不会提交两份助手回答或重复 operation 结果
 
 #### Scenario: Worker 重启后恢复
-- **WHEN** Worker 在 quick 只读执行中退出且 Run 超过处理租约
-- **THEN** 系统在重试上限内将 Run 重新入队并安全重放单轮执行图
+- **WHEN** answer Run 在领取后、进入循环前退出，或统一 dialogue-loop 留下允许恢复的持久化状态并超过租约
+- **THEN** 系统在重试上限内重新入队同一 Run，并继续使用统一循环
 
 #### Scenario: investigation Worker 重启后恢复
-- **WHEN** Worker 在调查中退出且已有完成轮次
-- **THEN** 系统在重试上限内复用已提交轮次和账本并从下一未完成步骤继续
+- **WHEN** 历史 investigation answer Run 超过租约且停留在旧调查执行步骤
+- **THEN** 系统将 Run 标记为 `failed`、释放活动槽并说明旧快照不可安全恢复
+- **AND** 已有轮次与账本保持可读，不重放旧执行器或送入统一循环
+
+#### Scenario: 旧执行快照停止恢复
+- **WHEN** answer Run 在旧 context、basis、result-mode、investigation、composite、coverage 或 shared-graph 步骤超过租约
+- **THEN** 系统将 Run 标为 `failed`、释放会话活动槽并记录旧快照不可安全恢复
+- **AND** 系统不调用统一 dialogue-loop 接管该 Run
+
+#### Scenario: operation Run 恢复
+- **WHEN** Candidate 或 Entry Revision Run 超过处理租约且没有超过恢复上限
+- **THEN** 系统继续按既有幂等规则重新入队同一 Run
 
 #### Scenario: 超过恢复上限
 - **WHEN** 同一 Run 连续超过允许的恢复次数
-- **THEN** 系统将 Run 及活动 Investigation 标记为 `failed`、释放会话活动槽并记录恢复失败原因
+- **THEN** 系统将 Run 标记为 `failed`、释放会话活动槽并记录恢复失败原因
 
 ### Requirement: Run 可取消
-系统 MUST 允许对话所有者取消 `waiting` 或 `processing` Run；Worker MUST 通过能读取其他事务最新提交状态的短会话，在上下文决策、回答模式路由、每轮控制器、查询工具批次、证据读取和最终综合边界检查取消请求，取消后的模型或工具结果 MUST NOT 写成正常回答或推进工作集。
+系统 MUST 允许对话所有者取消 `waiting` 或 `processing` Run；Worker、统一 dialogue-loop 适配器、Candidate、Entry Revision 和只读搜索 MUST 通过能读取其他事务最新提交状态的短会话，在各自既有安全边界检查取消请求。取消后的模型或工具结果 MUST NOT 写成正常回答、正式知识或 operation 结果。
 
 #### Scenario: 取消等待中的 Run
 - **WHEN** 用户取消尚未领取的 `waiting` Run
 - **THEN** 系统将其标记为 `cancelled`、释放活动槽且 Worker 不再执行
 
 #### Scenario: 取消处理中的 Run
-- **WHEN** 用户取消正在模型调用中的 quick Run
+- **WHEN** 用户取消正在统一 dialogue-loop 中处理的 answer Run
 - **THEN** 系统记录取消请求，并在下一个可中断点识别取消、丢弃未提交结果且不更新工作集
 
 #### Scenario: 取消处理中的调查 Run
-- **WHEN** 用户在控制器或查询工具批次期间取消 investigate Run
-- **THEN** Worker 在下一边界从最新数据库状态识别取消，保留已完成轮次审计但不进入下一轮、正常回答或工作集推进
+- **WHEN** 所有者请求取消仍处于 `processing` 的历史调查 Run
+- **THEN** 系统保留取消入口及历史审计，并按既有取消收尾逻辑释放活动槽
+- **AND** 不重新启动旧调查控制器、不进入下一轮调查或生成正常回答
+
+#### Scenario: 取消 operation Run
+- **WHEN** 用户取消正在生成 Candidate 或 Entry Revision 的 Run
+- **THEN** Worker 在既有安全边界识别共享取消信号并进入 `cancelled`，不提交正式 Entry 变更
 
 #### Scenario: MySQL 长事务期间取消
 - **WHEN** Worker 在 MySQL 执行长事务且另一请求提交取消
@@ -149,37 +164,6 @@ Worker MUST 通过数据库原子操作领取待执行 Run，并记录领取时�
 - **WHEN** actual result 为 answer、调查已有结果但最终回答模型未配置或调用失败
 - **THEN** 系统明确记录回答阶段失败并将 Run 标为 `partial` 或 `failed`，不得伪装为正常 AI 回答
 
-### Requirement: 知识问答使用 quick 或有界调查执行图
-系统 MUST 在上下文决策与结果形态确定后先解析回答模式；启用复合回答的 quick Run MUST 基于原始消息生成并校验多回答义务，再按固定一次执行图使用允许的用户陈述、Grove 检索/Evidence、受限结构化工具和模型通用知识。investigate 与未启用复合能力的 quick Run继续使用兼容依据规划和既有固定图。当前 Run 的 Grove 事实 MUST 只来自重新读取的正式 Entry 与 Evidence，结构化事实 MUST 来自实际工具结果，模型 MUST NOT 自行创建无限工具循环、指定可信范围或把非 Grove 内容包装成 Citation。
-
-#### Scenario: 单一模型知识 quick 正常完成
-- **WHEN** 复合计划只有一个 `model_allowed` 义务且没有显式 investigate 覆盖
-- **THEN** 系统跳过 Grove 工具，以实际 quick 模式生成可无 Citation 的开放回答并保存逐项覆盖；兼容路径仍可使用 `model_first`
-
-#### Scenario: 复合 quick 正常完成
-- **WHEN** quick Run 同时包含通用解释、Grove 知识与结构化统计义务
-- **THEN** 系统按固化计划执行对应只读输入、生成服务端工具事实并一次综合为 answer，不强制选择唯一依据或改成 entries
-
-#### Scenario: quick 继续追问正常完成
-- **WHEN** Worker 领取一个有活动工作集的 quick `continue` Run 且各阶段成功
-- **THEN** 系统只把复验后的工作集种子作为计划内 Grove 检索输入，与新召回统一处理；历史回答不成为事实，复合回答不得因搜索命中自动推进工作集
-
-#### Scenario: investigate 正常完成
-- **WHEN** actual mode 为 investigate 且调查在预算内完成若干轮
-- **THEN** 应用继续逐轮执行既有固定只读工具链，并用最终账本、允许的用户陈述和兼容依据策略生成一次回答，本 change 不插入复合执行图
-
-#### Scenario: 新话题正常完成
-- **WHEN** Run 决策为 `new_topic`
-- **THEN** 系统不使用旧工作集种子或旧话题用户陈述，按当前原始问题执行所选 quick/investigate 图；只有既有规则允许时才形成输出工作集
-
-#### Scenario: 历史消息不作为事实
-- **WHEN** 同一 Conversation 提交 quick 或 investigate 追问
-- **THEN** 有限历史助手消息只参与意图、路由与查询理解，不成为回答义务、用户陈述、Grove Evidence 或独立事实依据
-
-#### Scenario: 工具达到预算上限
-- **WHEN** quick 复合输入或调查的请求、查询、结果、Entry、Evidence、桶或字节达到服务端上限
-- **THEN** 系统停止扩张，并按用户依据限制基于已有合法依据继续，或明确标记受影响义务、部分结果、知识不足与停止原因
-
 ### Requirement: 候选草稿使用受控 operation Run
 系统 MUST 为已接受的 draft_candidate 请求创建 `run_kind=draft_candidate` 的持久化 Run，固化 source_run_id、目标项目和 Draft；该 Run MUST 复用单会话活动槽、领取、取消、租约恢复、终态提交和可观测性，但 MUST NOT 执行问答上下文决策、回答模式路由、搜索、调查或工作集推进。
 
@@ -228,181 +212,3 @@ Knowledge Agent Run MUST 支持 `run_kind=entry_revision`，固化 source_run_id
 #### Scenario: 确认或撤销失败
 - **WHEN** Entry 应用或撤销工具失败
 - **THEN** 工具调用记录标记 error/真实状态，Execution 与界面不进入伪成功终态
-
-### Requirement: 结构化 Entry 查找使用独立有界执行图
-系统 MUST 在上下文决策后先解析结果形态；`actual_result_mode=entries` MUST 执行固定的“结果路由完成 → 受控搜索 → 去重与范围复验 → 快照装配 → 原子提交”只读图，跳过回答模式路由、调查循环、Evidence 读取与最终回答模型。该执行图 MUST 复用 Run 领取、租约恢复、取消、单会话活动槽和预算约束。
-
-#### Scenario: Entry 查找正常完成
-- **WHEN** Worker 领取一个实际结果形态为 entries 的 answer Run
-- **THEN** 系统按服务端上限搜索正式 Entry、保存结构化结果与完整性，不调用回答模型或生成 Citation
-
-#### Scenario: Entry 查找崩溃恢复
-- **WHEN** Worker 在搜索或结果装配后退出且 Run 超过租约
-- **THEN** 系统在重试上限内重放同一有界图，并以同一 Run 原子覆盖未提交半成品，不创建第二个结果集
-
-#### Scenario: 取消 Entry 查找
-- **WHEN** 用户取消 waiting 或 processing 的 Entry 查找 Run
-- **THEN** Worker 在下一安全边界停止，Run 进入 cancelled，不提交正常结果或改变工作集
-
-#### Scenario: 显式结果形态跳过路由
-- **WHEN** `request_result_mode` 为 answer 或 entries
-- **THEN** Worker 直接固化对应 actual 结果形态，且可观测记录中不伪造一次未发生的结果路由模型调用
-
-### Requirement: Run 持久化请求策略与实际回答依据
-系统 MUST 为 answer Run 固化 `request_basis_mode`；复合 quick Run MUST 在工具执行前持久化服务端规范化的版本化回答计划，并在执行后保存有界输入结果与逐项覆盖快照。兼容 quick/investigate 继续保存内部 `planned_basis_strategy` 与既有计划。任何计划快照 MUST 只保存恢复所需的义务、受限请求、策略和候选用户消息 ID，不复制消息正文或原始模型输出；崩溃恢复 MUST 复用首次计划和已完成输入，只可因对象或消息失效而收紧。终态回答 MUST 保存服务端校验后的实际依据，旧 Run 缺少新增字段时 MUST 保持可读且不得反向猜测。
-
-#### Scenario: 新问题固化依据覆盖
-- **WHEN** 空闲 Conversation 接受一条 `basis_mode=knowledge_only` 的新问题
-- **THEN** waiting Run 固化该请求模式，网络重试返回同一 Run 和同一模式
-
-#### Scenario: 自动复合计划持久化
-- **WHEN** composite planner 为 quick 请求生成合法多义务计划
-- **THEN** Run 在任何相关工具执行前保存服务端规范化计划，并在崩溃恢复时复用它而不重新规划、扩大消息集合或改变义务
-
-#### Scenario: 兼容依据规划结果持久化
-- **WHEN** investigate 或降级后的 basis planner 选择 `hybrid`
-- **THEN** Run 继续保存兼容策略和候选用户消息 ID 子集，并按原恢复规则复用
-
-#### Scenario: 已完成输入请求被恢复
-- **WHEN** 复合 Run 已提交一份检索或结构化请求结果后 Worker 中断
-- **THEN** 恢复使用同 Run 稳定指纹复用该有界结果，只重放尚未完成的只读请求
-
-#### Scenario: 历史 Run 缺少复合字段
-- **WHEN** 客户端恢复本 change 上线前生成的回答 Run
-- **THEN** 系统返回可空复合计划/执行/覆盖字段、原回答与 Citation，不因缺少新数据而迁移失败或伪造完整依据
-
-### Requirement: 依据规划与实际执行可观测
-系统 MUST 为实际发生的复合规划或兼容依据规划保存独立 purpose、prompt 版本、provider、model、fallback、error、duration 和可用 usage；复合输入请求、结构化工具、Evidence 与综合必须记录真实工具状态、完整性和耗时，并把失败汇总到 Run 降级摘要。确定性遵守显式 `knowledge_only`、特性开关关闭或按计划跳过工具 MUST NOT 伪造成模型/工具调用。
-
-#### Scenario: 自动复合规划成功
-- **WHEN** 配置模型成功返回合法复合计划且服务端规范化完成
-- **THEN** 模型调用记录包含真实 provider/model、`is_fallback=false`、复合 prompt 版本与耗时，Run 摘要能区分它与旧 basis route
-
-#### Scenario: 复合规划失败后兼容回答成功
-- **WHEN** composite planner 失败并显式降级到旧 basis/quick，后续回答成功
-- **THEN** Run 仍汇总 composite planning fallback，客户端能识别本次没有按复合路径正常完成
-
-#### Scenario: 显式 knowledge_only 仍执行复合规划
-- **WHEN** quick 请求显式 `knowledge_only` 且复合能力开启
-- **THEN** 规划器可以拆解回答义务，但服务端确定性把全部策略收紧为 Grove-only；不得把该收紧伪造成模型自主决定
-
-#### Scenario: 计划不需要 Grove
-- **WHEN** 合法复合计划只有模型允许义务且没有 Grove 输入请求
-- **THEN** 系统不调用 Grove 工具、不记录伪工具错误或 fallback，并持久化实际未使用 Grove
-
-#### Scenario: 结构化工具部分失败
-- **WHEN** 一份结构化请求部分失败但其他输入有效
-- **THEN** 对应工具调用和义务覆盖标记真实 partial/unknown，成功响应不得掩盖受影响阶段
-
-### Requirement: entries Run 固化结构化查询计划与版本
-系统 MUST 为启用结构化查询能力的 `actual_result_mode=entries` Run 持久化服务端校验后的计划、schema 版本、prompt 版本和计划模型可观测信息；计划字段对旧 Run保持可空。计划一经固化 MUST 在同一 Run 的重试、恢复和历史读取中保持不变，模型原始输出或非法参数不得作为可执行计划保存。
-
-#### Scenario: 计划验证后持久化
-- **WHEN** structured query planner 返回合法计划且服务端规范化成功
-- **THEN** Run 在任何查询工具执行前保存规范化计划、版本和模型调用审计
-
-#### Scenario: 历史 Run 没有查询计划
-- **WHEN** 客户端读取本 change 上线前的 entries Run
-- **THEN** API 继续返回旧 Entry 结果快照，查询计划字段为空且系统不猜测历史筛选或聚合
-
-### Requirement: 结构化查询 Run 可取消和崩溃恢复
-Worker MUST 在查询规划前后、每个确定性工具调用前后和最终提交前检查取消；恢复时 MUST 复用已固化计划和同 Run 中已提交的幂等工具结果，只重放未完成的只读步骤。取消、超出恢复上限或迟到工具结果 MUST NOT 形成正常 Entry 结果快照。
-
-#### Scenario: 计划后 Worker 崩溃
-- **WHEN** Worker 已提交规范化计划但尚未完成全部工具调用时退出
-- **THEN** 恢复复用同一计划，按调用指纹复用已提交结果并继续未完成步骤，不再次调用规划模型
-
-#### Scenario: 聚合执行期间取消
-- **WHEN** 用户在 aggregate_entries 执行期间请求取消 Run
-- **THEN** Worker 在下一个边界丢弃未提交的迟到结果，将 Run 标为 cancelled 并释放活动槽
-
-#### Scenario: 重放只读查询
-- **WHEN** 未完成 query_entries 在租约恢复后重放
-- **THEN** 重放不修改正式 Entry，并生成同一计划语义下的结果或明确对象已变化/执行异常
-
-### Requirement: 结构化查询终态原子提交且可观测
-系统 MUST 在同一事务中提交 v2 Entry 结果快照、助手兼容消息、Run 终态和活动槽释放；每次规划与工具调用 MUST 按实际 provider、model、fallback、状态、完整性、错误和耗时进入 Run 可观测汇总。部分失败 MUST 保留合法结构化结果并标记 partial/unknown，成功响应不得掩盖规划降级或工具异常。
-
-#### Scenario: 组合查询正常完成
-- **WHEN** count、group_count 与 entries 输出都正常执行并通过结果预算校验
-- **THEN** 系统原子提交同一 v2 快照与 completed Run，调用顺序和每个输出完整性可查询
-
-#### Scenario: 规划降级后旧查找成功
-- **WHEN** 结构化查询规划失败但既有有限语义查找成功
-- **THEN** Run 可以返回兼容 Entry 列表，但 fallback 汇总标识 structured_query_plan 失败，结果不包含伪聚合或精确全集承诺
-
-#### Scenario: 一个工具部分失败
-- **WHEN** 聚合完成但 Entry 列表装配出现部分不可用对象
-- **THEN** 系统保留可确认的聚合和合法 Entry，按各输出完整性标记 Run/结果为 partial 或 unknown，不提交相互矛盾的半份快照
-
-### Requirement: quick Run 可以固化共享执行图状态
-启用共享执行图的 quick 复合 Run MUST 保存与首次规范化计划绑定的版本化图、冻结预算和节点终态；图执行状态 MUST 继续受同一 Conversation 活动槽、Worker 领取、租约恢复、重试上限、取消和终态原子提交控制。旧 Run、未启用共享图的 Run 和已有 `CompositeAnswerExecution v1` MUST 继续按原记录读取与执行，系统 MUST NOT 为历史 Run 反向生成共享图。
-
-#### Scenario: 新 quick Run 进入共享执行
-- **WHEN** 复合回答与共享执行图开关均开启，Run 已固化合法 `CompositeAnswerPlan v1`
-- **THEN** Worker 在任何图节点前保存图与预算，并继续使用原 Run 活动槽和取消状态，不创建第二个子 Run
-
-#### Scenario: 旧 Run 没有共享图字段
-- **WHEN** API、Worker 或历史分页读取迁移前完成的 Run
-- **THEN** 共享图字段保持空且原 answer、执行快照、coverage、basis 和状态照常可读，不推断或执行新图
-
-#### Scenario: 租约恢复复用图节点
-- **WHEN** processing Run 租约超时且合法图中已有终态节点
-- **THEN** Worker 在恢复次数上限内重新领取同一 Run、复用终态节点并继续 pending 节点；超过上限仍按既有规则失败并释放活动槽
-
-#### Scenario: 开关回滚不改写进行中图 Run
-- **WHEN** 部署关闭共享图开关时仍存在已经持久化图的 processing/waiting Run
-- **THEN** 这些 Run 继续按各自固化图恢复，新 Run 才使用串行路径，系统不得让进行中 Run 整体重跑旧执行器
-
-### Requirement: 共享图预算和取消在节点边界生效
-系统 MUST 为共享图固化节点数、深度、工具调用、对象、Evidence、桶、并发、字节和总耗时预算，并在节点启动、结果接纳、检查点与终态提交前检查取消和剩余预算。并行执行不得因竞态重复消费额度或使实际总量超过 Run 固化上限；达到预算时保留合法结果并明确标记受影响节点和回答义务。
-
-#### Scenario: 并行 ready 节点竞争剩余额度
-- **WHEN** 多个 ready 节点的潜在对象或 Evidence 总量超过剩余 Run 预算
-- **THEN** 调度器按稳定顺序预分配有界额度，只执行获准部分，并把未获额度节点标记为 limited/partial 而不是由完成先后决定结果
-
-#### Scenario: 节点返回时用户已经取消
-- **WHEN** 独立会话中的只读节点完成，但协调器在接纳前发现 Run 已请求取消
-- **THEN** 该结果不写入图 state、Evidence、工具成功记录或正常回答，Run 按 cancelled 收尾
-
-#### Scenario: 图快照达到字节上限
-- **WHEN** graph 或 state 无法在保留节点身份、依赖、状态、完整性和必要句柄的前提下写入配置的 TEXT 字节预算
-- **THEN** 系统显式失败或在图尚未开始时降级串行，不静默截断关键恢复信息后继续
-
-### Requirement: 共享图保持 Workspace 隔离和只读副作用边界
-共享图的每个节点 MUST 从父 Run 重新构造并校验 owner、Workspace 和可选项目范围；节点结果、fingerprint、复用与依赖 MUST 限于同一 Run。并行会话、恢复、去重和兼容物化 MUST NOT 跨 Workspace、项目或 Run 读取、关联或复用 Entry/Evidence，也不得获得知识写入权限。
-
-#### Scenario: 相同查询存在于两个 Workspace
-- **WHEN** 两个 Workspace 的不同 Run 使用完全相同的规范化查询和输出参数
-- **THEN** 它们拥有不同范围绑定与图结果，任何节点、Entry、Evidence、result handle 或缓存都不能跨 Run 共享
-
-#### Scenario: 项目范围图节点被并行执行
-- **WHEN** 一个项目范围 Run 同时执行多个独立节点
-- **THEN** 每个独立数据库会话只读取该 Run 固化项目内正式 Entry，其他项目和 Workspace 的对象不进入候选、结果或审计摘要
-
-#### Scenario: 图结果被最终综合采用
-- **WHEN** 图节点产生 Entry、Evidence、统计或列表并完成回答
-- **THEN** 只有当前 Run 重新核验的 Evidence 和实际结构化结果可以进入回答依据，查询命中本身不创建或修改正式知识、Candidate、Draft、Operation 或事实工作集
-
-### Requirement: quick Run 持久化一次覆盖补查决策与检查点
-启用覆盖补查的 quick 复合 Run MUST 在补查 planner 前保存版本化控制快照，至少包含首次合法 answer/coverage/answer basis/Run 状态候选、可修复 requirement id、固化执行模式、冻结预算、阶段、停止原因和错误摘要；规范化补查计划、串行执行快照或共享补查 graph/state MUST 在各自首次使用前持久化。旧 Run 缺少这些字段时 MUST 保持可读并不反向生成补查。
-
-#### Scenario: 首次回答后进入补查
-- **WHEN** quick Run 已生成首次合法回答与可修复 coverage，且补查开关对该新 Run 开启
-- **THEN** Worker 先提交基线控制快照和冻结预算，再调用最多一次补查 planner
-
-#### Scenario: 旧 Run 没有补查字段
-- **WHEN** API、历史分页或 Worker 读取本 change 上线前完成的 Run
-- **THEN** 系统返回原 answer、Citation、coverage、basis 和 fallback，补查内部字段保持空且不重新执行
-
-#### Scenario: 幂等消息重试
-- **WHEN** 客户端以同一 `client_message_id` 重试已进入补查的提交
-- **THEN** 系统返回同一 Run 和同一补查状态，不创建新消息、新 Run 或第二次补查
-
-#### Scenario: 补查期间取消
-- **WHEN** 用户在补查规划、新节点或再综合期间取消 Run
-- **THEN** Worker 在下一安全边界停止，不提交正常回答或推进工作集，并按既有 cancelled 终态释放会话活动槽
-
-#### Scenario: 终态提交保持一致
-- **WHEN** 补查成功、部分成功或失败保底后 Run 收尾
-- **THEN** 系统在同一事务边界提交最终或基线 answer、coverage、answer basis、fallback、Run 终态、助手消息与活动槽释放，不留下伪 completed 半成品
