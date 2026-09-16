@@ -152,6 +152,63 @@ def test_real_damaged_invalid_json_is_not_repaired_or_extracted() -> None:
     assert claims == {}
 
 
+@pytest.mark.parametrize(
+    "payload",
+    [
+        {"answer_summary": {"narrative": "未知旧结构"}},
+        {"blocks": [{"kind": "unknown", "text": "未知块"}]},
+        {"blocks": [{"kind": "text", "text": "多余字段"}], "extra": True},
+    ],
+)
+def test_invalid_json_wrapper_rejects_unknown_contracts(payload: dict) -> None:
+    response = ModelResponse(
+        parts=[
+            ToolCallPart(
+                "final_result",
+                {"INVALID_JSON": json.dumps(payload, ensure_ascii=False)},
+            )
+        ]
+    )
+
+    normalized, compatibility, claims = _normalize_legacy_answer_response(
+        response, ["final_result"]
+    )
+
+    assert normalized is response
+    assert compatibility is None
+    assert claims == {}
+
+
+def test_strict_invalid_json_wrapper_does_not_authorize_unknown_reference() -> None:
+    response = ModelResponse(
+        parts=[
+            ToolCallPart(
+                "final_result",
+                {
+                    "INVALID_JSON": json.dumps(
+                        {
+                            "blocks": [
+                                {
+                                    "kind": "evidence",
+                                    "evidence_handle": "ev-forged",
+                                }
+                            ]
+                        }
+                    )
+                },
+            )
+        ]
+    )
+
+    normalized, compatibility, _ = _normalize_legacy_answer_response(
+        response, ["final_result"]
+    )
+    answer = DialogueAnswer.model_validate(normalized.parts[0].args_as_dict())
+
+    assert compatibility is not None
+    assert output_errors(answer, _state()) == ["ev-forged 不是当前轮核验 Evidence"]
+
+
 def test_skipped_evidence_event_does_not_make_turn_incomplete() -> None:
     state = _state()
     event = {

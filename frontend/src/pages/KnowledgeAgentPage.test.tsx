@@ -189,6 +189,19 @@ describe('KnowledgeAgentPage', () => {
     expect(screen.queryByText('整理回答中')).not.toBeInTheDocument()
   })
 
+  it('未知阶段回退为稳定处理中提示', async () => {
+    setupFetch(makeRun({
+      status: 'processing',
+      dialogue_loop_status: 'processing',
+      dialogue_stage: 'future_stage',
+    }))
+    renderPage()
+
+    expect(await screen.findByTestId('agent-active-stage')).toHaveTextContent(
+      '正在准备本轮回答',
+    )
+  })
+
   it('partial completed 提供继续操作并使用正式消息提交', async () => {
     const { calls } = setupFetch(makeRun({
       status: 'partial',

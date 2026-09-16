@@ -259,11 +259,9 @@ function AssistantMessage({
 }) {
   const status = runDisplayStatus(run)
   const running = Boolean(run && ACTIVE_RUN_STATUSES.has(run.status))
-  const activeStage = run?.dialogue_stage
-    ? DIALOGUE_STAGE_LABELS[run.dialogue_stage]
-    : run?.status === 'waiting'
-      ? '等待执行'
-      : '正在准备本轮回答'
+  const activeStage = (
+    run?.dialogue_stage ? DIALOGUE_STAGE_LABELS[run.dialogue_stage] : null
+  ) || (run?.status === 'waiting' ? '等待执行' : '正在准备本轮回答')
   const blocks = run?.dialogue_blocks || []
   const fallbackText = blocks.length === 0 ? run?.answer?.answer || message.content : null
   return (
