@@ -40,7 +40,7 @@
 - [x] 4.4 运行相关后端测试、全量 Ruff、OpenSpec 严格校验和 `git diff --check`，记录自动化与待人工语义验收边界
 - [x] 4.5 运行 Run 801→802 相关后端测试、Ruff、OpenSpec 严格校验与 `git diff --check`，保留跨轮读取及 13-block 回归并记录待人工语义验收
 - [x] 4.6 运行候选协作链受影响后端测试、Ruff、OpenSpec 严格校验和 `git diff --check`，保留跨轮读取、候选隔离、13-block 与安全复验回归
-- [ ] 4.7 确认运行服务与当前提交对应后，限额复测 `collaboration_a`、`collaboration_b`、相关保留能力及单独标识的 Run 806 原始短问法，逐轮完成语义审阅并保留前后报告
+- [x] 4.7 确认运行服务与当前提交对应后，限额复测 `collaboration_a`、`collaboration_b`、相关保留能力及单独标识的 Run 806 原始短问法，逐轮完成语义审阅并保留前后报告
 
 ## 5. 验证记录
 
@@ -53,3 +53,4 @@
 - 2026-09-17 Run 794 异常恢复追加回归：274 个相关后端测试通过，全量 Ruff 通过，OpenSpec 严格校验 64 项通过，`git diff --check` 通过。Run 793→794→795 正式落库夹具确认 13 块失败摘要被稳定限制为 12 块，失败现场保留脱敏诊断、工具/模型审计和 continuation；新问“我有几个项目”仅调用一次 `list_projects` 并完成，显式“继续”仍恢复原 continuation。全部使用本地 `FunctionModel`，真实语义验收仍待人工执行。
 - 2026-09-17 Run 801→802 候选续接追加回归：585 个知识 Agent 与实验台测试通过；正式 production adapter 夹具经数据库快照、新 `LoopState` 及“继续”确认仅调用一次无工具 finalizer、无重复搜索/Entry/Source/Evidence 调用并交付候选。真实 Run 801 候选文本已固化为夹具，“20cm 防倒灌空间”改成“20 公分高度”会被语义校验拒绝，10A 与两处 20cm 的数量事实也必须完整保留。共享复验覆盖 Workspace/权限/项目范围/对象及 Entry/Source 指纹变化，候选失败摘要不再重放旧列表与重复正文。全量 Ruff 检查、OpenSpec 严格校验 64 项和 `git diff --check` 通过；全部模型夹具使用本地 `FunctionModel`，未重启服务，真实语义验收仍待人工执行。
 - 2026-09-17 候选协作链追加回归：`test_knowledge_agent_dialogue_loop.py` 与 `test_knowledge_agent_production_adapter.py` 全部通过。正式四轮夹具经 Run 快照落库和新 `LoopState` 恢复，确认候选 finalizer 的真实 messages/instructions 包含已复验 Entry、前轮模型分析、用户决定及上一版候选；显式 `new_topic` 不注入旧对象。“抛开知识库”只从已展示正文按位置绑定对象并复验权限与 Entry/Source 指纹，不派发搜索、Entry/Source 读取或 Evidence。连续改写以上一版候选为确定性基准；安全失败稿与同次缺口成对保存，含写入声明的输出不会替换上一安全稿。全量后端 Ruff、OpenSpec 严格校验 64 项及 `git diff --check` 通过；真实 DeepSeek 复测与用户语义验收仍待完成。
+- 2026-09-17 DeepSeek 复测：本地服务由当前工作区启动，批次报告记录 commit `b5d0c64` 及受影响源码哈希；服务端未公开 commit，故运行版本仍标记为需手工核对。零模型 preflight 通过后执行 `retained_read`、`collaboration_a`、`collaboration_b` 和独立的 `short_anchored_discussion`，计划 20 轮、实际发送 18 轮，模型审计 58 条、真实派发 51 次，usage 为 input 268272、output 10638、cache read 221312，fallback 为 0。Codex 逐轮审阅后语义 9 pass、5 fail、1 not covered，4 段整段均未通过：B 链的分析与候选生成从基线失败改善为通过；A 链候选仍未落实前轮分析且继续无进展；B 语气轮完整保留内容但没有实质变得简短自然；跨轮读取 Run 830 仍 partial，新增原始短问法因 Run 845 前置读取失败未发送。原始及 reviewed 报告保存于 `backend/data/knowledge-agent-evals/formal-api/20260917T112724Z-df6818/`（本地忽略目录）。未为追求绿色补跑，用户最终语义验收仍待完成。
