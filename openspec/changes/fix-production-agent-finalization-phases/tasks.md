@@ -7,6 +7,8 @@
 - [x] 1.5 用 Run 793→794→795 建立跨正式 Run 回归，复现 13 块兜底校验异常，并断言失败后新问项目数量只调用 `list_projects`
 - [x] 1.6 用 Run 801→802 建立跨正式 Run 候选续接回归，覆盖快照落库、新建状态、继续成功、无重复资料调用及新问题隔离
 - [x] 1.7 覆盖候选续接的权限撤回、范围切换、对象删除、Entry/Source 指纹变化和恢复材料缺失
+- [x] 1.8 用基线 Run 815→818、822→824 和会话 301 Run 806 建立正式跨 Run 回归，检查实际模型 messages/instructions 包含正确 Entry、前轮分析、上一版候选与用户决定
+- [x] 1.9 覆盖连续改写不回退原 Entry、失败续接稿件/缺口配对、明确新问题隔离，以及权限、范围、Entry/Source 材料变化拒绝复用
 
 ## 2. 共享收尾与恢复
 
@@ -20,6 +22,9 @@
 - [x] 2.8 在候选 finalize-only continuation 中保存最小编辑对象定位信息，完成 Workspace/身份/项目/权限/对象/Entry 与 Source 指纹复验后再重建 `editing_context`
 - [x] 2.9 对“只改语气”候选交付对齐提示与校验，保留原始事实关系、数量维度和不确定性，不用固定章节或主题特判
 - [x] 2.10 候选任务失败摘要只展示当前候选、准确缺口和有效恢复方式，不重放历史列表、无关记录或重复正文
+- [x] 2.11 在 production adapter 快照中有界保存已有 Entry 的对象、分析、最新安全候选和用户决定，经现有数据库安全复验后才激活
+- [x] 2.12 让候选 finalizer 使用已绑定的前轮分析，连续语气/精简改写以上一版候选为基准，并成对保存最新安全稿与实际缺口
+- [x] 2.13 让“抛开知识库”的短追问可选择已展示正文作为讨论对象，保持资料工具禁用、来源边界和新任务隔离
 
 ## 3. 正式阶段传播与 Web
 
@@ -34,6 +39,8 @@
 - [x] 4.3 核对冻结预算常量与无付费模型调用，更新任务状态并形成重启说明和人工语义/视觉走查清单
 - [x] 4.4 运行相关后端测试、全量 Ruff、OpenSpec 严格校验和 `git diff --check`，记录自动化与待人工语义验收边界
 - [x] 4.5 运行 Run 801→802 相关后端测试、Ruff、OpenSpec 严格校验与 `git diff --check`，保留跨轮读取及 13-block 回归并记录待人工语义验收
+- [x] 4.6 运行候选协作链受影响后端测试、Ruff、OpenSpec 严格校验和 `git diff --check`，保留跨轮读取、候选隔离、13-block 与安全复验回归
+- [ ] 4.7 确认运行服务与当前提交对应后，限额复测 `collaboration_a`、`collaboration_b`、相关保留能力及单独标识的 Run 806 原始短问法，逐轮完成语义审阅并保留前后报告
 
 ## 5. 验证记录
 
@@ -45,3 +52,4 @@
 - 2026-09-17 跨轮 Entry 追加回归：相关后端套件 374 个通过，全量 Ruff 通过；Run 786→787 夹具确认首次仅一次 `read_entries`、零重搜/筛选且最终 `completed`，并覆盖刷新恢复、候选隔离、权限撤回、跨 Workspace、项目切换、Entry 删除和指纹变化。
 - 2026-09-17 Run 794 异常恢复追加回归：274 个相关后端测试通过，全量 Ruff 通过，OpenSpec 严格校验 64 项通过，`git diff --check` 通过。Run 793→794→795 正式落库夹具确认 13 块失败摘要被稳定限制为 12 块，失败现场保留脱敏诊断、工具/模型审计和 continuation；新问“我有几个项目”仅调用一次 `list_projects` 并完成，显式“继续”仍恢复原 continuation。全部使用本地 `FunctionModel`，真实语义验收仍待人工执行。
 - 2026-09-17 Run 801→802 候选续接追加回归：585 个知识 Agent 与实验台测试通过；正式 production adapter 夹具经数据库快照、新 `LoopState` 及“继续”确认仅调用一次无工具 finalizer、无重复搜索/Entry/Source/Evidence 调用并交付候选。真实 Run 801 候选文本已固化为夹具，“20cm 防倒灌空间”改成“20 公分高度”会被语义校验拒绝，10A 与两处 20cm 的数量事实也必须完整保留。共享复验覆盖 Workspace/权限/项目范围/对象及 Entry/Source 指纹变化，候选失败摘要不再重放旧列表与重复正文。全量 Ruff 检查、OpenSpec 严格校验 64 项和 `git diff --check` 通过；全部模型夹具使用本地 `FunctionModel`，未重启服务，真实语义验收仍待人工执行。
+- 2026-09-17 候选协作链追加回归：`test_knowledge_agent_dialogue_loop.py` 与 `test_knowledge_agent_production_adapter.py` 全部通过。正式四轮夹具经 Run 快照落库和新 `LoopState` 恢复，确认候选 finalizer 的真实 messages/instructions 包含已复验 Entry、前轮模型分析、用户决定及上一版候选；显式 `new_topic` 不注入旧对象。“抛开知识库”只从已展示正文按位置绑定对象并复验权限与 Entry/Source 指纹，不派发搜索、Entry/Source 读取或 Evidence。连续改写以上一版候选为确定性基准；安全失败稿与同次缺口成对保存，含写入声明的输出不会替换上一安全稿。全量后端 Ruff、OpenSpec 严格校验 64 项及 `git diff --check` 通过；真实 DeepSeek 复测与用户语义验收仍待完成。

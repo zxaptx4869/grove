@@ -100,6 +100,7 @@ from evals.dialogue_loop.loop import (
     render_answer,
     render_directory_not_found,
     run_turn,
+    select_editing_context,
 )
 from evals.dialogue_loop.report import evaluate, evaluation_plan, sanitize
 
@@ -5112,9 +5113,31 @@ async def test_candidate_finalizer_discards_invalid_evidence_and_completes() -> 
     assert state.candidate_draft is None
 
 
+@pytest.mark.parametrize(
+    ("repair", "expected_fragment", "unexpected_fragment", "expected_gap"),
+    [
+        (
+            "这是一段仍然缺少边界的缩减稿。",
+            "缩减稿",
+            "现有记录说明了人造板",
+            "原记录与现有内容",
+        ),
+        (
+            "已写入正式记录。",
+            "现有记录说明了人造板",
+            "已写入正式记录",
+            "候选修改稿缺少：来源边界",
+        ),
+    ],
+)
 @pytest.mark.asyncio
-async def test_candidate_finalizer_keeps_original_draft_when_repair_is_invalid() -> None:
-    """收尾文本仍缺硬边界时保留进入收尾前的完整原稿。"""
+async def test_candidate_finalizer_pairs_safe_draft_with_its_validation_gaps(
+    repair: str,
+    expected_fragment: str,
+    unexpected_fragment: str,
+    expected_gap: str,
+) -> None:
+    """安全的新失败稿携带新缺口；越界新稿保留上一安全稿及其缺口。"""
 
     state = _state()
     state.instrumentation.context_policy_enabled = True
@@ -5131,7 +5154,7 @@ async def test_candidate_finalizer_keeps_original_draft_when_repair_is_invalid()
     def respond(_messages, info):
         nonlocal calls
         calls += 1
-        text = original if calls == 1 else "这是一段仍然缺少边界的缩减稿。"
+        text = original if calls == 1 else repair
         return ModelResponse(
             parts=[
                 ToolCallPart(
@@ -5149,11 +5172,185 @@ async def test_candidate_finalizer_keeps_original_draft_when_repair_is_invalid()
 
     assert turn["status"] == "partial_completed"
     assert calls == 2
-    saved = state.continuation.recoverable_material["candidate_draft"]
-    assert saved["blocks"][0]["text"] == original
-    assert "现有记录说明了人造板的环保等级" in turn["answer"]
-    assert "缩减稿" not in turn["answer"]
-    assert state.continuation.recoverable_material["candidate_draft_errors"]
+    material = state.continuation.recoverable_material
+    saved_text = "\n".join(block["text"] for block in material["candidate_draft"]["blocks"])
+    assert expected_fragment in saved_text
+    assert unexpected_fragment not in saved_text
+    assert expected_fragment in turn["answer"]
+    assert expected_gap in "；".join(material["candidate_draft_errors"])
+
+
+def test_tone_only_candidate_uses_previous_candidate_as_semantic_baseline() -> None:
+    """连续改写须保留上一版候选新增的数量归属和不确定性。"""
+
+    state = _state()
+    state.begin_turn(904, "内容不变，只改得更口语化")
+    state.editing_active = True
+    state.editing_purpose = "candidate"
+    state.editing_context = loop_module.EditingContext(
+        entry={
+            "entry_id": 35,
+            "title": "安装记录",
+            "content": "原记录只说明需要留出安装空间。",
+        },
+        validation_refs={},
+        draft={
+            "blocks": [
+                {
+                    "kind": "text",
+                    "text": (
+                        "候选建议：安装时可能需要在上方预留大约 20 厘米空间。"
+                        "这是模型补充的候选判断，尚未写入正式记录，也不属于 Source 原文。"
+                    ),
+                }
+            ],
+            "needs_clarification": False,
+        },
+    )
+    state.candidate_draft = state.editing_context.draft
+    rewritten = DialogueAnswer.model_validate(
+        {
+            "blocks": [
+                {
+                    "kind": "text",
+                    "text": (
+                        "现有候选改成口语说法：安装时必须预留 20 厘米空间。"
+                        "这是模型补充的候选判断，尚未写入正式记录，也不属于 Source 原文。"
+                    ),
+                }
+            ]
+        }
+    )
+
+    errors = output_errors(rewritten, state)
+
+    assert any("程度或不确定性" in error for error in errors)
+
+
+@pytest.mark.asyncio
+async def test_no_knowledge_discussion_selects_displayed_entry_without_data_read(
+    monkeypatch,
+) -> None:
+    """“抛开知识库”只定位并复验已展示正文，不重新读取资料。"""
+
+    state = _state()
+    state.begin_turn(806, "抛开知识库，第一条说得对吗")
+    entries = [
+        {
+            "entry_id": 35,
+            "title": "第一条",
+            "content": "第一条已经展示的正文",
+            "sources": [],
+        },
+        {
+            "entry_id": 18,
+            "title": "第二条",
+            "content": "第二条已经展示的正文",
+            "sources": [],
+        },
+    ]
+    state.authorized_entry_ids.update({35, 18})
+    state.discovered_entry_ids.update({35, 18})
+    state.discovered_entry_fingerprints.update({35: "a" * 64, 18: "b" * 64})
+    handle = state.store_result(
+        "entries",
+        {"items": entries, "denied_entry_ids": [], "unavailable_entry_ids": []},
+        "completed",
+        "limited",
+    )
+    refs = {
+        "workspace_id": state.workspace_id,
+        "user_id": state.user_id,
+        "entry_ids": [35],
+        "source_ids": [],
+        "source_pairs": [],
+        "fingerprints": {"entry:35": "current"},
+    }
+    state.result_sets[handle].semantics["entry_validation_refs"] = {"35": refs}
+    handles_before = set(state.current_handles)
+    checks = []
+
+    async def fake_material_refs(_state, entry_ids, source_pairs):
+        checks.append((entry_ids, source_pairs))
+        return refs
+
+    monkeypatch.setattr(loop_module, "_database_material_refs", fake_material_refs)
+
+    selected = await select_editing_context(
+        state,
+        "edit",
+        purpose="discussion",
+        result_set_handle=handle,
+        position=1,
+    )
+
+    assert selected["entry"]["entry_id"] == 35
+    assert selected["result_handle"] is None
+    assert state.editing_context is not None
+    assert state.editing_context.entry["content"] == "第一条已经展示的正文"
+    assert checks == [([35], [])]
+    assert state.current_handles == handles_before
+    assert not any(event.get("tool") in {"search_knowledge", "query_entries", "read_entries"}
+                   for event in state.tool_events)
+
+
+@pytest.mark.asyncio
+async def test_no_knowledge_context_cannot_start_candidate_edit(monkeypatch) -> None:
+    """不使用知识库的讨论例外不得扩展为候选编辑或资料获取。"""
+
+    state = _state()
+    state.begin_turn(807, "抛开知识库，按第一条生成候选")
+    with pytest.raises(ModelRetry, match="只能用于通用讨论"):
+        await select_editing_context(
+            state,
+            "edit",
+            purpose="candidate",
+            result_set_handle="rs-1-1",
+            position=1,
+        )
+
+
+@pytest.mark.asyncio
+async def test_displayed_entry_context_rejects_material_fingerprint_change(monkeypatch) -> None:
+    """已展示正文的 Entry 或 Source 指纹变化后不得继续复用旧内容。"""
+
+    state = _state()
+    state.begin_turn(808, "抛开知识库，第一条说得对吗")
+    entry = {"entry_id": 35, "title": "第一条", "content": "旧正文", "sources": []}
+    state.authorized_entry_ids.add(35)
+    state.discovered_entry_ids.add(35)
+    state.discovered_entry_fingerprints[35] = "a" * 64
+    saved_refs = {
+        "workspace_id": state.workspace_id,
+        "user_id": state.user_id,
+        "entry_ids": [35],
+        "source_ids": [],
+        "source_pairs": [],
+        "fingerprints": {"entry:35": "old"},
+    }
+    handle = state.store_result(
+        "entries",
+        {"items": [entry]},
+        "completed",
+        "limited",
+        semantics={"entry_validation_refs": {"35": saved_refs}},
+    )
+
+    async def changed_refs(_state, _entry_ids, _source_pairs):
+        return {**saved_refs, "fingerprints": {"entry:35": "changed"}}
+
+    monkeypatch.setattr(loop_module, "_database_material_refs", changed_refs)
+
+    with pytest.raises(ModelRetry, match="材料发生变化"):
+        await select_editing_context(
+            state,
+            "edit",
+            purpose="discussion",
+            result_set_handle=handle,
+            position=1,
+        )
+    assert state.editing_context is None
+    assert state.editing_active is False
 
 
 @pytest.mark.asyncio

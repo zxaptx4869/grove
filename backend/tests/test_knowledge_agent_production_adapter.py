@@ -38,7 +38,7 @@ from evals.dialogue_loop.core import (
     StopState,
 )
 from evals.dialogue_loop.instrumentation import InputEstimate, Instrumentation
-from evals.dialogue_loop.loop import LoopState
+from evals.dialogue_loop.loop import EditingContext, LoopState, _current_material_history
 from tests._knowledge_agent_fixtures import (
     create_child_node,
     create_entry_with_evidence,
@@ -78,6 +78,37 @@ def test_production_state_round_trip_preserves_scope_results_and_continuation() 
         semantics={"project_name": "项目甲"},
     )
     state.evidence["ev-1"] = {"entry_id": 7, "source_id": 8}
+    entry = {
+        "entry_id": 7,
+        "title": "记录",
+        "content": "原记录认为安装空间大约需要预留 20 厘米。",
+        "sources": [{"source_id": 8, "title": "安装说明"}],
+    }
+    refs = {
+        "workspace_id": 11,
+        "user_id": 22,
+        "entry_ids": [7],
+        "source_ids": [8],
+        "source_pairs": [[7, 8]],
+        "fingerprints": {"entry:7": "a" * 64, "evidence:7:8": "b" * 64},
+    }
+    state.focused_entry = entry
+    state.focused_entry_refs = refs
+    state.editing_context = EditingContext(
+        entry=entry,
+        validation_refs=refs,
+        discussion="通用分析认为应保留“大约”的不确定性，并说明这是安装空间。",
+        draft={
+            "blocks": [
+                {
+                    "kind": "text",
+                    "text": "候选：安装时建议大约预留 20 厘米空间，尚未写入。",
+                }
+            ],
+            "needs_clarification": False,
+        },
+        decisions=["按刚才分析改", "内容不变，表达更口语化"],
+    )
     state.continuation = ContinuationState(
         task_type="finalize_answer",
         tool_name="finalize_answer",
@@ -126,6 +157,23 @@ def test_production_state_round_trip_preserves_scope_results_and_continuation() 
     assert restored.continuation is not None
     assert restored.continuation.pending_steps == [{"step": "finalize_answer"}]
     assert restored.continuation.validation_refs["source_ids"] == [8]
+    assert restored.focused_entry == entry
+    assert restored.focused_entry_refs == refs
+    assert restored.editing_context is not None
+    assert restored.editing_context.discussion == state.editing_context.discussion
+    assert restored.editing_context.draft == state.editing_context.draft
+    assert restored.editing_context.decisions == state.editing_context.decisions
+
+    restored.begin_turn(56, "按刚才分析改得更口语化")
+    restored.editing_active = True
+    restored.editing_purpose = "candidate"
+    restored.candidate_draft = restored.editing_context.draft
+    material_history = _current_material_history(restored, restored.current_message, [], [])
+    serialized_history = str(material_history)
+    assert entry["content"] in serialized_history
+    assert "通用分析认为应保留" in serialized_history
+    assert "候选：安装时建议" in serialized_history
+    assert "内容不变，表达更口语化" in serialized_history
 
     switched_scope = _state()
     switched_scope.project_id = 45
@@ -136,6 +184,9 @@ def test_production_state_round_trip_preserves_scope_results_and_continuation() 
     assert switched_scope.authorized_entry_ids == {7}
     assert switched_scope.discovered_entry_ids == set()
     assert switched_scope.discovered_entry_fingerprints == {}
+    assert switched_scope.focused_entry is None
+    assert switched_scope.focused_entry_refs is None
+    assert switched_scope.editing_context is None
 
 
 def test_production_restore_does_not_authorize_candidate_list() -> None:
@@ -163,6 +214,225 @@ def test_production_restore_does_not_authorize_candidate_list() -> None:
     assert restored.authorized_entry_ids == set()
     assert restored.discovered_entry_ids == set()
     assert restored.discovered_entry_fingerprints == {}
+
+
+@pytest.mark.asyncio
+async def test_completed_entry_collaboration_restores_actual_finalizer_input_across_runs(
+    monkeypatch,
+) -> None:
+    """成功 Run 的分析和候选经正式快照恢复，并在新任务中清除。"""
+
+    finalizer_inputs: list[tuple[str, str]] = []
+
+    async def get_text_model(_db, _workspace_id):
+        return FunctionModel(lambda _messages, _info: ModelResponse(parts=[]))
+
+    async with async_session_factory() as db:
+        user = await create_user(db, "成功协作上下文")
+        workspace = await create_workspace(db, user)
+        project = await create_project(db, workspace, "安装项目")
+        node = await create_child_node(db, project, "设备")
+        source, attachment = await create_source_attachment(
+            db, workspace, project, title="安装记录", text_content="现场空间有限。"
+        )
+        entry = await create_entry_with_evidence(
+            db,
+            project,
+            node,
+            source,
+            attachment,
+            title="设备安装",
+            content="现有记录：安装空间可能需要预留。",
+            quote="现场空间有限",
+        )
+        await db.commit()
+        for row in (user, workspace, project, source, attachment, entry):
+            await db.refresh(row)
+        conversation = await create_conversation(
+            db,
+            workspace.id,
+            user.id,
+            KnowledgeConversationCreate(scope_type="project", project_id=project.id),
+        )
+
+        item = {
+            "entry_id": entry.id,
+            "title": entry.title,
+            "content": entry.content,
+            "project_name": project.name,
+            "sources": [
+                {
+                    "source_id": source.id,
+                    "source_title": source.title,
+                    "attachment_id": attachment.id,
+                    "quote": "现场空间有限",
+                }
+            ],
+        }
+        refs_holder: dict = {}
+        candidate_text = (
+            "现有记录提到安装空间可能需要预留；候选建议补充现场测量步骤。"
+            "这是模型分析形成的候选，尚未写入正式记录，不属于 Source 原文。"
+        )
+
+        def completed_turn(state: LoopState, message: str, text: str) -> tuple[dict, list]:
+            completion = {
+                "status": "completed",
+                "reason_code": "completed",
+                "reason": None,
+                "incomplete_steps": [],
+                "can_continue": False,
+                "continuation": None,
+            }
+            blocks = [{"kind": "text", "text": text}]
+            state.remember_turn(
+                message, text, state.tool_events, blocks=blocks, completion=completion
+            )
+            return ({
+                "status": "completed",
+                "answer": text,
+                "blocks": blocks,
+                "completion": completion,
+                "model_calls": [],
+                "tool_calls": list(state.tool_events),
+                "budget": state.ledger.snapshot(),
+                "error": None,
+            }, [])
+
+        async def controlled_run_turn(_agent, state, message, history):
+            if message == "分析这条记录":
+                refs = await loop_module._database_material_refs(
+                    state, [entry.id], [(entry.id, source.id)]
+                )
+                refs_holder.update(refs)
+                state.authorized_entry_ids.add(entry.id)
+                state.discovered_entry_ids.add(entry.id)
+                state.discovered_entry_fingerprints[entry.id] = "c" * 64
+                handle = state.store_result(
+                    "entries",
+                    {"items": [item]},
+                    "completed",
+                    "limited",
+                    semantics={"entry_validation_refs": {str(entry.id): refs}},
+                )
+                state.focused_entry = item
+                state.focused_entry_refs = refs
+                state.editing_context = EditingContext(
+                    entry=item,
+                    validation_refs=refs,
+                    discussion="通用分析：保留“可能”的不确定性，并补充现场测量步骤。",
+                    decisions=[message],
+                )
+                state.tool_events.append({
+                    "tool": "editing_context",
+                    "result_handle": handle,
+                    "status": "completed",
+                    "turn_index": state.turn_index,
+                })
+                return completed_turn(state, message, state.editing_context.discussion)
+
+            if message == "按刚才分析改":
+                assert state.editing_context is not None
+                await loop_module.select_editing_context(
+                    state, "edit", purpose="candidate"
+                )
+
+                def candidate_response(messages, info):
+                    serialized = str(messages)
+                    instructions = str(info.instructions)
+                    finalizer_inputs.append((serialized, instructions))
+                    assert item["content"] in serialized
+                    assert "保留“可能”的不确定性" in serialized
+                    assert message in serialized
+                    assert "生成候选稿" in instructions
+                    assert "尚未写入" in instructions
+                    return ModelResponse(parts=[ToolCallPart(
+                        info.output_tools[0].name,
+                        {"blocks": [{"kind": "text", "text": candidate_text}]},
+                    )])
+
+                result = await loop_module._finalize_once(
+                    loop_module.build_finalizer_agent(FunctionModel(candidate_response)),
+                    state,
+                    message,
+                    history,
+                    [],
+                    "test_completed_collaboration",
+                )
+                return completed_turn(state, message, result.output.blocks[0].text)
+
+            if message == "内容不变，只改得更口语化":
+                assert state.editing_context is not None
+                assert state.editing_context.draft is not None
+                await loop_module.select_editing_context(
+                    state, "edit", content_only=True, purpose="candidate"
+                )
+
+                def tone_response(messages, info):
+                    serialized = str(messages)
+                    instructions = str(info.instructions)
+                    finalizer_inputs.append((serialized, instructions))
+                    assert candidate_text in serialized
+                    assert "上一阶段已生成候选修改稿" in serialized
+                    assert "模型补充" in instructions
+                    text = (
+                        "现有记录说安装空间可能要预留；候选建议先量一下现场。"
+                        "尚未写入正式记录，模型补充不属于 Source 原文。"
+                    )
+                    return ModelResponse(parts=[ToolCallPart(
+                        info.output_tools[0].name,
+                        {"blocks": [{"kind": "text", "text": text}]},
+                    )])
+
+                result = await loop_module._finalize_once(
+                    loop_module.build_finalizer_agent(FunctionModel(tone_response)),
+                    state,
+                    message,
+                    history,
+                    [],
+                    "test_tone_rewrite",
+                )
+                return completed_turn(state, message, result.output.blocks[0].text)
+
+            assert message == "列出项目"
+            assert state.editing_context is None
+            assert state.focused_entry is None
+            return completed_turn(state, message, "当前独立任务。")
+
+        monkeypatch.setattr("app.services.ai_models.get_text_model", get_text_model)
+        monkeypatch.setattr(
+            "app.services.knowledge_agent.production_adapter.run_turn",
+            controlled_run_turn,
+        )
+
+        for index, (message, context_mode) in enumerate(
+            [
+                ("分析这条记录", "auto"),
+                ("按刚才分析改", "auto"),
+                ("内容不变，只改得更口语化", "auto"),
+                ("列出项目", "new_topic"),
+            ],
+            start=1,
+        ):
+            _, run = await submit_message(
+                db,
+                conversation,
+                KnowledgeRunSubmitRequest(
+                    client_message_id=f"completed-collaboration-{index}",
+                    message=message,
+                    context_mode=context_mode,
+                ),
+            )
+            run.status = "processing"
+            run.current_step = "claim"
+            await db.commit()
+            await execute_dialogue_loop_run(db, run)
+            await db.commit()
+            await db.refresh(run)
+            assert run.status == "completed"
+
+        assert refs_holder
+        assert len(finalizer_inputs) == 2
 
 
 @pytest.mark.asyncio

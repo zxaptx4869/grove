@@ -1820,7 +1820,22 @@ def _candidate_semantic_errors(
         or state.editing_context is None
     ):
         return []
-    original = str(state.editing_context.entry.get("content") or "")
+    baseline = state.editing_context.entry.get("content") or ""
+    saved_draft = state.editing_context.draft
+    if isinstance(saved_draft, dict):
+        try:
+            draft_answer = DialogueAnswer.model_validate(saved_draft)
+        except (TypeError, ValueError):
+            draft_answer = None
+        if draft_answer is not None:
+            draft_text = "\n".join(
+                block.text
+                for block in draft_answer.blocks
+                if block.kind in {"text", "insufficient"}
+            )
+            if draft_text:
+                baseline = draft_text
+    original = str(baseline)
     candidate = "\n".join(
         block.text for block in answer.blocks if block.kind == "text"
     )
@@ -2285,6 +2300,24 @@ def _candidate_boundary(
         "blocks": [{"kind": "text", "text": text}],
         "needs_clarification": answer.needs_clarification,
     })
+
+
+def _safe_candidate_recovery(answer: DialogueAnswer) -> bool:
+    """失败后仅允许普通候选文本进入下一轮恢复材料。"""
+
+    if not answer.blocks:
+        return False
+    text = "\n".join(
+        block.text for block in answer.blocks if block.kind in {"text", "insufficient"}
+    )
+    return (
+        all(
+            block.kind in {"text", "insufficient"}
+            and (block.kind != "text" or _entry_reference(block.text) is None)
+            for block in answer.blocks
+        )
+        and not _has_positive_write_claim(text)
+    )
 
 
 def _content_only_boundary(answer: DialogueAnswer) -> DialogueAnswer:
@@ -2760,6 +2793,8 @@ async def _semantic_search_dispatch(
 async def select_editing_context(
     state: LoopState, action: Literal["edit", "resume", "suspend"], content_only: bool = False,
     purpose: Literal["discussion", "candidate"] | None = None,
+    result_set_handle: str | None = None,
+    position: int | None = None,
 ) -> dict:
     """由当前 Agent 表达语义选择，程序固定对象、复验权限并保存用户原始决定。"""
     if action == "suspend":
@@ -2771,9 +2806,47 @@ async def select_editing_context(
             state.continuation = None
             state.active_continuation = None
         return {"status": "completed", "editing": "suspended"}
-    if not state.tools_allowed:
-        raise ModelRetry("本轮不使用知识库，不能恢复正式 Entry 的编辑材料")
+    if not state.tools_allowed and purpose != "discussion":
+        raise ModelRetry("本轮不使用知识库时，对象选择只能用于通用讨论")
     task = state.editing_context
+    task_refs_verified = False
+    if result_set_handle is not None or position is not None:
+        if result_set_handle is None or position is None:
+            raise ModelRetry("按已展示位置选择对象时必须同时提供结果句柄和序号")
+        record = state.result_sets.get(result_set_handle)
+        items = record.payload.get("items", []) if record is not None else []
+        if (
+            record is None
+            or result_set_handle not in state.current_handles
+            or record.kind != "entries"
+            or not record.displayable
+            or record.status not in {"completed", "partial"}
+            or position < 1
+            or position > len(items)
+        ):
+            raise ModelRetry("只能从最近已展示的 Entry 正文结果中按有效序号选择对象")
+        entry = items[position - 1]
+        try:
+            entry_id = int(entry["entry_id"])
+        except (KeyError, TypeError, ValueError) as exc:
+            raise ModelRetry("已展示对象缺少有效 Entry 身份") from exc
+        if entry_id not in state.authorized_entry_ids or entry_id not in state.discovered_entry_ids:
+            raise ModelRetry("已展示对象不在当前授权和发现集合")
+        saved_refs = (record.semantics.get("entry_validation_refs") or {}).get(str(entry_id))
+        if not isinstance(saved_refs, dict):
+            raise ModelRetry("已展示对象缺少可复验的材料指纹，请重新读取核验")
+        pairs = [
+            (entry_id, int(source["source_id"]))
+            for source in entry.get("sources", [])
+            if source.get("source_id") is not None
+        ]
+        current_refs = await _database_material_refs(state, [entry_id], pairs)
+        if saved_refs != current_refs:
+            raise ModelRetry("已展示对象或来源材料发生变化，请重新读取核验")
+        task = EditingContext(entry=entry, validation_refs=current_refs)
+        task_refs_verified = True
+        state.focused_entry = entry
+        state.focused_entry_refs = current_refs
     if action == "edit" and state.focused_entry is not None and (
         task is None or task.entry["entry_id"] != state.focused_entry["entry_id"]
     ):
@@ -2790,19 +2863,20 @@ async def select_editing_context(
         raise ModelRetry("没有已选编辑对象，请先用授权列表位置打开具体 Entry")
     if task.entry["entry_id"] not in state.authorized_entry_ids:
         raise ModelRetry("编辑对象已经不在授权集合")
-    try:
-        current = await _database_material_refs(
-            state, task.validation_refs["entry_ids"],
-            [tuple(pair) for pair in task.validation_refs["source_pairs"]],
-        )
-        if current != task.validation_refs:
-            raise ValueError("编辑对象或来源材料已变化，需要重新打开核验")
-    except Exception as exc:
-        state.editing_active = False
-        state.candidate_draft = None
-        state.continuation = None
-        state.active_continuation = None
-        raise ModelRetry(str(exc)) from exc
+    if not task_refs_verified:
+        try:
+            current = await _database_material_refs(
+                state, task.validation_refs["entry_ids"],
+                [tuple(pair) for pair in task.validation_refs["source_pairs"]],
+            )
+            if current != task.validation_refs:
+                raise ValueError("编辑对象或来源材料已变化，需要重新打开核验")
+        except Exception as exc:
+            state.editing_active = False
+            state.candidate_draft = None
+            state.continuation = None
+            state.active_continuation = None
+            raise ModelRetry(str(exc)) from exc
     state.editing_context = task
     state.editing_active = True
     state.editing_purpose = purpose or (
@@ -2816,7 +2890,9 @@ async def select_editing_context(
     state.active_continuation = None
     if state.current_message not in task.decisions:
         task.decisions.append(state.current_message)
-    handle = state.store_result("entries", {"items": [task.entry]}, "completed", "limited")
+    handle = None
+    if state.tools_allowed:
+        handle = state.store_result("entries", {"items": [task.entry]}, "completed", "limited")
     return {"status": "completed", "result_handle": handle, "entry": task.entry,
             "candidate_draft": state.candidate_draft, "purpose": state.editing_purpose,
             "user_decisions": task.decisions, "content_only": content_only}
@@ -2844,9 +2920,22 @@ def build_agent(model) -> Agent[LoopDeps, DialogueAnswer]:
     @agent.instructions
     def editing_context_instruction(ctx: RunContext[LoopDeps]) -> str:
         state = ctx.deps.state
-        if not state.tools_allowed:
-            return ""
         task = state.editing_context
+        recent_entry_sets = [
+            {
+                "result_set_handle": handle,
+                "items": [
+                    {
+                        "position": index,
+                        "entry_id": item.get("entry_id"),
+                        "title": item.get("title"),
+                    }
+                    for index, item in enumerate(record.payload.get("items", []), start=1)
+                ],
+            }
+            for handle, record in state.result_sets.items()
+            if handle in state.current_handles and record.kind == "entries" and record.displayable
+        ]
         context = {
             "current_entry": {k: state.focused_entry.get(k) for k in ("entry_id", "title")}
             if state.focused_entry else None,
@@ -2854,9 +2943,17 @@ def build_agent(model) -> Agent[LoopDeps, DialogueAnswer]:
             if task else None,
             "has_saved_draft": bool(task and task.draft),
             "editing_active": state.editing_active,
+            "recent_displayed_entries": recent_entry_sets[-2:],
         }
         if state.editing_active and task is not None:
             context.update(candidate_draft=task.draft, user_decisions=task.decisions)
+        no_knowledge_boundary = (
+            "本轮明确不使用知识库：不得调用搜索、Entry/Source 读取或 Evidence；仅当用户按刚才"
+            "展示内容进行通用讨论时，可用 editing_context 的 result_set_handle 与 position 选择"
+            "对象并做权限和指纹安全复验，purpose 必须为 discussion。"
+            if not state.tools_allowed
+            else ""
+        )
         return (
             "当前对象与最近查询结果是独立状态。围绕当前条目讨论补充时保持同一 Entry，"
             "不得自行扩大到整套知识。讨论补充点用 "
@@ -2866,6 +2963,7 @@ def build_agent(model) -> Agent[LoopDeps, DialogueAnswer]:
             "明确返回已保存原稿用 resume；新轮查询新主题不激活旧对象，不套旧候选约束。"
             "用户只要精简正文时设置 content_only=true。选择动作由你理解用户语义，"
             "不得根据历史错误推断用户同意扩大范围。保存的旧材料只是线索，工具复验后才能使用。"
+            + no_knowledge_boundary
             + json.dumps(context, ensure_ascii=False)
         )
 
@@ -2874,13 +2972,17 @@ def build_agent(model) -> Agent[LoopDeps, DialogueAnswer]:
         ctx: RunContext[LoopDeps], action: Literal["edit", "resume", "suspend"],
         content_only: bool = False,
         purpose: Literal["discussion", "candidate"] | None = None,
+        result_set_handle: str | None = None,
+        position: int | None = None,
     ) -> dict:
         """复验当前 Entry 后直接收尾：discussion 讨论补充点，candidate 生成候选，不写记录。"""
         state = ctx.deps.state
         if state.relevance_resume_only:
             raise ModelRetry("续执行只允许完成语义候选筛选，不能切换编辑对象")
         await state.ledger.reserve_tool()
-        result = await select_editing_context(state, action, content_only, purpose)
+        result = await select_editing_context(
+            state, action, content_only, purpose, result_set_handle, position
+        )
         state.tool_events.append({
             "tool": "editing_context", "status": "completed", "completeness": "limited",
             "result_handle": result.get("result_handle"), "turn_index": state.turn_index,
@@ -3673,6 +3775,40 @@ def build_agent(model) -> Agent[LoopDeps, DialogueAnswer]:
         state.read_entry_ids.update(
             int(item["entry_id"]) for item in payload.get("items", [])
         )
+        returned_items = payload.get("items", [])
+        result_record = state.result_sets.get(result.get("result_handle"))
+        if (
+            returned_items
+            and result_record is not None
+            and "completeness" in result_record.semantics
+        ):
+            all_pairs = [
+                (int(item["entry_id"]), int(source["source_id"]))
+                for item in returned_items
+                for source in item.get("sources", [])
+                if source.get("source_id") is not None
+            ]
+            all_refs = await _database_material_refs(
+                state, [int(item["entry_id"]) for item in returned_items], all_pairs
+            )
+            per_entry_refs = {}
+            for item in returned_items:
+                entry_id = int(item["entry_id"])
+                pairs = [pair for pair in all_pairs if pair[0] == entry_id]
+                source_ids = sorted({source_id for _, source_id in pairs})
+                per_entry_refs[str(entry_id)] = {
+                    "workspace_id": state.workspace_id,
+                    "user_id": state.user_id,
+                    "entry_ids": [entry_id],
+                    "source_ids": source_ids,
+                    "source_pairs": [list(pair) for pair in pairs],
+                    "fingerprints": {
+                        key: value
+                        for key, value in all_refs["fingerprints"].items()
+                        if key == f"entry:{entry_id}" or key.startswith(f"evidence:{entry_id}:")
+                    },
+                }
+            result_record.semantics["entry_validation_refs"] = per_entry_refs
         unavailable_only = (
             result.get("status") == "unavailable"
             and payload.get("unavailable_entry_ids")
@@ -3833,6 +3969,8 @@ def build_agent(model) -> Agent[LoopDeps, DialogueAnswer]:
     @agent.output_validator
     async def validate_output(ctx: RunContext[LoopDeps], answer: DialogueAnswer) -> DialogueAnswer:
         state = ctx.deps.state
+        previous_draft = state.candidate_draft
+        previous_errors = list(state.candidate_draft_errors)
         candidate_message = _candidate_request_message(state)
         if candidate_message is not None:
             answer = _candidate_boundary(
@@ -3842,24 +3980,29 @@ def build_agent(model) -> Agent[LoopDeps, DialogueAnswer]:
                     or _candidate_content_only_requested(candidate_message)
                 ),
             )
-        if (
-            candidate_message is not None
-            and state.instrumentation.phase != "finalize"
-        ):
-            state.candidate_draft = answer.model_dump(mode="json")
-            preserve_editing_draft(state, answer)
         answer = resolve_answer_results(answer, state)
         errors = output_errors(answer, ctx.deps.state)
         errors.extend(await _project_material_errors(state, state.current_handles))
         if errors:
             _capture_provisional_answer(answer, state)
-            state.candidate_draft_errors = list(errors)
+            if candidate_message is not None and _safe_candidate_recovery(answer):
+                state.candidate_draft = answer.model_dump(mode="json")
+                state.candidate_draft_errors = list(errors)
+            elif candidate_message is not None:
+                state.candidate_draft = previous_draft
+                state.candidate_draft_errors = previous_errors
+            else:
+                state.candidate_draft_errors = list(errors)
             state.instrumentation.finalize_compatibility = None
             message = "；".join(errors)
             state.instrumentation.record_validation_failure(
                 "reference_validation", message, answer.model_dump(mode="json")
             )
             raise ModelRetry(message)
+        if candidate_message is not None and state.instrumentation.phase != "finalize":
+            state.candidate_draft = answer.model_dump(mode="json")
+            preserve_editing_draft(state, answer)
+            state.candidate_draft_errors.clear()
         return answer
 
     return agent
@@ -3903,9 +4046,10 @@ def build_finalizer_agent(model) -> Agent[LoopDeps, DialogueAnswer]:
         if state.candidate_draft and candidate_message is not None:
             gaps = "；".join(state.candidate_draft_errors)
             draft_instruction = (
-                "上一阶段已有候选修改稿。保留其安全内容，对照当前 Entry "
-                "修正已记录的缺口；不要因为缺少固定标题而丢弃整篇稿件，"
-                "也不得保留与原记录冲突的表达。"
+                "上一阶段已有候选修改稿。它是本次改写的直接基准，并且始终只是模型候选；"
+                "当前 Entry 与 Source 只用于安全复验、溯源和识别内容边界，不能把候选新增判断"
+                "升格为正式记录或来源事实。保留安全内容并修正已记录的缺口；不要因为缺少"
+                "固定标题而丢弃整篇稿件，也不得保留与原记录冲突的表达。"
                 + (f"当前缺口：{gaps}。" if gaps else "")
             )
         if candidate_message is not None:
@@ -3966,6 +4110,7 @@ def build_finalizer_agent(model) -> Agent[LoopDeps, DialogueAnswer]:
     async def validate_output(ctx: RunContext[LoopDeps], answer: DialogueAnswer) -> DialogueAnswer:
         state = ctx.deps.state
         previous_draft = state.candidate_draft
+        previous_errors = list(state.candidate_draft_errors)
         answer = _candidate_finalizer_text_only(answer, state)
         answer = resolve_answer_results(answer, state)
         candidate_message = _candidate_request_message(state)
@@ -3982,8 +4127,14 @@ def build_finalizer_agent(model) -> Agent[LoopDeps, DialogueAnswer]:
         if errors:
             _capture_provisional_answer(answer, state)
             if _candidate_request_message(state) is not None:
-                state.candidate_draft = previous_draft or answer.model_dump(mode="json")
-            state.candidate_draft_errors = list(errors)
+                if _safe_candidate_recovery(answer):
+                    state.candidate_draft = answer.model_dump(mode="json")
+                    state.candidate_draft_errors = list(errors)
+                else:
+                    state.candidate_draft = previous_draft
+                    state.candidate_draft_errors = previous_errors
+            else:
+                state.candidate_draft_errors = list(errors)
             if not (
                 state.instrumentation.finalize_compatibility
                 and state.instrumentation.finalize_compatibility.get("kind")
@@ -4657,6 +4808,7 @@ def _candidate_continuation_material(
                 "entry_id": entry_id,
                 "entry_handle": handle,
                 "decisions": list(state.editing_context.decisions[-4:]),
+                "discussion": state.editing_context.discussion,
             }
     # 关系与句柄只留给程序复验，不注入候选稿 finalizer。
     material["events"] = []
@@ -5045,6 +5197,11 @@ def _restore_finalize_editing_context(
         entry=items[0],
         validation_refs=continuation.validation_refs,
         draft=material.get("candidate_draft"),
+        discussion=(
+            saved.get("discussion")
+            if isinstance(saved.get("discussion"), str)
+            else None
+        ),
         decisions=decisions or [continuation.original_question],
     )
     return None
@@ -5359,7 +5516,9 @@ def _current_material_history(
     model_only_context: list[dict] | None = None,
 ) -> list[ModelMessage]:
     """把求解阶段已取得的当前轮材料重建为合法配对消息。"""
-    if not state.tools_allowed:
+    if not state.tools_allowed and not (
+        state.editing_active and state.editing_context is not None
+    ):
         messages = _model_only_history(state, message, model_only_context)
         provisional = _provisional_answer(state)
         if provisional is not None:

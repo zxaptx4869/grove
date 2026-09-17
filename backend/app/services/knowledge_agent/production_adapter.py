@@ -61,6 +61,7 @@ from evals.dialogue_loop.instrumentation import BudgetedModel, Instrumentation
 from evals.dialogue_loop.loop import (
     CONTINUE_PATTERNS,
     FINALIZE_CONTINUE_MESSAGES,
+    EditingContext,
     LoopState,
     ResultRecord,
     build_agent,
@@ -69,7 +70,7 @@ from evals.dialogue_loop.loop import (
 
 logger = logging.getLogger(__name__)
 
-STATE_VERSION = 1
+STATE_VERSION = 2
 HISTORY_LIMIT = 32
 STATE_BYTES_LIMIT = 240_000
 _DIALOGUE_STAGES = {
@@ -310,6 +311,37 @@ def _continuation_from_snapshot(raw: dict | None) -> ContinuationState | None:
         return None
 
 
+def _collaboration_snapshot(state: LoopState, restorable_entry_ids: list[int]) -> dict | None:
+    """仅保存已授权、已发现的单个正式 Entry 协作上下文。"""
+
+    task = state.editing_context
+    entry = task.entry if task is not None else state.focused_entry
+    refs = task.validation_refs if task is not None else state.focused_entry_refs
+    if not isinstance(entry, dict) or not isinstance(refs, dict):
+        return None
+    try:
+        entry_id = int(entry["entry_id"])
+    except (KeyError, TypeError, ValueError):
+        return None
+    if entry_id not in restorable_entry_ids or refs.get("entry_ids") != [entry_id]:
+        return None
+    if refs.get("workspace_id") != state.workspace_id or refs.get("user_id") != state.user_id:
+        return None
+    return {
+        "focused_entry": entry,
+        "focused_entry_refs": refs,
+        "editing_context": (
+            {
+                "entry": task.entry,
+                "validation_refs": task.validation_refs,
+                "draft": task.draft,
+                "discussion": task.discussion,
+                "decisions": task.decisions[-8:],
+            }
+            if task is not None
+            else None
+        ),
+    }
 def _state_snapshot(state: LoopState, turn: dict, *, loop_status: str) -> dict:
     records = {
         handle: _record_snapshot(record)
@@ -321,6 +353,7 @@ def _state_snapshot(state: LoopState, turn: dict, *, loop_status: str) -> dict:
         & state.discovered_entry_ids
         & state.discovered_entry_fingerprints.keys()
     )
+    collaboration = _collaboration_snapshot(state, restorable_entry_ids)
     return _bounded_state(
         {
             "version": STATE_VERSION,
@@ -344,6 +377,7 @@ def _state_snapshot(state: LoopState, turn: dict, *, loop_status: str) -> dict:
                 str(entry_id): state.discovered_entry_fingerprints[entry_id]
                 for entry_id in restorable_entry_ids
             },
+            "collaboration": collaboration,
             "tool_events": state.tool_events[-32:],
             "model_calls": turn.get("model_calls", [])[-16:],
             "budget": turn.get("budget"),
@@ -410,6 +444,50 @@ def _restore_state(state: LoopState, snapshot: dict) -> None:
             ):
                 state.discovered_entry_ids.add(entry_id)
                 state.discovered_entry_fingerprints[entry_id] = fingerprint
+    collaboration = snapshot.get("collaboration")
+    if scope_matches and isinstance(collaboration, dict):
+        entry = collaboration.get("focused_entry")
+        refs = collaboration.get("focused_entry_refs")
+        try:
+            entry_id = int(entry["entry_id"])
+        except (KeyError, TypeError, ValueError):
+            entry_id = -1
+        if (
+            entry_id in state.authorized_entry_ids
+            and entry_id in state.discovered_entry_ids
+            and isinstance(refs, dict)
+            and refs.get("workspace_id") == state.workspace_id
+            and refs.get("user_id") == state.user_id
+            and refs.get("entry_ids") == [entry_id]
+        ):
+            state.focused_entry = entry
+            state.focused_entry_refs = refs
+            raw_task = collaboration.get("editing_context")
+            if (
+                isinstance(raw_task, dict)
+                and raw_task.get("entry") == entry
+                and raw_task.get("validation_refs") == refs
+            ):
+                decisions = raw_task.get("decisions")
+                state.editing_context = EditingContext(
+                    entry=entry,
+                    validation_refs=refs,
+                    draft=(
+                        raw_task.get("draft")
+                        if isinstance(raw_task.get("draft"), dict)
+                        else None
+                    ),
+                    discussion=(
+                        raw_task.get("discussion")
+                        if isinstance(raw_task.get("discussion"), str)
+                        else None
+                    ),
+                    decisions=(
+                        [str(item) for item in decisions[-8:]]
+                        if isinstance(decisions, list)
+                        else []
+                    ),
+                )
     continuation = _continuation_from_snapshot(snapshot.get("continuation"))
     state.continuation = continuation
 
@@ -618,7 +696,11 @@ async def execute_dialogue_loop_run(db: AsyncSession, run: KnowledgeAgentRun) ->
         state.continuation = continuation
     state.begin_turn(run.id, message)
     # 允许“第二条/刚才那组”复用最近一轮已授权结果；失败后的新问题不恢复旧现场。
-    if run.request_context_mode != "new_topic" and restore_persisted:
+    if run.request_context_mode == "new_topic":
+        state.focused_entry = None
+        state.focused_entry_refs = None
+        state.editing_context = None
+    elif restore_persisted:
         state.current_handles.update(state.result_sets)
     model = await get_text_model(db, run.workspace_id)
     used_fallback_model = isinstance(model, TestModel)
