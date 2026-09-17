@@ -1314,7 +1314,7 @@ def test_agent_exposes_split_statistics_without_composite_arguments() -> None:
 
 
 def test_candidate_revision_output_keeps_hard_boundaries_without_fixed_headings() -> None:
-    """候选稿只校验写入、内容区分和来源边界，不强制固定章节标题。"""
+    """候选稿校验写入与内容区分，不要求固定标题或来源免责声明。"""
 
     state = _state()
     state.begin_turn(5, "帮我完善一下这条知识")
@@ -1328,7 +1328,6 @@ def test_candidate_revision_output_keeps_hard_boundaries_without_fixed_headings(
     assert any("未写入状态" in error for error in errors)
     assert any("原记录与现有内容" in error for error in errors)
     assert any("新增建议" in error for error in errors)
-    assert any("来源边界" in error for error in errors)
 
     natural = DialogueAnswer.model_validate(
         {
@@ -1514,6 +1513,51 @@ def test_candidate_revision_accepts_equivalent_source_boundary_wording(
     )
 
     assert output_errors(answer, state) == []
+
+
+def test_candidate_source_boundary_uses_program_fact_not_required_wording() -> None:
+    """自然区分模型判断时不要求命中来源同义词表。"""
+
+    state = _state()
+    state.begin_turn(5, "帮我补充这条知识，把内容输出给我")
+    answer = DialogueAnswer.model_validate(
+        {
+            "blocks": [
+                {
+                    "kind": "text",
+                    "text": (
+                        "现有记录把限制条件写得过于绝对，建议改为结合实际场景判断。"
+                        "这是模型分析形成的候选，尚未写入正式记录。"
+                    ),
+                }
+            ]
+        }
+    )
+
+    assert output_errors(answer, state) == []
+
+
+def test_candidate_rejects_positive_model_claim_as_source_even_with_tail_boundary() -> None:
+    """尾部未写入说明不能掩盖正文把模型判断冒充 Source 的错误。"""
+
+    state = _state()
+    state.begin_turn(5, "帮我补充这条知识，把内容输出给我")
+    answer = DialogueAnswer.model_validate(
+        {
+            "blocks": [
+                {
+                    "kind": "text",
+                    "text": (
+                        "现有记录需要调整，建议补充使用条件。"
+                        "新增模型判断来自 Source 原文。"
+                        "这是候选，尚未写入正式记录。"
+                    ),
+                }
+            ]
+        }
+    )
+
+    assert any("不得把模型判断声称为 Source" in error for error in output_errors(answer, state))
 
 
 def test_content_only_candidate_accepts_one_text_and_rejects_evidence_block() -> None:
@@ -4935,10 +4979,9 @@ async def test_candidate_draft_survives_finalize_failure_and_continue_only_refor
                             "blocks": [
                                 {
                                     "kind": "text",
-                                    "text": (
-                                        "现有记录说明了人造板的环保等级。\n"
-                                        "在此基础上，可以补充选择和维护建议。\n"
-                                        "这是一版候选修改稿，尚未写入正式记录。"
+                                        "text": (
+                                            "人造板的环保等级内容已整理为一版候选修改稿，"
+                                            "尚未写入正式记录。"
                                     ),
                                 }
                             ]
@@ -4994,15 +5037,15 @@ async def test_candidate_draft_survives_finalize_failure_and_continue_only_refor
         for block in material["candidate_draft"]["blocks"]
         if block["kind"] == "text"
     )
-    assert "现有记录说明了人造板的环保等级" in saved_text
-    assert material["candidate_draft_errors"] == ["候选修改稿缺少：来源边界"]
+    assert "人造板的环保等级" in saved_text
+    assert material["candidate_draft_errors"] == ["候选修改稿缺少：原记录与现有内容"]
     summary = failed["completion"]["continuation"]["material_summary"]
     assert summary["answer_basis"] == "candidate_draft"
     assert summary["entry_ids"] == [seeded["entry_id"]]
     assert summary["source_ids"] == [seeded["source_id"]]
     assert summary["candidate_text_chars"] == len(saved_text)
-    assert summary["validation_gaps"] == ["候选修改稿缺少：来源边界"]
-    assert "现有记录说明了人造板的环保等级" in failed["answer"]
+    assert summary["validation_gaps"] == ["候选修改稿缺少：原记录与现有内容"]
+    assert "人造板的环保等级" in failed["answer"]
     assert "候选稿" in failed["answer"]
     assert len(state.tool_events) == events_before
     assert all(
@@ -5045,8 +5088,8 @@ async def test_candidate_finalizer_discards_invalid_evidence_and_completes() -> 
                                 {
                                     "kind": "text",
                                     "text": (
-                                        "现有记录说明日本 F4 星级。可以补充认证核验方法。"
-                                        "这是一版候选稿，尚未写入知识库。"
+                                        "日本 F4 星级内容已整理为一版候选稿，"
+                                        "尚未写入知识库。"
                                     ),
                                 }
                             ]
@@ -5124,9 +5167,9 @@ async def test_candidate_finalizer_discards_invalid_evidence_and_completes() -> 
         ),
         (
             "已写入正式记录。",
-            "现有记录说明了人造板",
+            "人造板的环保等级",
             "已写入正式记录",
-            "候选修改稿缺少：来源边界",
+            "原记录与现有内容",
         ),
     ],
 )
@@ -5145,9 +5188,7 @@ async def test_candidate_finalizer_pairs_safe_draft_with_its_validation_gaps(
     message = "按你的分析，把第一条的知识补充一下，发给我"
     state.begin_turn(903, message)
     original = (
-        "现有记录说明了人造板的环保等级。\n"
-        "建议补充选购和维护方法。\n"
-        "这是候选修改稿，尚未写入正式记录。"
+        "人造板的环保等级内容已整理为候选修改稿，尚未写入正式记录。"
     )
     calls = 0
 
@@ -5178,6 +5219,61 @@ async def test_candidate_finalizer_pairs_safe_draft_with_its_validation_gaps(
     assert unexpected_fragment not in saved_text
     assert expected_fragment in turn["answer"]
     assert expected_gap in "；".join(material["candidate_draft_errors"])
+
+
+@pytest.mark.asyncio
+async def test_candidate_continuation_advances_latest_pair_then_stops_repeated_no_progress(
+) -> None:
+    """两次恢复使用最新安全稿；同稿同缺口连续出现时停止空转。"""
+
+    state = _state()
+    state.instrumentation.context_policy_enabled = True
+    await _seed_finalize_material(state)
+    original_message = "按刚才分析纠正并补充这条知识"
+    state.begin_turn(905, original_message)
+    state.candidate_draft = {
+        "blocks": [{"kind": "text", "text": "上一版安全候选"}],
+        "needs_clarification": False,
+    }
+    state.candidate_draft_errors = ["上一版缺口"]
+    state.continuation = await _create_finalize_continuation(state, original_message, [])
+    repaired = "这是一版新的安全候选，尚未写入正式记录。"
+    calls = 0
+
+    def respond(_messages, info):
+        nonlocal calls
+        calls += 1
+        return ModelResponse(parts=[ToolCallPart(
+            info.output_tools[0].name,
+            {"blocks": [{"kind": "text", "text": repaired}]},
+        )])
+
+    model = BudgetedModel(FunctionModel(respond), state.instrumentation)
+    agent = build_agent(model)
+    finalizer = build_finalizer_agent(model)
+
+    state.begin_turn(906, "继续")
+    first, _ = await run_turn(agent, state, "继续", [], finalizer)
+
+    assert first["status"] == "partial_completed"
+    assert first["completion"]["can_continue"] is True
+    assert state.continuation is not None
+    first_material = state.continuation.recoverable_material
+    first_text = "\n".join(
+        block["text"] for block in first_material["candidate_draft"]["blocks"]
+    )
+    assert repaired in first_text
+    assert first_material["candidate_draft_errors"] != ["上一版缺口"]
+
+    state.begin_turn(907, "继续")
+    second, _ = await run_turn(agent, state, "继续", [], finalizer)
+
+    assert second["status"] == "partial_completed"
+    assert second["completion"]["reason_code"] == "candidate_recovery_no_progress"
+    assert second["completion"]["can_continue"] is False
+    assert state.continuation is None
+    assert "连续两次恢复" in second["answer"]
+    assert calls == 2
 
 
 def test_tone_only_candidate_uses_previous_candidate_as_semantic_baseline() -> None:

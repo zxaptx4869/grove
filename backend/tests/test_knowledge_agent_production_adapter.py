@@ -345,6 +345,7 @@ async def test_production_adapter_preserves_displayed_entry_discussion_and_candi
                 )])
             serialized = str(messages)
             observed["candidate_inputs"].append(serialized)
+            observed["instructions"].append(str(info.instructions))
             text = (
                 "候选修订：建议保留条件性表达，并在现场确认后采用。"
                 "这是基于当前记录和模型分析形成的候选，尚未写入正式记录；"
@@ -466,6 +467,7 @@ async def test_production_adapter_preserves_displayed_entry_discussion_and_candi
         assert candidate_calls == 2
         assert open_calls == 4
         assert len(observed["candidate_inputs"]) == 1
+        assert "允许候选与原 Entry 不同" in str(observed["instructions"])
         assert "第一条正文" in observed["candidate_inputs"][0]
         assert "第一条的条件性表达合理" in observed["candidate_inputs"][0]
 
@@ -1271,9 +1273,9 @@ async def test_run_801_to_802_restores_candidate_editing_context_and_only_finali
                             {
                                 "kind": "text",
                                 "text": (
-                                    "把现有记录换成口语说法：洗碗机要紧挨水槽安装；"
+                                    "把现有记录换成口语说法：洗碗机最好紧挨水槽安装；"
                                     "水电提前留在旁边柜子的侧面或后面，走线走管要整齐，"
-                                    "方便以后检修。还要留20公分的防倒灌空间并安装角阀。"
+                                    "方便以后检修。还要留20公分的高度并安装角阀。"
                                     "另外，单独拉一根10A电线，进水口的角阀要方便关水，"
                                     "排水管要比洗碗机底部高20公分，防止脏水倒灌。\n"
                                     "这是模型整理的候选稿，尚未写入正式 Entry；"
@@ -1479,7 +1481,7 @@ async def test_run_801_to_802_restores_candidate_editing_context_and_only_finali
         assert resumed_state is not None
         assert resumed_state.tool_events == []
         answer_802 = json.loads(run_802.answer_json)["answer"]
-        assert "20公分的防倒灌空间" in answer_802
+        assert "20公分的高度" in answer_802
         assert "10A电线" in answer_802
         assert "底部高20公分" in answer_802
         assert "尚未写入正式 Entry" in answer_802
