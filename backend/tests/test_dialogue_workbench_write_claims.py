@@ -73,7 +73,7 @@ def test_content_only_candidate_uses_same_unwritten_boundary():
     text = bounded.blocks[0].text
     assert text.startswith("精简候选正文")
     assert text.count(PROGRAM_UNWRITTEN_NOTE) == 1
-    assert text.count("模型补充不属于 Source 原文") == 1
+    assert text.count("模型补充属于候选判断，不代表 Source 原文") == 1
     assert loop._candidate_boundary(bounded, content_only=True) == bounded
 
 

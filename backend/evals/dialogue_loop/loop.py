@@ -1903,6 +1903,8 @@ _NEGATED_WRITE_RE = re.compile(
 )
 _PROGRAM_UNWRITTEN_NOTE = "（以上为候选内容，尚未写入正式 Entry。）"
 _PROGRAM_SOURCE_NOTE = "（模型补充属于候选判断，不代表 Source 原文。）"
+_LEGACY_PROGRAM_SOURCE_NOTE = "（模型补充不属于 Source 原文。）"
+_SOURCE_REFERENCE_RE = re.compile(r"(?:Source\s*原文|来源\s*原文)", re.IGNORECASE)
 _POSITIVE_SOURCE_CLAIM_RE = re.compile(
     r"(?:模型(?:判断|分析|补充|建议)|新增(?:内容|判断|建议)|候选(?:判断|内容))"
     r"[^。！？；;\n]{0,24}"
@@ -1943,6 +1945,12 @@ def _has_positive_source_claim(text: str) -> bool:
     """只拦截正文把模型判断直接归属于 Source 的明确正向陈述。"""
 
     return _POSITIVE_SOURCE_CLAIM_RE.search(text) is not None
+
+
+def _has_source_reference(text: str) -> bool:
+    """判断正文是否已经明确谈及 Source/来源原文，仅用于避免重复尾注。"""
+
+    return _SOURCE_REFERENCE_RE.search(text) is not None
 
 
 _LENGTH_MEASUREMENT_RE = re.compile(
@@ -2513,7 +2521,7 @@ def _candidate_boundary(
         suffixes = []
         if not _has_unwritten_boundary(text):
             suffixes.append(_PROGRAM_UNWRITTEN_NOTE)
-        if _PROGRAM_SOURCE_NOTE not in text:
+        if not _has_source_reference(text):
             suffixes.append(_PROGRAM_SOURCE_NOTE)
         if suffixes:
             payload["blocks"][-1]["text"] = (
@@ -2522,9 +2530,13 @@ def _candidate_boundary(
         return DialogueAnswer.model_validate(payload)
 
     text = "\n".join(block.text for block in answer.blocks)
+    if text.rstrip().endswith(_LEGACY_PROGRAM_SOURCE_NOTE):
+        prefix = text.rstrip()[: -len(_LEGACY_PROGRAM_SOURCE_NOTE)].rstrip()
+        if _has_source_reference(prefix):
+            text = prefix
     if not _has_unwritten_boundary(text):
         text += "\n" + _PROGRAM_UNWRITTEN_NOTE
-    if _PROGRAM_SOURCE_NOTE not in text:
+    if not _has_source_reference(text):
         text += "\n" + _PROGRAM_SOURCE_NOTE
     return DialogueAnswer.model_validate({
         "blocks": [{"kind": "text", "text": text}],
@@ -3212,6 +3224,21 @@ async def _persist_discussion_answer(state: LoopState, answer: DialogueAnswer) -
     if state.current_message not in task.decisions:
         task.decisions.append(state.current_message)
     task.discussion = text
+
+
+def preserve_editing_draft(state: LoopState, answer: DialogueAnswer) -> None:
+    """兼容实验台调用，并统一写入候选稿及其当前缺口。"""
+
+    if (
+        state.editing_active
+        and state.editing_context is not None
+        and _candidate_request_message(state) is not None
+    ):
+        _sync_candidate_recovery(
+            state,
+            answer.model_dump(mode="json"),
+            list(state.candidate_draft_errors),
+        )
 
 
 def build_agent(model) -> Agent[LoopDeps, DialogueAnswer]:
