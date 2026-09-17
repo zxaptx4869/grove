@@ -10,6 +10,7 @@ import getpass
 import hashlib
 import json
 import os
+import re
 import sqlite3
 import statistics
 import time
@@ -175,14 +176,53 @@ def expected_rows(snapshot: dict, project_id: int | None, turn: Turn) -> list[di
 
 
 def collect_facts(run: dict, diagnostic: dict, observability: dict | None = None) -> list[dict]:
-    """只从结构化结果读取数字，综合回答还必须实际展示对应服务端事实。"""
+    """分开收集公开交付与内部工具事实，避免以工具成功代替回答完成。"""
     facts = []
     snapshot = run.get("entry_result") or {}
     entry_set = snapshot.get("set_summary") or {}
     if snapshot.get("count") is not None:
-        facts.append({"kind": "count", **snapshot["count"], "entry_set": entry_set})
+        facts.append(
+            {
+                "kind": "count",
+                **snapshot["count"],
+                "entry_set": entry_set,
+                "delivery": "public_structured",
+            }
+        )
     for group in snapshot.get("group_counts", []):
-        facts.append({"kind": "group", **group, "entry_set": entry_set})
+        facts.append(
+            {
+                "kind": "group",
+                **group,
+                "entry_set": entry_set,
+                "delivery": "public_structured",
+            }
+        )
+    for block in run.get("dialogue_blocks") or []:
+        if block.get("kind") != "statistic" or block.get("result_type") != "statistic":
+            continue
+        semantics = block.get("semantics") or {}
+        if semantics.get("subject") != "entries":
+            continue
+        block_set = {"main_types": semantics.get("main_types") or []}
+        if semantics.get("project_id") is not None:
+            block_set["project_id"] = semantics["project_id"]
+        common = {
+            "completeness": block.get("completeness") or semantics.get("completeness"),
+            "entry_set": block_set,
+            "delivery": "public_structured",
+        }
+        if block.get("group_by"):
+            facts.append(
+                {
+                    "kind": "group",
+                    "group_by": block["group_by"],
+                    "buckets": block.get("buckets") or [],
+                    **common,
+                }
+            )
+        elif isinstance(block.get("value"), int):
+            facts.append({"kind": "count", "value": block["value"], **common})
     plan = diagnostic.get("composite_answer_plan") or {}
     sets = {
         item["id"]: item["query_plan"]["entry_set"] for item in plan.get("structured_requests", [])
@@ -204,6 +244,7 @@ def collect_facts(run: dict, diagnostic: dict, observability: dict | None = None
                             if fact["request_id"] in sets
                             else None
                         ),
+                        "delivery": "public_structured",
                     }
                 )
     for call in (observability or {}).get("tool_calls", []):
@@ -223,6 +264,7 @@ def collect_facts(run: dict, diagnostic: dict, observability: dict | None = None
                     "value": result["value"],
                     "completeness": result.get("completeness"),
                     "entry_set": entry_set,
+                    "delivery": "internal_tool",
                 }
             )
         elif operation == "group_count":
@@ -233,8 +275,30 @@ def collect_facts(run: dict, diagnostic: dict, observability: dict | None = None
                     "buckets": result.get("buckets") or [],
                     "completeness": result.get("completeness"),
                     "entry_set": entry_set,
+                    "delivery": "internal_tool",
                 }
             )
+    public_counts = [
+        fact
+        for fact in facts
+        if fact["kind"] == "count" and fact.get("delivery") == "public_structured"
+    ]
+    internal_counts = [
+        fact
+        for fact in facts
+        if fact["kind"] == "count" and fact.get("delivery") == "internal_tool"
+    ]
+    answer_text = ((run.get("answer") or {}).get("answer") or "").strip()
+    match = re.fullmatch(r"(?:总数\s*[:：]\s*|(?:共|合计)\s*)(\d+)\s*(?:条)?[.。]?", answer_text)
+    if not public_counts and len(internal_counts) == 1 and match:
+        fact = internal_counts[0]
+        facts.append(
+            {
+                **fact,
+                "value": int(match.group(1)),
+                "delivery": "public_text_exact",
+            }
+        )
     return facts
 
 
@@ -303,6 +367,7 @@ def evaluate_turn(
     previous: dict | None = None,
 ) -> dict:
     errors = []
+    review_reasons = []
     answer = run.get("answer") or {}
     clarification = (
         run.get("context_decision") == "clarify" or answer.get("status") == "clarification"
@@ -384,6 +449,12 @@ def evaluate_turn(
         and matches_set(fact.get("entry_set"), turn)
         and matches_scope(run, fact.get("entry_set"), project_id)
     ]
+    public = [
+        fact
+        for fact in facts
+        if fact.get("delivery", "public_structured").startswith("public")
+    ]
+    eligible_public = [fact for fact in eligible if fact in public]
     if turn.kind in {"count", "group"} and any(fact["kind"] == turn.kind for fact in facts):
         if not any(
             fact["kind"] == turn.kind
@@ -397,8 +468,15 @@ def evaluate_turn(
             errors.append("统计数字未绑定到预期项目范围，不能凭数值巧合判通过")
     if turn.kind == "count":
         expected = len(rows)
-        actual = [fact.get("value") for fact in facts if fact["kind"] == "count"]
-        if not any(fact.get("value") == expected for fact in eligible):
+        actual = [fact.get("value") for fact in public if fact["kind"] == "count"]
+        matching_internal = any(fact.get("value") == expected for fact in eligible)
+        matching_public = any(fact.get("value") == expected for fact in eligible_public)
+        public_counts = [fact for fact in public if fact["kind"] == "count"]
+        if public_counts and not matching_public:
+            errors.append("公开结构化统计与独立快照不一致")
+        elif matching_internal and not matching_public:
+            review_reasons.append("内部统计正确，但未确认公开回答已交付该结果")
+        elif not matching_public:
             errors.append("缺少口径匹配且完整的精确总数")
     elif turn.kind == "group":
         key = "project_id" if turn.group_by == "project" else turn.group_by
@@ -409,13 +487,25 @@ def evaluate_turn(
                 for p in snapshot["projects"]
                 if project_id is None or p["id"] == project_id
             }
-        actual = [fact for fact in facts if fact["kind"] == "group"]
-        if not any(
+        actual = [fact for fact in public if fact["kind"] == "group"]
+        matching_public = any(
+            fact.get("group_by") == turn.group_by
+            and {str(bucket["key"]): bucket["count"] for bucket in fact.get("buckets", [])}
+            == expected
+            for fact in eligible_public
+        )
+        matching_internal = any(
             fact.get("group_by") == turn.group_by
             and {str(bucket["key"]): bucket["count"] for bucket in fact.get("buckets", [])}
             == expected
             for fact in eligible
-        ):
+        )
+        public_groups = [fact for fact in public if fact["kind"] == "group"]
+        if public_groups and not matching_public:
+            errors.append("公开结构化分组统计与独立快照不一致")
+        elif matching_internal and not matching_public:
+            review_reasons.append("内部分组统计正确，但未确认公开回答已交付该结果")
+        elif not matching_public:
             errors.append("缺少口径匹配且完整的分组统计")
     elif turn.kind == "list":
         expected = [
@@ -463,8 +553,29 @@ def evaluate_turn(
             for item in observability.get("tool_calls", [])
             if item.get("tool_name") == "list_projects"
         ]
-        actual = [item.get("project_count") for item in project_calls]
-        if expected not in actual:
+        internal_counts = [item.get("project_count") for item in project_calls]
+        expected_ids = {item["id"] for item in snapshot["projects"]}
+        project_blocks = [
+            block
+            for block in run.get("dialogue_blocks") or []
+            if block.get("kind") == "list"
+            and block.get("result_type") == "projects"
+            and (block.get("semantics") or {}).get("subject") == "projects"
+        ]
+        public_sets = [
+            {item.get("id") for item in block.get("items", [])}
+            for block in project_blocks
+            if block.get("completeness") == "complete"
+            and (block.get("semantics") or {}).get("completeness") == "complete"
+        ]
+        actual = [sorted(ids) for ids in public_sets]
+        if public_sets and expected_ids not in public_sets:
+            errors.append("公开项目枚举与独立快照不一致")
+        elif expected_ids in public_sets:
+            pass
+        elif expected in internal_counts:
+            review_reasons.append("内部项目数正确，但未确认公开回答已交付项目枚举")
+        else:
             errors.append("项目枚举数量与只读快照不一致")
     elif turn.kind == "search":
         search_count = sum(tool_names.count(name) for name in ("search_knowledge", "query_entries"))
@@ -520,10 +631,12 @@ def evaluate_turn(
             current_text = diagnostic.get("assistant_text", "")
             if previous_text.strip() and previous_text.strip() == current_text.strip():
                 errors.append("续接只重放上一轮回答，没有实际进展")
-    status = "fail" if errors else "review" if turn.review else "pass"
+    status = "fail" if errors else "review" if turn.review or review_reasons else "pass"
+    deterministic_status = "fail" if errors else "review" if review_reasons else "pass"
     return {
         "status": status,
         "errors": errors,
+        "review_reasons": review_reasons,
         "expected": expected,
         "actual": actual,
         "clarification": clarification,
@@ -533,11 +646,12 @@ def evaluate_turn(
             "error": run.get("error"),
         },
         "deterministic": {
-            "status": "fail" if errors else "pass",
+            "status": deterministic_status,
             "errors": errors,
+            "review_reasons": review_reasons,
         },
         "semantic": {
-            "status": "pending" if turn.review else "not_applicable",
+            "status": "pending" if turn.review or review_reasons else "not_applicable",
             "criteria": list(turn.semantic_criteria),
         },
     }
@@ -575,6 +689,9 @@ def summary(report: dict) -> dict:
         for turn in turns
         for item in turn.get("observability", {}).get("model_invocations", [])
     ]
+    dispatched_invocations = [
+        item for item in invocations if item.get("outcome") != "not_dispatched"
+    ]
     execution_counts = Counter(
         turn.get("evaluation", {}).get("execution", {}).get("status", "not_executed")
         for turn in turns
@@ -586,10 +703,16 @@ def summary(report: dict) -> dict:
     semantic_counts = Counter(
         turn.get("evaluation", {}).get("semantic", {}).get("status", "unknown") for turn in turns
     )
+    case_outcomes = Counter(_case_outcome(case) for case in report["cases"])
+    conditional_not_triggered = sum(
+        turn.get("evaluation", {}).get("status") == "not_covered"
+        and not turn.get("run", {}).get("id")
+        for turn in turns
+    )
     token_keys = ("input_tokens", "output_tokens", "cache_read_tokens", "cache_write_tokens")
     known_usage = {key: 0 for key in token_keys}
     usage_missing = 0
-    for item in invocations:
+    for item in dispatched_invocations:
         usage = item.get("usage")
         if not isinstance(usage, dict):
             usage_missing += 1
@@ -605,17 +728,20 @@ def summary(report: dict) -> dict:
         "execution_statuses": dict(execution_counts),
         "deterministic_statuses": dict(deterministic_counts),
         "semantic_statuses": dict(semantic_counts),
+        "case_outcomes": dict(case_outcomes),
+        "conditional_not_triggered": conditional_not_triggered,
         "fully_passed_cases": sum(
-            bool(case["turns"])
-            and all(turn["evaluation"]["status"] == "pass" for turn in case["turns"])
-            for case in report["cases"]
+            bool(case["turns"]) and _case_passed(case) for case in report["cases"]
         ),
         "unnecessary_clarifications": sum(
             "不必要澄清" in turn["evaluation"]["errors"] for turn in turns
         ),
+        "model_audit_records": len(invocations),
+        "dispatched_model_invocations": len(dispatched_invocations),
+        # 保留旧键，但明确它代表审计记录数，不是硬派发计数。
         "model_invocations": len(invocations),
-        "fallback_invocations": sum(bool(item["is_fallback"]) for item in invocations),
-        "invocations_with_usage": sum(bool(item.get("usage")) for item in invocations),
+        "fallback_invocations": sum(bool(item.get("is_fallback")) for item in invocations),
+        "invocations_with_usage": sum(bool(item.get("usage")) for item in dispatched_invocations),
         "models": sorted(
             {f"{item['provider']}/{item['model']}" for item in invocations if item.get("model")}
         ),
@@ -626,9 +752,56 @@ def summary(report: dict) -> dict:
     }
 
 
+def _case_passed(case: dict) -> bool:
+    return _case_outcome(case) == "pass"
+
+
+def _case_outcome(case: dict) -> str:
+    if not case["turns"]:
+        return "not_covered"
+    states = [turn.get("evaluation") or {} for turn in case["turns"]]
+    if any(
+        (item.get("execution") or {}).get("status")
+        in {"partial", "failed", "cancelled"}
+        or (item.get("deterministic") or {}).get("status") in {"fail", "blocked"}
+        or (item.get("semantic") or {}).get("status") == "fail"
+        for item in states
+    ):
+        return "fail"
+    if any(
+        (item.get("execution") or {}).get("status") == "not_executed"
+        or (item.get("deterministic") or {}).get("status") == "not_covered"
+        or (item.get("semantic") or {}).get("status") == "not_covered"
+        for item in states
+    ):
+        return "not_covered"
+    if any(
+        (item.get("execution") or {}).get("status") != "completed"
+        or (item.get("deterministic") or {}).get("status") != "pass"
+        or (item.get("semantic") or {}).get("status")
+        not in {"pass", "not_applicable"}
+        for item in states
+    ):
+        return "pending_review"
+    return "pass"
+
+
 def summary_markdown(report: dict) -> str:
     """面向 Codex 和人工审阅的短摘要；详细证据留在 report.json。"""
     stats = summary(report)
+    sent_turns = sum(
+        bool(turn.get("run", {}).get("id"))
+        for case in report["cases"]
+        for turn in case["turns"]
+    )
+    reviewers = sorted(
+        {
+            reviewer
+            for case in report["cases"]
+            for turn in case["turns"]
+            if (reviewer := (turn.get("evaluation", {}).get("semantic") or {}).get("reviewed_by"))
+        }
+    )
     lines = [
         "# 知识 Agent 评测摘要",
         "",
@@ -636,11 +809,17 @@ def summary_markdown(report: dict) -> str:
         f"- 代码 commit：`{report['git_revision']}`",
         f"- 运行版本：{report.get('runtime_version', {}).get('confidence', '未确认')}",
         f"- 批次状态：{report['status']}",
-        f"- 场景 / 消息：{stats['cases']} / {stats['turns']}",
+        f"- 场景 / 记录轮次：{stats['cases']} / {stats['turns']}",
+        f"- 计划轮次：{report.get('limits', {}).get('planned_user_messages', stats['turns'])}；"
+        f"实际发送：{sent_turns}；"
+        f"条件未触发：{stats['conditional_not_triggered']}",
         f"- 执行层：{stats['execution_statuses']}",
         f"- 确定性层：{stats['deterministic_statuses']}",
         f"- 语义层：{stats['semantic_statuses']}",
-        f"- 模型调用：{stats['model_invocations']}；"
+        f"- 整段结论：{stats['case_outcomes']}",
+        f"- 语义审阅者：{'、'.join(reviewers) if reviewers else '尚未语义审阅'}",
+        f"- 模型审计记录：{stats['model_audit_records']}；"
+        f"已派发：{stats['dispatched_model_invocations']}；"
         f"无 usage 记录：{stats['invocations_without_usage']}",
         f"- 已知 usage：{stats['known_model_usage']}",
         "",
@@ -661,9 +840,6 @@ def summary_markdown(report: dict) -> str:
             item.get("evaluation", {}).get("semantic", {}).get("status", "unknown")
             for item in turns
         )
-        failures = [
-            error for item in turns for error in item.get("evaluation", {}).get("errors", [])
-        ]
         lines.extend(
             [
                 f"### {case['case_id']}：{case['title']}",
@@ -671,10 +847,39 @@ def summary_markdown(report: dict) -> str:
                 f"- 执行：{dict(execution)}",
                 f"- 确定性：{dict(deterministic)}",
                 f"- 语义：{dict(semantic)}",
-                f"- 具体缺口：{'；'.join(dict.fromkeys(failures)) or '无确定性缺口'}",
+                f"- 整段结论：{_case_outcome(case)}",
                 "",
             ]
         )
+        for index, item in enumerate(turns, 1):
+            evaluation = item.get("evaluation") or {}
+            deterministic = evaluation.get("deterministic") or {}
+            semantic_result = evaluation.get("semantic") or {}
+            if deterministic.get("status") == "pass" and semantic_result.get("status") in {
+                "pass",
+                "not_applicable",
+            }:
+                continue
+            run_id = (item.get("run") or {}).get("id")
+            question = " ".join(str(item.get("message") or "未记录问题").split())[:80]
+            deterministic_notes = (
+                deterministic.get("errors")
+                or deterministic.get("review_reasons")
+                or evaluation.get("errors")
+                or [deterministic.get("status", "unknown")]
+            )
+            semantic_notes = semantic_result.get("notes") or [
+                semantic_result.get("status", "unknown")
+            ]
+            reviewer = semantic_result.get("reviewed_by", "未审阅")
+            lines.extend(
+                [
+                    f"- Run {run_id if run_id is not None else '未发送'} / 第 {index} 轮 / "
+                    f"问题：{question}；确定性：{'；'.join(deterministic_notes)}；"
+                    f"语义：{'；'.join(semantic_notes)}；审阅者：{reviewer}"
+                ]
+            )
+        lines.append("")
     if report.get("comparison"):
         lines.extend(
             [
@@ -688,6 +893,7 @@ def summary_markdown(report: dict) -> str:
         [
             "详细的问题、回答、工具审计、模型调用、continuation 和预算见 `report.json`。",
             "语义状态为 pending 时不计作场景通过。",
+            "Codex 审阅不等于用户最终验收。",
         ]
     )
     return "\n".join(lines)
@@ -704,7 +910,8 @@ def markdown_report(report: dict) -> str:
         f"- 场景 / 轮数：{stats['cases']} / {stats['turns']}",
         f"- 自动结果：{stats['statuses']}；整段自动通过 {stats['fully_passed_cases']} 段",
         f"- 不必要澄清：{stats['unnecessary_clarifications']} 次",
-        f"- 模型阶段记录：{stats['model_invocations']}；降级 {stats['fallback_invocations']}",
+        f"- 模型审计记录 / 已派发：{stats['model_audit_records']} / "
+        f"{stats['dispatched_model_invocations']}；降级 {stats['fallback_invocations']}",
         f"- 模型：{', '.join(stats['models'])}",
         f"- 单轮耗时中位数 / 最大值：{stats['median_seconds']} / {stats['max_seconds']} 秒",
         "",
@@ -792,6 +999,64 @@ def compare_reports(old: dict, new: dict) -> dict:
 
     before, after = keyed(old), keyed(new)
     common = before.keys() & after.keys()
+
+    def layer_status(turn: dict, layer: str) -> str:
+        value = (turn.get("evaluation") or {}).get(layer)
+        return value.get("status", "unknown") if isinstance(value, dict) else "unknown"
+
+    def classify(layer: str, previous: str, current: str) -> str:
+        if "unknown" in {previous, current}:
+            return "unknown"
+        failed = {
+            "execution": {"partial", "failed", "cancelled"},
+            "deterministic": {"fail", "blocked"},
+            "semantic": {"fail"},
+        }[layer]
+        passed = {"completed"} if layer == "execution" else {"pass"}
+        if previous == current:
+            if current in failed:
+                return "still_failed"
+            if current in {"pending", "review"}:
+                return "pending_review"
+            if current in {"not_covered", "not_executed"}:
+                return "not_covered"
+            if current in passed or current == "not_applicable":
+                return "unchanged_pass"
+            return "unchanged"
+        if current in passed:
+            return "improved"
+        if previous in passed or current in failed:
+            return "regressed"
+        if previous in failed and current in {"pending", "review"}:
+            return "improved_pending_review"
+        if current in {"pending", "review"}:
+            return "pending_review"
+        if current in {"not_covered", "not_executed"}:
+            return "not_covered"
+        return "changed"
+
+    changes = []
+    layer_counts = {}
+    for layer in ("execution", "deterministic", "semantic"):
+        counts = Counter()
+        for key in sorted(common):
+            previous = layer_status(before[key], layer)
+            current = layer_status(after[key], layer)
+            classification = classify(layer, previous, current)
+            counts[classification] += 1
+            if previous != current:
+                changes.append(
+                    {
+                        "case": key[0],
+                        "repeat": key[1],
+                        "turn": key[2] + 1,
+                        "layer": layer,
+                        "before": previous,
+                        "after": current,
+                        "classification": classification,
+                    }
+                )
+        layer_counts[layer] = dict(counts)
     comparable = (
         old["baseline"]["domain_hashes"] == new["baseline"]["domain_hashes"]
         and old["provider"] == new["provider"]
@@ -808,17 +1073,8 @@ def compare_reports(old: dict, new: dict) -> dict:
         "comparable_data_model_suite": comparable,
         "matched_turns": len(common),
         "note": "运行中配置未由服务端完整公开；即使可比，也需核对特性开关。",
-        "changes": [
-            {
-                "case": key[0],
-                "repeat": key[1],
-                "turn": key[2] + 1,
-                "before": before[key]["evaluation"]["status"],
-                "after": after[key]["evaluation"]["status"],
-            }
-            for key in sorted(common)
-            if before[key]["evaluation"]["status"] != after[key]["evaluation"]["status"]
-        ],
+        "layer_classifications": layer_counts,
+        "changes": changes,
     }
 
 
@@ -914,6 +1170,17 @@ async def run_case(
         )
         if sent >= report["limits"]["user_messages"]:
             raise RuntimeError("整批评测达到用户消息上限")
+        model_audit_count = sum(
+            len(item.get("observability", {}).get("model_invocations", []))
+            for item_case in report["cases"]
+            for item in item_case["turns"]
+        )
+        audit_threshold = report["limits"].get(
+            "model_audit_stop_threshold",
+            report["limits"].get("model_invocations", MAX_MODEL_INVOCATIONS),
+        )
+        if model_audit_count >= audit_threshold:
+            raise RuntimeError("整批评测已达到模型审计记录的轮后停止阈值")
         if turn.change_scope:
             scope = turn.change_scope
             await request(
@@ -975,13 +1242,6 @@ async def run_case(
             evaluation=evaluation,
         )
         save_report(report, directory)
-        invocation_count = sum(
-            len(item.get("observability", {}).get("model_invocations", []))
-            for item_case in report["cases"]
-            for item in item_case["turns"]
-        )
-        if invocation_count > report["limits"]["model_invocations"]:
-            raise RuntimeError("整批评测超过预先固定的模型调用上限")
         print(
             f"{case.id}[{repeat}] 第 {index} 轮 Run {run_id}：{evaluation['status']} "
             f"{'；'.join(evaluation['errors'])}",
@@ -1081,7 +1341,7 @@ async def run_suite(args, password: str) -> int:
         "limits": {
             "user_messages": MAX_USER_MESSAGES,
             "planned_user_messages": maximum_messages,
-            "model_invocations": MAX_MODEL_INVOCATIONS,
+            "model_audit_stop_threshold": MAX_MODEL_INVOCATIONS,
             "batch_seconds": args.batch_timeout,
             "turn_seconds": args.turn_timeout,
             "agent_per_turn_budgets": "未修改，沿用正式服务当前配置",
@@ -1196,13 +1456,15 @@ def regrade_saved_report(source: Path, output: Path) -> Path:
                 turn["evaluation"]["status"] = "fail"
             previous = turn
     report["source_report"] = str(source.resolve())
-    report["source_batch_id"] = report["batch_id"]
+    report["regraded_from_batch_id"] = report["batch_id"]
+    report["source_batch_id"] = report.get("source_batch_id", report["batch_id"])
     report["regraded_at"] = datetime.now(UTC).isoformat()
     report["grader_sha256"] = hashlib.sha256(Path(__file__).read_bytes()).hexdigest()
     report["batch_id"] = (
         datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ") + "-regraded-" + uuid.uuid4().hex[:6]
     )
     report.pop("comparison", None)
+    report.pop("semantic_review", None)
     directory = output / report["batch_id"]
     directory.mkdir(parents=True, mode=0o700)
     save_report(report, directory)
@@ -1218,15 +1480,35 @@ def apply_semantic_review(source: Path, review_path: Path) -> Path:
     if review.get("batch_id") not in {report.get("batch_id"), report.get("source_batch_id")}:
         raise ValueError("语义审阅批次与原始报告不匹配")
     turns = {
-        (case["case_id"], index): turn
+        (case["case_id"], case.get("repeat", 1), index): turn
         for case in report["cases"]
         for index, turn in enumerate(case["turns"], 1)
     }
     seen = set()
     for item in review.get("reviews", []):
-        key = (item.get("case_id"), item.get("turn"))
-        if key in seen or key not in turns:
-            raise ValueError(f"语义审阅定位重复或不存在：{key}")
+        if item.get("repeat") is None:
+            matches = [
+                key
+                for key in turns
+                if key[0] == item.get("case_id") and key[2] == item.get("turn")
+            ]
+            if len(matches) > 1:
+                raise ValueError(
+                    f"语义审阅定位存在多个 repeat："
+                    f"{(item.get('case_id'), item.get('turn'))}"
+                )
+            if not matches:
+                raise ValueError(
+                    f"语义审阅定位不存在："
+                    f"{(item.get('case_id'), item.get('turn'))}"
+                )
+            key = matches[0]
+        else:
+            key = (item.get("case_id"), item.get("repeat"), item.get("turn"))
+        if key in seen:
+            raise ValueError(f"语义审阅定位重复：{key}")
+        if key not in turns:
+            raise ValueError(f"语义审阅定位不存在：{key}")
         if item.get("status") not in {"pass", "fail", "not_covered"}:
             raise ValueError(f"语义审阅状态无效：{key}")
         semantic = turns[key].setdefault("evaluation", {}).setdefault("semantic", {})
@@ -1242,8 +1524,12 @@ def apply_semantic_review(source: Path, review_path: Path) -> Path:
         "reviewed_turns": len(seen),
     }
     report["summary"] = summary(report)
+    suffix = ""
     output = source.with_name("reviewed-report.json")
-    summary_output = source.with_name("reviewed-summary.md")
+    if output.exists():
+        suffix = "-" + datetime.now(UTC).strftime("%Y%m%dT%H%M%S%fZ") + "-" + uuid.uuid4().hex[:6]
+        output = source.with_name(f"reviewed-report{suffix}.json")
+    summary_output = source.with_name(f"reviewed-summary{suffix}.md")
     for path, content in (
         (output, json.dumps(sanitize(report), ensure_ascii=False, indent=2)),
         (summary_output, summary_markdown(sanitize(report))),

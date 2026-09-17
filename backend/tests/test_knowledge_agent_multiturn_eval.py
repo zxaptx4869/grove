@@ -20,6 +20,8 @@ from evals.knowledge_agent_multiturn import (
     request,
     run_suite,
     save_report,
+    summary,
+    summary_markdown,
     wait_run,
 )
 
@@ -139,7 +141,25 @@ def test_composite_tool_fact_must_be_displayed_and_linked_to_matching_set():
     assert collect_facts(run, diagnostic)[0]["value"] == 2
 
 
-def test_dialogue_loop_aggregate_audit_is_a_deterministic_fact():
+def test_dialogue_loop_aggregate_audit_does_not_replace_public_delivery():
+    snapshot, run, observation = sample()
+    run["entry_result"] = None
+    run["answer"] = {"answer": "我不能回答这个问题"}
+    observation["tool_calls"] = [
+        {
+            "tool_name": "aggregate_entries",
+            "status": "completed",
+            "params_summary": '{"params":{"operation":"count","entry_set":{"main_types":[]}}}',
+            "result_summary": '{"operation":"count","value":2,"completeness":"complete"}',
+        }
+    ]
+    result = evaluate_turn(Turn("总数"), run, {}, observation, snapshot, None)
+    assert result["deterministic"]["status"] == "review"
+    assert result["status"] == "review"
+    assert "内部统计正确，但未确认公开回答已交付该结果" in result["review_reasons"]
+
+
+def test_count_public_delivery_rejects_wrong_value_and_accepts_structured_result():
     snapshot, run, observation = sample()
     run["entry_result"] = None
     observation["tool_calls"] = [
@@ -150,8 +170,107 @@ def test_dialogue_loop_aggregate_audit_is_a_deterministic_fact():
             "result_summary": '{"operation":"count","value":2,"completeness":"complete"}',
         }
     ]
+    run["dialogue_blocks"] = [
+        {
+            "kind": "statistic",
+            "result_type": "statistic",
+            "value": 99,
+            "completeness": "complete",
+            "semantics": {
+                "subject": "entries",
+                "project_scope": "全部项目",
+                "main_types": [],
+                "completeness": "complete",
+            },
+        }
+    ]
     result = evaluate_turn(Turn("总数"), run, {}, observation, snapshot, None)
-    assert result["deterministic"]["status"] == "pass"
+    assert result["deterministic"]["status"] == "fail"
+    assert "公开结构化统计与独立快照不一致" in result["errors"]
+    run["dialogue_blocks"][0]["value"] = 2
+    assert evaluate_turn(Turn("总数"), run, {}, observation, snapshot, None)[
+        "deterministic"
+    ]["status"] == "pass"
+
+
+def test_count_public_delivery_rejects_matching_number_with_wrong_scope():
+    snapshot, run, observation = sample()
+    run["entry_result"] = None
+    run["dialogue_blocks"] = [
+        {
+            "kind": "statistic",
+            "result_type": "statistic",
+            "value": 2,
+            "completeness": "complete",
+            "semantics": {
+                "subject": "entries",
+                "project_scope": "指定项目",
+                "project_id": 1,
+                "main_types": [],
+                "completeness": "complete",
+            },
+        }
+    ]
+    result = evaluate_turn(Turn("总数"), run, {}, observation, snapshot, None)
+    assert result["deterministic"]["status"] == "fail"
+    assert "统计数字未绑定到预期项目范围，不能凭数值巧合判通过" in result["errors"]
+
+
+def test_project_tool_result_requires_public_structured_enumeration():
+    snapshot, run, observation = sample()
+    run["entry_result"] = None
+    run["answer"] = {"answer": "我不能回答这个问题"}
+    observation["tool_calls"] = [
+        {
+            "tool_name": "list_projects",
+            "status": "completed",
+            "result_summary": '{"project_count":2}',
+        }
+    ]
+    result = evaluate_turn(Turn("项目", "projects"), run, {}, observation, snapshot, None)
+    assert result["deterministic"]["status"] == "review"
+    run["dialogue_blocks"] = [
+        {
+            "kind": "list",
+            "result_type": "projects",
+            "items": [{"id": 1, "name": "有记录"}, {"id": 2, "name": "空项目"}],
+            "completeness": "complete",
+            "semantics": {"subject": "projects", "completeness": "complete"},
+        }
+    ]
+    assert evaluate_turn(Turn("项目", "projects"), run, {}, observation, snapshot, None)[
+        "deterministic"
+    ]["status"] == "pass"
+
+
+def test_group_tool_result_without_public_delivery_stays_pending_review():
+    snapshot, run, observation = sample()
+    run["entry_result"] = None
+    run["answer"] = {"answer": "已完成分组"}
+    observation["tool_calls"] = [
+        {
+            "tool_name": "aggregate_entries",
+            "status": "completed",
+            "params_summary": (
+                '{"params":{"operation":"group_count","group_by":"project",'
+                '"entry_set":{"main_types":[]}}}'
+            ),
+            "result_summary": (
+                '{"operation":"group_count","group_by":"project","completeness":"complete",'
+                '"buckets":[{"key":"1","count":2},{"key":"2","count":0}]}'
+            ),
+        }
+    ]
+    result = evaluate_turn(
+        Turn("按项目分组", "group", group_by="project"),
+        run,
+        {},
+        observation,
+        snapshot,
+        None,
+    )
+    assert result["deterministic"]["status"] == "review"
+    assert "内部分组统计正确，但未确认公开回答已交付该结果" in result["review_reasons"]
 
 
 def test_search_accepts_formal_search_tool_name_but_not_duplicate_searches():
@@ -255,6 +374,145 @@ def test_suite_comparison_rejects_changed_data_or_scenarios():
     assert not compare_reports(old, new)["comparable_data_model_suite"]
     assert len(build_cases("装修", "旅行")) == 12
     assert len(build_cases("装修", None)) == 9
+
+
+def test_report_comparison_detects_semantic_change_when_automatic_status_is_stable():
+    old = {
+        "baseline": {"domain_hashes": {"entries": "same"}},
+        "provider": ["model"],
+        "suite_digest": "same",
+        "grader_sha256": "same",
+        "domain_unchanged": True,
+        "cases": [
+            {
+                "case_id": "case",
+                "repeat": 1,
+                "turns": [
+                    {
+                        "evaluation": {
+                            "status": "review",
+                            "execution": {"status": "completed"},
+                            "deterministic": {"status": "pass"},
+                            "semantic": {"status": "fail"},
+                        }
+                    }
+                ],
+            }
+        ],
+    }
+    new = copy.deepcopy(old)
+    new["cases"][0]["turns"][0]["evaluation"]["semantic"]["status"] = "pass"
+    comparison = compare_reports(old, new)
+    assert comparison["changes"] == [
+        {
+            "case": "case",
+            "repeat": 1,
+            "turn": 1,
+            "layer": "semantic",
+            "before": "fail",
+            "after": "pass",
+            "classification": "improved",
+        }
+    ]
+    assert comparison["layer_classifications"]["execution"] == {
+        "unchanged_pass": 1
+    }
+    assert comparison["layer_classifications"]["deterministic"] == {
+        "unchanged_pass": 1
+    }
+
+
+def test_report_comparison_marks_missing_old_layer_unknown():
+    old = {
+        "baseline": {"domain_hashes": {}},
+        "provider": [],
+        "suite_digest": "same",
+        "grader_sha256": "same",
+        "domain_unchanged": True,
+        "cases": [{"case_id": "case", "repeat": 1, "turns": [{"evaluation": {}}]}],
+    }
+    new = copy.deepcopy(old)
+    new["cases"][0]["turns"][0]["evaluation"] = {
+        "execution": {"status": "completed"},
+        "deterministic": {"status": "pass"},
+        "semantic": {"status": "pending"},
+    }
+    comparison = compare_reports(old, new)
+    assert {item["layer"] for item in comparison["changes"]} == {
+        "execution",
+        "deterministic",
+        "semantic",
+    }
+    assert all(item["before"] == "unknown" for item in comparison["changes"])
+
+
+def test_report_comparison_classifies_unchanged_failures_and_pending_review():
+    report = {
+        "baseline": {"domain_hashes": {}},
+        "provider": [],
+        "suite_digest": "same",
+        "grader_sha256": "same",
+        "domain_unchanged": True,
+        "cases": [
+            {
+                "case_id": "case",
+                "repeat": 1,
+                "turns": [
+                    {
+                        "evaluation": {
+                            "execution": {"status": "partial"},
+                            "deterministic": {"status": "fail"},
+                            "semantic": {"status": "pending"},
+                        }
+                    }
+                ],
+            }
+        ],
+    }
+    classifications = compare_reports(report, copy.deepcopy(report))[
+        "layer_classifications"
+    ]
+    assert classifications == {
+        "execution": {"still_failed": 1},
+        "deterministic": {"still_failed": 1},
+        "semantic": {"pending_review": 1},
+    }
+
+
+def test_summary_does_not_count_partial_or_pending_semantic_as_fully_passed():
+    report = {
+        "cases": [
+            {
+                "turns": [
+                    {
+                        "evaluation": {
+                            "status": "pass",
+                            "errors": [],
+                            "execution": {"status": "partial"},
+                            "deterministic": {"status": "pass"},
+                            "semantic": {"status": "pass"},
+                        }
+                    }
+                ]
+            },
+            {
+                "turns": [
+                    {
+                        "evaluation": {
+                            "status": "review",
+                            "errors": [],
+                            "execution": {"status": "completed"},
+                            "deterministic": {"status": "pass"},
+                            "semantic": {"status": "pending"},
+                        }
+                    }
+                ]
+            },
+        ]
+    }
+    result = summary(report)
+    assert result["fully_passed_cases"] == 0
+    assert result["case_outcomes"] == {"fail": 1, "pending_review": 1}
 
 
 def test_core_suite_is_fixed_small_and_uses_dynamic_targets():
@@ -415,12 +673,210 @@ def test_report_is_atomic_sanitized_and_semantic_review_preserves_source(tmp_pat
     assert payload["cases"][0]["turns"][0]["evaluation"]["semantic"]["status"] == "fail"
 
 
+def test_semantic_review_uses_repeat_and_rejects_ambiguous_legacy_locator(tmp_path):
+    source = tmp_path / "report.json"
+    base_turn = {
+        "message": "第四轮",
+        "evaluation": {
+            "status": "review",
+            "errors": [],
+            "execution": {"status": "completed"},
+            "deterministic": {"status": "pass", "errors": []},
+            "semantic": {"status": "pending"},
+        },
+    }
+    source.write_text(
+        json.dumps(
+            {
+                "batch_id": "batch",
+                "git_revision": "abc",
+                "runtime_version": {},
+                "status": "completed",
+                "cases": [
+                    {
+                        "case_id": "case",
+                        "title": "重复",
+                        "repeat": repeat,
+                        "turns": [copy.deepcopy(base_turn)],
+                    }
+                    for repeat in (1, 2)
+                ],
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+    review = tmp_path / "review.json"
+    review.write_text(
+        '{"batch_id":"batch","reviews":'
+        '[{"case_id":"case","turn":1,"status":"fail"}]}',
+        encoding="utf-8",
+    )
+    with pytest.raises(ValueError, match="语义审阅定位存在多个 repeat"):
+        apply_semantic_review(source, review)
+    review.write_text(
+        '{"batch_id":"batch","reviews":['
+        '{"case_id":"case","repeat":1,"turn":1,"status":"fail","notes":["首次失败"]},'
+        '{"case_id":"case","repeat":2,"turn":1,"status":"pass"}]}',
+        encoding="utf-8",
+    )
+    reviewed = apply_semantic_review(source, review)
+    payload = json.loads(reviewed.read_text(encoding="utf-8"))
+    assert payload["cases"][0]["turns"][0]["evaluation"]["semantic"]["status"] == "fail"
+    assert payload["cases"][1]["turns"][0]["evaluation"]["semantic"]["status"] == "pass"
+
+
+def test_semantic_review_rejects_duplicate_and_missing_locator(tmp_path):
+    source = tmp_path / "report.json"
+    source.write_text(
+        json.dumps(
+            {
+                "batch_id": "batch",
+                "git_revision": "abc",
+                "runtime_version": {},
+                "status": "completed",
+                "cases": [
+                    {
+                        "case_id": "case",
+                        "title": "单次",
+                        "repeat": 1,
+                        "turns": [
+                            {
+                                "message": "问题",
+                                "evaluation": {
+                                    "status": "review",
+                                    "errors": [],
+                                    "execution": {"status": "completed"},
+                                    "deterministic": {"status": "pass"},
+                                    "semantic": {"status": "pending"},
+                                },
+                            }
+                        ],
+                    }
+                ],
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+    review = tmp_path / "review.json"
+    duplicate = {
+        "batch_id": "batch",
+        "reviews": [
+            {"case_id": "case", "repeat": 1, "turn": 1, "status": "pass"},
+            {"case_id": "case", "repeat": 1, "turn": 1, "status": "fail"},
+        ],
+    }
+    review.write_text(json.dumps(duplicate), encoding="utf-8")
+    with pytest.raises(ValueError, match="重复"):
+        apply_semantic_review(source, review)
+    duplicate["reviews"] = [
+        {"case_id": "missing", "repeat": 1, "turn": 1, "status": "pass"}
+    ]
+    review.write_text(json.dumps(duplicate), encoding="utf-8")
+    with pytest.raises(ValueError, match="不存在"):
+        apply_semantic_review(source, review)
+
+
+def test_semantic_review_does_not_silently_overwrite_existing_output(tmp_path):
+    report = {
+        "batch_id": "batch",
+        "git_revision": "abc",
+        "runtime_version": {},
+        "status": "completed",
+        "cases": [
+            {
+                "case_id": "case",
+                "title": "单次",
+                "repeat": 1,
+                "turns": [
+                    {
+                        "message": "问题",
+                        "evaluation": {
+                            "status": "review",
+                            "errors": [],
+                            "execution": {"status": "completed"},
+                            "deterministic": {"status": "pass"},
+                            "semantic": {"status": "pending"},
+                        },
+                    }
+                ],
+            }
+        ],
+    }
+    source = tmp_path / "report.json"
+    source.write_text(json.dumps(report), encoding="utf-8")
+    review = tmp_path / "review.json"
+    review.write_text(
+        '{"batch_id":"batch","reviews":['
+        '{"case_id":"case","turn":1,"status":"pass"}]}',
+        encoding="utf-8",
+    )
+    first = apply_semantic_review(source, review)
+    first_content = first.read_text(encoding="utf-8")
+    second = apply_semantic_review(source, review)
+    assert second != first
+    assert first.read_text(encoding="utf-8") == first_content
+
+
+def test_summary_lists_run_question_deterministic_and_semantic_gaps():
+    report = {
+        "batch_id": "batch",
+        "git_revision": "abc",
+        "runtime_version": {},
+        "status": "completed",
+        "limits": {"planned_user_messages": 2},
+        "cases": [
+            {
+                "case_id": "case",
+                "title": "场景",
+                "repeat": 1,
+                "turns": [
+                    {
+                        "message": "这一轮的问题",
+                        "run": {"id": 88},
+                        "evaluation": {
+                            "status": "fail",
+                            "errors": ["确定性缺口"],
+                            "execution": {"status": "completed"},
+                            "deterministic": {"status": "fail", "errors": ["确定性缺口"]},
+                            "semantic": {
+                                "status": "fail",
+                                "notes": ["语义理由"],
+                                "reviewed_by": "codex",
+                            },
+                        },
+                    },
+                    {
+                        "message": "继续",
+                        "evaluation": {
+                            "status": "not_covered",
+                            "errors": ["条件未触发"],
+                            "execution": {"status": "not_executed"},
+                            "deterministic": {"status": "not_covered"},
+                            "semantic": {"status": "not_covered"},
+                        },
+                    },
+                ],
+            }
+        ],
+    }
+    text = summary_markdown(report)
+    assert "计划轮次：2；实际发送：1；条件未触发：1" in text
+    assert "Run 88" in text and "这一轮的问题" in text
+    assert "确定性缺口" in text and "语义理由" in text
+    assert "审阅者：codex" in text
+    assert "Codex 审阅不等于用户最终验收" in text
+
+
 def test_regrade_preserves_conditional_turn_without_run(tmp_path):
     source = tmp_path / "source.json"
     source.write_text(
         json.dumps(
             {
                 "batch_id": "old",
+                "source_batch_id": "root",
+                "semantic_review": {"reviewed_turns": 1},
                 "status": "completed",
                 "domain_unchanged": True,
                 "git_revision": "abc",
@@ -464,3 +920,6 @@ def test_regrade_preserves_conditional_turn_without_run(tmp_path):
     directory = regrade_saved_report(source, tmp_path / "regraded")
     payload = json.loads((directory / "report.json").read_text(encoding="utf-8"))
     assert payload["cases"][0]["turns"][0]["evaluation"]["status"] == "not_covered"
+    assert payload["source_batch_id"] == "root"
+    assert payload["regraded_from_batch_id"] == "old"
+    assert "semantic_review" not in payload
