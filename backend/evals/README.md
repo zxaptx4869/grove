@@ -104,7 +104,8 @@ Message、Run、Evidence 与审计，原业务库不得写入。
 .venv/bin/python -m evals.knowledge_agent_multiturn
 ```
 
-密码通过终端隐藏输入，也可从 `GROVE_EVAL_PASSWORD` 读取。不将密码写在命令参数、
+密码优先沿用 `dialogue_loop` 按 Workspace 隔离的系统钥匙串项，缺失时通过
+终端隐藏输入，也可从 `GROVE_EVAL_PASSWORD` 读取。不将密码写在命令参数、
 仓库文件或报告中。Token 只在内存中保存，结束时调用移动端登出接口。
 
 默认连接 `http://127.0.0.1:8000`，只读核对 `backend/grove.db`；服务必须已运行且
@@ -112,6 +113,12 @@ Knowledge Agent Worker 已开启。接口身份及每个 Run 必须与核对数�
 本工具仅接受本机 HTTP 服务，不能用于远程部署。
 
 ```bash
+# 零模型预检：登录、身份/数据库一致性、列表 API 与 Provider 配置
+.venv/bin/python -m evals.knowledge_agent_multiturn --preflight
+
+# 轻量核心基线：4 组，最多 19 条用户消息，含两次独立协作链
+.venv/bin/python -m evals.knowledge_agent_multiturn --suite core
+
 # 原始反馈重复三次，每次使用新 Conversation
 .venv/bin/python -m evals.knowledge_agent_multiturn --cases original --repeat 3
 
@@ -126,11 +133,18 @@ Knowledge Agent Worker 已开启。接口身份及每个 Run 必须与核对数�
 # 评分器修正后重评已保存响应，不重新登录或调用模型
 .venv/bin/python -m evals.knowledge_agent_multiturn \
   --regrade /private/tmp/grove-agent-eval/<批次>/report.json
+
+# 将逐轮人工语义结论附加成新报告，原 report.json 保持不变
+.venv/bin/python -m evals.knowledge_agent_multiturn \
+  --review-report /private/tmp/grove-agent-eval/<批次>/report.json \
+  --review-file /private/tmp/grove-agent-eval/<批次>/semantic-review.json
 ```
 
 完整集合为 12 段、27 轮，默认每段一次，按顺序执行。没有空项目时跳过三个依赖
 空项目的场景；账号完全没有正式记录则拒绝运行。单轮默认等待 240 秒，超时提交
 取消并等待终态；仍未确认取消时停止整批，不继续发送同会话消息。
+核心基线额外固定整批 40 条用户消息、192 条模型审计和 1800 秒上限；
+这些是评测器的停止线，不修改 Agent 单轮预算、重试或模型配置。
 
 ## 场景与口径
 
@@ -140,6 +154,12 @@ Knowledge Agent Worker 已开启。接口身份及每个 Run 必须与核对数�
 - 不查知识库的开放讨论、显式新话题和后续指代。
 - 首轮真实歧义、补充任务后的继续追问。
 - 空项目、通过范围接口切换项目、Workspace 内自然语言指定项目。
+
+`--suite core` 只含四组高信号场景：项目枚举与跨轮读取保留集、两组表达不同的
+“检索 → 正文 → 通用知识评价 → 候选 → 只改语气 → 条件续接 → 独立新问题”链，
+以及 Workspace/项目范围切换。运行前从当前项目动态选两条已有、有来源的 Entry，
+用其真实标题组装问题；不硬编码 ID、数量或主题关键词。只有上轮公开 Run 实际返回
+合法 continuation 时才发送“继续”，否则明确记为 `not_covered`。
 
 场景同时包含已有能力的衔接与目标架构尚未提供的能力。项目分组、自然语言项目
 解析单独标记为能力缺口，不把这些失败一律归为模型质量回归。
@@ -151,9 +171,17 @@ Knowledge Agent Worker 已开启。接口身份及每个 Run 必须与核对数�
 
 ## 结果解释
 
-每批保存独立 `report.json` 和可读的 `report.md`，每轮结束即写入；文件默认位于
+每批保存独立 `summary.md`、`report.md` 和 `report.json`，每轮结束即原子写入；
+`summary.md` 只列场景状态和具体缺口，`report.json` 保留问题、回答、脱敏工具参数/结果、
+模型公开响应、错误、continuation 和预算。文件默认位于
 `/private/tmp/grove-agent-eval/`，目录权限 700、报告权限 600。报告包含 demo 对话与
 有界工具结果，应作为本地调试资料，不提交整份报告到仓库。
+
+每轮同时记录三层结果：执行层是 `completed/partial/failed/cancelled/not_executed`；
+确定性层只判断范围、数量、对象、工具、续接和安全边界；语义层初始为 `pending`，
+需逐轮人工标注 `pass/fail/not_covered`。模型调用成功、HTTP 200 或 Run completed
+都不会自动把语义层改为通过。语义标注另存 `reviewed-report.json` 和
+`reviewed-summary.md`，不覆盖原始证据。
 
 | 结果 | 含义 |
 |---|---|
@@ -188,7 +216,8 @@ Knowledge Agent Worker 已开启。接口身份及每个 Run 必须与核对数�
 不要把一批小样本的百分比当成总体质量结论。
 
 报告保存模型用途、provider/model、prompt version、fallback、工具参数、结果与延迟。
-已有阶段不一定返回 usage，缺少 usage 时不能给出完整 token 或费用估算。
+已有阶段不一定返回 usage，摘要只汇总能取得的 provider usage，缺失数量另行标明；
+不估算 Codex token、费用或节省比例。
 退出码 1 表示有失败、阻塞或执行异常；评测发现产品缺陷时返回非零是正常行为。
 `review` 不使退出码失败，但不意味着人工验收已经完成。
 
@@ -198,3 +227,6 @@ Knowledge Agent Worker 已开启。接口身份及每个 Run 必须与核对数�
 .venv/bin/pytest tests/test_knowledge_agent_multiturn_eval.py
 .venv/bin/ruff check evals tests/test_knowledge_agent_multiturn_eval.py
 ```
+
+建议节奏：开发中只跑相关离线回归；一组相关 Agent 修复完成后跑受影响的真实场景；
+交付前跑 `--suite core` 保留集。不要在每个提交后全量调用真实模型。

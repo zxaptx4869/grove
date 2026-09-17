@@ -22,11 +22,23 @@ from urllib.parse import urlparse
 
 import httpx
 
-from evals.knowledge_agent_cases import Case, Turn, build_cases, build_task_cases
+from evals.dialogue_loop.credentials import password_for_run
+from evals.dialogue_loop.report import sanitize
+from evals.knowledge_agent_cases import (
+    Case,
+    Turn,
+    build_cases,
+    build_core_baseline_cases,
+    build_task_cases,
+)
 
 TERMINAL = {"completed", "partial", "failed", "cancelled"}
 MAIN_TYPES = {"knowledge", "method", "parameter", "reminder"}
 PREFIX = "/api/knowledge-agent"
+MAX_USER_MESSAGES = 40
+MAX_MODEL_INVOCATIONS = 192
+DEFAULT_BATCH_TIMEOUT_SECONDS = 1800
+DATA_TOOLS = {"search_knowledge", "query_entries", "read_entries"}
 DIAGNOSTIC_FIELDS = (
     "history_message_ids_json",
     "context_meta_json",
@@ -41,6 +53,7 @@ DIAGNOSTIC_FIELDS = (
     "coverage_repair_execution_json",
     "coverage_repair_graph_json",
     "coverage_repair_graph_state_json",
+    "dialogue_loop_state_json",
 )
 
 
@@ -122,12 +135,27 @@ class Oracle:
             key.removesuffix("_json"): json.loads(value) if value else None
             for key, value in records[0].items()
         }
-        data["assistant_text"] = self.rows(
+        messages = self.rows(
             "SELECT content FROM knowledge_messages "
             "WHERE run_id=? AND conversation_id=? AND role='assistant'",
             (run_id, conversation_id),
-        )[0]["content"]
+        )
+        data["assistant_text"] = messages[0]["content"] if messages else ""
         return data
+
+    def baseline_targets(self, project_id: int, limit: int = 2) -> list[dict]:
+        """只从当前授权 Workspace 的既有正式记录选可追溯目标。"""
+        return self.rows(
+            "SELECT e.id,e.title,e.project_id,p.name AS project_name,"
+            "LENGTH(e.content) AS content_chars,COUNT(ev.id) AS evidence_count "
+            "FROM entries e JOIN projects p ON p.id=e.project_id "
+            "JOIN entry_source_evidences ev ON ev.entry_id=e.id "
+            "WHERE p.workspace_id=? AND e.project_id=? AND LENGTH(e.content)>=40 "
+            "GROUP BY e.id,e.title,e.project_id,p.name "
+            "ORDER BY COUNT(ev.id) DESC,LENGTH(e.content) DESC,e.updated_at DESC,e.id DESC "
+            "LIMIT ?",
+            (self.workspace_id, project_id, limit),
+        )
 
     def provider(self) -> list[dict]:
         return self.rows(
@@ -203,6 +231,39 @@ def matches_scope(run: dict, entry_set: dict | None, project_id: int | None) -> 
     return actual == project_id and run.get("project_id") in {None, project_id}
 
 
+def _json_object(value: object) -> dict:
+    if isinstance(value, dict):
+        return value
+    if not isinstance(value, str) or not value:
+        return {}
+    try:
+        parsed = json.loads(value)
+    except json.JSONDecodeError:
+        return {}
+    return parsed if isinstance(parsed, dict) else {}
+
+
+def displayed_entry_ids(run: dict) -> list[int]:
+    """优先使用公开结构化结果，不从助手文本猜测对象。"""
+    result = run.get("entry_result") or {}
+    ids = [item.get("entry_id") for item in result.get("items", [])]
+    if ids:
+        return [item for item in ids if isinstance(item, int)]
+    for block in run.get("dialogue_blocks") or []:
+        if block.get("kind") != "list":
+            continue
+        ids.extend(item.get("entry_id") for item in block.get("items", []))
+    return [item for item in ids if isinstance(item, int)]
+
+
+def _tool_params(observability: dict, tool_name: str) -> list[dict]:
+    return [
+        _json_object(item.get("params_summary"))
+        for item in observability.get("tool_calls", [])
+        if item.get("tool_name") == tool_name
+    ]
+
+
 def evaluate_turn(
     turn: Turn,
     run: dict,
@@ -227,12 +288,16 @@ def evaluate_turn(
     ]
     if not live:
         errors.append("未证明本轮真实模型调用成功")
-    if any(item.get("is_fallback") for item in invocations) or (
-        run.get("fallback_summary") or {}
-    ).get("has_fallback"):
+    fallback_stages = (run.get("fallback_summary") or {}).get("stages", [])
+    if any(item.get("is_fallback") for item in invocations) or any(
+        item.get("is_fallback") and not str(item.get("purpose", "")).startswith("tool:")
+        for item in fallback_stages
+    ):
         errors.append("存在显式降级，不能计作正常链路通过")
-    if run["status"] != "completed":
+    if run["status"] not in turn.accepted_statuses:
         errors.append(f"Run 终态为 {run['status']}")
+    if run["status"] == "partial" and not run.get("can_continue"):
+        errors.append("部分完成但没有可用 continuation")
     if clarification != (turn.kind == "clarify"):
         errors.append("不必要澄清" if clarification else "缺少必要澄清")
     if turn.context_mode == "new_topic" and run.get("context_decision") != "new_topic":
@@ -249,6 +314,18 @@ def evaluate_turn(
     }
     if any(item["entry_id"] not in allowed for item in [*items, *citations]):
         errors.append("返回对象超出预期 Workspace/项目范围")
+
+    tool_names = [item.get("tool_name") for item in observability.get("tool_calls", [])]
+    for required in turn.required_tools:
+        count = tool_names.count(required)
+        if count != 1:
+            errors.append(f"工具 {required} 预期调用 1 次，实际 {count} 次")
+    repeated = sorted({name for name in tool_names if name and tool_names.count(name) > 1})
+    if repeated:
+        errors.append(f"存在重复工具调用：{','.join(repeated)}")
+    forbidden = sorted(set(tool_names) & set(turn.forbidden_tools))
+    if forbidden:
+        errors.append(f"调用了禁止的资料工具：{','.join(forbidden)}")
     rows = expected_rows(snapshot, project_id, turn)
     expected: object = None
     actual: object = None
@@ -333,6 +410,67 @@ def evaluate_turn(
             item["tool_name"] != "working_set_seed" for item in observability.get("tool_calls", [])
         ):
             errors.append("违反用户明确的不查知识库要求")
+    elif turn.kind == "projects":
+        expected = len(snapshot["projects"])
+        project_calls = [
+            _json_object(item.get("result_summary"))
+            for item in observability.get("tool_calls", [])
+            if item.get("tool_name") == "list_projects"
+        ]
+        actual = [item.get("project_count") for item in project_calls]
+        if expected not in actual:
+            errors.append("项目枚举数量与只读快照不一致")
+    elif turn.kind == "search":
+        actual = displayed_entry_ids(run)
+        expected = turn.target_entry_id
+        if not actual:
+            errors.append("没有结构化展示经筛选的 Entry")
+        if expected is not None and expected not in actual:
+            errors.append("运行前固定的目标 Entry 未出现在展示结果中")
+        if any(
+            (block.get("semantics") or {}).get("result_role") == "candidate"
+            for block in run.get("dialogue_blocks") or []
+            if block.get("kind") == "list"
+        ):
+            errors.append("未筛选候选被当作可展示列表")
+    elif turn.kind == "read_reference":
+        previous_ids = displayed_entry_ids((previous or {}).get("run", {}))
+        if not previous_ids:
+            errors.append("上轮没有可供“第一条”引用的结构化对象")
+        else:
+            expected = previous_ids[0]
+            params = _tool_params(observability, "read_entries")
+            requested_ids = {
+                entry_id
+                for item in params
+                for entry_id in (item.get("params") or item).get("entry_ids", [])
+            }
+            actual = sorted(requested_ids)
+            if expected not in requested_ids:
+                errors.append("首次 read_entries 未读取上轮实际展示的第一条")
+            read_calls = [
+                _json_object(item.get("result_summary"))
+                for item in observability.get("tool_calls", [])
+                if item.get("tool_name") == "read_entries"
+            ]
+            if any(
+                item.get("denied_count", 0) or item.get("unavailable_count", 0)
+                for item in read_calls
+            ):
+                errors.append("跨轮读取出现拒绝或失效 Entry")
+    elif turn.kind in {"anchored_discussion", "candidate", "tone_revision", "continuation"}:
+        if not (diagnostic.get("assistant_text") or "").strip():
+            errors.append("没有可见回答正文")
+        if turn.kind == "continuation":
+            dialogue_calls = [
+                item for item in invocations if item.get("purpose") == "dialogue_agent"
+            ]
+            if len(dialogue_calls) != 1:
+                errors.append(f"续接预期一次 finalizer，实际模型调用 {len(dialogue_calls)} 次")
+            previous_text = ((previous or {}).get("diagnostic") or {}).get("assistant_text", "")
+            current_text = diagnostic.get("assistant_text", "")
+            if previous_text.strip() and previous_text.strip() == current_text.strip():
+                errors.append("续接只重放上一轮回答，没有实际进展")
     status = "fail" if errors else "review" if turn.review else "pass"
     return {
         "status": status,
@@ -341,6 +479,18 @@ def evaluate_turn(
         "actual": actual,
         "clarification": clarification,
         "real_model_calls": len(live),
+        "execution": {
+            "status": run.get("status", "not_executed"),
+            "error": run.get("error"),
+        },
+        "deterministic": {
+            "status": "fail" if errors else "pass",
+            "errors": errors,
+        },
+        "semantic": {
+            "status": "pending" if turn.review else "not_applicable",
+            "criteria": list(turn.semantic_criteria),
+        },
     }
 
 
@@ -376,10 +526,36 @@ def summary(report: dict) -> dict:
         for turn in turns
         for item in turn.get("observability", {}).get("model_invocations", [])
     ]
+    execution_counts = Counter(
+        turn.get("evaluation", {}).get("execution", {}).get("status", "not_executed")
+        for turn in turns
+    )
+    deterministic_counts = Counter(
+        turn.get("evaluation", {}).get("deterministic", {}).get("status", "unknown")
+        for turn in turns
+    )
+    semantic_counts = Counter(
+        turn.get("evaluation", {}).get("semantic", {}).get("status", "unknown") for turn in turns
+    )
+    token_keys = ("input_tokens", "output_tokens", "cache_read_tokens", "cache_write_tokens")
+    known_usage = {key: 0 for key in token_keys}
+    usage_missing = 0
+    for item in invocations:
+        usage = item.get("usage")
+        if not isinstance(usage, dict):
+            usage_missing += 1
+            continue
+        for key in token_keys:
+            value = usage.get(key)
+            if isinstance(value, int):
+                known_usage[key] += value
     return {
         "cases": len(report["cases"]),
         "turns": len(turns),
         "statuses": dict(counts),
+        "execution_statuses": dict(execution_counts),
+        "deterministic_statuses": dict(deterministic_counts),
+        "semantic_statuses": dict(semantic_counts),
         "fully_passed_cases": sum(
             bool(case["turns"])
             and all(turn["evaluation"]["status"] == "pass" for turn in case["turns"])
@@ -394,9 +570,78 @@ def summary(report: dict) -> dict:
         "models": sorted(
             {f"{item['provider']}/{item['model']}" for item in invocations if item.get("model")}
         ),
+        "known_model_usage": known_usage,
+        "invocations_without_usage": usage_missing,
         "median_seconds": round(statistics.median(elapsed), 2) if elapsed else None,
         "max_seconds": round(max(elapsed), 2) if elapsed else None,
     }
+
+
+def summary_markdown(report: dict) -> str:
+    """面向 Codex 和人工审阅的短摘要；详细证据留在 report.json。"""
+    stats = summary(report)
+    lines = [
+        "# 知识 Agent 评测摘要",
+        "",
+        f"- 批次：{report['batch_id']}",
+        f"- 代码 commit：`{report['git_revision']}`",
+        f"- 运行版本：{report.get('runtime_version', {}).get('confidence', '未确认')}",
+        f"- 批次状态：{report['status']}",
+        f"- 场景 / 消息：{stats['cases']} / {stats['turns']}",
+        f"- 执行层：{stats['execution_statuses']}",
+        f"- 确定性层：{stats['deterministic_statuses']}",
+        f"- 语义层：{stats['semantic_statuses']}",
+        f"- 模型调用：{stats['model_invocations']}；"
+        f"无 usage 记录：{stats['invocations_without_usage']}",
+        f"- 已知 usage：{stats['known_model_usage']}",
+        "",
+        "## 逐场景",
+        "",
+    ]
+    for case in report["cases"]:
+        turns = case["turns"]
+        execution = Counter(
+            item.get("evaluation", {}).get("execution", {}).get("status", "not_executed")
+            for item in turns
+        )
+        deterministic = Counter(
+            item.get("evaluation", {}).get("deterministic", {}).get("status", "unknown")
+            for item in turns
+        )
+        semantic = Counter(
+            item.get("evaluation", {}).get("semantic", {}).get("status", "unknown")
+            for item in turns
+        )
+        failures = [
+            error for item in turns for error in item.get("evaluation", {}).get("errors", [])
+        ]
+        lines.extend(
+            [
+                f"### {case['case_id']}：{case['title']}",
+                "",
+                f"- 执行：{dict(execution)}",
+                f"- 确定性：{dict(deterministic)}",
+                f"- 语义：{dict(semantic)}",
+                f"- 具体缺口：{'；'.join(dict.fromkeys(failures)) or '无确定性缺口'}",
+                "",
+            ]
+        )
+    if report.get("comparison"):
+        lines.extend(
+            [
+                "## 相对基线",
+                "",
+                json.dumps(report["comparison"], ensure_ascii=False, indent=2),
+                "",
+            ]
+        )
+    lines.extend(
+        [
+            "详细的问题、回答、工具审计、模型调用、continuation 和预算见 `report.json`。",
+            "语义状态为 pending 时不计作场景通过。",
+        ]
+    )
+    return "\n".join(lines)
 
 
 def markdown_report(report: dict) -> str:
@@ -476,9 +721,11 @@ def markdown_report(report: dict) -> str:
 
 def save_report(report: dict, directory: Path) -> None:
     report["summary"] = summary(report)
+    safe_report = sanitize(report)
     for name, value in (
-        ("report.json", json.dumps(report, ensure_ascii=False, indent=2)),
-        ("report.md", markdown_report(report)),
+        ("report.json", json.dumps(safe_report, ensure_ascii=False, indent=2)),
+        ("report.md", markdown_report(safe_report)),
+        ("summary.md", summary_markdown(safe_report)),
     ):
         temporary = directory / f"{name}.tmp"
         temporary.write_text(value, encoding="utf-8")
@@ -535,9 +782,19 @@ def scope_payload(project_id: int | None) -> dict:
 
 def blocked_reason(turn: Turn, previous: dict | None) -> str | None:
     previous = previous or {}
+    if turn.only_if_continuation and not (
+        previous.get("run", {}).get("can_continue") and previous.get("run", {}).get("continuation")
+    ):
+        return "上轮未产生合法 continuation，本轮按预定标准记为未覆盖"
     items = (previous.get("run", {}).get("entry_result") or {}).get("items", [])
-    if turn.reference_previous and len(items) < 2:
+    if turn.kind == "reference" and turn.reference_previous and len(items) < 2:
         return "上一轮没有返回两个对象，未发送无锚点指代"
+    if (
+        turn.kind == "read_reference"
+        and turn.reference_previous
+        and not displayed_entry_ids(previous.get("run", {}))
+    ):
+        return "上一轮没有展示 Entry，未发送无锚点读取"
     if turn.requires_previous_answer and previous.get("evaluation", {}).get("status") not in {
         "pass",
         "review",
@@ -547,7 +804,16 @@ def blocked_reason(turn: Turn, previous: dict | None) -> str | None:
 
 
 async def run_case(
-    client, oracle, snapshot, scopes, case: Case, repeat: int, report, directory, seconds
+    client,
+    oracle,
+    snapshot,
+    scopes,
+    case: Case,
+    repeat: int,
+    report,
+    directory,
+    seconds,
+    batch_deadline,
 ):
     scope = case.scope
     conversation = await request(
@@ -567,17 +833,38 @@ async def run_case(
         previous = record["turns"][-1] if record["turns"] else None
         blocked = blocked_reason(turn, previous)
         if blocked:
+            not_covered = turn.only_if_continuation
             record["turns"].append(
                 {
                     "message": turn.message,
+                    "request": asdict(turn),
                     "evaluation": {
-                        "status": "blocked",
+                        "status": "not_covered" if not_covered else "blocked",
                         "errors": [blocked],
+                        "execution": {"status": "not_executed", "error": None},
+                        "deterministic": {
+                            "status": "not_covered" if not_covered else "blocked",
+                            "errors": [blocked],
+                        },
+                        "semantic": {
+                            "status": "not_covered" if not_covered else "not_applicable",
+                            "criteria": list(turn.semantic_criteria),
+                        },
                     },
                 }
             )
             save_report(report, directory)
             continue
+        remaining = batch_deadline - time.monotonic()
+        if remaining <= 0:
+            raise TimeoutError("整批评测达到预先固定的时间上限")
+        sent = sum(
+            bool(item.get("run", {}).get("id"))
+            for item_case in report["cases"]
+            for item in item_case["turns"]
+        )
+        if sent >= report["limits"]["user_messages"]:
+            raise RuntimeError("整批评测达到用户消息上限")
         if turn.change_scope:
             scope = turn.change_scope
             await request(
@@ -613,7 +900,7 @@ async def run_case(
         record["turns"].append(pending)
         save_report(report, directory)
         try:
-            run = await wait_run(client, run_id, seconds)
+            run = await wait_run(client, run_id, min(seconds, remaining))
         except BaseException:
             await request(client, "POST", f"{PREFIX}/runs/{run_id}/cancel")
             raise
@@ -639,11 +926,42 @@ async def run_case(
             evaluation=evaluation,
         )
         save_report(report, directory)
+        invocation_count = sum(
+            len(item.get("observability", {}).get("model_invocations", []))
+            for item_case in report["cases"]
+            for item in item_case["turns"]
+        )
+        if invocation_count > report["limits"]["model_invocations"]:
+            raise RuntimeError("整批评测超过预先固定的模型调用上限")
         print(
             f"{case.id}[{repeat}] 第 {index} 轮 Run {run_id}：{evaluation['status']} "
             f"{'；'.join(evaluation['errors'])}",
             flush=True,
         )
+
+
+async def _git_output(*args: str) -> str:
+    process = await asyncio.create_subprocess_exec(
+        "git",
+        *args,
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.DEVNULL,
+    )
+    stdout, _ = await process.communicate()
+    if process.returncode:
+        raise ValueError(f"无法记录 Git 信息：git {' '.join(args)}")
+    return stdout.decode().strip()
+
+
+def _source_hashes() -> dict[str, str]:
+    root = Path(__file__).resolve().parents[2]
+    paths = (
+        "backend/evals/knowledge_agent_multiturn.py",
+        "backend/evals/knowledge_agent_cases.py",
+        "backend/app/services/knowledge_agent/production_adapter.py",
+        "backend/evals/dialogue_loop/loop.py",
+    )
+    return {path: hashlib.sha256((root / path).read_bytes()).hexdigest() for path in paths}
 
 
 async def run_suite(args, password: str) -> int:
@@ -661,9 +979,12 @@ async def run_suite(args, password: str) -> int:
     empty = next((item for item in projects if counts[item["id"]] == 0), None)
     scopes = {"workspace": None, "project": project["id"], "empty": empty["id"] if empty else None}
     cases = build_cases(project["name"], empty["name"] if empty else None)
-    if getattr(args, "task_suite", False):
+    if args.suite == "core":
+        cases = build_core_baseline_cases(oracle.baseline_targets(project["id"]))
+    elif args.suite == "task" or getattr(args, "task_suite", False):
         other = next(
-            (p for p in projects if p["id"] != project["id"] and counts[p["id"]] > 0), None,
+            (p for p in projects if p["id"] != project["id"] and counts[p["id"]] > 0),
+            None,
         )
         if other is None:
             raise ValueError("任务对照需要另一个非空项目，以免相同计数掩盖错误")
@@ -677,22 +998,28 @@ async def run_suite(args, password: str) -> int:
     stamp = datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ") + "-" + uuid.uuid4().hex[:6]
     directory = args.output / stamp
     directory.mkdir(parents=True, mode=0o700)
-    process = await asyncio.create_subprocess_exec(
-        "git",
-        "rev-parse",
-        "HEAD",
-        stdout=asyncio.subprocess.PIPE,
-    )
-    revision, _ = await process.communicate()
-    if process.returncode:
-        raise ValueError("无法记录本次评测的 Git 版本")
+    maximum_messages = sum(len(case.turns) for case in cases) * args.repeat
+    if maximum_messages > MAX_USER_MESSAGES:
+        raise ValueError(
+            f"评测计划最多 {maximum_messages} 条用户消息，超过 {MAX_USER_MESSAGES} 条上限"
+        )
+    revision = await _git_output("rev-parse", "HEAD")
+    status = await _git_output("status", "--short")
     report = {
-        "schema_version": 1,
+        "schema_version": 2,
         "batch_id": stamp,
         "status": "running",
         "started_at": datetime.now(UTC).isoformat(),
         "base_url": args.base_url,
-        "git_revision": revision.decode().strip(),
+        "git_revision": revision,
+        "git_status": status.splitlines(),
+        "source_hashes": _source_hashes(),
+        "runtime_version": {
+            "confidence": (
+                "本机 API 未暴露 commit；已确认认证身份与同一本地数据库，代码哈希供手工核对"
+            ),
+            "api_commit": None,
+        },
         "username": args.username,
         "workspace_id": oracle.workspace_id,
         "baseline": baseline,
@@ -702,11 +1029,20 @@ async def run_suite(args, password: str) -> int:
         "suite_digest": digest([asdict(case) for case in cases]),
         "suite": [asdict(case) for case in cases],
         "repeat": args.repeat,
+        "limits": {
+            "user_messages": MAX_USER_MESSAGES,
+            "planned_user_messages": maximum_messages,
+            "model_invocations": MAX_MODEL_INVOCATIONS,
+            "batch_seconds": args.batch_timeout,
+            "turn_seconds": args.turn_timeout,
+            "agent_per_turn_budgets": "未修改，沿用正式服务当前配置",
+        },
         "runner_sha256": hashlib.sha256(
             await asyncio.to_thread(Path(__file__).read_bytes)
         ).hexdigest(),
     }
     authenticated = False
+    batch_deadline = time.monotonic() + args.batch_timeout
     async with httpx.AsyncClient(base_url=args.base_url, timeout=30, trust_env=False) as client:
         try:
             login = await request(
@@ -737,6 +1073,7 @@ async def run_suite(args, password: str) -> int:
                         report,
                         directory,
                         args.turn_timeout,
+                        batch_deadline,
                     )
             report["status"] = "completed"
         except Exception as exc:
@@ -820,6 +1157,97 @@ def regrade_saved_report(source: Path, output: Path) -> Path:
     return directory
 
 
+def apply_semantic_review(source: Path, review_path: Path) -> Path:
+    """将人工语义结论写入新报告，不改写原始运行证据。"""
+    report = json.loads(source.read_text(encoding="utf-8"))
+    review = json.loads(review_path.read_text(encoding="utf-8"))
+    if review.get("batch_id") != report.get("batch_id"):
+        raise ValueError("语义审阅批次与原始报告不匹配")
+    turns = {
+        (case["case_id"], index): turn
+        for case in report["cases"]
+        for index, turn in enumerate(case["turns"], 1)
+    }
+    seen = set()
+    for item in review.get("reviews", []):
+        key = (item.get("case_id"), item.get("turn"))
+        if key in seen or key not in turns:
+            raise ValueError(f"语义审阅定位重复或不存在：{key}")
+        if item.get("status") not in {"pass", "fail", "not_covered"}:
+            raise ValueError(f"语义审阅状态无效：{key}")
+        semantic = turns[key].setdefault("evaluation", {}).setdefault("semantic", {})
+        semantic.update(
+            status=item["status"],
+            notes=list(item.get("notes") or []),
+            reviewed_by=review.get("reviewed_by", "manual"),
+        )
+        seen.add(key)
+    report["semantic_review"] = {
+        "source": str(review_path.resolve()),
+        "reviewed_at": review.get("reviewed_at") or datetime.now(UTC).isoformat(),
+        "reviewed_turns": len(seen),
+    }
+    report["summary"] = summary(report)
+    output = source.with_name("reviewed-report.json")
+    summary_output = source.with_name("reviewed-summary.md")
+    for path, content in (
+        (output, json.dumps(sanitize(report), ensure_ascii=False, indent=2)),
+        (summary_output, summary_markdown(sanitize(report))),
+    ):
+        temporary = path.with_suffix(path.suffix + ".tmp")
+        temporary.write_text(content, encoding="utf-8")
+        temporary.chmod(0o600)
+        temporary.replace(path)
+    return output
+
+
+async def run_preflight(args, password: str) -> int:
+    """只校验本机正式 API、身份、数据库和 Provider 可用性，不创建 Run。"""
+    oracle = Oracle(args.database, args.username)
+    authenticated = False
+    result = {
+        "status": "failed",
+        "model_requests": 0,
+        "base_url": args.base_url,
+        "workspace_id": oracle.workspace_id,
+        "provider": oracle.provider(),
+        "checks": [],
+    }
+    async with httpx.AsyncClient(base_url=args.base_url, timeout=30, trust_env=False) as client:
+        try:
+            login = await request(
+                client,
+                "POST",
+                "/api/auth/mobile/login",
+                json={"username": args.username, "password": password},
+            )
+            client.headers["Authorization"] = f"Bearer {login['token']}"
+            authenticated = True
+            identity = await request(client, "GET", "/api/me")
+            if (identity["user"]["id"], identity["workspace"]["id"]) != (
+                oracle.user_id,
+                oracle.workspace_id,
+            ):
+                raise ValueError("认证身份与只读核对数据库不一致")
+            await request(client, "GET", f"{PREFIX}/conversations")
+            result["checks"].extend(
+                ["本机 API 可访问", "demo 认证成功", "Workspace 身份一致", "对话列表可读"]
+            )
+            if not any(item.get("text_available") for item in result["provider"]):
+                raise ValueError("当前 Workspace 没有可用文本模型配置")
+            result["checks"].append("文本模型配置可用")
+            result["status"] = "passed"
+        finally:
+            if authenticated:
+                try:
+                    await request(client, "POST", "/api/auth/mobile/logout")
+                except httpx.HTTPError:
+                    result["logout_warning"] = "评测会话注销失败"
+            oracle.db.close()
+    print(json.dumps(sanitize(result), ensure_ascii=False, indent=2))
+    return 0 if result["status"] == "passed" else 1
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--base-url", default="http://127.0.0.1:8000")
@@ -827,22 +1255,58 @@ def main() -> int:
     parser.add_argument("--username", default="demo")
     parser.add_argument("--output", type=Path, default=Path("/private/tmp/grove-agent-eval"))
     parser.add_argument("--cases", help="仅运行指定场景，英文逗号分隔")
+    parser.add_argument(
+        "--suite",
+        choices=("legacy", "core", "task"),
+        default="legacy",
+        help="评测集；core 为轻量正式链路基线",
+    )
     parser.add_argument("--task-suite", action="store_true", help="运行固定的任务状态调试与保留集")
     parser.add_argument("--repeat", type=int, choices=range(1, 6), default=1)
     parser.add_argument("--turn-timeout", type=float, default=240)
+    parser.add_argument(
+        "--batch-timeout",
+        type=float,
+        default=DEFAULT_BATCH_TIMEOUT_SECONDS,
+        help="整批时间上限（秒）",
+    )
+    parser.add_argument("--preflight", action="store_true", help="只执行零模型本机链路预检")
     parser.add_argument("--compare", type=Path, help="上一批 report.json")
     parser.add_argument("--regrade", type=Path, help="只重评已有 report.json，不调用模型")
+    parser.add_argument("--review-report", type=Path, help="需要附加人工语义审阅的 report.json")
+    parser.add_argument("--review-file", type=Path, help="结构化人工语义审阅 JSON")
     args = parser.parse_args()
     endpoint = urlparse(args.base_url)
     if endpoint.scheme != "http" or endpoint.hostname not in {"localhost", "127.0.0.1", "::1"}:
         parser.error("本工具仅用于本机开发服务，禁止向远程地址发送账号凭据")
-    if args.turn_timeout <= 0:
-        parser.error("单轮超时必须大于零")
+    if args.turn_timeout <= 0 or args.batch_timeout <= 0:
+        parser.error("单轮和整批超时必须大于零")
     if args.regrade:
         directory = regrade_saved_report(args.regrade, args.output)
         results = json.loads((directory / "report.json").read_text(encoding="utf-8"))["summary"]
         return 1 if any(results["statuses"].get(key) for key in ("fail", "blocked")) else 0
-    password = os.environ.get("GROVE_EVAL_PASSWORD") or getpass.getpass("demo 登录密码：")
+    if bool(args.review_report) != bool(args.review_file):
+        parser.error("--review-report 和 --review-file 必须同时使用")
+    if args.review_report:
+        output = apply_semantic_review(args.review_report, args.review_file)
+        print(f"审阅后报告：{output}")
+        return 0
+    oracle = Oracle(args.database, args.username)
+    workspace_id = oracle.workspace_id
+    oracle.db.close()
+    password = os.environ.get("GROVE_EVAL_PASSWORD")
+    if not password:
+        try:
+            password, _, warning = password_for_run(workspace_id, prompt=getpass.getpass)
+        except EOFError:
+            parser.error(
+                "非交互环境中未找到 demo 凭据；请先使用 "
+                "evals.dialogue_loop --save-demo-password 保存当前 Workspace 钥匙串项"
+            )
+        if warning:
+            print(warning)
+    if args.preflight:
+        return asyncio.run(run_preflight(args, password))
     return asyncio.run(run_suite(args, password))
 
 

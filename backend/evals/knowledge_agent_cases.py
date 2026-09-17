@@ -15,6 +15,12 @@ class Turn:
     reference_previous: bool = False
     requires_previous_answer: bool = False
     review: bool = False
+    accepted_statuses: tuple[str, ...] = ("completed",)
+    required_tools: tuple[str, ...] = ()
+    forbidden_tools: tuple[str, ...] = ()
+    target_entry_id: int | None = None
+    only_if_continuation: bool = False
+    semantic_criteria: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -281,5 +287,152 @@ def build_task_cases(project_name: str, other_name: str) -> list[Case]:
                 Turn("重新开始：整个工作区有多少条正式记录", context_mode="new_topic"),
             ),
             category="任务状态 / 保留集",
+        ),
+    ]
+
+
+def build_core_baseline_cases(targets: list[dict]) -> list[Case]:
+    """构造轻量真实基线；目标来自运行前只读快照，不硬编码 Entry ID。"""
+    if len(targets) < 2:
+        raise ValueError("核心基线需要当前项目至少两条可追溯的正式 Entry")
+
+    data_tools = ("search_knowledge", "query_entries", "read_entries")
+
+    def collaboration_case(target: dict, variant: str) -> Case:
+        if variant == "a":
+            discuss = (
+                "抛开知识库，只把你刚才展示的第一条正文当作讨论对象，"
+                "用通用知识分析其中的建议是否合理，说明不确定之处。不要再查知识库。"
+            )
+            candidate = "按你刚才的分析，为第一条整理一版候选内容，不要写入正式记录。"
+            tone = "只调整上一版候选的语气，让它更自然口语化，保留全部内容、限定和不确定性。"
+        else:
+            discuss = (
+                "不要再检索，就你刚展示的第一条正文本身，从通用知识角度"
+                "评价它是否可靠，把原文事实和你的建议分开。"
+            )
+            candidate = "基于上面的评价，给这条记录准备一份候选稿，明确它还没写入正式 Entry。"
+            tone = "内容不变，只把刚才的候选稿换成更简短、自然的说法。"
+        return Case(
+            f"collaboration_{variant}",
+            f"完整协作链变体 {variant.upper()}",
+            (
+                Turn(
+                    f"查找与《{target['title']}》相关的正式记录，列出直接相关项。",
+                    "search",
+                    required_tools=("query_entries",),
+                    target_entry_id=target["id"],
+                    review=True,
+                    semantic_criteria=("检索结果围绕用户指定主题，不把未筛选候选当直接相关",),
+                ),
+                Turn(
+                    "把第一条的正文和来源依据展示出来。",
+                    "read_reference",
+                    reference_previous=True,
+                    required_tools=("read_entries",),
+                    forbidden_tools=("search_knowledge", "query_entries"),
+                    review=True,
+                    semantic_criteria=("“第一条”指向上轮实际展示的首个对象", "正文和来源边界清楚"),
+                ),
+                Turn(
+                    discuss,
+                    "anchored_discussion",
+                    requires_previous_answer=True,
+                    forbidden_tools=data_tools,
+                    review=True,
+                    semantic_criteria=(
+                        "以刚展示正文为讨论对象，不要求用户重贴",
+                        "不新增检索，不冒充来源核验",
+                        "分析具体且保留合理不确定性",
+                    ),
+                ),
+                Turn(
+                    candidate,
+                    "candidate",
+                    requires_previous_answer=True,
+                    accepted_statuses=("completed", "partial"),
+                    forbidden_tools=data_tools,
+                    review=True,
+                    semantic_criteria=(
+                        "候选承接前一轮分析，不只重排原 Entry",
+                        "自然区分原记录、模型建议与未写入状态",
+                    ),
+                ),
+                Turn(
+                    tone,
+                    "tone_revision",
+                    requires_previous_answer=True,
+                    accepted_statuses=("completed", "partial"),
+                    forbidden_tools=data_tools,
+                    review=True,
+                    semantic_criteria=(
+                        "保留上一版候选的全部内容而不是回到原 Entry",
+                        "保留数量、单位、限定和不确定性",
+                        "仍明确未写入正式记录",
+                    ),
+                ),
+                Turn(
+                    "继续",
+                    "continuation",
+                    only_if_continuation=True,
+                    accepted_statuses=("completed", "partial"),
+                    forbidden_tools=data_tools,
+                    review=True,
+                    semantic_criteria=(
+                        "解决上轮的实际缺口，不重放旧稿",
+                        "不重复成功的检索或读取",
+                    ),
+                ),
+                Turn(
+                    "现在换个独立问题：我当前可访问几个项目？",
+                    "projects",
+                    required_tools=("list_projects",),
+                    forbidden_tools=data_tools,
+                ),
+            ),
+            scope="project",
+            category="核心协作链 / 语义必审",
+            notes=[f"运行前动态目标 Entry={target['id']}，项目={target['project_name']}"],
+        )
+
+    first, second = targets[:2]
+    return [
+        Case(
+            "retained_read",
+            "项目枚举、检索与跨轮读取保留集",
+            (
+                Turn("我当前可访问哪些项目？", "projects", required_tools=("list_projects",)),
+                Turn(
+                    f"在当前 Workspace 查找与《{first['title']}》相关的正式记录，按相关性列出。",
+                    "search",
+                    required_tools=("query_entries",),
+                    target_entry_id=first["id"],
+                ),
+                Turn(
+                    "直接读取上一轮第一条的完整正文和来源，不要重新搜索。",
+                    "read_reference",
+                    reference_previous=True,
+                    required_tools=("read_entries",),
+                    forbidden_tools=("search_knowledge", "query_entries"),
+                    review=True,
+                    semantic_criteria=("跨轮直接读取上轮首个对象，无重复搜索",),
+                ),
+            ),
+            category="已有成功能保留集",
+        ),
+        collaboration_case(first, "a"),
+        collaboration_case(second, "b"),
+        Case(
+            "scope_switch",
+            "Workspace 与项目范围切换",
+            (
+                Turn("当前 Workspace 共有多少条正式记录？", "count"),
+                Turn(
+                    "范围已切到当前项目，请只统计这个项目的全部正式记录。",
+                    "count",
+                    change_scope="project",
+                ),
+            ),
+            category="范围切换保留集",
         ),
     ]

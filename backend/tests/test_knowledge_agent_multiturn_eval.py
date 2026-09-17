@@ -1,20 +1,24 @@
 """评测器自身的反例测试，确保错误结果不会被算作通过。"""
 
 import copy
+import json
 import sqlite3
 from types import SimpleNamespace
 
 import httpx
 import pytest
 
-from evals.knowledge_agent_cases import Turn, build_cases
+from evals.knowledge_agent_cases import Turn, build_cases, build_core_baseline_cases
 from evals.knowledge_agent_multiturn import (
     Oracle,
+    apply_semantic_review,
     blocked_reason,
     collect_facts,
     compare_reports,
     evaluate_turn,
+    request,
     run_suite,
+    save_report,
     wait_run,
 )
 
@@ -210,3 +214,161 @@ def test_suite_comparison_rejects_changed_data_or_scenarios():
     assert not compare_reports(old, new)["comparable_data_model_suite"]
     assert len(build_cases("装修", "旅行")) == 12
     assert len(build_cases("装修", None)) == 9
+
+
+def test_core_suite_is_fixed_small_and_uses_dynamic_targets():
+    targets = [
+        {"id": 501, "title": "动态标题甲", "project_name": "项目甲"},
+        {"id": 502, "title": "动态标题乙", "project_name": "项目甲"},
+    ]
+    cases = build_core_baseline_cases(targets)
+    assert len(cases) == 4
+    assert sum(len(case.turns) for case in cases) == 19
+    serialized = str(cases)
+    assert "动态标题甲" in serialized and "动态标题乙" in serialized
+    continuation = cases[1].turns[-2]
+    assert continuation.only_if_continuation
+    assert blocked_reason(continuation, {"run": {}}) == (
+        "上轮未产生合法 continuation，本轮按预定标准记为未覆盖"
+    )
+
+
+def test_completed_but_irrelevant_candidate_stays_pending_semantic_review():
+    snapshot, run, observation = sample()
+    run["answer"] = {"answer": "项目共 2 个"}
+    result = evaluate_turn(
+        Turn(
+            "按分析生成候选",
+            "candidate",
+            review=True,
+            semantic_criteria=("承接分析",),
+        ),
+        run,
+        {"assistant_text": "这是一段与候选任务无关的回答"},
+        observation,
+        snapshot,
+        None,
+    )
+    assert result["deterministic"]["status"] == "pass"
+    assert result["semantic"]["status"] == "pending"
+    assert result["status"] == "review"
+
+
+def test_successful_model_call_does_not_hide_continuation_without_progress():
+    snapshot, run, observation = sample()
+    observation["model_invocations"][0]["purpose"] = "dialogue_agent"
+    previous = {"diagnostic": {"assistant_text": "完全相同的旧稿"}}
+    result = evaluate_turn(
+        Turn("继续", "continuation", review=True),
+        run,
+        {"assistant_text": "完全相同的旧稿"},
+        observation,
+        snapshot,
+        None,
+        previous,
+    )
+    assert result["deterministic"]["status"] == "fail"
+    assert "续接只重放上一轮回答，没有实际进展" in result["errors"]
+
+
+def test_candidate_search_result_cannot_bypass_selection_boundary():
+    snapshot, run, observation = sample()
+    run["entry_result"] = {"items": [{"entry_id": 10}]}
+    run["dialogue_blocks"] = [
+        {
+            "kind": "list",
+            "items": [{"entry_id": 10}],
+            "semantics": {"result_role": "candidate"},
+        }
+    ]
+    observation["tool_calls"] = [
+        {"tool_name": "query_entries", "params_summary": "{}", "result_summary": "{}"}
+    ]
+    result = evaluate_turn(
+        Turn(
+            "检索",
+            "search",
+            target_entry_id=10,
+            required_tools=("query_entries",),
+        ),
+        run,
+        {"assistant_text": "候选"},
+        observation,
+        snapshot,
+        None,
+    )
+    assert result["deterministic"]["status"] == "fail"
+    assert "未筛选候选被当作可展示列表" in result["errors"]
+
+
+@pytest.mark.asyncio
+async def test_mock_api_login_submit_and_poll_are_sequential():
+    calls = []
+
+    def handler(http_request):
+        calls.append((http_request.method, http_request.url.path))
+        if http_request.url.path.endswith("/messages"):
+            return httpx.Response(200, json={"run": {"id": 9, "status": "waiting"}})
+        return httpx.Response(200, json={"id": 9, "status": "completed"})
+
+    async with httpx.AsyncClient(
+        transport=httpx.MockTransport(handler), base_url="http://test"
+    ) as client:
+        submitted = await request(
+            client,
+            "POST",
+            "/api/knowledge-agent/conversations/3/messages",
+            json={"message": "问题", "client_message_id": "fixed"},
+        )
+        completed = await wait_run(client, submitted["run"]["id"], 1)
+    assert completed["status"] == "completed"
+    assert calls == [
+        ("POST", "/api/knowledge-agent/conversations/3/messages"),
+        ("GET", "/api/knowledge-agent/runs/9"),
+    ]
+
+
+def test_report_is_atomic_sanitized_and_semantic_review_preserves_source(tmp_path):
+    report = {
+        "batch_id": "batch-1",
+        "git_revision": "abc",
+        "runtime_version": {"confidence": "test"},
+        "status": "completed",
+        "cases": [
+            {
+                "case_id": "case",
+                "title": "场景",
+                "category": "测试",
+                "repeat": 1,
+                "turns": [
+                    {
+                        "message": "问题",
+                        "diagnostic": {"assistant_text": "回答", "password": "never-write"},
+                        "evaluation": {
+                            "status": "review",
+                            "errors": [],
+                            "execution": {"status": "completed", "error": None},
+                            "deterministic": {"status": "pass", "errors": []},
+                            "semantic": {"status": "pending", "criteria": ["是否答题"]},
+                        },
+                    }
+                ],
+            }
+        ],
+    }
+    save_report(report, tmp_path)
+    raw = (tmp_path / "report.json").read_text(encoding="utf-8")
+    assert "never-write" not in raw
+    assert "<redacted>" in raw
+    assert (tmp_path / "summary.md").stat().st_mode & 0o777 == 0o600
+    original = raw
+    review = tmp_path / "semantic-review.json"
+    review.write_text(
+        '{"batch_id":"batch-1","reviewed_by":"test","reviews":'
+        '[{"case_id":"case","turn":1,"status":"fail","notes":["答非所问"]}]}',
+        encoding="utf-8",
+    )
+    reviewed = apply_semantic_review(tmp_path / "report.json", review)
+    assert (tmp_path / "report.json").read_text(encoding="utf-8") == original
+    payload = json.loads(reviewed.read_text(encoding="utf-8"))
+    assert payload["cases"][0]["turns"][0]["evaluation"]["semantic"]["status"] == "fail"
