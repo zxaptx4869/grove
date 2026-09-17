@@ -232,6 +232,11 @@ def _state_snapshot(state: LoopState, turn: dict, *, loop_status: str) -> dict:
         for handle, record in state.result_sets.items()
         if record.displayable and handle in state.current_handles
     }
+    restorable_entry_ids = sorted(
+        state.authorized_entry_ids
+        & state.discovered_entry_ids
+        & state.discovered_entry_fingerprints.keys()
+    )
     return _bounded_state(
         {
             "version": STATE_VERSION,
@@ -240,10 +245,21 @@ def _state_snapshot(state: LoopState, turn: dict, *, loop_status: str) -> dict:
             "blocks": turn.get("blocks", []),
             "completion": turn.get("completion") or {},
             "continuation": _continuation_snapshot(state.continuation),
+            "scope": {
+                "workspace_id": state.workspace_id,
+                "user_id": state.user_id,
+                "scope_type": state.scope_type,
+                "project_id": state.project_id,
+            },
             "history_turns": state.history_turns[-HISTORY_LIMIT:],
             "records": records,
             "evidence": state.evidence,
             "authorized_entry_ids": sorted(state.authorized_entry_ids),
+            "discovered_entry_ids": restorable_entry_ids,
+            "discovered_entry_fingerprints": {
+                str(entry_id): state.discovered_entry_fingerprints[entry_id]
+                for entry_id in restorable_entry_ids
+            },
             "tool_events": state.tool_events[-32:],
             "model_calls": turn.get("model_calls", [])[-16:],
             "budget": turn.get("budget"),
@@ -286,6 +302,29 @@ def _restore_state(state: LoopState, snapshot: dict) -> None:
         except (TypeError, ValueError):
             sequence = 0
         state._handle_sequence = max(state._handle_sequence, sequence)
+    restored_scope = snapshot.get("scope") or {}
+    scope_matches = restored_scope == {
+        "workspace_id": state.workspace_id,
+        "user_id": state.user_id,
+        "scope_type": state.scope_type,
+        "project_id": state.project_id,
+    }
+    restored_fingerprints = snapshot.get("discovered_entry_fingerprints") or {}
+    if scope_matches and isinstance(restored_fingerprints, dict):
+        for raw_entry_id in snapshot.get("discovered_entry_ids", []):
+            try:
+                entry_id = int(raw_entry_id)
+            except (TypeError, ValueError):
+                continue
+            fingerprint = restored_fingerprints.get(str(entry_id))
+            if (
+                entry_id in state.authorized_entry_ids
+                and isinstance(fingerprint, str)
+                and len(fingerprint) == 64
+                and all(character in "0123456789abcdef" for character in fingerprint.lower())
+            ):
+                state.discovered_entry_ids.add(entry_id)
+                state.discovered_entry_fingerprints[entry_id] = fingerprint
     continuation = _continuation_from_snapshot(snapshot.get("continuation"))
     state.continuation = continuation
 

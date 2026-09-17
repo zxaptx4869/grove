@@ -29,6 +29,7 @@ from app.services.knowledge_agent.production_adapter import (
     execute_dialogue_loop_run,
 )
 from app.services.knowledge_agent.runs import run_out, submit_message
+from evals.dialogue_loop import loop as loop_module
 from evals.dialogue_loop.core import BudgetLedger, ContinuationState
 from evals.dialogue_loop.instrumentation import InputEstimate, Instrumentation
 from evals.dialogue_loop.loop import LoopState
@@ -53,6 +54,9 @@ def _state() -> LoopState:
 
 def test_production_state_round_trip_preserves_scope_results_and_continuation() -> None:
     state = _state()
+    fingerprint = "7" * 64
+    state.discovered_entry_ids.add(7)
+    state.discovered_entry_fingerprints[7] = fingerprint
     handle = state.store_result(
         "list",
         {"items": [{"entry_id": 7, "title": "记录"}]},
@@ -103,14 +107,28 @@ def test_production_state_round_trip_preserves_scope_results_and_continuation() 
     _restore_state(restored, json.loads(json.dumps(snapshot, ensure_ascii=False)))
     assert restored.project_id == 44
     assert restored.authorized_entry_ids == {7}
+    assert restored.discovered_entry_ids == {7}
+    assert restored.discovered_entry_fingerprints == {7: fingerprint}
     assert restored.result_sets[handle].payload["items"][0]["entry_id"] == 7
     assert restored.continuation is not None
     assert restored.continuation.pending_steps == [{"step": "finalize_answer"}]
     assert restored.continuation.validation_refs["source_ids"] == [8]
 
+    switched_scope = _state()
+    switched_scope.project_id = 45
+    _restore_state(
+        switched_scope,
+        json.loads(json.dumps(snapshot, ensure_ascii=False)),
+    )
+    assert switched_scope.authorized_entry_ids == {7}
+    assert switched_scope.discovered_entry_ids == set()
+    assert switched_scope.discovered_entry_fingerprints == {}
+
 
 def test_production_restore_does_not_authorize_candidate_list() -> None:
     state = _state()
+    state.discovered_entry_ids.add(99)
+    state.discovered_entry_fingerprints[99] = "9" * 64
     handle = state.store_result(
         "list",
         {"items": [{"entry_id": 99, "title": "间接候选"}]},
@@ -130,6 +148,159 @@ def test_production_restore_does_not_authorize_candidate_list() -> None:
     assert handle in restored.result_sets
     assert restored.result_sets[handle].semantics["result_role"] == "candidate"
     assert restored.authorized_entry_ids == set()
+    assert restored.discovered_entry_ids == set()
+    assert restored.discovered_entry_fingerprints == {}
+
+
+@pytest.mark.asyncio
+async def test_run_786_to_787_restores_authorized_discovery_without_requery(
+    monkeypatch,
+) -> None:
+    """Run 787 应首次直接读取 Run 786 已授权且已发现的三条 Entry。"""
+    entry_ids = [35, 18, 84]
+    fingerprints = {
+        entry_id: f"{entry_id:064x}"
+        for entry_id in entry_ids
+    }
+    run_786 = _state()
+    run_786.discovered_entry_ids.update(entry_ids)
+    run_786.discovered_entry_fingerprints.update(fingerprints)
+    selected_handle = run_786.store_result(
+        "list",
+        {
+            "items": [
+                {
+                    "entry_id": entry_id,
+                    "title": f"Entry {entry_id}",
+                }
+                for entry_id in entry_ids
+            ]
+        },
+        "completed",
+        "limited",
+        semantics={"result_role": "authorized", "relevance_scope": "direct"},
+    )
+    run_786.store_result(
+        "entries",
+        {
+            "items": [
+                {
+                    "entry_id": entry_id,
+                    "title": f"Entry {entry_id}",
+                    "content": f"内容 {entry_id}",
+                    "project_name": "项目甲",
+                    "node_path": "",
+                    "sources": [],
+                }
+                for entry_id in entry_ids
+            ],
+            "denied_entry_ids": [],
+            "unavailable_entry_ids": [],
+        },
+        "completed",
+        "limited",
+    )
+    snapshot = _state_snapshot(
+        run_786,
+        {
+            "status": "completed",
+            "answer": "已读取三条记录。",
+            "blocks": [{"kind": "list", "result_handle": selected_handle}],
+            "completion": {"status": "completed", "can_continue": False},
+            "model_calls": [],
+        },
+        loop_status="completed",
+    )
+
+    run_787 = _state()
+    _restore_state(run_787, json.loads(json.dumps(snapshot, ensure_ascii=False)))
+    run_787.begin_turn(787, "把这几条的内容输出出来")
+    run_787.current_handles.update(run_787.result_sets)
+    dispatched: list[str] = []
+
+    async def fake_dispatch(ctx, tool_name, params, kind, **_kwargs):
+        dispatched.append(tool_name)
+        assert tool_name == "read_entries"
+        assert params == {"entry_ids": entry_ids}
+        assert ctx.deps.state.discovered_entry_ids.issuperset(entry_ids)
+        payload = {
+            "items": [
+                {
+                    "entry_id": entry_id,
+                    "title": f"Entry {entry_id}",
+                    "content": f"内容 {entry_id}",
+                    "project_name": "项目甲",
+                    "node_path": "",
+                    "sources": [],
+                }
+                for entry_id in entry_ids
+            ],
+            "denied_entry_ids": [],
+            "unavailable_entry_ids": [],
+        }
+        handle = ctx.deps.state.store_result(
+            kind, payload, "completed", "limited"
+        )
+        event = {
+            "tool": tool_name,
+            "shared_tool": tool_name,
+            "result_handle": handle,
+            "status": "completed",
+            "completeness": "limited",
+            "params": params,
+            "result_summary": {"returned_count": len(entry_ids)},
+            "error": None,
+            "turn_index": run_787.turn_index,
+        }
+        run_787.tool_events.append(event)
+        return {**event, "payload": payload}
+
+    monkeypatch.setattr(loop_module, "_dispatch", fake_dispatch)
+    model_calls = 0
+
+    def respond(_messages, info):
+        nonlocal model_calls
+        model_calls += 1
+        if model_calls == 1:
+            return ModelResponse(
+                parts=[ToolCallPart("read_entries", {"entry_ids": entry_ids})]
+            )
+        read_handle = next(
+            handle
+            for handle in run_787.current_handles
+            if run_787.result_sets[handle].kind == "entries"
+            and run_787.result_sets[handle].turn_index == run_787.turn_index
+        )
+        refs = "\n".join(
+            f"[[entry:{read_handle}:{position}]]"
+            for position in range(1, len(entry_ids) + 1)
+        )
+        return ModelResponse(
+            parts=[
+                ToolCallPart(
+                    info.output_tools[0].name,
+                    {"blocks": [{"kind": "text", "text": refs}]},
+                )
+            ]
+        )
+
+    turn, _ = await loop_module.run_turn(
+        loop_module.build_agent(FunctionModel(respond)),
+        run_787,
+        "把这几条的内容输出出来",
+        [],
+    )
+
+    assert turn["status"] == "completed", turn
+    assert dispatched == ["read_entries"]
+    assert not any(
+        event.get("tool") in {
+            "search_knowledge",
+            "query_entries",
+            "select_relevant_entries",
+        }
+        for event in turn["tool_calls"]
+    )
 
 
 def test_terminal_and_answer_status_mapping_is_programmatic() -> None:

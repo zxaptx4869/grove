@@ -428,6 +428,7 @@ class LoopState:
     project_name: str | None = None
     cancel_check: Callable[[], Awaitable[None]] | None = field(default=None, repr=False)
     discovered_entry_ids: set[int] = field(default_factory=set)
+    discovered_entry_fingerprints: dict[int, str] = field(default_factory=dict)
     authorized_entry_ids: set[int] = field(default_factory=set)
     read_entry_ids: set[int] = field(default_factory=set)
     result_sets: dict[str, ResultRecord] = field(default_factory=dict)
@@ -779,6 +780,43 @@ def _mark_budget_stop(
     )
 
 
+def _effective_denied_events(events: list[dict]) -> list[dict]:
+    """完整成功的同组读取只消解早先的临时拒绝，不删除审计。"""
+
+    effective: list[dict] = []
+    for index, event in enumerate(events):
+        if event.get("status") != "denied":
+            continue
+        tool_name = event.get("shared_tool") or event.get("tool")
+        params = event.get("shared_params") or event.get("params") or {}
+        entry_ids = params.get("entry_ids") if isinstance(params, dict) else None
+        if tool_name != "read_entries" or not isinstance(entry_ids, list):
+            effective.append(event)
+            continue
+        normalized = list(dict.fromkeys(entry_ids))
+        superseded = False
+        for later in events[index + 1 :]:
+            later_params = later.get("shared_params") or later.get("params") or {}
+            later_ids = (
+                later_params.get("entry_ids")
+                if isinstance(later_params, dict)
+                else None
+            )
+            if (
+                (later.get("shared_tool") or later.get("tool")) == "read_entries"
+                and later.get("status") in {"completed", "ok"}
+                and isinstance(later_ids, list)
+                and list(dict.fromkeys(later_ids)) == normalized
+                and (later.get("result_summary") or {}).get("returned_count")
+                == len(normalized)
+            ):
+                superseded = True
+                break
+        if not superseded:
+            effective.append(event)
+    return effective
+
+
 def _stop_from_failure(
     state: LoopState,
     exc: BaseException,
@@ -804,7 +842,7 @@ def _stop_from_failure(
             incomplete_steps=["目标对象尚未由工具确认"],
             can_continue=False,
         )
-    denied_events = [event for event in events if event.get("status") == "denied"]
+    denied_events = _effective_denied_events(events)
     if denied_events:
         event = next(
             (
@@ -926,7 +964,7 @@ def _stop_from_events(state: LoopState, events: list[dict]) -> StopState | None:
 
     if state.stop_state is not None:
         return state.stop_state
-    denied_events = [event for event in events if event.get("status") == "denied"]
+    denied_events = _effective_denied_events(events)
     denied = next(
         (
             event
@@ -990,7 +1028,7 @@ def _stop_from_events(state: LoopState, events: list[dict]) -> StopState | None:
     incomplete = []
     for event in events:
         status = event.get("status")
-        if status in {"partial", "error"}:
+        if status in {"partial", "error", "unavailable"}:
             incomplete.append(event)
             continue
         # 语义查询即使没有更多结果也会标记 limited，只有明确存在后续结果时
@@ -2403,6 +2441,7 @@ async def _dispatch(
                 project_id=state.project_id,
                 project_name=state.project_name,
                 discovered_entry_ids=state.discovered_entry_ids,
+                discovered_entry_fingerprints=state.discovered_entry_fingerprints,
             )
             result = await dispatch_read_tool(
                 db,
@@ -3448,11 +3487,14 @@ def build_agent(model) -> Agent[LoopDeps, DialogueAnswer]:
             int(item["entry_id"]) for item in payload.get("items", [])
         )
         unavailable_only = (
-            result.get("status") == "denied"
+            result.get("status") == "unavailable"
             and payload.get("unavailable_entry_ids")
             and not payload.get("denied_entry_ids")
         )
-        if result.get("status") in {"partial", "error"} or unavailable_only:
+        if (
+            result.get("status") in {"partial", "error", "unavailable"}
+            or unavailable_only
+        ):
             continuation = ContinuationState(
                 task_type="read_entries",
                 tool_name="read_entries",
@@ -3563,6 +3605,7 @@ def build_agent(model) -> Agent[LoopDeps, DialogueAnswer]:
                     project_id=state.project_id,
                     project_name=state.project_name,
                     discovered_entry_ids=state.discovered_entry_ids,
+                    discovered_entry_fingerprints=state.discovered_entry_fingerprints,
                 )
                 refreshed = await resolve_recent_result_entries(db, tool_ctx, [entry_id])
                 if not refreshed.items:

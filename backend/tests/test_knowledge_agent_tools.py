@@ -4,13 +4,18 @@ import pytest
 from sqlalchemy import select
 
 from app.db.session import async_session_factory
-from app.models import KnowledgeAgentEvidence
+from app.models import KnowledgeAgentEvidence, WorkspaceMember
 from app.models.knowledge_agent import (
     SCOPE_PROJECT,
     SCOPE_WORKSPACE,
     TOOL_DENIED,
     TOOL_OK,
     TOOL_UNAVAILABLE,
+)
+from app.services.entry import entry_baseline, entry_fingerprint
+from app.services.knowledge_agent.read_tool_adapters import (
+    ReadEntriesParams,
+    read_entries_handler,
 )
 from app.services.knowledge_agent.tools import (
     RunToolContext,
@@ -231,6 +236,9 @@ async def test_read_entries_requires_discovery_and_rechecks_scope() -> None:
 
         # 发现后：返回完整内容与来源关系
         ctx.discovered_entry_ids.add(entry.id)
+        ctx.discovered_entry_fingerprints[entry.id] = entry_fingerprint(
+            entry_baseline(entry)
+        )
         loaded = await read_entries(db, ctx, [entry.id])
         assert len(loaded.items) == 1
         assert loaded.items[0].content == "闭水试验通常持续 24 小时。"
@@ -269,6 +277,162 @@ async def test_read_entries_requires_discovery_and_rechecks_scope() -> None:
         cross = await read_entries(db, project_ctx, [other_entry.id])
         assert cross.items == []
         assert other_entry.id in cross.denied_entry_ids
+
+
+@pytest.mark.asyncio
+async def test_restored_entry_read_revalidates_permission_scope_and_fingerprint() -> None:
+    """恢复发现集不放宽 Workspace、成员、项目、存在性或版本校验。"""
+    async with async_session_factory() as db:
+        user = await create_user(db, "跨轮复验")
+        workspace = await create_workspace(db, user)
+        project = await create_project(db, workspace, "原项目")
+        other_project = await create_project(db, workspace, "切换后项目")
+        node = await create_child_node(db, project, "设备")
+        source, attachment = await create_source_attachment(
+            db, workspace, project, text_content="洗碗机内容。"
+        )
+        entry = await create_entry_with_evidence(
+            db,
+            project,
+            node,
+            source,
+            attachment,
+            title="洗碗机",
+            content="洗碗机原始内容。",
+            quote="洗碗机内容",
+        )
+        deleted_entry = await create_entry_with_evidence(
+            db,
+            project,
+            node,
+            source,
+            attachment,
+            title="待删除 Entry",
+            content="删除前内容。",
+            quote="洗碗机内容",
+        )
+
+        other_workspace = await create_workspace(db, user)
+        foreign_project = await create_project(db, other_workspace, "其他 Workspace")
+        foreign_node = await create_child_node(db, foreign_project, "其他设备")
+        foreign_source, foreign_attachment = await create_source_attachment(
+            db,
+            other_workspace,
+            foreign_project,
+            text_content="其他 Workspace 内容。",
+        )
+        foreign_entry = await create_entry_with_evidence(
+            db,
+            foreign_project,
+            foreign_node,
+            foreign_source,
+            foreign_attachment,
+            title="跨 Workspace Entry",
+            content="不可读取。",
+            quote="其他 Workspace 内容",
+        )
+        await db.commit()
+
+        original_fingerprint = entry_fingerprint(entry_baseline(entry))
+        deleted_fingerprint = entry_fingerprint(entry_baseline(deleted_entry))
+        foreign_fingerprint = entry_fingerprint(entry_baseline(foreign_entry))
+
+        cross_workspace_ctx = RunToolContext(
+            run_id=1,
+            workspace_id=workspace.id,
+            owner_user_id=user.id,
+            scope_type=SCOPE_WORKSPACE,
+            project_id=None,
+            project_name=None,
+            discovered_entry_ids={foreign_entry.id},
+            discovered_entry_fingerprints={foreign_entry.id: foreign_fingerprint},
+        )
+        cross_workspace = await read_entries(
+            db, cross_workspace_ctx, [foreign_entry.id]
+        )
+        assert cross_workspace.items == []
+        assert cross_workspace.unavailable_entry_ids == [foreign_entry.id]
+
+        switched_project_ctx = RunToolContext(
+            run_id=2,
+            workspace_id=workspace.id,
+            owner_user_id=user.id,
+            scope_type=SCOPE_PROJECT,
+            project_id=other_project.id,
+            project_name=other_project.name,
+            discovered_entry_ids={entry.id},
+            discovered_entry_fingerprints={entry.id: original_fingerprint},
+        )
+        switched_project = await read_entries(db, switched_project_ctx, [entry.id])
+        assert switched_project.items == []
+        assert switched_project.denied_entry_ids == [entry.id]
+
+        entry.content = "洗碗机内容已更新。"
+        await db.flush()
+        changed_ctx = RunToolContext(
+            run_id=3,
+            workspace_id=workspace.id,
+            owner_user_id=user.id,
+            scope_type=SCOPE_WORKSPACE,
+            project_id=None,
+            project_name=None,
+            discovered_entry_ids={entry.id},
+            discovered_entry_fingerprints={entry.id: original_fingerprint},
+        )
+        changed = await read_entries(db, changed_ctx, [entry.id])
+        assert changed.items == []
+        assert changed.unavailable_entry_ids == [entry.id]
+        changed_execution = await read_entries_handler(
+            db, changed_ctx, ReadEntriesParams(entry_ids=[entry.id])
+        )
+        assert changed_execution.status == TOOL_UNAVAILABLE
+
+        deleted_entry_id = deleted_entry.id
+        await db.delete(deleted_entry)
+        await db.flush()
+        deleted_ctx = RunToolContext(
+            run_id=4,
+            workspace_id=workspace.id,
+            owner_user_id=user.id,
+            scope_type=SCOPE_WORKSPACE,
+            project_id=None,
+            project_name=None,
+            discovered_entry_ids={deleted_entry_id},
+            discovered_entry_fingerprints={deleted_entry_id: deleted_fingerprint},
+        )
+        deleted = await read_entries(db, deleted_ctx, [deleted_entry_id])
+        assert deleted.items == []
+        assert deleted.unavailable_entry_ids == [deleted_entry_id]
+
+        membership = (
+            await db.execute(
+                select(WorkspaceMember).where(
+                    WorkspaceMember.workspace_id == workspace.id,
+                    WorkspaceMember.user_id == user.id,
+                )
+            )
+        ).scalar_one()
+        await db.delete(membership)
+        await db.flush()
+        revoked_ctx = RunToolContext(
+            run_id=5,
+            workspace_id=workspace.id,
+            owner_user_id=user.id,
+            scope_type=SCOPE_WORKSPACE,
+            project_id=None,
+            project_name=None,
+            discovered_entry_ids={entry.id},
+            discovered_entry_fingerprints={
+                entry.id: entry_fingerprint(entry_baseline(entry))
+            },
+        )
+        revoked = await read_entries(db, revoked_ctx, [entry.id])
+        assert revoked.items == []
+        assert revoked.denied_entry_ids == [entry.id]
+        revoked_execution = await read_entries_handler(
+            db, revoked_ctx, ReadEntriesParams(entry_ids=[entry.id])
+        )
+        assert revoked_execution.status == TOOL_DENIED
 
 
 @pytest.mark.asyncio

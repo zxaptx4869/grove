@@ -11,7 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app.agents.semantic import run_semantic_agent
-from app.models import Attachment, Entry, Project, Source
+from app.models import Attachment, Entry, Project, Source, WorkspaceMember
 from app.models.knowledge_agent import (
     PURPOSE_RERANK,
     SCOPE_PROJECT,
@@ -22,7 +22,7 @@ from app.models.knowledge_agent import (
     TOOL_PARTIAL,
     TOOL_UNAVAILABLE,
 )
-from app.services.entry import entry_eager_options
+from app.services.entry import entry_baseline, entry_eager_options, entry_fingerprint
 from app.services.knowledge_agent.evidence import (
     available_attachment_text,
     build_node_path_map,
@@ -50,6 +50,7 @@ class RunToolContext:
     project_id: int | None
     project_name: str | None
     discovered_entry_ids: set[int] = field(default_factory=set)
+    discovered_entry_fingerprints: dict[int, str] = field(default_factory=dict)
     # 结构化语义计划由服务端准备的共享候选集合；模型参数中不存在此字段
     structured_query_entry_ids: set[int] | None = None
     structured_query_entry_order: list[int] | None = None
@@ -194,6 +195,7 @@ async def resolve_recent_result_entries(
         if entry is None:
             continue
         paths = await _node_paths(db, entry.project_id)
+        fingerprint = entry_fingerprint(entry_baseline(entry))
         items.append(
             SearchResultItem(
                 entry_id=entry.id,
@@ -205,6 +207,7 @@ async def resolve_recent_result_entries(
             )
         )
         ctx.discovered_entry_ids.add(entry.id)
+        ctx.discovered_entry_fingerprints[entry.id] = fingerprint
     return SearchToolOutput(items=items)
 
 
@@ -269,6 +272,7 @@ async def search_confirmed_knowledge(
 
     items: list[SearchResultItem] = []
     for entry in top_entries:
+        fingerprint = entry_fingerprint(entry_baseline(entry))
         items.append(
             SearchResultItem(
                 entry_id=entry.id,
@@ -280,6 +284,7 @@ async def search_confirmed_knowledge(
             )
         )
         ctx.discovered_entry_ids.add(entry.id)
+        ctx.discovered_entry_fingerprints[entry.id] = fingerprint
     return SearchToolOutput(
         items=items,
         embedding_meta=embedding_meta.__dict__ if embedding_meta else None,
@@ -296,6 +301,16 @@ async def read_entries(
     unique = list(dict.fromkeys(entry_ids))
     denied: list[int] = []
     unavailable: list[int] = []
+    membership = (
+        await db.execute(
+            select(WorkspaceMember.id).where(
+                WorkspaceMember.workspace_id == ctx.workspace_id,
+                WorkspaceMember.user_id == ctx.owner_user_id,
+            )
+        )
+    ).scalar_one_or_none()
+    if membership is None:
+        return ReadEntriesOutput(denied_entry_ids=unique)
     discovered = set(unique) & ctx.discovered_entry_ids
     for entry_id in unique:
         if entry_id not in ctx.discovered_entry_ids:
@@ -332,6 +347,13 @@ async def read_entries(
         # 复验范围：项目范围 Run 只能读该项目对象
         if ctx.scope_type == SCOPE_PROJECT and entry.project_id != ctx.project_id:
             denied.append(entry_id)
+            continue
+        expected_fingerprint = ctx.discovered_entry_fingerprints.get(entry_id)
+        if (
+            expected_fingerprint is None
+            or entry_fingerprint(entry_baseline(entry)) != expected_fingerprint
+        ):
+            unavailable.append(entry_id)
             continue
         items.append(
             ReadEntryItem(

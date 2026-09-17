@@ -38,6 +38,12 @@
 
 这沿用现有 finalize continuation 的 `validation_refs` 与 `_database_material_refs`，不建立通用任务系统。
 
+### 3.1 已授权 Entry 的跨轮发现集与指纹一起恢复
+
+生产快照只保存 `authorized_entry_ids ∩ discovered_entry_ids` 中同时具备服务端 Entry 指纹的对象，恢复时把该子集及指纹注入既有 `LoopState` 和 `RunToolContext`。旧快照或候选结果缺少这组交集与指纹时不追认可读取身份。
+
+`read_entries` 在返回正文前继续查询 Workspace 成员关系，并复验 Entry 所在 Workspace、当前项目范围、对象存在性及 `entry_baseline` 指纹。完整成功的同组后续读取可在轮次终态计算中消解早先的临时拒绝事件，但审计事件仍保留；没有后续完整成功证据的权限拒绝不被消解。
+
 ### 4. `INVALID_JSON` 兼容位于 Provider 响应归一化层
 
 扩展现有 `_normalize_legacy_answer_response()` 所在的请求返回边界，仅识别“唯一 output tool call、参数字典恰有一个 `INVALID_JSON` 字符串字段”。使用 `json.loads` 严格解析后要求顶层键属于当前 `DialogueAnswer`，再构造标准 `ToolCallPart` 交给 PydanticAI 和既有 output validator。

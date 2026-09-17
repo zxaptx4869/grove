@@ -2627,6 +2627,41 @@ def test_limited_result_without_more_is_not_an_incomplete_step() -> None:
     assert stop.status == "failed"
 
 
+def test_successful_read_supersedes_only_matching_temporary_denial() -> None:
+    state = _state()
+    temporary_denial = {
+        "tool": "read_entries",
+        "shared_tool": "read_entries",
+        "status": "denied",
+        "params": {"entry_ids": [35, 18, 84]},
+        "reason_code": "access_denied",
+        "error": "部分 Entry 越权或不可用",
+    }
+    successful_read = {
+        "tool": "read_entries",
+        "shared_tool": "read_entries",
+        "status": "completed",
+        "params": {"entry_ids": [35, 18, 84]},
+        "result_summary": {"returned_count": 3},
+    }
+
+    assert _stop_from_events(state, [temporary_denial, successful_read]) is None
+
+    real_denial = _stop_from_events(
+        state,
+        [
+            temporary_denial,
+            {
+                **successful_read,
+                "params": {"entry_ids": [35, 18]},
+                "result_summary": {"returned_count": 2},
+            },
+        ],
+    )
+    assert real_denial is not None
+    assert real_denial.status == "denied"
+
+
 @pytest.mark.asyncio
 async def test_missing_directory_does_not_fall_back_to_root_walk(monkeypatch) -> None:
     """完整未命中后即使模型请求根级 children，也复用结果并明确回答不存在。"""

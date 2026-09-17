@@ -15,6 +15,7 @@ from app.models.knowledge_agent import (
     TOOL_DENIED,
     TOOL_EMPTY,
     TOOL_PARTIAL,
+    TOOL_UNAVAILABLE,
 )
 from app.services.knowledge_agent.directory_tools import (
     DIRECTORY_TOOL_VERSION,
@@ -85,11 +86,15 @@ async def read_entries_handler(
 ) -> ReadToolExecution:
     """复用已发现集合门禁；越权 id 不因适配器获得读取能力。"""
     output = await read_entries(db, ctx, params.entry_ids)
-    affected = len(output.denied_entry_ids) + len(output.unavailable_entry_ids)
+    denied = len(output.denied_entry_ids)
+    unavailable = len(output.unavailable_entry_ids)
+    affected = denied + unavailable
     if affected and output.items:
         status = TOOL_PARTIAL
-    elif affected:
+    elif denied:
         status = TOOL_DENIED
+    elif unavailable:
+        status = TOOL_UNAVAILABLE
     elif output.items:
         status = TOOL_COMPLETED
     else:
@@ -105,7 +110,15 @@ async def read_entries_handler(
             "denied_count": len(output.denied_entry_ids),
             "unavailable_count": len(output.unavailable_entry_ids),
         },
-        error="部分 Entry 越权或不可用" if affected else None,
+        error=(
+            "部分 Entry 越权或不可用"
+            if output.items and affected
+            else "Entry 读取未获授权"
+            if denied
+            else "Entry 已删除或内容已变更"
+            if unavailable
+            else None
+        ),
     )
 
 

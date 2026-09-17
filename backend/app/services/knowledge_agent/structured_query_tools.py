@@ -450,6 +450,15 @@ def _sort_semantic_candidates(
     )
 
 
+def _remember_discovered_entries(ctx: RunToolContext, items: list) -> None:
+    """将服务端装配的 Entry 及其指纹写入本轮发现集。"""
+
+    for item in items:
+        ctx.discovered_entry_ids.add(item.entry_id)
+        if item.fingerprint is not None:
+            ctx.discovered_entry_fingerprints[item.entry_id] = item.fingerprint
+
+
 async def semantic_query_entries_handler(
     db: AsyncSession,
     ctx: RunToolContext,
@@ -477,8 +486,7 @@ async def semantic_query_entries_handler(
         node_path_chars=settings.knowledge_agent_result_node_path_chars,
         match_hint_chars=settings.knowledge_agent_result_match_hint_chars,
     )
-    for item in items:
-        ctx.discovered_entry_ids.add(item.entry_id)
+    _remember_discovered_entries(ctx, items)
     if unavailable:
         completeness = RESULT_COMPLETENESS_UNKNOWN
         status = "partial"
@@ -648,6 +656,7 @@ async def query_entries_handler(
         node_path_chars=settings.knowledge_agent_result_node_path_chars,
         match_hint_chars=settings.knowledge_agent_result_match_hint_chars,
     )
+    _remember_discovered_entries(ctx, items)
     if unavailable:
         return ReadToolExecution(
             status="partial",
@@ -764,6 +773,7 @@ async def restore_query_entries_handler(
         node_path_chars=settings.knowledge_agent_result_node_path_chars,
         match_hint_chars=settings.knowledge_agent_result_match_hint_chars,
     )
+    _remember_discovered_entries(ctx, items)
     missing = len(entry_ids) - len(items) + len(unavailable)
     if missing:
         status = "partial"

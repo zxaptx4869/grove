@@ -40,6 +40,21 @@
 - **WHEN** continuation 的候选句柄缺失、指纹不一致或不再属于原成功查询
 - **THEN** 系统拒绝恢复，不猜测替代句柄也不重新执行成功查询
 
+### Requirement: 跨轮已授权 Entry 读取必须恢复发现门禁
+
+生产适配器在恢复上一轮状态时 MUST 将已授权、已发现且保存了 Entry 内容指纹的对象同步恢复到现有 `RunToolContext.discovered_entry_ids`；未筛选候选 MUST NOT 因此获得读取授权。每次读取仍 MUST 复验 Workspace 成员权限、项目范围、Entry 存在性和当前指纹；任一不一致 MUST 拒绝读取。同一组 Entry 的后续成功读取 MUST 消解同轮早先已被成功读取证伪的临时拒绝终态，真实权限失败仍 MUST 保持 `denied`。
+
+#### Scenario: Run 786 授权集在 Run 787 首次直接读取
+
+- **WHEN** Run 786 搜索、筛选并成功读取 Entry 35、18、84，Run 787 请求输出同三条内容
+- **THEN** Run 787 首次 `read_entries([35,18,84])` 直接成功，本轮只读取一次且不派发 `search_knowledge`、`query_entries` 或 `select_relevant_entries`
+- **AND** 最终状态为 `completed`，不保留已被后续成功读取消解的临时 `denied`
+
+#### Scenario: 权限、范围或对象变化继续拒绝
+
+- **WHEN** 恢复后的用户权限已撤回、Workspace 或项目范围不一致、Entry 已删除或当前指纹不同
+- **THEN** 读取在返回正文前被拒绝或标记为不可用，不自动重搜也不放宽候选/直接相关授权边界
+
 ### Requirement: 结构化输出兼容必须严格且可恢复
 
 统一模型包装层 MAY 对唯一输出工具参数形如 `{"INVALID_JSON": "..."}` 的已知 Provider 包装执行一次确定性解包，但仅在内层字符串可由标准 JSON 解析器严格解析、顶层恰为受支持的 `DialogueAnswer`、完整合同校验通过时才可转换。系统 MUST NOT 使用宽松 JSON 修复、正则提取、补括号或放宽 schema；解析或授权校验失败时 MUST 保留已确认材料及 finalize-only continuation，并且继续只重试最终回答而不重复成功资料动作。现有模型请求和重试预算 MUST 保持不变。
