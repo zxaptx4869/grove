@@ -9,6 +9,9 @@
 - 对 Provider 返回的 `INVALID_JSON` 外层包装增加严格、有限的确定性兼容：仅接受内层 JSON 可严格解析且完整通过 `DialogueAnswer` 与既有引用授权校验的输出；损坏 JSON 保持失败并保存 finalize-only continuation。
 - 保留格式校验重试或软阈值前已通过相关检查的文本和通用知识标注，失败输出不得覆盖已确认内容；终态按真实完成程度计算。
 - 保证确定性失败兜底自身始终满足回答合同；正式适配器遇到未捕获异常时保留脱敏诊断、已产生审计和安全恢复状态，并在下一轮区分明确续接与新的独立问题。
+- 统一批量读取与逐条打开的已读取 Entry 材料合同，在不把列表发现等同于正文读取的前提下保存稳定展示关系、对象身份和必要校验引用；允许从同一已授权展示集合读取合法保序子集。
+- 让已明确关联到 Entry 的成功分析在普通回答与无工具 finalizer 两条路径中跨 Run 保存并进入后续候选；候选失败时原子维护最新安全稿与对应缺口，重复恢复无进展时准确停止承诺继续可修复。
+- 区分有界历史材料与本轮活动材料，避免恢复时把全部历史结果提升为当前句柄，并使失败摘要只使用当前任务的已确认材料。
 - 将 `finalize_transition` 记录为未派发并保留预算停止原因，真实模型失败继续按失败记录。
 - 复用统一循环已有 activity callback，将低频、去重后的用户可见阶段写入正式 Run 的 dialogue-loop 状态快照，并通过正式 API 传给 Web；`current_step` 继续专用于 Worker 恢复检查。
 - 正式 Web 以真实阶段展示轻量状态提示，覆盖组织、查询、读取和整理回答；终态、取消、刷新、切换会话及 continuation 后不保留旧阶段，并支持减少动画偏好与可访问状态播报。
@@ -22,11 +25,11 @@
 
 ### Modified Capabilities
 
-- `knowledge-agent-dialogue-loop-production-adapter`: 补充软阈值安全收尾、严格 `INVALID_JSON` 兼容、未筛选候选恢复、未派发审计和正式 Web 阶段展示合同。
+- `knowledge-agent-dialogue-loop-production-adapter`: 补充软阈值安全收尾、严格 `INVALID_JSON` 兼容、未筛选候选恢复、已读取 Entry 一致引用、协作分析与候选恢复同步、有界活动材料、未派发审计和正式 Web 阶段展示合同。
 - `knowledge-agent-run`: 将用户可见执行阶段作为独立于 Worker `current_step` 的低频可恢复状态返回，并约束终态清理。
 
 ## Impact
 
-- 后端：`backend/evals/dialogue_loop/` 的共享收尾、输出兼容与 continuation；`backend/app/services/knowledge_agent/production_adapter.py` 的状态持久化与模型审计；正式 Run 响应组装。
+- 后端：`backend/evals/dialogue_loop/` 的共享收尾、Entry 结果构造、协作分析、输出兼容与 continuation；`backend/app/services/knowledge_agent/production_adapter.py` 的有界状态恢复与模型审计；正式 Run 响应组装。
 - Web：`frontend/src/pages/KnowledgeAgentPage.tsx` 与正式 API 类型、相关测试；沿用现有语义色和 Lucide 动效，不改变页面布局或移动端。
-- 验证：以 Run 13 的 8295/9290 投影、5 条候选及真实 `INVALID_JSON` 响应建立确定性夹具，同时覆盖硬上限、真实模型失败、空结果、权限/句柄失效、continuation 不重复查询及实验台/生产适配器一致性。
+- 验证：以 Run 13 的 8295/9290 投影、5 条候选及真实 `INVALID_JSON` 响应建立确定性夹具，同时覆盖硬上限、真实模型失败、空结果、权限/句柄失效、continuation 不重复查询及实验台/生产适配器一致性；新增会话 312 Run 851–865 的对象、讨论、候选和连续恢复回归，并在限额内执行正式 DeepSeek 复测。
