@@ -53,6 +53,7 @@ from evals.dialogue_loop.core import (
     VARIANT_SCENARIOS,
     BudgetExceeded,
     BudgetLedger,
+    ContinuationState,
     DialogueAnswer,
     StopState,
 )
@@ -1348,6 +1349,134 @@ def test_candidate_revision_output_keeps_hard_boundaries_without_fixed_headings(
         {"blocks": [{"kind": "text", "text": "已经帮你更新好了，尚未写入正式记录。"}]}
     )
     assert any("不得声称已经写入" in error for error in output_errors(written, state))
+
+
+def test_run_801_tone_only_candidate_preserves_measurement_dimension() -> None:
+    """真实 Run 801 候选结构合法，仍不能改变 20cm 的尺寸含义。"""
+
+    state = _state()
+    state.begin_turn(801, "把这条记录改得更加口语化一些")
+    state.editing_active = True
+    state.editing_purpose = "candidate"
+    state.editing_context = loop_module.EditingContext(
+        entry={
+            "entry_id": 35,
+            "title": "洗碗机安装",
+            "content": (
+                "洗碗机安装要求：1)紧挨水槽安装；2)水电提前留到旁边柜子的"
+                "侧面或后面；3)走线走管整齐方便检修。需预留20cm防倒灌空间和角阀。"
+                "补充：单独拉一根10A电线；进水口装角阀方便关水；排水管要比洗碗机"
+                "底部高20cm防止脏水倒灌。"
+            ),
+            "sources": [],
+        },
+        validation_refs={},
+    )
+    drifted_text = (
+        Path(__file__).parent
+        / "fixtures"
+        / "dialogue-run-801-drifted-candidate.txt"
+    ).read_text(encoding="utf-8")
+    drifted = DialogueAnswer.model_validate(
+        {
+            "blocks": [
+                {
+                    "kind": "text",
+                    "text": drifted_text,
+                }
+            ]
+        }
+    )
+
+    errors = output_errors(drifted, state)
+
+    assert any("数量所属的尺寸含义" in error for error in errors)
+
+
+def test_tone_only_candidate_preserves_original_uncertainty() -> None:
+    state = _state()
+    state.begin_turn(801, "只改语气，换个更口语的说法")
+    state.editing_active = True
+    state.editing_purpose = "candidate"
+    state.editing_context = loop_module.EditingContext(
+        entry={
+            "entry_id": 36,
+            "title": "安装建议",
+            "content": "建议预留约20cm空间，具体以现场条件为准。",
+            "sources": [],
+        },
+        validation_refs={},
+    )
+    strengthened = DialogueAnswer.model_validate(
+        {
+            "blocks": [
+                {
+                    "kind": "text",
+                    "text": (
+                        "现有记录改成口语说法：必须预留20公分空间。\n"
+                        "这是模型整理的候选稿，尚未写入正式 Entry；"
+                        "没有新增 Source 原文。"
+                    ),
+                }
+            ]
+        }
+    )
+
+    errors = output_errors(strengthened, state)
+
+    assert any("程度或不确定性" in error for error in errors)
+
+
+def test_candidate_failure_summary_omits_historical_results_and_duplicate_entry() -> None:
+    """候选失败只展示当前草稿与缺口，历史恢复材料不进入摘要。"""
+
+    state = _state()
+    state.begin_turn(801, "把这条记录改得更加口语化一些")
+    state.editing_active = True
+    state.editing_purpose = "candidate"
+    state.editing_context = loop_module.EditingContext(
+        entry={"entry_id": 35, "title": "当前记录", "content": "原正文"},
+        validation_refs={},
+    )
+    state.candidate_draft = {
+        "blocks": [{"kind": "text", "text": "当前候选正文"}],
+        "needs_clarification": False,
+    }
+    state.candidate_draft_errors = ["候选修改稿缺少：来源边界"]
+    state.store_result(
+        "projects",
+        {"projects": [{"id": 9, "name": "旧项目"}]},
+        "completed",
+        "complete",
+    )
+    state.store_result(
+        "entries",
+        {"items": [{"entry_id": 35, "title": "当前记录", "content": "重复原正文"}]},
+        "completed",
+        "limited",
+    )
+    continuation = ContinuationState(
+        task_type="candidate_draft",
+        tool_name="finalize_answer",
+        scope={"answer_basis": "candidate_draft"},
+        recoverable_material={"candidate_draft": state.candidate_draft},
+    )
+    stop = StopState(
+        status="partial_completed",
+        reason_code="finalize_output_invalid",
+        reason="候选修改稿缺少：来源边界",
+        incomplete_steps=["候选修改稿缺少：来源边界"],
+        can_continue=True,
+        continuation=continuation,
+    )
+
+    text, blocks = _verified_failure_output(state, stop)
+
+    assert text.count("当前候选正文") == 1
+    assert "旧项目" not in text
+    assert "重复原正文" not in text
+    assert "来源边界" in text
+    assert len(blocks) <= 4
 
 
 @pytest.mark.parametrize(
@@ -4032,6 +4161,7 @@ async def _seed_finalize_material(state: LoopState) -> dict:
         seeded = {
             "user_id": int(user.id),
             "workspace_id": int(workspace.id),
+            "project_id": int(project.id),
             "entry_id": int(entry.id),
             "source_id": int(source.id),
             "attachment_id": int(attachment.id),
@@ -5217,6 +5347,12 @@ async def test_finalize_continuation_rejects_forgery_permission_and_material_cha
     assert forged["content"] not in public_snapshot
     assert forged["quote"] not in public_snapshot
 
+    wrong_workspace = deepcopy(continuation)
+    forged_state.workspace_id += 1
+    valid, reason = await _validate_finalize_continuation(forged_state, wrong_workspace)
+    assert valid is False and "Workspace" in reason
+    forged_state.workspace_id -= 1
+
     fake_handle = deepcopy(continuation)
     fake_handle.recoverable_material["record_fingerprints"]["forged"] = "bad"
     valid, reason = await _validate_finalize_continuation(forged_state, fake_handle)
@@ -5273,6 +5409,56 @@ async def test_finalize_continuation_rejects_forgery_permission_and_material_cha
         relation_state, relation_continuation
     )
     assert valid is False and "来源关系" in reason
+
+    candidate_state = _state()
+    candidate = await _seed_finalize_material(candidate_state)
+    candidate_state.scope_type = "project"
+    candidate_state.project_id = candidate["project_id"]
+    entry_record = next(
+        record
+        for record in candidate_state.result_sets.values()
+        if record.kind == "entries"
+    )
+    refs = await loop_module._database_material_refs(
+        candidate_state,
+        [candidate["entry_id"]],
+        [(candidate["entry_id"], candidate["source_id"])],
+    )
+    candidate_state.editing_context = loop_module.EditingContext(
+        entry=entry_record.payload["items"][0],
+        validation_refs=refs,
+        decisions=["把这条记录改得更口语化"],
+    )
+    candidate_state.editing_active = True
+    candidate_state.editing_purpose = "candidate"
+    candidate_state.candidate_draft = {
+        "blocks": [{"kind": "text", "text": "候选文本"}],
+        "needs_clarification": False,
+    }
+    candidate_continuation = await _create_finalize_continuation(
+        candidate_state, "把这条记录改得更口语化", []
+    )
+    candidate_state.editing_context = None
+    valid, reason = await _validate_finalize_continuation(
+        candidate_state, candidate_continuation
+    )
+    assert valid is True and reason is None
+    assert candidate_state.editing_context is not None
+    assert candidate_state.editing_context.entry["entry_id"] == candidate["entry_id"]
+
+    missing_context = deepcopy(candidate_continuation)
+    missing_context.recoverable_material.pop("editing_context")
+    candidate_state.editing_context = None
+    valid, reason = await _validate_finalize_continuation(
+        candidate_state, missing_context
+    )
+    assert valid is False and "缺少可恢复的编辑对象" in reason
+
+    candidate_state.project_id += 1
+    valid, reason = await _validate_finalize_continuation(
+        candidate_state, candidate_continuation
+    )
+    assert valid is False and "项目范围" in reason
 
 
 @pytest.mark.asyncio

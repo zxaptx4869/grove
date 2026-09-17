@@ -31,10 +31,22 @@ from app.services.knowledge_agent.production_adapter import (
 )
 from app.services.knowledge_agent.runs import run_out, submit_message
 from evals.dialogue_loop import loop as loop_module
-from evals.dialogue_loop.core import BudgetLedger, ContinuationState
+from evals.dialogue_loop.core import (
+    TURN_PARTIAL_COMPLETED,
+    BudgetLedger,
+    ContinuationState,
+    StopState,
+)
 from evals.dialogue_loop.instrumentation import InputEstimate, Instrumentation
 from evals.dialogue_loop.loop import LoopState
-from tests._knowledge_agent_fixtures import create_project, create_user, create_workspace
+from tests._knowledge_agent_fixtures import (
+    create_child_node,
+    create_entry_with_evidence,
+    create_project,
+    create_source_attachment,
+    create_user,
+    create_workspace,
+)
 
 
 def _state() -> LoopState:
@@ -683,6 +695,246 @@ async def test_production_adapter_uses_same_invalid_json_fixture_and_resume_only
         ).scalars().all()
         assert [call.tool_name for call in tool_calls] == ["list_projects"]
         assert len(provider_calls) == 3
+
+
+@pytest.mark.asyncio
+async def test_run_801_to_802_restores_candidate_editing_context_and_only_finalizes(
+    monkeypatch,
+) -> None:
+    """Run 802 必须经正式快照恢复编辑对象，不重复资料调用。"""
+
+    real_run_turn = loop_module.run_turn
+    provider_calls = 0
+    resumed_state = None
+    first_message = "把这条记录改得更加口语化一些"
+
+    def respond(_messages, info):
+        nonlocal provider_calls
+        provider_calls += 1
+        return ModelResponse(
+            parts=[
+                ToolCallPart(
+                    info.output_tools[0].name,
+                    {
+                        "blocks": [
+                            {
+                                "kind": "text",
+                                "text": (
+                                    "把现有记录换成口语说法：洗碗机要紧挨水槽安装；"
+                                    "水电提前留在旁边柜子的侧面或后面，走线走管要整齐，"
+                                    "方便以后检修。还要留20公分的防倒灌空间并安装角阀。"
+                                    "另外，单独拉一根10A电线，进水口的角阀要方便关水，"
+                                    "排水管要比洗碗机底部高20公分，防止脏水倒灌。\n"
+                                    "这是模型整理的候选稿，尚未写入正式 Entry；"
+                                    "没有新增的 Source 原文。"
+                                ),
+                            }
+                        ]
+                    },
+                )
+            ]
+        )
+
+    async def get_text_model(_db, _workspace_id):
+        return FunctionModel(respond, model_name="deterministic-run-802")
+
+    async with async_session_factory() as db:
+        user = await create_user(db, "Run801候选续接")
+        workspace = await create_workspace(db, user)
+        project = await create_project(db, workspace, "厨房改造")
+        node = await create_child_node(db, project, "洗碗机")
+        source, attachment = await create_source_attachment(
+            db,
+            workspace,
+            project,
+            title="安装现场记录",
+            text_content="现场要求预留防倒灌空间。",
+        )
+        entry = await create_entry_with_evidence(
+            db,
+            project,
+            node,
+            source,
+            attachment,
+            title="洗碗机安装",
+            content=(
+                "洗碗机安装要求：1)紧挨水槽安装；2)水电提前留到旁边柜子的"
+                "侧面或后面；3)走线走管整齐方便检修。需预留20cm防倒灌空间和角阀。"
+                "补充：单独拉一根10A电线；进水口装角阀方便关水；排水管要比洗碗机"
+                "底部高20cm防止脏水倒灌。"
+            ),
+            quote="预留防倒灌空间",
+        )
+        await db.commit()
+        for row in (user, workspace, project, source, attachment, entry):
+            await db.refresh(row)
+
+        conversation = await create_conversation(
+            db,
+            workspace.id,
+            user.id,
+            KnowledgeConversationCreate(scope_type="project", project_id=project.id),
+        )
+
+        async def controlled_run_turn(agent, state, message, history):
+            nonlocal resumed_state
+            if message == first_message:
+                item = {
+                    "entry_id": entry.id,
+                    "title": entry.title,
+                    "content": entry.content,
+                    "project_name": project.name,
+                    "sources": [
+                        {
+                            "source_id": source.id,
+                            "source_title": source.title,
+                            "attachment_id": attachment.id,
+                            "quote": "预留防倒灌空间",
+                        }
+                    ],
+                }
+                state.authorized_entry_ids.add(entry.id)
+                entry_handle = state.store_result(
+                    "entries", {"items": [item]}, "completed", "limited"
+                )
+                state.tool_events.append(
+                    {
+                        "tool": "read_entries",
+                        "result_handle": entry_handle,
+                        "status": "completed",
+                        "completeness": "limited",
+                        "params": {"entry_ids": [entry.id]},
+                        "turn_index": state.turn_index,
+                    }
+                )
+                refs = await loop_module._database_material_refs(
+                    state, [entry.id], [(entry.id, source.id)]
+                )
+                state.editing_context = loop_module.EditingContext(
+                    entry=item,
+                    validation_refs=refs,
+                    decisions=[first_message],
+                )
+                state.editing_active = True
+                state.editing_purpose = "candidate"
+                drifted_candidate = (
+                    Path(__file__).parent
+                    / "fixtures"
+                    / "dialogue-run-801-drifted-candidate.txt"
+                ).read_text(encoding="utf-8")
+                state.candidate_draft = {
+                    "blocks": [
+                        {
+                            "kind": "text",
+                            "text": drifted_candidate,
+                        }
+                    ],
+                    "needs_clarification": False,
+                }
+                state.candidate_draft_errors = [
+                    "候选修改稿缺少：原记录与现有内容、来源边界"
+                ]
+                continuation = await loop_module._create_finalize_continuation(
+                    state, message, state.tool_events
+                )
+                state.continuation = continuation
+                stop = StopState(
+                    status=TURN_PARTIAL_COMPLETED,
+                    reason_code="finalize_output_invalid",
+                    reason="候选输出未通过边界校验",
+                    incomplete_steps=list(state.candidate_draft_errors),
+                    can_continue=True,
+                    continuation=continuation,
+                )
+                text, blocks = loop_module._verified_failure_output(state, stop)
+                completion = state.completion_snapshot(TURN_PARTIAL_COMPLETED)
+                state.remember_turn(
+                    message,
+                    text,
+                    state.tool_events,
+                    blocks=blocks,
+                    completion=completion,
+                )
+                return (
+                    {
+                        "status": TURN_PARTIAL_COMPLETED,
+                        "answer": text,
+                        "blocks": blocks,
+                        "completion": completion,
+                        "model_calls": [],
+                        "tool_calls": list(state.tool_events),
+                        "budget": state.ledger.snapshot(),
+                        "error": None,
+                    },
+                    history,
+                )
+
+            assert message == "继续"
+            assert state.active_continuation is not None
+            assert state.editing_context is None
+            resumed_state = state
+            result = await real_run_turn(agent, state, message, history)
+            assert state.editing_context is not None
+            return result
+
+        monkeypatch.setattr("app.services.ai_models.get_text_model", get_text_model)
+        monkeypatch.setattr(
+            "app.services.knowledge_agent.production_adapter.run_turn",
+            controlled_run_turn,
+        )
+
+        _, run_801 = await submit_message(
+            db,
+            conversation,
+            KnowledgeRunSubmitRequest(
+                client_message_id="candidate-run-801",
+                message=first_message,
+            ),
+        )
+        run_801.status = "processing"
+        run_801.current_step = "claim"
+        await db.commit()
+        await execute_dialogue_loop_run(db, run_801)
+        await db.commit()
+        await db.refresh(run_801)
+
+        snapshot_801 = json.loads(run_801.dialogue_loop_state_json)
+        assert run_801.status == "partial"
+        assert snapshot_801["continuation"]["task_type"] == "candidate_draft"
+        assert snapshot_801["continuation"]["scope"]["scope_type"] == "project"
+        assert snapshot_801["continuation"]["scope"]["project_id"] == project.id
+        recoverable = snapshot_801["continuation"]["recoverable_material"]
+        assert len(recoverable["records"]) == 1
+        assert recoverable["editing_context"]["entry_id"] == entry.id
+        assert len(snapshot_801["blocks"]) <= 4
+
+        _, run_802 = await submit_message(
+            db,
+            conversation,
+            KnowledgeRunSubmitRequest(
+                client_message_id="candidate-run-802",
+                message="继续",
+            ),
+        )
+        run_802.status = "processing"
+        run_802.current_step = "claim"
+        await db.commit()
+        await execute_dialogue_loop_run(db, run_802)
+        await db.commit()
+        await db.refresh(run_802)
+
+        assert run_802.status == "completed"
+        assert provider_calls == 1
+        assert resumed_state is not None
+        assert resumed_state.tool_events == []
+        answer_802 = json.loads(run_802.answer_json)["answer"]
+        assert "20公分的防倒灌空间" in answer_802
+        assert "10A电线" in answer_802
+        assert "底部高20公分" in answer_802
+        assert "尚未写入正式 Entry" in answer_802
+        snapshot_802 = json.loads(run_802.dialogue_loop_state_json)
+        assert snapshot_802["continuation"] is None
+        assert snapshot_802["tool_events"] == []
 
 
 @pytest.mark.asyncio

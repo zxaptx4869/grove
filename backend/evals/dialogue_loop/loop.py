@@ -6,6 +6,7 @@ import asyncio
 import hashlib
 import json
 import re
+from collections import Counter
 from collections.abc import Awaitable, Callable
 from dataclasses import asdict, dataclass, field, replace
 from decimal import Decimal, InvalidOperation
@@ -266,6 +267,25 @@ def _candidate_request_message(state: LoopState) -> str | None:
     ):
         return continuation.original_question
     return None
+
+
+def _tone_only_candidate_requested(message: str) -> bool:
+    """识别只允许表达方式变化的改写，不依赖业务主题。"""
+
+    normalized = re.sub(r"[，。！？!?,；;：:\s]", "", message).casefold()
+    return any(
+        pattern in normalized
+        for pattern in (
+            "口语化",
+            "只改语气",
+            "调整语气",
+            "只改措辞",
+            "换个说法",
+            "换种说法",
+            "润色一下",
+            "表达更自然",
+        )
+    )
 
 
 def _dialogue_model_settings(model) -> dict:
@@ -1678,6 +1698,161 @@ def _has_positive_write_claim(text: str) -> bool:
     )
 
 
+_LENGTH_MEASUREMENT_RE = re.compile(
+    r"(?P<number>\d+(?:\.\d+)?)\s*(?P<unit>mm|cm|m|毫米|厘米|公分|米)",
+    re.IGNORECASE,
+)
+_QUANTITY_RE = re.compile(
+    r"(?P<number>\d+(?:\.\d+)?)\s*(?P<unit>kwh|kw|mah|mm|cm|db|a|v|w|h|m|%|"
+    r"千瓦时|千瓦|毫安时|毫米|厘米|公分|分贝|安培|伏特|瓦|小时|米)",
+    re.IGNORECASE,
+)
+_LENGTH_UNIT_ALIASES = {
+    "mm": "mm",
+    "毫米": "mm",
+    "cm": "cm",
+    "厘米": "cm",
+    "公分": "cm",
+    "m": "m",
+    "米": "m",
+}
+_DIMENSION_TERMS = {
+    "space": ("空间", "间隙", "余量", "空位"),
+    "height": ("高度", "净高", "高出", "抬高", "增高"),
+    "width": ("宽度", "净宽"),
+    "depth": ("深度", "埋深"),
+    "length": ("长度", "总长"),
+    "distance": ("距离", "间距"),
+    "thickness": ("厚度", "壁厚"),
+    "diameter": ("直径", "管径", "口径"),
+}
+_UNCERTAINTY_GROUPS = (
+    ("建议", "可以", "可考虑", "最好", "宜", "不妨"),
+    ("大约", "约", "左右", "上下", "差不多"),
+    ("可能", "也许", "或许", "通常", "一般", "不一定"),
+    ("具体以", "为准", "取决于", "视情况", "视现场", "具体还得看", "看现场"),
+)
+_CERTAINTY_STRENGTHENERS = ("必须", "一定", "肯定", "绝对", "务必")
+_QUANTITY_UNIT_ALIASES = {
+    **_LENGTH_UNIT_ALIASES,
+    "kwh": "kwh",
+    "千瓦时": "kwh",
+    "kw": "kw",
+    "千瓦": "kw",
+    "mah": "mah",
+    "毫安时": "mah",
+    "db": "db",
+    "分贝": "db",
+    "a": "a",
+    "安培": "a",
+    "v": "v",
+    "伏特": "v",
+    "w": "w",
+    "瓦": "w",
+    "h": "h",
+    "小时": "h",
+    "%": "%",
+}
+_ADJACENT_DIMENSIONS = {
+    "height": ("高", "高出", "抬高", "增高"),
+    "width": ("宽",),
+    "depth": ("深",),
+    "length": ("长",),
+    "distance": ("距",),
+    "thickness": ("厚",),
+}
+
+
+def _quantity_claims(text: str) -> Counter[tuple[str, str]]:
+    """对只改语气的文本保留所有带单位数量及出现次数。"""
+
+    claims: Counter[tuple[str, str]] = Counter()
+    for match in _QUANTITY_RE.finditer(text):
+        number = format(Decimal(match.group("number")).normalize(), "f")
+        unit = _QUANTITY_UNIT_ALIASES[match.group("unit").casefold()]
+        claims[(number, unit)] += 1
+    return claims
+
+
+def _measurement_dimensions(text: str) -> dict[tuple[str, str], Counter[str]]:
+    """提取长度数量所修饰的通用尺寸维度。"""
+
+    dimensions: dict[tuple[str, str], Counter[str]] = {}
+    for match in _LENGTH_MEASUREMENT_RE.finditer(text):
+        number = format(Decimal(match.group("number")).normalize(), "f")
+        unit = _LENGTH_UNIT_ALIASES[match.group("unit").casefold()]
+        clause_start = max(
+            text.rfind(mark, 0, match.start()) for mark in "。！？；;\n"
+        ) + 1
+        following = [
+            position
+            for mark in "。！？；;\n"
+            if (position := text.find(mark, match.end())) >= 0
+        ]
+        clause_end = min(following) if following else len(text)
+        clause = text[clause_start:clause_end]
+        found = {
+            dimension
+            for dimension, terms in _DIMENSION_TERMS.items()
+            if any(term in clause for term in terms)
+        } or {"unspecified"}
+        relative_start = match.start() - clause_start
+        relative_end = match.end() - clause_start
+        before = clause[:relative_start].rstrip()
+        after = clause[relative_end:].lstrip()
+        for dimension, markers in _ADJACENT_DIMENSIONS.items():
+            if any(before.endswith(marker) for marker in markers) or any(
+                after.startswith(marker) for marker in markers
+            ):
+                found.discard("unspecified")
+                found.add(dimension)
+        dimensions.setdefault((number, unit), Counter()).update(found)
+    return dimensions
+
+
+def _candidate_semantic_errors(
+    answer: DialogueAnswer, state: LoopState, candidate_message: str
+) -> list[str]:
+    """对仅改表达的候选执行有限、确定性事实保护。"""
+
+    if (
+        not _tone_only_candidate_requested(candidate_message)
+        or state.editing_context is None
+    ):
+        return []
+    original = str(state.editing_context.entry.get("content") or "")
+    candidate = "\n".join(
+        block.text for block in answer.blocks if block.kind == "text"
+    )
+    errors: list[str] = []
+    if _quantity_claims(original) != _quantity_claims(candidate):
+        errors.append("只改语气必须保留原记录的数量事实及出现次数")
+    original_dimensions = _measurement_dimensions(original)
+    candidate_dimensions = _measurement_dimensions(candidate)
+    for measurement, expected in original_dimensions.items():
+        actual = candidate_dimensions.get(measurement)
+        if actual != expected:
+            number, unit = measurement
+            errors.append(
+                f"只改语气不能改变数量所属的尺寸含义：{number}{unit}"
+            )
+            break
+    original_soft = [
+        group for group in _UNCERTAINTY_GROUPS if any(term in original for term in group)
+    ]
+    missing_soft = any(
+        not any(term in candidate for term in group) for group in original_soft
+    )
+    strengthened = (
+        bool(original_soft)
+        and not any(term in original for term in _CERTAINTY_STRENGTHENERS)
+        and any(term in candidate for term in _CERTAINTY_STRENGTHENERS)
+    )
+    if missing_soft or strengthened:
+        errors.append("只改语气必须保留原记录的程度或不确定性")
+    return errors
+
+
 async def _project_material_errors(state: LoopState, handles: set[str]) -> list[str]:
     """发送或恢复项目介绍前复验成员权限和已保存快照，不增加资料工具动作。"""
     from evals.dialogue_loop.project_material import read_project_material
@@ -2071,6 +2246,7 @@ def output_errors(answer: DialogueAnswer, state: LoopState) -> list[str]:
             missing.append("精简候选稿只能包含一个文本块")
         if missing:
             errors.append(f"候选修改稿缺少：{'、'.join(missing)}")
+        errors.extend(_candidate_semantic_errors(answer, state, candidate_message))
     return errors
 
 
@@ -2783,18 +2959,28 @@ def build_agent(model) -> Agent[LoopDeps, DialogueAnswer]:
     def candidate_revision_instruction(ctx: RunContext[LoopDeps]) -> str:
         if not _candidate_revision_requested(ctx.deps.state.current_message):
             return ""
+        semantic_limit = (
+            "用户只要求调整表达方式：必须保留原文的事实关系、"
+            "数量所属的尺寸含义及建议、约数、可能性等限定；"
+            "原文含糊时保留含糊，不得改成更窄或更确定的结论。"
+            if _tone_only_candidate_requested(ctx.deps.state.current_message)
+            else ""
+        )
         if _candidate_content_only_requested(ctx.deps.state.current_message):
             return (
                 "当前是候选稿的精简交付请求，不是写入正式记录。只调用 final_result 一次，"
                 "且只输出一个 text 块：正文主体为补充后的候选知识内容，末尾用最短说明明确"
                 "尚未写入知识库，并说明模型补充不属于 Source 原文。不要输出 Evidence、Entry、"
                 "list、statistic、insufficient 或其他说明块，不要调用资料或写入工具。"
+                + semantic_limit
             )
         return (
             "当前请求只要求生成候选修改稿，用户将自行审核或更新，不是写入正式记录。"
             "不要调用 report_unsupported 或任何写入工具；直接用 final_result 的 text 块输出，"
             "优先给出完整的修改后候选正文，明确尚未写入知识库；在正文中自然区分现有内容与"
             "新增建议，并简短说明来源边界，不强制固定章节，按用户需要解释修改理由。"
+            "如果只是改写而没有新增事实，用一句自然说明即可。"
+            + semantic_limit
         )
 
     @agent.instructions
@@ -3715,11 +3901,21 @@ def build_finalizer_agent(model) -> Agent[LoopDeps, DialogueAnswer]:
         draft_instruction = ""
         candidate_message = _candidate_request_message(state)
         if state.candidate_draft and candidate_message is not None:
+            gaps = "；".join(state.candidate_draft_errors)
             draft_instruction = (
-                "上一阶段已有候选修改稿。请优先保留其内容，只做最小整理，"
-                "不要因为缺少固定标题而丢弃整篇稿件。"
+                "上一阶段已有候选修改稿。保留其安全内容，对照当前 Entry "
+                "修正已记录的缺口；不要因为缺少固定标题而丢弃整篇稿件，"
+                "也不得保留与原记录冲突的表达。"
+                + (f"当前缺口：{gaps}。" if gaps else "")
             )
         if candidate_message is not None:
+            semantic_limit = (
+                "这是仅调整表达的任务：保留原记录的事实关系、"
+                "数量所属的尺寸含义和建议、约数、可能性等限定，"
+                "不得将含糊表达改成更窄或更确定的结论。"
+                if _tone_only_candidate_requested(candidate_message)
+                else ""
+            )
             return (
                 ("当前是候选稿收尾。保留已保存的候选文本，"
                  if state.candidate_draft else
@@ -3727,6 +3923,9 @@ def build_finalizer_agent(model) -> Agent[LoopDeps, DialogueAnswer]:
                 + "不得输出或引用"
                 "Evidence、Entry、列表、统计或其他 Grove 句柄；保存的对象关系只供程序"
                 "复验，不是模型的当前轮可引用材料。"
+                "用自然的一两句话说明候选基于现有记录、是否有模型增补及"
+                "尚未写入，不要堆叠固定章节。"
+                + semantic_limit
                 + draft_instruction
             )
         if state.editing_active and state.editing_context is not None:
@@ -4058,7 +4257,17 @@ def _verified_failure_output(
         }[stop.status]
     )
     requested_blocks: list[dict] = [{"kind": "text", "text": status_text}]
-    provisional = _provisional_answer(state)
+    candidate_failure = (
+        _candidate_request_message(state) is not None
+        or (
+            stop.continuation is not None
+            and stop.continuation.scope.get("answer_basis") == "candidate_draft"
+        )
+    )
+    suppress_saved_material = (
+        candidate_failure or stop.reason_code == "continuation_material_invalid"
+    )
+    provisional = None if suppress_saved_material else _provisional_answer(state)
     if provisional is not None:
         requested_blocks.append(
             {
@@ -4072,7 +4281,7 @@ def _verified_failure_output(
             block.model_dump(mode="json") for block in provisional.blocks
         )
     candidate_text, candidate_blocks = _render_candidate_draft(state)
-    if candidate_text and _candidate_request_message(state) is not None:
+    if candidate_text and candidate_failure:
         requested_blocks.append(
             {
                 "kind": "text",
@@ -4080,35 +4289,36 @@ def _verified_failure_output(
             }
         )
         requested_blocks.extend(candidate_blocks)
-    for handle, record in state.result_sets.items():
-        if handle not in state.current_handles or record.status not in {
-            "completed", "ok", "empty", "partial", "limited"
-        }:
-            continue
-        if not record.displayable:
-            continue
-        if record.kind == "statistic":
-            requested_blocks.append(
-                {"kind": "statistic", "result_handle": handle, "label": "已确认统计"}
-            )
-        elif record.kind in {"list", "directories", "projects"}:
-            requested_blocks.append(
-                {"kind": "list", "result_handle": handle, "label": "已确认列表"}
-            )
-        elif record.kind == "entries":
-            for position, item in enumerate(record.payload.get("items", []), 1):
-                if item.get("content"):
-                    requested_blocks.append(
-                        {
-                            "kind": "text",
-                            "text": f"[[entry:{handle}:{position}]]",
-                        }
-                    )
-    for handle in state.evidence:
-        if handle in state.current_evidence:
-            requested_blocks.append(
-                {"kind": "evidence", "evidence_handle": handle, "note": "已确认来源"}
-            )
+    if not suppress_saved_material:
+        for handle, record in state.result_sets.items():
+            if handle not in state.current_handles or record.status not in {
+                "completed", "ok", "empty", "partial", "limited"
+            }:
+                continue
+            if not record.displayable:
+                continue
+            if record.kind == "statistic":
+                requested_blocks.append(
+                    {"kind": "statistic", "result_handle": handle, "label": "已确认统计"}
+                )
+            elif record.kind in {"list", "directories", "projects"}:
+                requested_blocks.append(
+                    {"kind": "list", "result_handle": handle, "label": "已确认列表"}
+                )
+            elif record.kind == "entries":
+                for position, item in enumerate(record.payload.get("items", []), 1):
+                    if item.get("content"):
+                        requested_blocks.append(
+                            {
+                                "kind": "text",
+                                "text": f"[[entry:{handle}:{position}]]",
+                            }
+                        )
+        for handle in state.evidence:
+            if handle in state.current_evidence:
+                requested_blocks.append(
+                    {"kind": "evidence", "evidence_handle": handle, "note": "已确认来源"}
+                )
     missing = "；".join(stop.incomplete_steps) or "仍有步骤尚未确认"
     if (
         stop.can_continue
@@ -4420,6 +4630,34 @@ def _candidate_continuation_material(
                 material["record_fingerprints"][handle] = _material_fingerprint(
                     serialized
                 )
+    if state.editing_active and state.editing_context is not None:
+        entry_id = int(state.editing_context.entry["entry_id"])
+        matching = [
+            (handle, record)
+            for handle, record in material["records"].items()
+            if record.get("kind") == "entries"
+            and {
+                int(item["entry_id"])
+                for item in record.get("payload", {}).get("items", [])
+                if item.get("entry_id") is not None
+            }
+            == {entry_id}
+        ]
+        if matching:
+            handle, record = max(
+                matching,
+                key=lambda item: (int(item[1].get("turn_index", 0)), item[0]),
+            )
+            material["records"] = {handle: record}
+            material["record_fingerprints"] = {
+                handle: _material_fingerprint(record)
+            }
+            material["evidence"] = {}
+            material["editing_context"] = {
+                "entry_id": entry_id,
+                "entry_handle": handle,
+                "decisions": list(state.editing_context.decisions[-4:]),
+            }
     # 关系与句柄只留给程序复验，不注入候选稿 finalizer。
     material["events"] = []
     return material
@@ -4478,14 +4716,19 @@ async def _database_material_refs(
             ).scalar_one_or_none()
             if member is None:
                 raise ValueError("当前用户已不再属于原 Workspace")
+            entry_conditions = [
+                Entry.id.in_(entry_ids or [-1]),
+                Project.workspace_id == state.workspace_id,
+            ]
+            if state.scope_type == "project":
+                if state.project_id is None:
+                    raise ValueError("当前项目范围缺少项目身份")
+                entry_conditions.append(Entry.project_id == state.project_id)
             entries = (
                 await db.execute(
                     select(Entry)
                     .join(Project, Entry.project_id == Project.id)
-                    .where(
-                        Entry.id.in_(entry_ids or [-1]),
-                        Project.workspace_id == state.workspace_id,
-                    )
+                    .where(*entry_conditions)
                 )
             ).scalars().all()
             by_entry = {int(entry.id): entry for entry in entries}
@@ -4506,14 +4749,17 @@ async def _database_material_refs(
                 )
 
             source_ids = sorted({source_id for _, source_id in source_pairs})
+            source_conditions = [
+                Source.id.in_(source_ids or [-1]),
+                Source.workspace_id == state.workspace_id,
+            ]
+            if state.scope_type == "project":
+                source_conditions.append(Source.project_id == state.project_id)
             sources = (
                 await db.execute(
                     select(Source)
                     .options(selectinload(Source.attachments))
-                    .where(
-                        Source.id.in_(source_ids or [-1]),
-                        Source.workspace_id == state.workspace_id,
-                    )
+                    .where(*source_conditions)
                 )
             ).scalars().all()
             by_source = {int(source.id): source for source in sources}
@@ -4635,6 +4881,8 @@ async def _create_finalize_continuation(
             scope={
                 "workspace_id": state.workspace_id,
                 "user_id": state.user_id,
+                "scope_type": state.scope_type,
+                "project_id": state.project_id,
                 "answer_basis": "candidate_draft",
                 **_editing_scope(state),
                 "authorized_entry_ids": sorted(state.authorized_entry_ids),
@@ -4732,6 +4980,8 @@ async def _create_finalize_continuation(
         scope={
             "workspace_id": state.workspace_id,
             "user_id": state.user_id,
+            "scope_type": state.scope_type,
+            "project_id": state.project_id,
             "answer_basis": "grove_material",
             **_editing_scope(state),
             "authorized_entry_ids": sorted(state.authorized_entry_ids),
@@ -4754,6 +5004,52 @@ async def _create_finalize_continuation(
     )
 
 
+def _restore_finalize_editing_context(
+    state: LoopState, continuation: ContinuationState
+) -> str | None:
+    """只从已通过句柄、授权与数据库指纹复验的单条 Entry 重建任务。"""
+
+    if not continuation.scope.get("editing_active"):
+        return None
+    material = continuation.recoverable_material
+    saved = material.get("editing_context")
+    if not isinstance(saved, dict):
+        if (
+            continuation.task_type == "finalize_answer"
+            and state.editing_context is not None
+            and state.editing_context.entry.get("entry_id")
+            == continuation.scope.get("editing_entry_id")
+        ):
+            return None
+        return "候选续执行缺少可恢复的编辑对象"
+    expected_entry_id = continuation.scope.get("editing_entry_id")
+    if saved.get("entry_id") != expected_entry_id:
+        return "候选续执行的编辑对象不匹配"
+    handle = saved.get("entry_handle")
+    record = state.result_sets.get(handle) if isinstance(handle, str) else None
+    if record is None or record.kind != "entries" or not record.displayable:
+        return "候选续执行的 Entry 句柄已失效"
+    items = [
+        item
+        for item in record.payload.get("items", [])
+        if item.get("entry_id") == expected_entry_id
+    ]
+    if len(items) != 1 or len(record.payload.get("items", [])) != 1:
+        return "候选续执行必须唯一定位当前 Entry"
+    decisions = saved.get("decisions")
+    if not isinstance(decisions, list) or any(
+        not isinstance(item, str) for item in decisions
+    ):
+        return "候选续执行的用户要求已失效"
+    state.editing_context = EditingContext(
+        entry=items[0],
+        validation_refs=continuation.validation_refs,
+        draft=material.get("candidate_draft"),
+        decisions=decisions or [continuation.original_question],
+    )
+    return None
+
+
 async def _validate_finalize_continuation(
     state: LoopState, continuation: ContinuationState
 ) -> tuple[bool, str | None]:
@@ -4764,10 +5060,10 @@ async def _validate_finalize_continuation(
     if continuation.scope.get("user_id") != state.user_id:
         return False, "续执行用户与当前身份不一致"
     if continuation.scope.get("editing_active") and (
-        state.editing_context is None
-        or state.editing_context.entry["entry_id"] != continuation.scope.get("editing_entry_id")
+        continuation.scope.get("scope_type") != state.scope_type
+        or continuation.scope.get("project_id") != state.project_id
     ):
-        return False, "当前编辑对象与续执行材料不匹配"
+        return False, "续执行项目范围与当前任务不一致"
     material = continuation.recoverable_material
     if material.get("provisional_answer") is not None:
         try:
@@ -4842,6 +5138,9 @@ async def _validate_finalize_continuation(
         return False, str(exc)
     if current.get("fingerprints") != continuation.validation_refs.get("fingerprints"):
         return False, "Entry、Source、来源关系或材料版本已经变化"
+    editing_error = _restore_finalize_editing_context(state, continuation)
+    if editing_error is not None:
+        return False, editing_error
     return True, None
 
 
@@ -5087,7 +5386,15 @@ def _current_material_history(
             "用户决定": state.editing_context.decisions,
             "上次针对该对象的讨论（模型分析）": state.editing_context.discussion,
             "交付模式": state.editing_purpose,
-            "边界": "仅围绕此 Entry 回答。补充讨论是模型分析，不表示 Source 已核验或已写入。",
+            "边界": (
+                "仅围绕此 Entry 回答。补充讨论是模型分析，"
+                "不表示 Source 已核验或已写入。"
+                + (
+                    "只调整表达；保留原文事实关系、数量维度和程度/不确定性。"
+                    if _tone_only_candidate_requested(message)
+                    else ""
+                )
+            ),
         }, ensure_ascii=False))]))
     if draft is not None:
         draft_text = "\n".join(
