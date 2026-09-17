@@ -5308,6 +5308,91 @@ async def test_no_knowledge_discussion_selects_displayed_entry_without_data_read
                    for event in state.tool_events)
 
 
+def test_authorized_entry_list_accepts_only_ordered_subsets() -> None:
+    """正文读取可缩小同一展示集合，但不能重排或混入其他对象。"""
+
+    state = _state()
+    handle = state.store_result(
+        "list",
+        {"items": [{"entry_id": value} for value in (7, 10, 9, 8)]},
+        "completed",
+        "complete",
+    )
+
+    assert loop_module._authorized_list_for_entry_ids(state, [7]) == (
+        handle,
+        state.result_sets[handle],
+    )
+    assert loop_module._authorized_list_for_entry_ids(state, [7, 9]) == (
+        handle,
+        state.result_sets[handle],
+    )
+    assert loop_module._authorized_list_for_entry_ids(state, [9, 7]) is None
+    assert loop_module._authorized_list_for_entry_ids(state, [7, 99]) is None
+
+
+@pytest.mark.asyncio
+async def test_parent_display_position_selects_first_opened_entry_after_three_opens(
+    monkeypatch,
+) -> None:
+    """连续逐条打开后，用户仍按原展示列表的第一条选择正文。"""
+
+    state = _state()
+    state.begin_turn(809, "抛开知识库，第一条说得对吗")
+    entries = [
+        {"entry_id": 35, "title": "第一条", "content": "第一条正文", "sources": []},
+        {"entry_id": 18, "title": "第二条", "content": "第二条正文", "sources": []},
+        {"entry_id": 84, "title": "第三条", "content": "第三条正文", "sources": []},
+    ]
+    state.authorized_entry_ids.update({35, 18, 84})
+    state.discovered_entry_ids.update({35, 18, 84})
+    parent = state.store_result(
+        "list",
+        {"items": [{"entry_id": item["entry_id"], "title": item["title"]} for item in entries]},
+        "completed",
+        "complete",
+    )
+    refs_by_entry = {}
+    for position, entry in enumerate(entries, start=1):
+        refs = {
+            "workspace_id": state.workspace_id,
+            "user_id": state.user_id,
+            "entry_ids": [entry["entry_id"]],
+            "source_ids": [],
+            "source_pairs": [],
+            "fingerprints": {f"entry:{entry['entry_id']}": f"fingerprint-{position}"},
+        }
+        refs_by_entry[entry["entry_id"]] = refs
+        state.store_result(
+            "entries",
+            {"items": [entry]},
+            "completed",
+            "limited",
+            semantics={
+                "entry_validation_refs": {str(entry["entry_id"]): refs},
+                "display_parent_handle": parent,
+                "display_positions": {str(entry["entry_id"]): position},
+            },
+        )
+
+    async def current_refs(_state, entry_ids, _source_pairs):
+        return refs_by_entry[entry_ids[0]]
+
+    monkeypatch.setattr(loop_module, "_database_material_refs", current_refs)
+
+    selected = await select_editing_context(
+        state,
+        "edit",
+        purpose="discussion",
+        result_set_handle=parent,
+        position=1,
+    )
+
+    assert selected["entry"]["entry_id"] == 35
+    assert state.editing_context is not None
+    assert state.editing_context.entry["content"] == "第一条正文"
+
+
 @pytest.mark.asyncio
 async def test_no_knowledge_context_cannot_start_candidate_edit(monkeypatch) -> None:
     """不使用知识库的讨论例外不得扩展为候选编辑或资料获取。"""

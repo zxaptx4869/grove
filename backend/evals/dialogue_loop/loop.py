@@ -70,6 +70,8 @@ ANSWER_PROTOCOL_PROMPT = """回答交付协议：无论是否需要查询资料�
 例如 {"blocks":[{"kind":"text","text":"面向用户的回答正文"}]}。
 final_result 是答案交付通道，不是资料工具。自我介绍、能力说明及无需资料的普通回应
 可直接交付答案，不必搜索或报告不支持；不要以未包装的普通文本代替 final_result。
+直接回答若明确分析某个已展示且已读取的 Entry，可填写 discussion_entry_id；不确定对象、
+普通独立问题或候选交付时保持 null。该字段只声明讨论对象，不代表资料已重新读取。
 收到格式纠正时按协议重新交付答案，不向用户叙述内部工具或格式错误。""".strip()
 
 SYSTEM_PROMPT = ASSISTANT_ROLE_PROMPT + "\n\n" + ANSWER_PROTOCOL_PROMPT + "\n\n" + """边界：
@@ -721,18 +723,248 @@ def _semantic_query_key(
     )
 
 
+RECENT_ENTRY_DISPLAY_GROUPS = 2
+
+
+def _ordered_subset_positions(available: list[int], requested: list[int]) -> list[int] | None:
+    """返回保序子集在父集合中的 1-based 位置；重复、越界或重排均拒绝。"""
+
+    if not requested or len(set(requested)) != len(requested):
+        return None
+    positions = []
+    cursor = 0
+    for entry_id in requested:
+        try:
+            index = available.index(entry_id, cursor)
+        except ValueError:
+            return None
+        positions.append(index + 1)
+        cursor = index + 1
+    return positions
+
+
 def _authorized_list_for_entry_ids(
     state: LoopState, entry_ids: list[int]
 ) -> tuple[str, ResultRecord] | None:
-    """定位包含读取目标的最近授权列表，供失败续执行保存最小状态。"""
+    """定位包含读取目标保序子集的最近授权展示集合。"""
 
     for handle, record in reversed(list(state.result_sets.items())):
-        if record.kind != "list" or not record.displayable:
+        if (
+            record.kind != "list"
+            or not record.displayable
+            or record.semantics.get("result_role", "authorized") == "candidate"
+        ):
             continue
-        available = [int(item["entry_id"]) for item in record.payload.get("items", [])]
-        if entry_ids == available:
+        available = [
+            int(item["entry_id"])
+            for item in record.payload.get("items", [])
+            if item.get("entry_id") is not None
+        ]
+        if _ordered_subset_positions(available, entry_ids) is not None:
             return handle, record
     return None
+
+
+def _entry_display_group(record: ResultRecord) -> str | None:
+    """返回 Entry 结果所属的用户可见展示组，列表发现与正文读取仍保持区别。"""
+
+    if (
+        record.kind == "list"
+        and record.displayable
+        and record.semantics.get("result_role", "authorized") != "candidate"
+        and any(item.get("entry_id") is not None for item in record.payload.get("items", []))
+    ):
+        return record.handle
+    if record.kind == "entries" and record.displayable:
+        parent = record.semantics.get("display_parent_handle")
+        return str(parent) if parent else record.handle
+    return None
+
+
+def recent_entry_reference_handles(state: LoopState) -> set[str]:
+    """按展示组保留最近两组 Entry 引用，避免按内部工具结果个数截断。"""
+
+    groups: dict[str, dict] = {}
+    for handle, record in state.result_sets.items():
+        group = _entry_display_group(record)
+        if group is None:
+            continue
+        value = groups.setdefault(group, {"turn_index": 0, "handles": set()})
+        value["turn_index"] = max(value["turn_index"], record.turn_index)
+        value["handles"].add(handle)
+        if group in state.result_sets:
+            value["handles"].add(group)
+            value["turn_index"] = max(
+                value["turn_index"], state.result_sets[group].turn_index
+            )
+    selected = sorted(
+        groups.items(),
+        key=lambda item: (item[1]["turn_index"], item[0]),
+        reverse=True,
+    )[:RECENT_ENTRY_DISPLAY_GROUPS]
+    return {
+        handle
+        for _, value in selected
+        for handle in value["handles"]
+        if handle in state.result_sets
+    }
+
+
+def _recent_displayed_entry_groups(state: LoopState) -> list[dict]:
+    """给模型提供与用户实际展示顺序一致的、仅含已读取正文的对象提示。"""
+
+    recent_handles = recent_entry_reference_handles(state)
+    groups: dict[str, dict] = {}
+    for handle in recent_handles:
+        record = state.result_sets[handle]
+        if record.kind != "entries":
+            continue
+        parent_handle = str(record.semantics.get("display_parent_handle") or handle)
+        parent = state.result_sets.get(parent_handle)
+        parent_items = parent.payload.get("items", []) if parent is not None else []
+        positions = record.semantics.get("display_positions") or {}
+        group = groups.setdefault(
+            parent_handle,
+            {
+                "result_set_handle": parent_handle,
+                "turn_index": record.turn_index,
+                "items": {},
+            },
+        )
+        group["turn_index"] = max(group["turn_index"], record.turn_index)
+        for fallback_position, entry in enumerate(record.payload.get("items", []), start=1):
+            entry_id = entry.get("entry_id")
+            if entry_id is None:
+                continue
+            position = positions.get(str(entry_id), fallback_position)
+            title = entry.get("title")
+            if parent_items and 1 <= int(position) <= len(parent_items):
+                title = parent_items[int(position) - 1].get("title") or title
+            group["items"][int(position)] = {
+                "position": int(position),
+                "entry_id": int(entry_id),
+                "title": title,
+            }
+    return [
+        {
+            "result_set_handle": value["result_set_handle"],
+            "items": [value["items"][position] for position in sorted(value["items"])],
+        }
+        for value in sorted(
+            groups.values(),
+            key=lambda item: (item["turn_index"], item["result_set_handle"]),
+            reverse=True,
+        )
+    ]
+
+
+async def _bind_entry_result_material(
+    state: LoopState,
+    record: ResultRecord,
+    items: list[dict],
+    *,
+    parent_handle: str | None,
+) -> None:
+    """为两种正文读取结果统一附加身份、校验引用与父展示位置。"""
+
+    if not items:
+        return
+    parent = state.result_sets.get(parent_handle) if parent_handle else None
+    available = [
+        int(item["entry_id"])
+        for item in (parent.payload.get("items", []) if parent is not None else [])
+        if item.get("entry_id") is not None
+    ]
+    entry_ids = [int(item["entry_id"]) for item in items]
+    positions = _ordered_subset_positions(available, entry_ids) if available else None
+    all_pairs = [
+        (int(item["entry_id"]), int(source["source_id"]))
+        for item in items
+        for source in item.get("sources", [])
+        if source.get("source_id") is not None
+    ]
+    all_refs = await _database_material_refs(state, entry_ids, all_pairs)
+    per_entry_refs = {}
+    for item in items:
+        entry_id = int(item["entry_id"])
+        pairs = [pair for pair in all_pairs if pair[0] == entry_id]
+        source_ids = sorted({source_id for _, source_id in pairs})
+        per_entry_refs[str(entry_id)] = {
+            "workspace_id": state.workspace_id,
+            "user_id": state.user_id,
+            "entry_ids": [entry_id],
+            "source_ids": source_ids,
+            "source_pairs": [list(pair) for pair in pairs],
+            "fingerprints": {
+                key: value
+                for key, value in all_refs["fingerprints"].items()
+                if key == f"entry:{entry_id}" or key.startswith(f"evidence:{entry_id}:")
+            },
+        }
+    record.semantics["entry_validation_refs"] = per_entry_refs
+    if parent_handle is not None and positions is not None:
+        record.semantics["display_parent_handle"] = parent_handle
+        record.semantics["display_positions"] = {
+            str(entry_id): position
+            for entry_id, position in zip(entry_ids, positions, strict=True)
+        }
+
+
+def _displayed_entry_material(
+    state: LoopState, result_set_handle: str, position: int
+) -> tuple[dict, dict]:
+    """从正文结果或其父展示集合解析唯一、已读取的 Entry 材料。"""
+
+    allowed_handles = state.current_handles | recent_entry_reference_handles(state)
+    record = state.result_sets.get(result_set_handle)
+    if (
+        record is None
+        or result_set_handle not in allowed_handles
+        or not record.displayable
+        or record.status not in {"completed", "partial"}
+    ):
+        raise ValueError("只能从最近已展示的 Entry 正文结果中按有效序号选择对象")
+    if record.kind == "entries":
+        items = record.payload.get("items", [])
+        if not 1 <= position <= len(items):
+            raise ValueError("只能从最近已展示的 Entry 正文结果中按有效序号选择对象")
+        entry = items[position - 1]
+        refs = (record.semantics.get("entry_validation_refs") or {}).get(
+            str(entry.get("entry_id"))
+        )
+        if not isinstance(refs, dict):
+            raise ValueError("已展示对象缺少可复验的材料指纹，请重新读取核验")
+        return entry, refs
+    if record.kind != "list":
+        raise ValueError("只能从最近已展示的 Entry 正文结果中按有效序号选择对象")
+    items = record.payload.get("items", [])
+    if not 1 <= position <= len(items):
+        raise ValueError("只能从最近已展示的 Entry 正文结果中按有效序号选择对象")
+    entry_id = int(items[position - 1]["entry_id"])
+    matches = []
+    for handle in allowed_handles:
+        child = state.result_sets.get(handle)
+        if child is None or child.kind != "entries" or not child.displayable:
+            continue
+        if child.semantics.get("display_parent_handle") != result_set_handle:
+            continue
+        if (child.semantics.get("display_positions") or {}).get(str(entry_id)) != position:
+            continue
+        entry = next(
+            (
+                item
+                for item in child.payload.get("items", [])
+                if int(item.get("entry_id", -1)) == entry_id
+            ),
+            None,
+        )
+        refs = (child.semantics.get("entry_validation_refs") or {}).get(str(entry_id))
+        if entry is not None and isinstance(refs, dict):
+            matches.append((child.turn_index, child.handle, entry, refs))
+    if not matches:
+        raise ValueError("该列表项只完成展示，尚未读取正文材料")
+    _, _, entry, refs = max(matches, key=lambda item: (item[0], item[1]))
+    return entry, refs
 
 
 def _directory_continuation(state: LoopState, params: dict, reason: str) -> ContinuationState:
@@ -1649,6 +1881,7 @@ def resolve_answer_results(answer: DialogueAnswer, state: LoopState) -> Dialogue
     return DialogueAnswer.model_validate({
         "blocks": blocks or [{"kind": "insufficient", "text": "结果没有可展示正文"}],
         "needs_clarification": answer.needs_clarification,
+        "discussion_entry_id": answer.discussion_entry_id,
     })
 
 
@@ -2813,28 +3046,18 @@ async def select_editing_context(
     if result_set_handle is not None or position is not None:
         if result_set_handle is None or position is None:
             raise ModelRetry("按已展示位置选择对象时必须同时提供结果句柄和序号")
-        record = state.result_sets.get(result_set_handle)
-        items = record.payload.get("items", []) if record is not None else []
-        if (
-            record is None
-            or result_set_handle not in state.current_handles
-            or record.kind != "entries"
-            or not record.displayable
-            or record.status not in {"completed", "partial"}
-            or position < 1
-            or position > len(items)
-        ):
-            raise ModelRetry("只能从最近已展示的 Entry 正文结果中按有效序号选择对象")
-        entry = items[position - 1]
+        try:
+            entry, saved_refs = _displayed_entry_material(
+                state, result_set_handle, position
+            )
+        except ValueError as exc:
+            raise ModelRetry(str(exc)) from exc
         try:
             entry_id = int(entry["entry_id"])
         except (KeyError, TypeError, ValueError) as exc:
             raise ModelRetry("已展示对象缺少有效 Entry 身份") from exc
         if entry_id not in state.authorized_entry_ids or entry_id not in state.discovered_entry_ids:
             raise ModelRetry("已展示对象不在当前授权和发现集合")
-        saved_refs = (record.semantics.get("entry_validation_refs") or {}).get(str(entry_id))
-        if not isinstance(saved_refs, dict):
-            raise ModelRetry("已展示对象缺少可复验的材料指纹，请重新读取核验")
         pairs = [
             (entry_id, int(source["source_id"]))
             for source in entry.get("sources", [])
@@ -2902,6 +3125,68 @@ async def select_editing_context(
             "user_decisions": task.decisions, "content_only": content_only}
 
 
+async def _persist_discussion_answer(state: LoopState, answer: DialogueAnswer) -> None:
+    """保存 Agent 明确关联到已读 Entry 的成功分析，不根据用户措辞猜测对象。"""
+
+    text = "\n".join(
+        block.text for block in answer.blocks if block.kind in {"text", "insufficient"}
+    ).strip()
+    if not text:
+        return
+    target_id = answer.discussion_entry_id
+    task = state.editing_context if state.editing_active else None
+    if task is not None and state.editing_purpose == "discussion":
+        task_id = int(task.entry["entry_id"])
+        if target_id is not None and target_id != task_id:
+            raise ModelRetry("讨论对象与已经复验的当前 Entry 不一致")
+    elif target_id is not None:
+        matches = []
+        for handle in recent_entry_reference_handles(state):
+            record = state.result_sets[handle]
+            if record.kind != "entries" or not record.displayable:
+                continue
+            for item in record.payload.get("items", []):
+                if int(item.get("entry_id", -1)) != target_id:
+                    continue
+                refs = (record.semantics.get("entry_validation_refs") or {}).get(
+                    str(target_id)
+                )
+                if isinstance(refs, dict):
+                    matches.append((record.turn_index, record.handle, item, refs))
+        if not matches:
+            raise ModelRetry("讨论对象不是最近已展示且已读取的 Entry")
+        _, _, entry, refs = max(matches, key=lambda item: (item[0], item[1]))
+        if (
+            target_id not in state.authorized_entry_ids
+            or target_id not in state.discovered_entry_ids
+        ):
+            raise ModelRetry("讨论对象不在当前授权和发现集合")
+        pairs = [
+            (target_id, int(source["source_id"]))
+            for source in entry.get("sources", [])
+            if source.get("source_id") is not None
+        ]
+        current_refs = await _database_material_refs(state, [target_id], pairs)
+        if refs != current_refs:
+            raise ModelRetry("讨论对象或来源材料发生变化，请重新读取核验")
+        if state.editing_context is not None and int(
+            state.editing_context.entry.get("entry_id", -1)
+        ) == target_id:
+            task = state.editing_context
+            task.entry = entry
+            task.validation_refs = current_refs
+        else:
+            task = EditingContext(entry=entry, validation_refs=current_refs)
+        state.editing_context = task
+        state.focused_entry = entry
+        state.focused_entry_refs = current_refs
+    else:
+        return
+    if state.current_message not in task.decisions:
+        task.decisions.append(state.current_message)
+    task.discussion = text
+
+
 def preserve_editing_draft(state: LoopState, answer: DialogueAnswer) -> None:
     """成功或可修复的候选全文不随本轮结束清理。"""
     if (state.editing_active and state.editing_context is not None
@@ -2925,21 +3210,7 @@ def build_agent(model) -> Agent[LoopDeps, DialogueAnswer]:
     def editing_context_instruction(ctx: RunContext[LoopDeps]) -> str:
         state = ctx.deps.state
         task = state.editing_context
-        recent_entry_sets = [
-            {
-                "result_set_handle": handle,
-                "items": [
-                    {
-                        "position": index,
-                        "entry_id": item.get("entry_id"),
-                        "title": item.get("title"),
-                    }
-                    for index, item in enumerate(record.payload.get("items", []), start=1)
-                ],
-            }
-            for handle, record in state.result_sets.items()
-            if handle in state.current_handles and record.kind == "entries" and record.displayable
-        ]
+        recent_entry_sets = _recent_displayed_entry_groups(state)
         context = {
             "current_entry": {k: state.focused_entry.get(k) for k in ("entry_id", "title")}
             if state.focused_entry else None,
@@ -2947,7 +3218,7 @@ def build_agent(model) -> Agent[LoopDeps, DialogueAnswer]:
             if task else None,
             "has_saved_draft": bool(task and task.draft),
             "editing_active": state.editing_active,
-            "recent_displayed_entries": recent_entry_sets[-2:],
+            "recent_displayed_entries": recent_entry_sets,
         }
         if state.editing_active and task is not None:
             context.update(candidate_draft=task.draft, user_decisions=task.decisions)
@@ -2967,6 +3238,8 @@ def build_agent(model) -> Agent[LoopDeps, DialogueAnswer]:
             "明确返回已保存原稿用 resume；新轮查询新主题不激活旧对象，不套旧候选约束。"
             "用户只要精简正文时设置 content_only=true。选择动作由你理解用户语义，"
             "不得根据历史错误推断用户同意扩大范围。保存的旧材料只是线索，工具复验后才能使用。"
+            "如果不调用 editing_context 而直接完成某个已读 Entry 的分析，必须在 final_result 填写"
+            "该对象的 discussion_entry_id；独立问题或对象不明确时保持 null。"
             + no_knowledge_boundary
             + json.dumps(context, ensure_ascii=False)
         )
@@ -3766,7 +4039,8 @@ def build_agent(model) -> Agent[LoopDeps, DialogueAnswer]:
         authorized = _authorized_list_for_entry_ids(state, entry_ids)
         if unauthorized or authorized is None:
             raise ModelRetry(
-                "read_entries 必须按同一授权展示集合的完整顺序读取；语义候选必须先调用 "
+                "read_entries 只能按同一授权展示集合的原相对顺序读取全部或保序子集；"
+                "语义候选必须先调用 "
                 f"select_relevant_entries。未授权 entry_ids={unauthorized}"
             )
         try:
@@ -3786,33 +4060,12 @@ def build_agent(model) -> Agent[LoopDeps, DialogueAnswer]:
             and result_record is not None
             and "completeness" in result_record.semantics
         ):
-            all_pairs = [
-                (int(item["entry_id"]), int(source["source_id"]))
-                for item in returned_items
-                for source in item.get("sources", [])
-                if source.get("source_id") is not None
-            ]
-            all_refs = await _database_material_refs(
-                state, [int(item["entry_id"]) for item in returned_items], all_pairs
+            await _bind_entry_result_material(
+                state,
+                result_record,
+                returned_items,
+                parent_handle=authorized[0],
             )
-            per_entry_refs = {}
-            for item in returned_items:
-                entry_id = int(item["entry_id"])
-                pairs = [pair for pair in all_pairs if pair[0] == entry_id]
-                source_ids = sorted({source_id for _, source_id in pairs})
-                per_entry_refs[str(entry_id)] = {
-                    "workspace_id": state.workspace_id,
-                    "user_id": state.user_id,
-                    "entry_ids": [entry_id],
-                    "source_ids": source_ids,
-                    "source_pairs": [list(pair) for pair in pairs],
-                    "fingerprints": {
-                        key: value
-                        for key, value in all_refs["fingerprints"].items()
-                        if key == f"entry:{entry_id}" or key.startswith(f"evidence:{entry_id}:")
-                    },
-                }
-            result_record.semantics["entry_validation_refs"] = per_entry_refs
         unavailable_only = (
             result.get("status") == "unavailable"
             and payload.get("unavailable_entry_ids")
@@ -3953,11 +4206,17 @@ def build_agent(model) -> Agent[LoopDeps, DialogueAnswer]:
         )
         state.read_entry_ids.update(item.entry_id for item in output.items)
         if output.items:
+            record = state.result_sets[handle]
+            await _bind_entry_result_material(
+                state,
+                record,
+                payload["items"],
+                parent_handle=result_set_handle,
+            )
             state.focused_entry = payload["items"][0]
-            pairs = [(entry_id, source["source_id"])
-                     for source in state.focused_entry.get("sources", [])
-                     if source.get("source_id")]
-            state.focused_entry_refs = await _database_material_refs(state, [entry_id], pairs)
+            state.focused_entry_refs = record.semantics["entry_validation_refs"][
+                str(entry_id)
+            ]
         event = {
             "tool": "open_list_item",
             "result_handle": handle,
@@ -4007,6 +4266,8 @@ def build_agent(model) -> Agent[LoopDeps, DialogueAnswer]:
             state.candidate_draft = answer.model_dump(mode="json")
             preserve_editing_draft(state, answer)
             state.candidate_draft_errors.clear()
+        elif candidate_message is None:
+            await _persist_discussion_answer(state, answer)
         return answer
 
     return agent
@@ -4155,9 +4416,7 @@ def build_finalizer_agent(model) -> Agent[LoopDeps, DialogueAnswer]:
             state.candidate_draft = answer.model_dump(mode="json")
             preserve_editing_draft(state, answer)
         elif state.editing_active and state.editing_context is not None:
-            state.editing_context.discussion = "\n".join(
-                block.text for block in answer.blocks if block.kind in {"text", "insufficient"}
-            )
+            await _persist_discussion_answer(state, answer)
         state.candidate_draft_errors.clear()
         return answer
 

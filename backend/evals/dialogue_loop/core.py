@@ -166,6 +166,7 @@ class DialogueAnswer(StrictModel):
 
     blocks: list[OutputBlock] = Field(min_length=1, max_length=ANSWER_BLOCKS_LIMIT)
     needs_clarification: bool = False
+    discussion_entry_id: int | None = Field(default=None, exclude=True)
 
 
 class BudgetExceeded(RuntimeError):

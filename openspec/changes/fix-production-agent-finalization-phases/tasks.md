@@ -59,12 +59,12 @@
 
 ## 6. 已有 Entry 对象与讨论链一致性修复
 
-- [ ] 6.1 建立真实 production adapter + `run_turn` 失败回归，覆盖批量读取、逐条打开、合法保序单项读取和实际模型 messages/instructions，不 monkeypatch `run_turn` 或手工预置 discussion
-- [ ] 6.2 统一 `read_entries` 与 `open_list_item` 的正文结果构造、对象身份、校验引用和父展示位置，并保留列表发现与正文读取区别
-- [ ] 6.3 允许同一已授权展示集合的合法保序子集读取，逐项复验 Workspace、权限、范围、存在性和指纹，并核对下游顺序与 continuation 假设
-- [ ] 6.4 让普通直接回答与无工具 finalizer 的明确 Entry 分析跨 Run 保存并进入候选输入，覆盖 `auto` 模式对象切换、独立问题和歧义澄清
-- [ ] 6.5 分离有界历史结果与本轮活动材料，保留最近实际展示集合及必要子项，失败摘要不重放无关历史材料
-- [ ] 6.6 运行对象与讨论链相关测试、Ruff、`git diff --check`，记录结果并完成本地阶段提交
+- [x] 6.1 建立真实 production adapter + `run_turn` 失败回归，覆盖批量读取、逐条打开、合法保序单项读取和实际模型 messages/instructions，不 monkeypatch `run_turn` 或手工预置 discussion
+- [x] 6.2 统一 `read_entries` 与 `open_list_item` 的正文结果构造、对象身份、校验引用和父展示位置，并保留列表发现与正文读取区别
+- [x] 6.3 允许同一已授权展示集合的合法保序子集读取，逐项复验 Workspace、权限、范围、存在性和指纹，并核对下游顺序与 continuation 假设
+- [x] 6.4 让普通直接回答与无工具 finalizer 的明确 Entry 分析跨 Run 保存并进入候选输入，覆盖 `auto` 模式对象切换、独立问题和歧义澄清
+- [x] 6.5 分离有界历史结果与本轮活动材料，保留最近实际展示集合及必要子项，失败摘要不重放无关历史材料
+- [x] 6.6 运行对象与讨论链相关测试、Ruff、`git diff --check`，记录结果并完成本地阶段提交
 
 ## 7. 候选与恢复链一致性修复
 
@@ -80,3 +80,7 @@
 - [ ] 8.1 核对正式服务实际加载的代码版本，在最多两批、累计不超过 24 条用户消息和现有停止阈值内复测多正文短问、分析后候选、上一版改写、continuation、换话题及保留能力
 - [ ] 8.2 保存不覆盖历史的原始报告和逐轮人工语义审阅；前置失败、未执行和未自然触发 continuation 均按实际记录
 - [ ] 8.3 将完整实施、自动化验证、真实 Run、未覆盖项、风险与回退依据写入本地讨论文档，区分已修好、仍失败和待用户验收
+
+## 9. 本次一致性修复验证记录
+
+- 2026-09-17 对象与讨论链：先以两个失败回归确认完整列表相等校验会拒绝合法子集、连续逐条打开后父列表“第一条”无法绑定；修复后 `test_knowledge_agent_dialogue_loop.py` 与 `test_knowledge_agent_production_adapter.py` 全部通过。新增正式 production adapter 六轮 `FunctionModel` 夹具，不替换 `run_turn`，覆盖结构化列表后批量正文读取、同一父集合逐条打开三项、普通直接分析通过 Agent 选择的 `discussion_entry_id` 持久化、候选 finalizer 实际输入包含 Entry 正文与分析、`auto` 模式切换第二条以及独立问题不覆盖 discussion。恢复后的历史 records 不再自动进入 `current_handles`，快照按最近两个用户可见 Entry 展示组保留父集合与必要子项；13-block 回归改为由当前失败任务生成 11 个材料，继续验证 12 块上限而不依赖历史材料重放。相关 Ruff 与 `git diff --check` 通过。

@@ -5,7 +5,7 @@ from dataclasses import asdict
 from pathlib import Path
 
 import pytest
-from pydantic_ai.messages import ModelResponse, ToolCallPart
+from pydantic_ai.messages import ModelResponse, ToolCallPart, ToolReturnPart
 from pydantic_ai.models.function import FunctionModel
 from sqlalchemy import select
 
@@ -154,6 +154,7 @@ def test_production_state_round_trip_preserves_scope_results_and_continuation() 
     assert restored.discovered_entry_ids == {7}
     assert restored.discovered_entry_fingerprints == {7: fingerprint}
     assert restored.result_sets[handle].payload["items"][0]["entry_id"] == 7
+    assert restored.current_handles == set()
     assert restored.continuation is not None
     assert restored.continuation.pending_steps == [{"step": "finalize_answer"}]
     assert restored.continuation.validation_refs["source_ids"] == [8]
@@ -187,6 +188,286 @@ def test_production_state_round_trip_preserves_scope_results_and_continuation() 
     assert switched_scope.focused_entry is None
     assert switched_scope.focused_entry_refs is None
     assert switched_scope.editing_context is None
+
+
+@pytest.mark.asyncio
+async def test_production_adapter_preserves_displayed_entry_discussion_and_candidate(
+    monkeypatch,
+) -> None:
+    """真实 run_turn 串起正文展示、直接分析、候选、对象切换和独立问题。"""
+
+    model_run = 0
+    observed: dict[str, object] = {"candidate_inputs": [], "instructions": []}
+
+    def tool_return(messages, tool_name: str) -> dict:
+        for message in reversed(messages):
+            for part in reversed(message.parts):
+                if isinstance(part, ToolReturnPart) and part.tool_name == tool_name:
+                    assert isinstance(part.content, dict)
+                    return part.content
+        raise AssertionError(f"缺少 {tool_name} 工具返回")
+
+    async with async_session_factory() as db:
+        user = await create_user(db, "真实对象讨论链")
+        workspace = await create_workspace(db, user)
+        project = await create_project(db, workspace, "材料项目")
+        node = await create_child_node(db, project, "板材")
+        entries = []
+        for index, (title, content) in enumerate(
+            (
+                ("第一条材料", "第一条正文：建议保留条件并现场确认。"),
+                ("第二条材料", "第二条正文：需要单独核对使用场景。"),
+                ("第三条材料", "第三条正文：只作为补充背景。"),
+            ),
+            start=1,
+        ):
+            source, attachment = await create_source_attachment(
+                db,
+                workspace,
+                project,
+                title=f"材料来源 {index}",
+                text_content=content,
+            )
+            entry = await create_entry_with_evidence(
+                db,
+                project,
+                node,
+                source,
+                attachment,
+                title=title,
+                content=content,
+                quote=content,
+            )
+            entries.append(entry)
+        await db.commit()
+        for row in (user, workspace, project, *entries):
+            await db.refresh(row)
+        conversation = await create_conversation(
+            db,
+            workspace.id,
+            user.id,
+            KnowledgeConversationCreate(scope_type="project", project_id=project.id),
+        )
+
+        displayed: dict[str, object] = {}
+
+        def display_and_read(messages, info):
+            call = int(displayed.get("calls", 0)) + 1
+            displayed["calls"] = call
+            if call == 1:
+                return ModelResponse(parts=[ToolCallPart(
+                    "query_entries",
+                    {
+                        "project_scope": "project",
+                        "project_name": project.name,
+                        "semantic_query": None,
+                        "limit": 3,
+                        "sort_field": "created_at",
+                        "sort_direction": "asc",
+                    },
+                )])
+            if call == 2:
+                result = tool_return(messages, "query_entries")
+                items = result["payload"]["items"]
+                displayed["parent_handle"] = result["result_handle"]
+                displayed["entry_ids"] = [item["entry_id"] for item in items]
+                displayed["titles"] = [item["title"] for item in items]
+                return ModelResponse(parts=[ToolCallPart(
+                    "read_entries", {"entry_ids": displayed["entry_ids"]}
+                )])
+            result = tool_return(messages, "read_entries")
+            displayed["read_handle"] = result["result_handle"]
+            return ModelResponse(parts=[ToolCallPart(
+                info.output_tools[0].name,
+                {"blocks": [{"kind": "result", "result_handle": result["result_handle"]}]},
+            )])
+
+        def discuss_first(_messages, info):
+            instructions = str(info.instructions)
+            observed["instructions"].append(instructions)
+            assert displayed["parent_handle"] in instructions
+            assert displayed["titles"][0] in instructions
+            return ModelResponse(parts=[ToolCallPart(
+                info.output_tools[0].name,
+                {
+                    "blocks": [{
+                        "kind": "text",
+                        "text": "模型分析：第一条的条件性表达合理，并应保留现场确认步骤。",
+                    }],
+                    "discussion_entry_id": displayed["entry_ids"][0],
+                },
+            )])
+
+        open_calls = 0
+        opened_handles: list[str] = []
+
+        def open_each_entry(messages, info):
+            nonlocal open_calls
+            open_calls += 1
+            if open_calls > 1:
+                previous = tool_return(messages, "open_list_item")
+                opened_handles.append(previous["result_handle"])
+            if open_calls <= 3:
+                return ModelResponse(parts=[ToolCallPart(
+                    "open_list_item",
+                    {
+                        "result_set_handle": displayed["parent_handle"],
+                        "position": open_calls,
+                    },
+                )])
+            return ModelResponse(parts=[ToolCallPart(
+                info.output_tools[0].name,
+                {
+                    "blocks": [
+                        {"kind": "result", "result_handle": handle}
+                        for handle in opened_handles
+                    ]
+                },
+            )])
+
+        candidate_calls = 0
+
+        def create_candidate(messages, info):
+            nonlocal candidate_calls
+            candidate_calls += 1
+            if info.function_tools:
+                instructions = str(info.instructions)
+                observed["instructions"].append(instructions)
+                assert displayed["titles"][0] in instructions
+                return ModelResponse(parts=[ToolCallPart(
+                    "editing_context",
+                    {
+                        "action": "edit",
+                        "purpose": "candidate",
+                        "result_set_handle": displayed["parent_handle"],
+                        "position": 1,
+                    },
+                )])
+            serialized = str(messages)
+            observed["candidate_inputs"].append(serialized)
+            text = (
+                "候选修订：建议保留条件性表达，并在现场确认后采用。"
+                "这是基于当前记录和模型分析形成的候选，尚未写入正式记录；"
+                "新增判断不是 Source 原文。"
+            )
+            return ModelResponse(parts=[ToolCallPart(
+                info.output_tools[0].name,
+                {"blocks": [{"kind": "text", "text": text}]},
+            )])
+
+        def switch_second(_messages, info):
+            return ModelResponse(parts=[ToolCallPart(
+                info.output_tools[0].name,
+                {
+                    "blocks": [{
+                        "kind": "text",
+                        "text": "模型分析：第二条需要结合实际使用场景判断。",
+                    }],
+                    "discussion_entry_id": displayed["entry_ids"][1],
+                },
+            )])
+
+        def independent(_messages, info):
+            return ModelResponse(parts=[ToolCallPart(
+                info.output_tools[0].name,
+                {"blocks": [{"kind": "text", "text": "甲醛是一种挥发性有机物。"}]},
+            )])
+
+        responders = [
+            display_and_read,
+            open_each_entry,
+            discuss_first,
+            create_candidate,
+            switch_second,
+            independent,
+        ]
+
+        async def get_text_model(_db, _workspace_id):
+            nonlocal model_run
+            responder = responders[model_run]
+            model_run += 1
+            return FunctionModel(responder, model_name=f"entry-chain-{model_run}")
+
+        monkeypatch.setattr("app.services.ai_models.get_text_model", get_text_model)
+
+        runs = []
+        snapshots = []
+        for index, message in enumerate(
+            (
+                "按创建顺序展示三条正文",
+                "逐条打开刚才三条正文",
+                "抛开知识库，第一条你觉得合理吗",
+                "按刚才分析改成候选",
+                "现在分析第二条",
+                "甲醛是什么",
+            ),
+            start=1,
+        ):
+            _, run = await submit_message(
+                db,
+                conversation,
+                KnowledgeRunSubmitRequest(
+                    client_message_id=f"entry-chain-{index}",
+                    message=message,
+                    basis_mode="auto",
+                ),
+            )
+            run.status = "processing"
+            run.current_step = "claim"
+            await db.commit()
+            await execute_dialogue_loop_run(db, run)
+            await db.commit()
+            await db.refresh(run)
+            run_snapshot = json.loads(run.dialogue_loop_state_json)
+            assert run.status == "completed", (
+                message,
+                run.error,
+                run_snapshot.get("completion"),
+                run_snapshot.get("diagnostic"),
+                run_snapshot.get("answer"),
+                [
+                        (str(call.get("error"))[:800], call.get("error_kind"))
+                    for call in run_snapshot.get("model_calls", [])
+                ],
+            )
+            runs.append(run)
+            snapshots.append(run_snapshot)
+
+        assert [run.status for run in runs] == ["completed"] * 6
+        open_snapshot = snapshots[1]
+        open_records = [
+            record
+            for record in open_snapshot["records"].values()
+            if record["kind"] == "entries"
+            and len(record["payload"]["items"]) == 1
+            and record["semantics"].get("display_parent_handle")
+            == displayed["parent_handle"]
+        ]
+        assert sorted(
+            record["semantics"]["display_positions"][
+                str(record["payload"]["items"][0]["entry_id"])
+            ]
+            for record in open_records
+        ) == [1, 2, 3]
+        assert all(record["semantics"]["entry_validation_refs"] for record in open_records)
+        first_discussion = snapshots[2]["collaboration"]
+        assert first_discussion["focused_entry"]["entry_id"] == displayed["entry_ids"][0]
+        assert "第一条的条件性表达合理" in first_discussion["editing_context"]["discussion"]
+        candidate = snapshots[3]["collaboration"]
+        assert candidate["editing_context"]["draft"] is not None
+        assert "候选修订" in json.dumps(candidate["editing_context"]["draft"], ensure_ascii=False)
+        switched = snapshots[4]["collaboration"]
+        assert switched["focused_entry"]["entry_id"] == displayed["entry_ids"][1]
+        assert "第二条需要结合" in switched["editing_context"]["discussion"]
+        independent_snapshot = snapshots[5]
+        assert independent_snapshot["collaboration"] == switched
+        assert independent_snapshot["records"]
+        assert independent_snapshot["tool_events"] == []
+        assert candidate_calls == 2
+        assert open_calls == 4
+        assert len(observed["candidate_inputs"]) == 1
+        assert "第一条正文" in observed["candidate_inputs"][0]
+        assert "第一条的条件性表达合理" in observed["candidate_inputs"][0]
 
 
 def test_production_restore_does_not_authorize_candidate_list() -> None:
@@ -1276,6 +1557,15 @@ async def test_run_793_to_795_validation_failure_then_new_question_isolated(
                 history,
             )
         if message == "好的，你整理一下":
+            # 当前失败任务本身产生 11 个材料，继续覆盖 12 块有界兜底；
+            # 上一轮历史材料不再因恢复而自动成为 current。
+            for index in range(11):
+                state.store_result(
+                    "statistic",
+                    {"value": index + 1},
+                    "completed",
+                    "complete",
+                )
             state.instrumentation.logs.append(
                 InvocationLog(
                     kind="text",

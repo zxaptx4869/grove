@@ -65,6 +65,7 @@ from evals.dialogue_loop.loop import (
     LoopState,
     ResultRecord,
     build_agent,
+    recent_entry_reference_handles,
     run_turn,
 )
 
@@ -343,10 +344,11 @@ def _collaboration_snapshot(state: LoopState, restorable_entry_ids: list[int]) -
         ),
     }
 def _state_snapshot(state: LoopState, turn: dict, *, loop_status: str) -> dict:
+    retained_handles = state.current_handles | recent_entry_reference_handles(state)
     records = {
         handle: _record_snapshot(record)
         for handle, record in state.result_sets.items()
-        if record.displayable and handle in state.current_handles
+        if record.displayable and handle in retained_handles
     }
     restorable_entry_ids = sorted(
         state.authorized_entry_ids
@@ -406,7 +408,6 @@ def _restore_state(state: LoopState, snapshot: dict) -> None:
             displayable=bool(raw.get("displayable", True)),
         )
         state.result_sets[record.handle] = record
-        state.current_handles.add(record.handle)
         if (
             record.kind == "list"
             and record.semantics.get("result_role", "authorized") != "candidate"
@@ -700,8 +701,6 @@ async def execute_dialogue_loop_run(db: AsyncSession, run: KnowledgeAgentRun) ->
         state.focused_entry = None
         state.focused_entry_refs = None
         state.editing_context = None
-    elif restore_persisted:
-        state.current_handles.update(state.result_sets)
     model = await get_text_model(db, run.workspace_id)
     used_fallback_model = isinstance(model, TestModel)
     if used_fallback_model:
