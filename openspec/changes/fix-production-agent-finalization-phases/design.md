@@ -62,12 +62,21 @@ Web 复用现有 Badge、`LoaderCircle`、语义色和消息内状态行；阶�
 
 `finalize_transition` 与 `text_not_dispatched` 同属 `MODEL_NOT_DISPATCHED`；错误文本仍保存用于说明停止原因，但不设置 fallback。只有实际 `text` 请求的 Provider/timeout/protocol 错误记为 `MODEL_CALL_FAILED`。不依据错误字符串猜测分类。
 
+### 7. 失败兜底有界化并保留异常现场
+
+`_verified_failure_output()` 按 `DialogueAnswer` 的 12 块上限预留首部状态说明与末部缺口说明，优先保留已通过边界检查的候选稿/通用文本，再按稳定顺序选取已确认结果与 Evidence；超出展示容量的材料仍保留在生产快照，不通过放宽 schema 交付。这样校验失败后的兜底不会因自身块数再次抛异常。
+
+正式适配器的最后异常边界从当时 `LoopState` 生成有界失败快照，保留此前历史、已授权结果、continuation、工具事件和当前 instrumentation 模型日志，并只写入异常类型、稳定错误码及 Pydantic 错误位置/类型等脱敏诊断，不保存 traceback、原始 prompt 或私密模型响应。模型审计照常落库，避免空失败快照覆盖恢复依据。
+
+若上一轮失败，只有显式 continuation 指令才激活其 continuation 和恢复材料；普通明确新问题从干净的当前轮句柄与模型消息历史执行，不自动续做失败任务。该隔离仅切断失败任务的执行上下文，不改变已授权 Entry 的服务端恢复集合，也不新增意图模型或草稿记忆能力。
+
 ## Risks / Trade-offs
 
 - [阶段短事务与终态提交竞争] → 单消费者保证顺序，关闭发布器后再写终态，并用 `status=processing` 条件更新避免覆盖终态。
 - [保留文本可能夹带未授权内容] → 仅允许无结构块文本，执行候选标题泄漏、写入声明、编辑范围和通用知识边界检查；最终仍走完整校验。
 - [恢复时候选已变化] → 使用句柄内容指纹和数据库对象指纹双重校验，变化即失效，不自动重搜。
 - [严格解包覆盖面有限] → 有意只兼容已观察且可证明安全的包装；损坏样本继续失败并由 continuation 恢复。
+- [异常快照可能携带敏感上下文] → 只保存既有有界状态和结构化脱敏诊断，模型原始响应仍沿用既有公开审计裁剪，不保存 traceback。
 
 ## Migration Plan
 

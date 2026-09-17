@@ -530,6 +530,34 @@ def test_deterministic_fallback_keeps_current_read_entry_content() -> None:
     assert any(block["kind"] == "entry" for block in blocks)
 
 
+def test_deterministic_fallback_never_exceeds_answer_block_contract() -> None:
+    """Run 794 同类材料超过展示容量时，失败兜底自身仍必须可校验。"""
+    state = _state()
+    for index in range(11):
+        state.store_result(
+            "statistic",
+            {"value": index + 1},
+            "completed",
+            "complete",
+        )
+    state.stop(
+        StopState(
+            status="failed",
+            reason_code="output_validation_failed",
+            reason="模型输出未通过结构校验",
+            incomplete_steps=["候选整理尚未完成"],
+            can_continue=False,
+        )
+    )
+
+    text, blocks = _verified_failure_output(state)
+
+    assert len(blocks) == 12
+    assert blocks[0]["kind"] == "text"
+    assert blocks[-1]["kind"] == "insufficient"
+    assert "候选整理尚未完成" in text
+
+
 def test_budget_stop_keeps_directory_continuation_without_fake_leaf_total() -> None:
     state = _state()
     _mark_budget_stop(

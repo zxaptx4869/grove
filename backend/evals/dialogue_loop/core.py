@@ -21,6 +21,7 @@ INPUT_ESTIMATE_METHOD = (
 HISTORY_ANSWER_CHARS_PER_TURN = 1_200
 HISTORY_INPUT_TOKENS_TARGET = 5_000
 OUTPUT_TOKENS_LIMIT = 2_000
+ANSWER_BLOCKS_LIMIT = 12
 PER_TURN_TEXT_REQUESTS = 12
 PER_TURN_EMBEDDING_REQUESTS = 4
 PER_TURN_TOOL_CALLS = 8
@@ -163,7 +164,7 @@ OutputBlock = Annotated[
 class DialogueAnswer(StrictModel):
     """模型只能排列可信句柄；真实数值、列表和原文由程序渲染。"""
 
-    blocks: list[OutputBlock] = Field(min_length=1, max_length=12)
+    blocks: list[OutputBlock] = Field(min_length=1, max_length=ANSWER_BLOCKS_LIMIT)
     needs_clarification: bool = False
 
 

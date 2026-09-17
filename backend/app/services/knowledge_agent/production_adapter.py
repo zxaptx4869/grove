@@ -9,8 +9,10 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+from dataclasses import asdict
 from typing import Any
 
+from pydantic import ValidationError
 from pydantic_ai.messages import (
     ModelRequest,
     ModelResponse,
@@ -53,9 +55,17 @@ from evals.dialogue_loop.core import (
     TURN_PARTIAL_COMPLETED,
     BudgetLedger,
     ContinuationState,
+    StopState,
 )
 from evals.dialogue_loop.instrumentation import BudgetedModel, Instrumentation
-from evals.dialogue_loop.loop import LoopState, ResultRecord, build_agent, run_turn
+from evals.dialogue_loop.loop import (
+    CONTINUE_PATTERNS,
+    FINALIZE_CONTINUE_MESSAGES,
+    LoopState,
+    ResultRecord,
+    build_agent,
+    run_turn,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -76,6 +86,80 @@ def _json(value: Any) -> str:
     return json.dumps(
         to_jsonable_python(value), ensure_ascii=False, separators=(",", ":")
     )
+
+
+def _is_failed_snapshot(snapshot: dict | None) -> bool:
+    return bool(snapshot and snapshot.get("loop_status") == TURN_FAILED)
+
+
+def _failed_run_continuation_requested(
+    run: KnowledgeAgentRun,
+    message: str,
+    snapshot: dict | None,
+) -> bool:
+    """失败 Run 只接受显式续接，普通新问题不继承其执行现场。"""
+    if run.request_context_mode == "continue":
+        return True
+    normalized = message.strip()
+    if normalized in FINALIZE_CONTINUE_MESSAGES:
+        return True
+    continuation = _continuation_from_snapshot(
+        snapshot.get("continuation") if snapshot else None
+    )
+    return bool(
+        continuation
+        and continuation.task_type not in {"finalize_answer", "candidate_draft"}
+        and any(pattern in normalized for pattern in CONTINUE_PATTERNS)
+    )
+
+
+def _exception_diagnostic(exc: Exception) -> dict:
+    """只持久化异常类别和结构位置，不保存 traceback 或原始输入。"""
+    diagnostic = {
+        "code": "dialogue_loop_unhandled_exception",
+        "exception_type": type(exc).__name__,
+    }
+    if isinstance(exc, ValidationError):
+        diagnostic["validation_errors"] = [
+            {
+                "type": str(item.get("type") or "validation_error"),
+                "loc": [str(part) for part in item.get("loc", ())],
+                "msg": str(item.get("msg") or "校验失败")[:500],
+            }
+            for item in exc.errors(
+                include_url=False,
+                include_context=False,
+                include_input=False,
+            )[:16]
+        ]
+    return diagnostic
+
+
+def _exception_turn(state: LoopState, exc: Exception) -> dict:
+    """构造不依赖模型输出校验器的最小失败结果，供生产异常边界持久化。"""
+    if state.stop_state is None:
+        state.stop(
+            StopState(
+                status=TURN_FAILED,
+                reason_code="dialogue_loop_unhandled_exception",
+                reason="统一对话循环执行异常",
+                incomplete_steps=["本轮回答尚未安全完成"],
+                can_continue=state.continuation is not None,
+                continuation=state.continuation,
+            )
+        )
+    answer = "本轮执行遇到系统故障，已保留可安全恢复的状态，请稍后重试。"
+    return {
+        "status": TURN_FAILED,
+        "answer": answer,
+        "blocks": [{"kind": "insufficient", "text": answer}],
+        "completion": state.completion_snapshot(TURN_FAILED),
+        "model_calls": [asdict(item) for item in state.instrumentation.logs],
+        "tool_calls": list(state.tool_events),
+        "budget": state.ledger.snapshot(),
+        "error": f"dialogue-loop 执行失败：{type(exc).__name__}",
+        "diagnostic": _exception_diagnostic(exc),
+    }
 
 
 class _DialogueStagePublisher:
@@ -263,6 +347,7 @@ def _state_snapshot(state: LoopState, turn: dict, *, loop_status: str) -> dict:
             "tool_events": state.tool_events[-32:],
             "model_calls": turn.get("model_calls", [])[-16:],
             "budget": turn.get("budget"),
+            "diagnostic": turn.get("diagnostic"),
         }
     )
 
@@ -520,14 +605,20 @@ async def execute_dialogue_loop_run(db: AsyncSession, run: KnowledgeAgentRun) ->
         project_name=run.project_name,
         cancel_check=lambda: _cancel_check(run.id),
     )
-    if persisted:
+    resume_failed_run = _failed_run_continuation_requested(run, message, persisted)
+    restore_persisted = bool(
+        persisted and (not _is_failed_snapshot(persisted) or resume_failed_run)
+    )
+    if restore_persisted:
         _restore_state(state, persisted)
-    continuation = _continuation_from_snapshot(persisted.get("continuation") if persisted else None)
+    continuation = _continuation_from_snapshot(
+        persisted.get("continuation") if restore_persisted and persisted else None
+    )
     if continuation is not None:
         state.continuation = continuation
     state.begin_turn(run.id, message)
-    # 允许“第二条/刚才那组”复用最近一轮已授权结果；显式新话题必须清空旧句柄。
-    if run.request_context_mode != "new_topic" and persisted:
+    # 允许“第二条/刚才那组”复用最近一轮已授权结果；失败后的新问题不恢复旧现场。
+    if run.request_context_mode != "new_topic" and restore_persisted:
         state.current_handles.update(state.result_sets)
     model = await get_text_model(db, run.workspace_id)
     used_fallback_model = isinstance(model, TestModel)
@@ -536,7 +627,11 @@ async def execute_dialogue_loop_run(db: AsyncSession, run: KnowledgeAgentRun) ->
         model = _explicit_offline_model()
     wrapped_model = BudgetedModel(model, instrumentation, request_scope="dialogue_agent")
     agent = build_agent(wrapped_model)
-    history = await _history_for_run(db, run)
+    history = (
+        []
+        if _is_failed_snapshot(persisted) and not resume_failed_run
+        else await _history_for_run(db, run)
+    )
     run.current_step = "dialogue_loop"
     run.dialogue_loop_state_json = _json(
         {
@@ -572,18 +667,32 @@ async def execute_dialogue_loop_run(db: AsyncSession, run: KnowledgeAgentRun) ->
         return
     except Exception as exc:  # noqa: BLE001
         logger.exception("dialogue-loop Run %s 执行失败", run.id)
+        turn = _exception_turn(state, exc)
         run.status = RUN_FAILED
         run.current_step = None
         run.active_slot = None
-        run.error = f"dialogue-loop 执行失败：{type(exc).__name__}"
+        run.error = turn["error"]
         run.dialogue_loop_state_json = _json(
+            _state_snapshot(state, turn, loop_status=TURN_FAILED)
+        )
+        run.answer_json = _json(
             {
-                "version": STATE_VERSION,
-                "loop_status": TURN_FAILED,
-                "blocks": [],
-                "completion": {"can_continue": False},
+                "answer": turn["answer"],
+                "status": "failed",
+                "points": [],
+                "citations": [],
+                "conflicts": [],
+                "group_counts": [],
+                "warnings": [],
             }
         )
+        if run.assistant_message_id:
+            assistant = await db.get(KnowledgeMessage, run.assistant_message_id)
+            if assistant:
+                assistant.content = turn["answer"]
+        await _record_model_logs(db, run, model, turn, fallback=used_fallback_model)
+        run.fallback_summary = _json(await run_fallback_summary(db, run.id))
+        await db.flush()
         return
     finally:
         instrumentation.activity_callback = None

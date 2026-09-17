@@ -27,6 +27,7 @@ from pydantic_ai.usage import UsageLimits
 from sqlalchemy import select
 
 from evals.dialogue_loop.core import (
+    ANSWER_BLOCKS_LIMIT,
     FINALIZE_SECONDS,
     HISTORY_ANSWER_CHARS_PER_TURN,
     HISTORY_INPUT_TOKENS_TARGET,
@@ -4145,6 +4146,16 @@ def _verified_failure_output(
             ),
         }
     )
+    if len(requested_blocks) > ANSWER_BLOCKS_LIMIT:
+        omitted = len(requested_blocks) - ANSWER_BLOCKS_LIMIT
+        insufficient = dict(requested_blocks[-1])
+        suffix = f"另有 {omitted} 项已确认材料保留在本轮恢复状态中，未在失败摘要中重复展示。"
+        base = str(insufficient["text"])
+        insufficient["text"] = f"{base[: max(1, 2_000 - len(suffix))]}{suffix}"
+        requested_blocks = [
+            *requested_blocks[: ANSWER_BLOCKS_LIMIT - 1],
+            insufficient,
+        ]
     answer = DialogueAnswer.model_validate({"blocks": requested_blocks})
     return render_answer(answer, state)
 

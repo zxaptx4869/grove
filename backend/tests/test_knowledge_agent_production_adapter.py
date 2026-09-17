@@ -1,6 +1,7 @@
 """正式 dialogue-loop 适配器的确定性边界测试。"""
 
 import json
+from dataclasses import asdict
 from pathlib import Path
 
 import pytest
@@ -33,7 +34,7 @@ from evals.dialogue_loop import loop as loop_module
 from evals.dialogue_loop.core import BudgetLedger, ContinuationState
 from evals.dialogue_loop.instrumentation import InputEstimate, Instrumentation
 from evals.dialogue_loop.loop import LoopState
-from tests._knowledge_agent_fixtures import create_user, create_workspace
+from tests._knowledge_agent_fixtures import create_project, create_user, create_workspace
 
 
 def _state() -> LoopState:
@@ -682,3 +683,348 @@ async def test_production_adapter_uses_same_invalid_json_fixture_and_resume_only
         ).scalars().all()
         assert [call.tool_name for call in tool_calls] == ["list_projects"]
         assert len(provider_calls) == 3
+
+
+@pytest.mark.asyncio
+async def test_run_793_to_795_validation_failure_then_new_question_isolated(
+    monkeypatch,
+) -> None:
+    """失败后的新问题必须重新查项目，不能自动续做上一轮整理。"""
+    from evals.dialogue_loop.core import StopState
+    from evals.dialogue_loop.instrumentation import InvocationLog
+
+    real_run_turn = loop_module.run_turn
+    model_calls = 0
+    expected_project_handle = ""
+
+    def respond(_messages, info):
+        nonlocal model_calls
+        model_calls += 1
+        if model_calls == 1:
+            return ModelResponse(parts=[ToolCallPart("list_projects", {})])
+        return ModelResponse(
+            parts=[
+                ToolCallPart(
+                    info.output_tools[0].name,
+                    {
+                        "blocks": [
+                            {
+                                "kind": "list",
+                                "result_handle": expected_project_handle,
+                                "label": "当前项目",
+                            },
+                            {"kind": "text", "text": "你当前有 2 个项目。"},
+                        ]
+                    },
+                )
+            ]
+        )
+
+    async def get_text_model(_db, _workspace_id):
+        return FunctionModel(respond, model_name="deterministic-run-795")
+
+    async def controlled_run_turn(agent, state, message, history):
+        if message == "抛开知识库，你分析一下呢":
+            for index in range(11):
+                state.store_result(
+                    "statistic",
+                    {"value": index + 1},
+                    "completed",
+                    "complete",
+                )
+            answer = "这是通用分析。如果需要，我可以整理成候选补充。"
+            completion = state.completion_snapshot("completed")
+            state.remember_turn(
+                message,
+                answer,
+                [],
+                blocks=[{"kind": "text", "text": answer}],
+                completion=completion,
+            )
+            return (
+                {
+                    "status": "completed",
+                    "answer": answer,
+                    "blocks": [{"kind": "text", "text": answer}],
+                    "completion": completion,
+                    "model_calls": [],
+                    "tool_calls": [],
+                    "error": None,
+                },
+                history,
+            )
+        if message == "好的，你整理一下":
+            state.instrumentation.logs.append(
+                InvocationLog(
+                    kind="text",
+                    provider="fixture",
+                    model="validation-fixture",
+                    duration_ms=7,
+                    usage=None,
+                    error="输出结构校验失败",
+                    error_kind="validation",
+                )
+            )
+            state.tool_events.append(
+                {
+                    "tool": "fixture_material",
+                    "status": "completed",
+                    "turn_index": state.turn_index,
+                    "result_summary": {"returned_count": 11},
+                }
+            )
+            stop = StopState(
+                status="failed",
+                reason_code="output_validation_failed",
+                reason="模型输出未通过结构校验",
+                incomplete_steps=["候选整理尚未完成"],
+                can_continue=False,
+            )
+            state.stop(stop)
+            answer, blocks = loop_module._verified_failure_output(state, stop)
+            completion = state.completion_snapshot("failed")
+            state.remember_turn(
+                message,
+                answer,
+                state.tool_events,
+                blocks=blocks,
+                completion=completion,
+            )
+            return (
+                {
+                    "status": "failed",
+                    "answer": answer,
+                    "blocks": blocks,
+                    "completion": completion,
+                    "model_calls": [asdict(item) for item in state.instrumentation.logs],
+                    "tool_calls": list(state.tool_events),
+                    "error": "ValidationError: 输出结构校验失败",
+                },
+                history,
+            )
+        assert message == "我有几个项目"
+        assert state.current_handles == set()
+        assert history == []
+        return await real_run_turn(agent, state, message, history)
+
+    monkeypatch.setattr("app.services.ai_models.get_text_model", get_text_model)
+    monkeypatch.setattr(
+        "app.services.knowledge_agent.production_adapter.run_turn",
+        controlled_run_turn,
+    )
+
+    async with async_session_factory() as db:
+        user = await create_user(db, "Run 793-795")
+        workspace = await create_workspace(db, user)
+        await create_project(db, workspace, "项目甲")
+        await create_project(db, workspace, "项目乙")
+        conversation = await create_conversation(
+            db,
+            workspace.id,
+            user.id,
+            KnowledgeConversationCreate(scope_type="workspace"),
+        )
+
+        saved_runs = []
+        for client_id, message in (
+            ("run-793-analysis", "抛开知识库，你分析一下呢"),
+            ("run-794-organize", "好的，你整理一下"),
+            ("run-795-project-count", "我有几个项目"),
+        ):
+            _, run = await submit_message(
+                db,
+                conversation,
+                KnowledgeRunSubmitRequest(
+                    client_message_id=client_id,
+                    message=message,
+                    basis_mode="auto",
+                ),
+            )
+            run.status = "processing"
+            run.current_step = "claim"
+            await db.commit()
+            if message == "我有几个项目":
+                expected_project_handle = f"rs-{conversation.id}-1"
+            await execute_dialogue_loop_run(db, run)
+            await db.commit()
+            await db.refresh(run)
+            saved_runs.append(run)
+
+        run_793, run_794, run_795 = saved_runs
+        failed_snapshot = json.loads(run_794.dialogue_loop_state_json)
+        assert run_793.status == "completed"
+        assert run_794.status == "failed"
+        assert len(failed_snapshot["blocks"]) == 12
+        assert failed_snapshot["tool_events"][-1]["tool"] == "fixture_material"
+        invocations_794 = (
+            await db.execute(
+                select(KnowledgeAgentModelInvocation).where(
+                    KnowledgeAgentModelInvocation.run_id == run_794.id
+                )
+            )
+        ).scalars().all()
+        assert len(invocations_794) == 1
+        assert run_795.status == "completed"
+        assert "2 个项目" in json.loads(run_795.answer_json)["answer"]
+        tool_calls_795 = (
+            await db.execute(
+                select(KnowledgeAgentToolCall).where(
+                    KnowledgeAgentToolCall.run_id == run_795.id
+                )
+            )
+        ).scalars().all()
+        assert [call.tool_name for call in tool_calls_795] == ["list_projects"]
+
+
+@pytest.mark.asyncio
+async def test_unhandled_validation_error_preserves_audit_and_continue_state(
+    monkeypatch,
+) -> None:
+    """生产异常边界保存脱敏现场；显式“继续”仍恢复合法 continuation。"""
+    from evals.dialogue_loop.core import DialogueAnswer
+    from evals.dialogue_loop.instrumentation import InvocationLog
+
+    async def get_text_model(_db, _workspace_id):
+        return FunctionModel(
+            lambda _messages, _info: None,
+            model_name="unexpected-validation-fixture",
+        )
+
+    async def controlled_run_turn(_agent, state, message, history):
+        if message == "整理候选":
+            handle = state.store_result(
+                "statistic",
+                {"value": 3},
+                "completed",
+                "complete",
+            )
+            state.tool_events.append(
+                {
+                    "tool": "fixture_material",
+                    "status": "completed",
+                    "result_handle": handle,
+                    "turn_index": state.turn_index,
+                }
+            )
+            state.instrumentation.logs.append(
+                InvocationLog(
+                    kind="text",
+                    provider="fixture",
+                    model="unexpected-validation-fixture",
+                    duration_ms=9,
+                    usage=None,
+                    error="模型输出结构校验失败",
+                    error_kind="validation",
+                )
+            )
+            state.continuation = ContinuationState(
+                task_type="finalize_answer",
+                tool_name="finalize_answer",
+                scope={
+                    "workspace_id": state.workspace_id,
+                    "user_id": state.user_id,
+                },
+                pending_steps=[{"step": "finalize_answer"}],
+                original_question=message,
+                recoverable_material={
+                    "mode": "grove_material",
+                    "records": {},
+                    "evidence": {},
+                    "events": [],
+                },
+            )
+            DialogueAnswer.model_validate({"blocks": []})
+            raise AssertionError("空 blocks 应先触发 ValidationError")
+        assert message == "继续"
+        assert state.active_continuation is not None
+        assert state.active_continuation.task_type == "finalize_answer"
+        answer = "已恢复并完成。"
+        completion = {"status": "completed", "can_continue": False}
+        return (
+            {
+                "status": "completed",
+                "answer": answer,
+                "blocks": [{"kind": "text", "text": answer}],
+                "completion": completion,
+                "model_calls": [],
+                "tool_calls": [],
+                "error": None,
+            },
+            history,
+        )
+
+    monkeypatch.setattr("app.services.ai_models.get_text_model", get_text_model)
+    monkeypatch.setattr(
+        "app.services.knowledge_agent.production_adapter.run_turn",
+        controlled_run_turn,
+    )
+
+    async with async_session_factory() as db:
+        user = await create_user(db, "异常恢复")
+        workspace = await create_workspace(db, user)
+        conversation = await create_conversation(
+            db,
+            workspace.id,
+            user.id,
+            KnowledgeConversationCreate(scope_type="workspace"),
+        )
+        _, failed_run = await submit_message(
+            db,
+            conversation,
+            KnowledgeRunSubmitRequest(
+                client_message_id="unexpected-validation-1",
+                message="整理候选",
+            ),
+        )
+        failed_run.status = "processing"
+        failed_run.current_step = "claim"
+        await db.commit()
+        await execute_dialogue_loop_run(db, failed_run)
+        await db.commit()
+        await db.refresh(failed_run)
+
+        snapshot = json.loads(failed_run.dialogue_loop_state_json)
+        assert failed_run.status == "failed"
+        assert snapshot["diagnostic"] == {
+            "code": "dialogue_loop_unhandled_exception",
+            "exception_type": "ValidationError",
+            "validation_errors": [
+                {
+                    "type": "too_short",
+                    "loc": ["blocks"],
+                    "msg": "List should have at least 1 item after validation, not 0",
+                }
+            ],
+        }
+        assert snapshot["blocks"][0]["kind"] == "insufficient"
+        assert snapshot["tool_events"][0]["tool"] == "fixture_material"
+        assert len(snapshot["model_calls"]) == 1
+        assert snapshot["continuation"]["task_type"] == "finalize_answer"
+        assert len(snapshot["records"]) == 1
+        invocations = (
+            await db.execute(
+                select(KnowledgeAgentModelInvocation).where(
+                    KnowledgeAgentModelInvocation.run_id == failed_run.id
+                )
+            )
+        ).scalars().all()
+        assert len(invocations) == 1
+        assert invocations[0].outcome == "model_call_failed"
+
+        _, continued_run = await submit_message(
+            db,
+            conversation,
+            KnowledgeRunSubmitRequest(
+                client_message_id="unexpected-validation-2",
+                message="继续",
+            ),
+        )
+        continued_run.status = "processing"
+        continued_run.current_step = "claim"
+        await db.commit()
+        await execute_dialogue_loop_run(db, continued_run)
+        await db.commit()
+        await db.refresh(continued_run)
+
+        assert continued_run.status == "completed"
+        assert "已恢复并完成" in json.loads(continued_run.answer_json)["answer"]
