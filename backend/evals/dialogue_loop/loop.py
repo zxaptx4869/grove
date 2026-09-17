@@ -2843,7 +2843,11 @@ async def select_editing_context(
         current_refs = await _database_material_refs(state, [entry_id], pairs)
         if saved_refs != current_refs:
             raise ModelRetry("已展示对象或来源材料发生变化，请重新读取核验")
-        task = EditingContext(entry=entry, validation_refs=current_refs)
+        if task is not None and int(task.entry.get("entry_id", -1)) == entry_id:
+            task.entry = entry
+            task.validation_refs = current_refs
+        else:
+            task = EditingContext(entry=entry, validation_refs=current_refs)
         task_refs_verified = True
         state.focused_entry = entry
         state.focused_entry_refs = current_refs
@@ -4056,7 +4060,8 @@ def build_finalizer_agent(model) -> Agent[LoopDeps, DialogueAnswer]:
             semantic_limit = (
                 "这是仅调整表达的任务：保留原记录的事实关系、"
                 "数量所属的尺寸含义和建议、约数、可能性等限定，"
-                "不得将含糊表达改成更窄或更确定的结论。"
+                "不得将含糊表达改成更窄或更确定的结论。必须实际完成用户要求的"
+                "语气、措辞或精简调整，不能原样重放上一版候选。"
                 if _tone_only_candidate_requested(candidate_message)
                 else ""
             )

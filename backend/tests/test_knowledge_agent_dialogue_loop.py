@@ -5267,6 +5267,17 @@ async def test_no_knowledge_discussion_selects_displayed_entry_without_data_read
         "fingerprints": {"entry:35": "current"},
     }
     state.result_sets[handle].semantics["entry_validation_refs"] = {"35": refs}
+    saved_draft = {
+        "blocks": [{"kind": "text", "text": "上一版安全候选"}],
+        "needs_clarification": False,
+    }
+    state.editing_context = loop_module.EditingContext(
+        entry=entries[0],
+        validation_refs=refs,
+        draft=saved_draft,
+        discussion="上一轮针对第一条的具体分析",
+        decisions=["先分析第一条"],
+    )
     handles_before = set(state.current_handles)
     checks = []
 
@@ -5288,6 +5299,9 @@ async def test_no_knowledge_discussion_selects_displayed_entry_without_data_read
     assert selected["result_handle"] is None
     assert state.editing_context is not None
     assert state.editing_context.entry["content"] == "第一条已经展示的正文"
+    assert state.editing_context.discussion == "上一轮针对第一条的具体分析"
+    assert state.editing_context.draft == saved_draft
+    assert state.editing_context.decisions == ["先分析第一条", state.current_message]
     assert checks == [([35], [])]
     assert state.current_handles == handles_before
     assert not any(event.get("tool") in {"search_knowledge", "query_entries", "read_entries"}
