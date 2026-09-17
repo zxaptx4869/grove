@@ -174,7 +174,7 @@ def expected_rows(snapshot: dict, project_id: int | None, turn: Turn) -> list[di
     ]
 
 
-def collect_facts(run: dict, diagnostic: dict) -> list[dict]:
+def collect_facts(run: dict, diagnostic: dict, observability: dict | None = None) -> list[dict]:
     """只从结构化结果读取数字，综合回答还必须实际展示对应服务端事实。"""
     facts = []
     snapshot = run.get("entry_result") or {}
@@ -206,6 +206,35 @@ def collect_facts(run: dict, diagnostic: dict) -> list[dict]:
                         ),
                     }
                 )
+    for call in (observability or {}).get("tool_calls", []):
+        if call.get("tool_name") != "aggregate_entries" or call.get("status") != "completed":
+            continue
+        params = _json_object(call.get("params_summary")).get("params") or {}
+        result = _json_object(call.get("result_summary"))
+        operation = result.get("operation") or params.get("operation")
+        entry_set = {**(params.get("entry_set") or {})}
+        scope = result.get("scope") or {}
+        if "project_id" in scope:
+            entry_set["project_id"] = scope["project_id"]
+        if operation == "count" and isinstance(result.get("value"), int):
+            facts.append(
+                {
+                    "kind": "count",
+                    "value": result["value"],
+                    "completeness": result.get("completeness"),
+                    "entry_set": entry_set,
+                }
+            )
+        elif operation == "group_count":
+            facts.append(
+                {
+                    "kind": "group",
+                    "group_by": result.get("group_by"),
+                    "buckets": result.get("buckets") or [],
+                    "completeness": result.get("completeness"),
+                    "entry_set": entry_set,
+                }
+            )
     return facts
 
 
@@ -317,10 +346,27 @@ def evaluate_turn(
 
     tool_names = [item.get("tool_name") for item in observability.get("tool_calls", [])]
     for required in turn.required_tools:
+        if turn.kind == "search" and required in {"search_knowledge", "query_entries"}:
+            # 两个名称是历史与正式适配层的同一读取能力，下方统一计数。
+            continue
         count = tool_names.count(required)
         if count != 1:
             errors.append(f"工具 {required} 预期调用 1 次，实际 {count} 次")
-    repeated = sorted({name for name in tool_names if name and tool_names.count(name) > 1})
+    signatures = [
+        (
+            item.get("tool_name"),
+            _json_object(item.get("params_summary")).get("fingerprint")
+            or item.get("params_summary"),
+        )
+        for item in observability.get("tool_calls", [])
+    ]
+    repeated = sorted(
+        {
+            name
+            for name, fingerprint in signatures
+            if name and signatures.count((name, fingerprint)) > 1
+        }
+    )
     if repeated:
         errors.append(f"存在重复工具调用：{','.join(repeated)}")
     forbidden = sorted(set(tool_names) & set(turn.forbidden_tools))
@@ -329,7 +375,7 @@ def evaluate_turn(
     rows = expected_rows(snapshot, project_id, turn)
     expected: object = None
     actual: object = None
-    facts = collect_facts(run, diagnostic)
+    facts = collect_facts(run, diagnostic, observability)
     eligible = [
         fact
         for fact in facts
@@ -421,6 +467,9 @@ def evaluate_turn(
         if expected not in actual:
             errors.append("项目枚举数量与只读快照不一致")
     elif turn.kind == "search":
+        search_count = sum(tool_names.count(name) for name in ("search_knowledge", "query_entries"))
+        if search_count != 1:
+            errors.append(f"检索工具预期调用 1 次，实际 {search_count} 次")
         actual = displayed_entry_ids(run)
         expected = turn.target_entry_id
         if not actual:
@@ -1123,7 +1172,12 @@ def regrade_saved_report(source: Path, output: Path) -> Path:
         scope = case_specs[case["case_id"]]["scope"]
         previous = None
         for turn in case["turns"]:
-            if "request" not in turn:
+            if "request" not in turn or "run" not in turn:
+                # 条件续接未触发时没有 Run，保留原 not_covered 证据。
+                if "run" in turn:
+                    previous = turn
+                continue
+            if not turn.get("observability"):
                 previous = turn
                 continue
             spec = Turn(**turn["request"])
@@ -1161,7 +1215,7 @@ def apply_semantic_review(source: Path, review_path: Path) -> Path:
     """将人工语义结论写入新报告，不改写原始运行证据。"""
     report = json.loads(source.read_text(encoding="utf-8"))
     review = json.loads(review_path.read_text(encoding="utf-8"))
-    if review.get("batch_id") != report.get("batch_id"):
+    if review.get("batch_id") not in {report.get("batch_id"), report.get("source_batch_id")}:
         raise ValueError("语义审阅批次与原始报告不匹配")
     turns = {
         (case["case_id"], index): turn

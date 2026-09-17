@@ -320,7 +320,6 @@ def build_core_baseline_cases(targets: list[dict]) -> list[Case]:
                 Turn(
                     f"查找与《{target['title']}》相关的正式记录，列出直接相关项。",
                     "search",
-                    required_tools=("query_entries",),
                     target_entry_id=target["id"],
                     review=True,
                     semantic_criteria=("检索结果围绕用户指定主题，不把未筛选候选当直接相关",),
@@ -405,7 +404,6 @@ def build_core_baseline_cases(targets: list[dict]) -> list[Case]:
                 Turn(
                     f"在当前 Workspace 查找与《{first['title']}》相关的正式记录，按相关性列出。",
                     "search",
-                    required_tools=("query_entries",),
                     target_entry_id=first["id"],
                 ),
                 Turn(

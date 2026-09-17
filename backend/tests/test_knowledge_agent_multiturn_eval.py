@@ -16,6 +16,7 @@ from evals.knowledge_agent_multiturn import (
     collect_facts,
     compare_reports,
     evaluate_turn,
+    regrade_saved_report,
     request,
     run_suite,
     save_report,
@@ -136,6 +137,46 @@ def test_composite_tool_fact_must_be_displayed_and_linked_to_matching_set():
     assert collect_facts(run, diagnostic) == []
     run["answer"]["answer"] = "共 2 条。\n完整统计。"
     assert collect_facts(run, diagnostic)[0]["value"] == 2
+
+
+def test_dialogue_loop_aggregate_audit_is_a_deterministic_fact():
+    snapshot, run, observation = sample()
+    run["entry_result"] = None
+    observation["tool_calls"] = [
+        {
+            "tool_name": "aggregate_entries",
+            "status": "completed",
+            "params_summary": '{"params":{"operation":"count","entry_set":{"main_types":[]}}}',
+            "result_summary": '{"operation":"count","value":2,"completeness":"complete"}',
+        }
+    ]
+    result = evaluate_turn(Turn("总数"), run, {}, observation, snapshot, None)
+    assert result["deterministic"]["status"] == "pass"
+
+
+def test_search_accepts_formal_search_tool_name_but_not_duplicate_searches():
+    snapshot, run, observation = sample()
+    run["entry_result"] = {"items": [{"entry_id": 10}]}
+    observation["tool_calls"] = [
+        {
+            "tool_name": "search_knowledge",
+            "status": "completed",
+            "params_summary": '{"fingerprint":"one"}',
+            "result_summary": '{"returned_count":1}',
+        }
+    ]
+    turn = Turn("检索", "search", target_entry_id=10)
+    assert evaluate_turn(turn, run, {}, observation, snapshot, None)["status"] == "pass"
+    observation["tool_calls"].append(
+        {
+            "tool_name": "query_entries",
+            "status": "completed",
+            "params_summary": '{"fingerprint":"two"}',
+            "result_summary": '{"returned_count":1}',
+        }
+    )
+    result = evaluate_turn(turn, run, {}, observation, snapshot, None)
+    assert "检索工具预期调用 1 次，实际 2 次" in result["errors"]
 
 
 def test_oracle_is_read_only_and_resolves_default_workspace(tmp_path):
@@ -372,3 +413,54 @@ def test_report_is_atomic_sanitized_and_semantic_review_preserves_source(tmp_pat
     assert (tmp_path / "report.json").read_text(encoding="utf-8") == original
     payload = json.loads(reviewed.read_text(encoding="utf-8"))
     assert payload["cases"][0]["turns"][0]["evaluation"]["semantic"]["status"] == "fail"
+
+
+def test_regrade_preserves_conditional_turn_without_run(tmp_path):
+    source = tmp_path / "source.json"
+    source.write_text(
+        json.dumps(
+            {
+                "batch_id": "old",
+                "status": "completed",
+                "domain_unchanged": True,
+                "git_revision": "abc",
+                "runtime_version": {"confidence": "test"},
+                "baseline": {"domain_hashes": {}, "projects": [], "entries": []},
+                "provider": [],
+                "scopes": {"workspace": None},
+                "suite": [
+                    {
+                        "id": "case",
+                        "scope": "workspace",
+                        "turns": [{"message": "继续", "kind": "continuation"}],
+                    }
+                ],
+                "cases": [
+                    {
+                        "case_id": "case",
+                        "title": "条件续接",
+                        "category": "测试",
+                        "repeat": 1,
+                        "turns": [
+                            {
+                                "message": "继续",
+                                "request": {"message": "继续", "kind": "continuation"},
+                                "evaluation": {
+                                    "status": "not_covered",
+                                    "errors": ["无 continuation"],
+                                    "execution": {"status": "not_executed"},
+                                    "deterministic": {"status": "not_covered"},
+                                    "semantic": {"status": "not_covered"},
+                                },
+                            }
+                        ],
+                    }
+                ],
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+    directory = regrade_saved_report(source, tmp_path / "regraded")
+    payload = json.loads((directory / "report.json").read_text(encoding="utf-8"))
+    assert payload["cases"][0]["turns"][0]["evaluation"]["status"] == "not_covered"
