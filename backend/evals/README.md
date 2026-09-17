@@ -116,7 +116,7 @@ Knowledge Agent Worker 已开启。接口身份及每个 Run 必须与核对数�
 # 零模型预检：登录、身份/数据库一致性、列表 API 与 Provider 配置
 .venv/bin/python -m evals.knowledge_agent_multiturn --preflight
 
-# 轻量核心基线：4 组，最多 19 条用户消息，含两次独立协作链
+# 轻量核心集：原 4 组基线加 1 组独立短问法，最多 22 条用户消息
 .venv/bin/python -m evals.knowledge_agent_multiturn --suite core
 
 # 原始反馈重复三次，每次使用新 Conversation
@@ -157,9 +157,10 @@ Knowledge Agent Worker 已开启。接口身份及每个 Run 必须与核对数�
 - 首轮真实歧义、补充任务后的继续追问。
 - 空项目、通过范围接口切换项目、Workspace 内自然语言指定项目。
 
-`--suite core` 只含四组高信号场景：项目枚举与跨轮读取保留集、两组表达不同的
+`--suite core` 含原四组高信号基线：项目枚举与跨轮读取保留集、两组表达不同的
 “检索 → 正文 → 通用知识评价 → 候选 → 只改语气 → 条件续接 → 独立新问题”链，
-以及 Workspace/项目范围切换。运行前从当前项目动态选两条已有、有来源的 Entry，
+以及 Workspace/项目范围切换；另有一组单独标识、不参与严格同条件比较的会话 301
+原始短问法“抛开知识库，第一条说得对吗”。运行前从当前项目动态选两条已有、有来源的 Entry，
 用其真实标题组装问题；不硬编码 ID、数量或主题关键词。只有上轮公开 Run 实际返回
 合法 continuation 时才发送“继续”，否则明确记为 `not_covered`。
 

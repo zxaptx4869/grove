@@ -521,14 +521,21 @@ def test_core_suite_is_fixed_small_and_uses_dynamic_targets():
         {"id": 502, "title": "动态标题乙", "project_name": "项目甲"},
     ]
     cases = build_core_baseline_cases(targets)
-    assert len(cases) == 4
-    assert sum(len(case.turns) for case in cases) == 19
+    assert len(cases) == 5
+    assert sum(len(case.turns) for case in cases) == 22
     serialized = str(cases)
     assert "动态标题甲" in serialized and "动态标题乙" in serialized
     continuation = cases[1].turns[-2]
     assert continuation.only_if_continuation
     assert blocked_reason(continuation, {"run": {}}) == (
         "上轮未产生合法 continuation，本轮按预定标准记为未覆盖"
+    )
+    short_case = next(case for case in cases if case.id == "short_anchored_discussion")
+    assert short_case.turns[-1].message == "抛开知识库，第一条说得对吗"
+    assert short_case.turns[-1].forbidden_tools == (
+        "search_knowledge",
+        "query_entries",
+        "read_entries",
     )
 
 

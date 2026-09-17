@@ -395,6 +395,43 @@ def build_core_baseline_cases(targets: list[dict]) -> list[Case]:
         )
 
     first, second = targets[:2]
+    short_anchored_discussion = Case(
+        "short_anchored_discussion",
+        "会话 301 原始短问法",
+        (
+            Turn(
+                f"查找与《{first['title']}》相关的正式记录，列出直接相关项。",
+                "search",
+                target_entry_id=first["id"],
+                review=True,
+            ),
+            Turn(
+                "把第一条的正文展示出来。",
+                "read_reference",
+                reference_previous=True,
+                required_tools=("read_entries",),
+                forbidden_tools=("search_knowledge", "query_entries"),
+                review=True,
+            ),
+            Turn(
+                "抛开知识库，第一条说得对吗",
+                "anchored_discussion",
+                requires_previous_answer=True,
+                forbidden_tools=data_tools,
+                review=True,
+                semantic_criteria=(
+                    "第一条仍指向刚展示的实际正文，不要求用户重贴",
+                    "只做通用分析，不新增检索或冒充来源核验",
+                ),
+            ),
+        ),
+        scope="project",
+        category="新增短问法 / 不参与严格同条件比较",
+        notes=[
+            f"运行前动态目标 Entry={first['id']}，项目={first['project_name']}",
+            "原始短句来自会话 301 Run 806；与既有长问法分开报告。",
+        ],
+    )
     return [
         Case(
             "retained_read",
@@ -420,6 +457,7 @@ def build_core_baseline_cases(targets: list[dict]) -> list[Case]:
         ),
         collaboration_case(first, "a"),
         collaboration_case(second, "b"),
+        short_anchored_discussion,
         Case(
             "scope_switch",
             "Workspace 与项目范围切换",
