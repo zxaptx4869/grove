@@ -1,6 +1,7 @@
 """知识对话与 Run 应用服务测试：所有权、范围、分页、幂等与并发冲突。"""
 
 import uuid
+from unittest.mock import AsyncMock
 
 import pytest
 from fastapi import HTTPException
@@ -115,6 +116,30 @@ async def test_create_conversation_workspace_and_project_scope() -> None:
                 KnowledgeConversationCreate(scope_type="project", project_id=project.id),
             )
         assert exc_info.value.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_create_conversation_refreshes_server_default_timestamps(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """创建对话会显式加载数据库默认时间，兼容 MySQL 异步驱动。"""
+    async with async_session_factory() as db:
+        user = await _user(db)
+        workspace = await _workspace_for(db, user)
+        refresh = AsyncMock(wraps=db.refresh)
+        monkeypatch.setattr(db, "refresh", refresh)
+
+        conversation = await create_conversation(
+            db,
+            workspace.id,
+            user.id,
+            KnowledgeConversationCreate(scope_type="workspace"),
+        )
+
+        refresh.assert_awaited_once_with(conversation)
+        assert conversation.last_activity_at is not None
+        assert conversation.created_at is not None
+        assert conversation.updated_at is not None
 
 
 @pytest.mark.asyncio

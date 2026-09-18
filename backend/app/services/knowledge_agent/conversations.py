@@ -249,6 +249,8 @@ async def create_conversation(
     )
     db.add(conversation)
     await db.flush()
+    # MySQL 不会像 SQLite 一样可靠返回服务端默认时间，响应前显式加载这些字段。
+    await db.refresh(conversation)
     return conversation
 
 
