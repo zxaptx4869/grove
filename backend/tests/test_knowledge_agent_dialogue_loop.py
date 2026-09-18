@@ -768,9 +768,15 @@ def test_compact_history_keeps_order_and_protocol_without_large_body() -> None:
                 "error": None,
             }
         ],
-        blocks=[
-            {"kind": "text", "text": "概括说明"},
-            {
+            blocks=[
+                {"kind": "text", "text": "概括说明"},
+                {
+                    "kind": "list",
+                    "handle": handle,
+                    "status": "completed",
+                    "completeness": "complete",
+                },
+                {
                 "kind": "entry",
                 "entry_id": 91,
                 "title": "甲",
@@ -2223,6 +2229,66 @@ async def test_semantic_selection_aligns_search_read_and_rendered_direct_set(
     assert "甲醛环保等级" not in turn["answer"]
     assert state.authorized_entry_ids == {11}
     assert turn["blocks"][0]["kind"] == "text"
+
+    async def revalidate_indirect(_state, entry_ids):
+        assert entry_ids == [22, 33]
+        return {
+            "items": [{"entry_id": entry_id} for entry_id in entry_ids],
+            "denied_entry_ids": [],
+            "unavailable_entry_ids": [],
+        }
+
+    monkeypatch.setattr(
+        loop_module, "_revalidate_discovered_entries", revalidate_indirect
+    )
+    state.begin_turn(57, "把刚才两条间接相关记录展示出来")
+    indirect_calls = 0
+
+    def show_indirect(_messages, info):
+        nonlocal indirect_calls
+        indirect_calls += 1
+        if indirect_calls == 1:
+            assert selected_handle in str(info.instructions)
+            assert "indirect_count" in str(info.instructions)
+            return ModelResponse(parts=[ToolCallPart(
+                "select_relevant_entries",
+                {
+                    "candidate_result_handle": selected_handle,
+                    "classifications": [],
+                    "relevance_scope": "indirect",
+                },
+            )])
+        result = next(
+            message
+            for message in reversed(state.tool_events)
+            if message.get("reason_code") == "indirect_results_authorized"
+        )
+        return ModelResponse(parts=[ToolCallPart(
+            info.output_tools[0].name,
+            {"blocks": [{
+                "kind": "list",
+                "result_handle": result["result_handle"],
+                "label": "间接相关正式记录",
+            }]},
+        )])
+
+    indirect_turn, _ = await run_turn(
+        build_agent(FunctionModel(show_indirect)),
+        state,
+        state.current_message,
+        [],
+    )
+
+    assert indirect_turn["status"] == "completed", indirect_turn
+    indirect_block = next(
+        block for block in indirect_turn["blocks"] if block["kind"] == "list"
+    )
+    assert indirect_block["semantics"]["relevance_scope"] == "indirect"
+    assert [item["entry_id"] for item in indirect_block["items"]] == [22, 33]
+    assert "墙面材料选乳胶漆" in indirect_turn["answer"]
+    assert "甲醛环保等级" in indirect_turn["answer"]
+    assert all("content" not in item for item in indirect_block["items"])
+    assert [item[0] for item in dispatched].count("query_entries") == 1
 
 
 def test_candidate_handle_cannot_render_or_resolve_position() -> None:
@@ -5276,6 +5342,132 @@ async def test_candidate_continuation_advances_latest_pair_then_stops_repeated_n
     assert calls == 2
 
 
+@pytest.mark.asyncio
+async def test_unbound_finalizer_discussion_is_saved_for_next_candidate() -> None:
+    """finalizer 明确关联已展示对象时，不依赖预先激活 editing_context。"""
+
+    state = _state()
+    state.instrumentation.context_policy_enabled = True
+    seeded = await _seed_finalize_material(state)
+    entry_id = seeded["entry_id"]
+    entry_record = next(
+        record
+        for record in state.result_sets.values()
+        if record.kind == "entries"
+    )
+    refs = await loop_module._database_material_refs(
+        state,
+        [entry_id],
+        [(entry_id, seeded["source_id"])],
+    )
+    entry_record.semantics["entry_validation_refs"] = {str(entry_id): refs}
+    entry_record.semantics["display_parent_handle"] = seeded["list_handle"]
+    entry_record.semantics["display_positions"] = {str(entry_id): 1}
+    state.discovered_entry_ids.add(entry_id)
+    state.discovered_entry_fingerprints[entry_id] = "a" * 64
+    state.remember_turn(
+        "展示这条记录的正文",
+        "已展示正文",
+        state.tool_events,
+        blocks=[
+            {"kind": "list", "handle": seeded["list_handle"]},
+            {
+                "kind": "entry",
+                "handle": entry_record.handle,
+                "position": 1,
+                "entry_id": entry_id,
+                "title": seeded["title"],
+            },
+        ],
+        completion={"status": "completed"},
+    )
+    state.begin_turn(902, "分析一下刚才这条记录是否严谨")
+    assert state.editing_context is None
+    assert state.editing_active is False
+
+    def solve_response(_messages, info):
+        return ModelResponse(parts=[ToolCallPart(
+            info.output_tools[0].name,
+            {"blocks": [{"kind": "text", "text": "等待独立收尾。"}]},
+        )])
+
+    solve_agent = Agent(
+        FunctionModel(solve_response),
+        deps_type=LoopDeps,
+        output_type=DialogueAnswer,
+    )
+
+    @solve_agent.output_validator
+    async def enter_finalizer(ctx, _answer):
+        ctx.deps.state.instrumentation.begin_finalize("input_soft_limit")
+        raise loop_module.FinalizeRequired("input_soft_limit")
+
+    discussion = "模型分析：这条记录需要保留检测条件，不能写成无条件结论。"
+
+    def finalize_response(_messages, info):
+        assert not info.function_tools
+        assert "discussion_entry_id" in str(info.instructions)
+        return ModelResponse(parts=[ToolCallPart(
+            info.output_tools[0].name,
+            {
+                "blocks": [{"kind": "text", "text": discussion}],
+                "discussion_entry_id": entry_id,
+            },
+        )])
+
+    analysis_turn, _ = await run_turn(
+        solve_agent,
+        state,
+        state.current_message,
+        [],
+        build_finalizer_agent(FunctionModel(finalize_response)),
+    )
+
+    assert analysis_turn["status"] == "completed", analysis_turn
+    assert state.editing_context is not None
+    assert state.editing_context.entry["entry_id"] == entry_id
+    assert state.editing_context.discussion == discussion
+
+    state.begin_turn(903, "按刚才分析生成候选")
+    candidate_calls = 0
+
+    def candidate_response(messages, info):
+        nonlocal candidate_calls
+        candidate_calls += 1
+        if info.function_tools:
+            return ModelResponse(parts=[ToolCallPart(
+                "editing_context",
+                {
+                    "action": "edit",
+                    "purpose": "candidate",
+                    "result_set_handle": seeded["list_handle"],
+                    "position": 1,
+                },
+            )])
+        assert discussion in str(messages)
+        return ModelResponse(parts=[ToolCallPart(
+            info.output_tools[0].name,
+            {"blocks": [{
+                "kind": "text",
+                "text": (
+                    "候选修订：该等级结论需要结合检测条件判断，不能作为无条件结论。"
+                    "以上为候选内容，尚未写入正式记录；模型判断不属于 Source 原文。"
+                ),
+            }]},
+        )])
+
+    candidate_turn, _ = await run_turn(
+        build_agent(FunctionModel(candidate_response)),
+        state,
+        state.current_message,
+        [],
+    )
+
+    assert candidate_turn["status"] in {"completed", "partial_completed"}, candidate_turn
+    assert discussion in str(state.editing_context.discussion)
+    assert candidate_calls == 2
+
+
 def test_tone_only_candidate_uses_previous_candidate_as_semantic_baseline() -> None:
     """连续改写须保留上一版候选新增的数量归属和不确定性。"""
 
@@ -5425,6 +5617,102 @@ def test_authorized_entry_list_accepts_only_ordered_subsets() -> None:
     )
     assert loop_module._authorized_list_for_entry_ids(state, [9, 7]) is None
     assert loop_module._authorized_list_for_entry_ids(state, [7, 99]) is None
+
+
+def test_undelivered_internal_list_does_not_replace_position_reference() -> None:
+    """内部允许展示的列表只有进入最终 blocks 后才能更新跨轮位置参照。"""
+
+    state = _state()
+    list_a = state.store_result(
+        "list",
+        {"items": [
+            {"entry_id": 7, "title": "ENF"},
+            {"entry_id": 9, "title": "日本 F4 星级"},
+            {"entry_id": 10, "title": "E0/E1"},
+            {"entry_id": 8, "title": "NAF"},
+        ]},
+        "completed",
+        "complete",
+    )
+    state.remember_turn(
+        "列出环保等级",
+        "已展示列表 A",
+        [{"tool": "query_entries", "result_handle": list_a}],
+        blocks=[{
+            "kind": "list",
+            "handle": list_a,
+            "status": "completed",
+            "completeness": "complete",
+        }],
+        completion={"status": "completed"},
+    )
+
+    state.begin_turn(56, "换个角度说说")
+    list_b = state.store_result(
+        "list",
+        {"items": [
+            {"entry_id": 7, "title": "ENF"},
+            {"entry_id": 10, "title": "E0/E1"},
+            {"entry_id": 9, "title": "日本 F4 星级"},
+            {"entry_id": 8, "title": "NAF"},
+        ]},
+        "completed",
+        "complete",
+    )
+    state.remember_turn(
+        "换个角度说说",
+        "只交付了一段解释，没有展示新列表",
+        [{"tool": "query_entries", "result_handle": list_b}],
+        blocks=[{"kind": "text", "text": "只交付了一段解释，没有展示新列表"}],
+        completion={"status": "completed"},
+    )
+    state.begin_turn(57, "第二条说得对吗")
+
+    selected = loop_module._authorized_list_for_entry_ids(state, [9])
+    assert selected is not None
+    assert selected[0] == list_a
+    assert list_a in loop_module.recent_entry_reference_handles(state)
+    assert list_b not in loop_module.recent_entry_reference_handles(state)
+    assert list_a in str(build_compact_history(state))
+    assert list_b not in str(build_compact_history(state))
+
+
+def test_delivered_new_list_replaces_position_reference() -> None:
+    """新列表实际交付后，最近位置参照才更新为新顺序。"""
+
+    state = _state()
+    list_a = state.store_result(
+        "list",
+        {"items": [{"entry_id": 7}, {"entry_id": 9}, {"entry_id": 10}]},
+        "completed",
+        "complete",
+    )
+    state.remember_turn(
+        "展示 A",
+        "A",
+        [{"tool": "query_entries", "result_handle": list_a}],
+        blocks=[{"kind": "list", "handle": list_a}],
+        completion={"status": "completed"},
+    )
+    state.begin_turn(58, "展示 B")
+    list_b = state.store_result(
+        "list",
+        {"items": [{"entry_id": 7}, {"entry_id": 10}, {"entry_id": 9}]},
+        "completed",
+        "complete",
+    )
+    state.remember_turn(
+        "展示 B",
+        "B",
+        [{"tool": "query_entries", "result_handle": list_b}],
+        blocks=[{"kind": "list", "handle": list_b}],
+        completion={"status": "completed"},
+    )
+    state.begin_turn(59, "第二条")
+
+    selected = loop_module._authorized_list_for_entry_ids(state, [10])
+    assert selected is not None
+    assert selected[0] == list_b
 
 
 @pytest.mark.asyncio

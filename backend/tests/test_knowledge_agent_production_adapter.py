@@ -190,6 +190,400 @@ def test_production_state_round_trip_preserves_scope_results_and_continuation() 
     assert switched_scope.editing_context is None
 
 
+def test_snapshot_keeps_delivered_position_reference_and_classified_indirect() -> None:
+    """快照保留内部结果，但恢复后只有实际交付列表能作为位置参照。"""
+
+    state = _state()
+    state.discovered_entry_ids.update({7, 9, 10, 22})
+    state.discovered_entry_fingerprints.update(
+        {7: "7" * 64, 9: "9" * 64, 10: "a" * 64, 22: "b" * 64}
+    )
+    list_a = state.store_result(
+        "list",
+        {
+            "items": [
+                {"entry_id": 7, "title": "ENF"},
+                {"entry_id": 9, "title": "日本 F4 星级"},
+                {"entry_id": 10, "title": "E0/E1"},
+            ],
+            "internal_classified_items": [
+                {"entry_id": 22, "title": "间接相关材料", "relevance_level": "indirect"}
+            ],
+        },
+        "completed",
+        "limited",
+        semantics={
+            "result_role": "authorized",
+            "relevance_scope": "direct",
+            "classification_counts": {"direct": 3, "indirect": 1, "unrelated": 0},
+        },
+    )
+    state.remember_turn(
+        "展示环保等级",
+        "已展示列表 A",
+        [{"tool": "select_relevant_entries", "result_handle": list_a}],
+        blocks=[{"kind": "list", "handle": list_a}],
+        completion={"status": "completed"},
+    )
+    state.begin_turn(56, "换个角度分析")
+    list_b = state.store_result(
+        "list",
+        {"items": [
+            {"entry_id": 7, "title": "ENF"},
+            {"entry_id": 10, "title": "E0/E1"},
+            {"entry_id": 9, "title": "日本 F4 星级"},
+        ]},
+        "completed",
+        "limited",
+    )
+    delivered_blocks = [{"kind": "text", "text": "本轮只交付分析，没有展示列表 B"}]
+    state.remember_turn(
+        "换个角度分析",
+        delivered_blocks[0]["text"],
+        [{"tool": "query_entries", "result_handle": list_b}],
+        blocks=delivered_blocks,
+        completion={"status": "completed"},
+    )
+    snapshot = _state_snapshot(
+        state,
+        {
+            "status": "completed",
+            "answer": delivered_blocks[0]["text"],
+            "blocks": delivered_blocks,
+            "completion": {"status": "completed", "can_continue": False},
+            "model_calls": [],
+        },
+        loop_status="completed",
+    )
+
+    assert set(snapshot["records"]) == {list_a, list_b}
+    assert 22 in snapshot["discovered_entry_ids"]
+    assert 22 not in snapshot["authorized_entry_ids"]
+
+    restored = _state()
+    _restore_state(restored, json.loads(json.dumps(snapshot, ensure_ascii=False)))
+    restored.begin_turn(57, "第二条说得对吗")
+    selected = loop_module._authorized_list_for_entry_ids(restored, [9])
+
+    assert selected is not None
+    assert selected[0] == list_a
+    assert list_b not in loop_module.recent_entry_reference_handles(restored)
+    assert 22 in restored.discovered_entry_ids
+    assert 22 not in restored.authorized_entry_ids
+
+
+def test_snapshot_deduplicates_same_parent_entry_and_fingerprint() -> None:
+    """重复打开同一材料只保留最新副本，指纹变化的版本仍分别保留。"""
+
+    state = _state()
+    parent = state.store_result(
+        "list",
+        {"items": [{"entry_id": 7, "title": "同一条"}]},
+        "completed",
+        "complete",
+    )
+    state.remember_turn(
+        "展示列表",
+        "已展示",
+        [{"tool": "query_entries", "result_handle": parent}],
+        blocks=[{"kind": "list", "handle": parent}],
+        completion={"status": "completed"},
+    )
+    duplicate_handles = []
+    for index in range(20):
+        state.begin_turn(100 + index, "再次打开第一条")
+        handle = state.store_result(
+            "entries",
+            {"items": [{"entry_id": 7, "title": "同一条", "content": "同一正文"}]},
+            "completed",
+            "limited",
+            semantics={
+                "display_parent_handle": parent,
+                "display_positions": {"7": 1},
+                "entry_validation_refs": {
+                    "7": {"fingerprints": {"entry:7": "same-fingerprint"}}
+                },
+            },
+        )
+        duplicate_handles.append(handle)
+        state.remember_turn(
+            "再次打开第一条",
+            "同一正文",
+            [{"tool": "open_list_item", "result_handle": handle}],
+            blocks=[{
+                "kind": "entry",
+                "handle": handle,
+                "position": 1,
+                "entry_id": 7,
+                "title": "同一条",
+            }],
+            completion={"status": "completed"},
+        )
+
+    state.begin_turn(121, "材料更新后再打开")
+    changed = state.store_result(
+        "entries",
+        {"items": [{"entry_id": 7, "title": "同一条", "content": "更新正文"}]},
+        "completed",
+        "limited",
+        semantics={
+            "display_parent_handle": parent,
+            "display_positions": {"7": 1},
+            "entry_validation_refs": {
+                "7": {"fingerprints": {"entry:7": "changed-fingerprint"}}
+            },
+        },
+    )
+    state.remember_turn(
+        "材料更新后再打开",
+        "更新正文",
+        [{"tool": "open_list_item", "result_handle": changed}],
+        blocks=[{
+            "kind": "entry",
+            "handle": changed,
+            "position": 1,
+            "entry_id": 7,
+            "title": "同一条",
+        }],
+        completion={"status": "completed"},
+    )
+    snapshot = _state_snapshot(
+        state,
+        {
+            "status": "completed",
+            "answer": "更新正文",
+            "blocks": [{"kind": "entry", "handle": changed, "entry_id": 7}],
+            "completion": {"status": "completed", "can_continue": False},
+            "model_calls": [],
+        },
+        loop_status="completed",
+    )
+
+    assert parent in snapshot["records"]
+    assert duplicate_handles[-1] in snapshot["records"]
+    assert changed in snapshot["records"]
+    assert not set(duplicate_handles[:-1]) & snapshot["records"].keys()
+
+
+@pytest.mark.asyncio
+async def test_production_adapter_uses_only_delivered_list_for_positions(
+    monkeypatch,
+) -> None:
+    """正式跨 Run 中，内部列表不更新位置；最终展示的新列表才更新。"""
+
+    from app.services.entry import entry_baseline, entry_fingerprint
+
+    model_run = 0
+    observed: dict[str, object] = {"opened_entry_ids": []}
+
+    def tool_return(messages, tool_name: str) -> dict:
+        for message in reversed(messages):
+            for part in getattr(message, "parts", []):
+                if isinstance(part, ToolReturnPart) and part.tool_name == tool_name:
+                    assert isinstance(part.content, dict)
+                    return part.content
+        raise AssertionError(f"缺少 {tool_name} 工具返回")
+
+    async with async_session_factory() as db:
+        user = await create_user(db, "位置参照正式链")
+        workspace = await create_workspace(db, user)
+        project = await create_project(db, workspace, "等级项目")
+        node = await create_child_node(db, project, "环保等级")
+        entries = []
+        for index, title in enumerate(("ENF", "日本 F4 星级", "E0/E1", "NAF"), 1):
+            source, attachment = await create_source_attachment(
+                db,
+                workspace,
+                project,
+                title=f"等级来源 {index}",
+                text_content=f"{title} 的正文材料。",
+            )
+            entry = await create_entry_with_evidence(
+                db,
+                project,
+                node,
+                source,
+                attachment,
+                title=title,
+                content=f"{title} 的正文材料。",
+                quote=f"{title} 的正文材料。",
+            )
+            entries.append(entry)
+        await db.commit()
+        for row in (user, workspace, project, *entries):
+            await db.refresh(row)
+        conversation = await create_conversation(
+            db,
+            workspace.id,
+            user.id,
+            KnowledgeConversationCreate(scope_type="project", project_id=project.id),
+        )
+
+        ordered_a = list(entries)
+        ordered_b = [entries[0], entries[2], entries[1], entries[3]]
+
+        async def fake_dispatch(ctx, tool_name, params, kind, **kwargs):
+            assert tool_name == "query_entries"
+            ordered = ordered_b if params.get("sort", {}).get("direction") == "desc" else ordered_a
+            items = [
+                {
+                    "entry_id": int(entry.id),
+                    "title": entry.title,
+                    "project_name": project.name,
+                    "excerpt": entry.content,
+                }
+                for entry in ordered
+            ]
+            for entry in ordered:
+                ctx.deps.state.discovered_entry_ids.add(int(entry.id))
+                ctx.deps.state.discovered_entry_fingerprints[int(entry.id)] = (
+                    entry_fingerprint(entry_baseline(entry))
+                )
+            payload = {"items": items, "returned_count": len(items), "has_more": False}
+            semantics = loop_module._result_semantics(tool_name, params, payload)
+            handle = ctx.deps.state.store_result(
+                kind,
+                payload,
+                "completed",
+                "complete",
+                semantics=semantics,
+                displayable=True,
+            )
+            event = {
+                "tool": kwargs.get("surface_tool") or tool_name,
+                "shared_tool": tool_name,
+                "result_handle": handle,
+                "status": "completed",
+                "completeness": "complete",
+                "params": kwargs.get("audit_params") or params,
+                "shared_params": params,
+                "result_summary": {"returned_count": len(items), "has_more": False},
+                "error": None,
+                "duration_ms": 0,
+                "turn_index": ctx.deps.state.turn_index,
+            }
+            ctx.deps.state.tool_events.append(event)
+            return {**event, "result_role": "authorized", "payload": payload}
+
+        monkeypatch.setattr(loop_module, "_dispatch", fake_dispatch)
+
+        def query_and_maybe_show(direction: str, *, show: bool):
+            calls = 0
+
+            def respond(messages, info):
+                nonlocal calls
+                calls += 1
+                if calls == 1:
+                    return ModelResponse(parts=[ToolCallPart(
+                        "query_entries",
+                        {
+                            "project_scope": "project",
+                            "project_name": project.name,
+                            "semantic_query": None,
+                            "limit": 4,
+                            "sort_field": "created_at",
+                            "sort_direction": direction,
+                        },
+                    )])
+                result = tool_return(messages, "query_entries")
+                if show:
+                    observed[f"shown_{direction}"] = result["result_handle"]
+                    blocks = [{
+                        "kind": "list",
+                        "result_handle": result["result_handle"],
+                        "label": "等级列表",
+                    }]
+                else:
+                    observed["hidden_b"] = result["result_handle"]
+                    blocks = [{"kind": "text", "text": "本轮只给解释，不展示内部新列表。"}]
+                return ModelResponse(parts=[ToolCallPart(
+                    info.output_tools[0].name,
+                    {"blocks": blocks},
+                )])
+
+            return respond
+
+        def open_second(expected_handle_key: str, expected_entry):
+            calls = 0
+
+            def respond(messages, info):
+                nonlocal calls
+                calls += 1
+                expected_handle = str(observed[expected_handle_key])
+                if calls == 1:
+                    serialized = f"{messages}\n{info.instructions}"
+                    assert expected_handle in serialized
+                    if expected_handle_key == "shown_asc":
+                        assert str(observed["hidden_b"]) not in serialized
+                    return ModelResponse(parts=[ToolCallPart(
+                        "open_list_item",
+                        {"result_set_handle": expected_handle, "position": 2},
+                    )])
+                result = tool_return(messages, "open_list_item")
+                opened_id = result["payload"]["items"][0]["entry_id"]
+                observed["opened_entry_ids"].append(opened_id)
+                assert opened_id == int(expected_entry.id)
+                return ModelResponse(parts=[ToolCallPart(
+                    info.output_tools[0].name,
+                    {"blocks": [{
+                        "kind": "text",
+                        "text": f"[[entry:{result['result_handle']}:1]]",
+                    }]},
+                )])
+
+            return respond
+
+        responders = [
+            query_and_maybe_show("asc", show=True),
+            query_and_maybe_show("desc", show=False),
+            open_second("shown_asc", entries[1]),
+            query_and_maybe_show("desc", show=True),
+            open_second("shown_desc", entries[2]),
+        ]
+
+        async def get_text_model(_db, _workspace_id):
+            nonlocal model_run
+            responder = responders[model_run]
+            model_run += 1
+            return FunctionModel(responder, model_name=f"position-reference-{model_run}")
+
+        monkeypatch.setattr("app.services.ai_models.get_text_model", get_text_model)
+
+        for index, message in enumerate(
+            (
+                "按 A 顺序展示等级标题",
+                "内部换个顺序分析，但不要展示列表",
+                "第二条的正文是什么",
+                "现在明确展示新的 B 顺序",
+                "新列表第二条的正文是什么",
+            ),
+            start=1,
+        ):
+            _, run = await submit_message(
+                db,
+                conversation,
+                KnowledgeRunSubmitRequest(
+                    client_message_id=f"position-reference-{index}",
+                    message=message,
+                    basis_mode="auto",
+                ),
+            )
+            run.status = "processing"
+            run.current_step = "claim"
+            await db.commit()
+            await execute_dialogue_loop_run(db, run)
+            await db.commit()
+            await db.refresh(run)
+            expected_statuses = {"completed", "partial"} if "正文" in message else {"completed"}
+            assert run.status in expected_statuses, (
+                message,
+                run.error,
+                run.dialogue_loop_state_json,
+            )
+
+    assert observed["opened_entry_ids"] == [int(entries[1].id), int(entries[2].id)]
+
+
 @pytest.mark.asyncio
 async def test_production_adapter_preserves_displayed_entry_discussion_and_candidate(
     monkeypatch,

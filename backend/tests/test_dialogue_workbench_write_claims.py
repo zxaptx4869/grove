@@ -88,6 +88,7 @@ def test_content_only_candidate_uses_same_unwritten_boundary():
     "不代表已核验、已保存以及已写入正式记录。",
     "不代表 已核验 或 已写入正式记录。",
     "不代表已写入。不代表已写入。",
+    "不是对这条记录来源材料的核验，也不代表它已经过官方确认或已写入正式记录。",
 ])
 def test_negated_statuses_pass_shared_candidate_validation(statement):
     state = _state()
@@ -97,6 +98,22 @@ def test_negated_statuses_pass_shared_candidate_validation(statement):
         "kind": "text", "text": CANDIDATE_BODY + "\n" + statement,
     }]})
     assert loop.output_errors(answer, state) == []
+
+
+@pytest.mark.parametrize("statement", [
+    "尚未写入正式记录；但当前内容已经写入正式记录。",
+    "这份候选尚未写入正式记录。另一份内容已经写入正式记录。",
+    "原稿尚未写入，但新稿已经写入正式记录。",
+    "说明中引用“已经写入正式记录”，仍不能作为安全边界。",
+])
+def test_local_negation_does_not_cover_separate_positive_write_claim(statement):
+    state = _state()
+    state.editing_active = True
+    state.editing_purpose = "candidate"
+    answer = DialogueAnswer.model_validate({"blocks": [{
+        "kind": "text", "text": CANDIDATE_BODY + "\n" + statement,
+    }]})
+    assert WRITE_ERROR in loop.output_errors(answer, state)
 
 
 @pytest.mark.parametrize("statement", [

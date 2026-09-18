@@ -176,6 +176,13 @@ async def test_current_entry_draft_simplify_suspend_resume_end_to_end():
     state.focused_entry_refs = None
     # 调用真实 open_list_item 路径固定当前对象，随后不重复资料读取。
     state.discovered_entry_ids.add(seeded["entry_id"])
+    state.remember_turn(
+        "展示候选对象",
+        "已展示第一条",
+        [{"tool": "select_relevant_entries", "result_handle": seeded["list_handle"]}],
+        blocks=[{"kind": "list", "handle": seeded["list_handle"]}],
+        completion={"status": "completed"},
+    )
     step = 0
 
     def respond(messages, info):
