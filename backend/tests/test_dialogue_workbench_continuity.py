@@ -504,7 +504,7 @@ def test_finalizer_input_excludes_rejected_candidates_but_validation_stays_stric
     ]}, "completed", "limited", displayable=False,
         semantics={"result_role": "candidate"})
     allowed = state.store_result("list", {"items": [{"entry_id": 8, "title": "美标NAF级"}],
-        "internal_classifications": [{"entry_id": 89, "relevance": "indirect",
+        "internal_classifications": [{"entry_id": 89, "relevance": "unrelated",
                                       "reason": "窗帘安装前必须清洗"}]},
         "completed", "limited", semantics={"result_role": "authorized",
                                              "candidate_result_handle": hidden})
@@ -517,4 +517,4 @@ def test_finalizer_input_excludes_rejected_candidates_but_validation_stays_stric
     assert "内部候选正文" not in str(history)
     bad = DialogueAnswer.model_validate({"blocks": [
         {"kind": "text", "text": "窗帘安装前必须清洗"}]})
-    assert "主答案包含间接相关或不相关候选的标题" in loop.output_errors(bad, state)
+    assert "主答案包含已判定为不相关候选的标题" in loop.output_errors(bad, state)
