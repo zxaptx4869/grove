@@ -190,8 +190,8 @@ def test_production_state_round_trip_preserves_scope_results_and_continuation() 
     assert switched_scope.editing_context is None
 
 
-def test_snapshot_keeps_delivered_position_reference_and_classified_indirect() -> None:
-    """快照保留内部结果，但恢复后只有实际交付列表能作为位置参照。"""
+def test_snapshot_keeps_delivered_unified_related_position_reference() -> None:
+    """统一相关列表完整恢复，内部未交付结果不能成为位置参照。"""
 
     state = _state()
     state.discovered_entry_ids.update({7, 9, 10, 22})
@@ -205,16 +205,19 @@ def test_snapshot_keeps_delivered_position_reference_and_classified_indirect() -
                 {"entry_id": 7, "title": "ENF"},
                 {"entry_id": 9, "title": "日本 F4 星级"},
                 {"entry_id": 10, "title": "E0/E1"},
-            ],
-            "internal_classified_items": [
-                {"entry_id": 22, "title": "间接相关材料", "relevance_level": "indirect"}
+                {
+                    "entry_id": 22,
+                    "title": "间接相关材料",
+                    "relevance_level": "indirect",
+                    "relevance_reason": "提供相关材料背景",
+                },
             ],
         },
         "completed",
         "limited",
         semantics={
             "result_role": "authorized",
-            "relevance_scope": "direct",
+            "relevance_scope": "related",
             "classification_counts": {"direct": 3, "indirect": 1, "unrelated": 0},
         },
     )
@@ -258,7 +261,7 @@ def test_snapshot_keeps_delivered_position_reference_and_classified_indirect() -
 
     assert set(snapshot["records"]) == {list_a, list_b}
     assert 22 in snapshot["discovered_entry_ids"]
-    assert 22 not in snapshot["authorized_entry_ids"]
+    assert 22 in snapshot["authorized_entry_ids"]
 
     restored = _state()
     _restore_state(restored, json.loads(json.dumps(snapshot, ensure_ascii=False)))
@@ -269,7 +272,7 @@ def test_snapshot_keeps_delivered_position_reference_and_classified_indirect() -
     assert selected[0] == list_a
     assert list_b not in loop_module.recent_entry_reference_handles(restored)
     assert 22 in restored.discovered_entry_ids
-    assert 22 not in restored.authorized_entry_ids
+    assert 22 in restored.authorized_entry_ids
 
 
 def test_snapshot_deduplicates_same_parent_entry_and_fingerprint() -> None:
@@ -488,6 +491,9 @@ async def test_production_adapter_uses_only_delivered_list_for_positions(
                 result = tool_return(messages, "query_entries")
                 if show:
                     observed[f"shown_{direction}"] = result["result_handle"]
+                    observed.setdefault("shown_handles", []).append(
+                        result["result_handle"]
+                    )
                     blocks = [{
                         "kind": "list",
                         "result_handle": result["result_handle"],
@@ -534,7 +540,7 @@ async def test_production_adapter_uses_only_delivered_list_for_positions(
             return respond
 
         responders = [
-            query_and_maybe_show("asc", show=True),
+            *[query_and_maybe_show("asc", show=True) for _ in range(9)],
             query_and_maybe_show("desc", show=False),
             open_second("shown_asc", entries[1]),
             query_and_maybe_show("desc", show=True),
@@ -549,16 +555,14 @@ async def test_production_adapter_uses_only_delivered_list_for_positions(
 
         monkeypatch.setattr("app.services.ai_models.get_text_model", get_text_model)
 
-        for index, message in enumerate(
-            (
-                "按 A 顺序展示等级标题",
+        messages = (
+                *[f"第 {index} 次按 A 顺序展示等级标题" for index in range(1, 10)],
                 "内部换个顺序分析，但不要展示列表",
                 "第二条的正文是什么",
                 "现在明确展示新的 B 顺序",
                 "新列表第二条的正文是什么",
-            ),
-            start=1,
-        ):
+            )
+        for index, message in enumerate(messages, start=1):
             _, run = await submit_message(
                 db,
                 conversation,
@@ -581,7 +585,286 @@ async def test_production_adapter_uses_only_delivered_list_for_positions(
                 run.dialogue_loop_state_json,
             )
 
+        snapshot = json.loads(run.dialogue_loop_state_json)
+        assert snapshot is not None
+        assert {turn["turn"] for turn in snapshot["history_turns"]} == {1}
+
     assert observed["opened_entry_ids"] == [int(entries[1].id), int(entries[2].id)]
+    assert str(observed["shown_handles"][-1]).endswith("-12")
+    assert str(observed["hidden_b"]).endswith("-10")
+
+
+@pytest.mark.asyncio
+async def test_production_adapter_unifies_related_list_and_skips_unread_discussion_id(
+    monkeypatch,
+) -> None:
+    """统一列表可直接读取 indirect，多填未读讨论 ID 不否决回答。"""
+
+    from app.services.entry import entry_baseline, entry_fingerprint
+
+    model_run = 0
+    observed: dict[str, object] = {"tools": [], "opened": []}
+
+    def tool_return(messages, tool_name: str) -> dict:
+        for message in reversed(messages):
+            for part in getattr(message, "parts", []):
+                if isinstance(part, ToolReturnPart) and part.tool_name == tool_name:
+                    assert isinstance(part.content, dict)
+                    return part.content
+        raise AssertionError(f"缺少 {tool_name} 工具返回")
+
+    async with async_session_factory() as db:
+        user = await create_user(db, "统一相关列表正式链")
+        workspace = await create_workspace(db, user)
+        project = await create_project(db, workspace, "甲醛项目")
+        node = await create_child_node(db, project, "环保材料")
+        entries = []
+        for index, (title, content) in enumerate(
+            (
+                ("甲醛的基本知识", "直接解释甲醛的特性。"),
+                ("环保等级选择", "环保等级可帮助筛选低释放材料。"),
+                ("窗帘安装前清洗", "清洗可减少窗帘残留的甲醛。"),
+                ("厨房插座布局", "插座布局与甲醛问题无关。"),
+            ),
+            start=1,
+        ):
+            source, attachment = await create_source_attachment(
+                db,
+                workspace,
+                project,
+                title=f"来源 {index}",
+                text_content=content,
+            )
+            entry = await create_entry_with_evidence(
+                db,
+                project,
+                node,
+                source,
+                attachment,
+                title=title,
+                content=content,
+                quote=content,
+            )
+            entries.append(entry)
+        await db.commit()
+        for row in (user, workspace, project, *entries):
+            await db.refresh(row)
+        conversation = await create_conversation(
+            db,
+            workspace.id,
+            user.id,
+            KnowledgeConversationCreate(scope_type="project", project_id=project.id),
+        )
+
+        async def fake_dispatch(ctx, tool_name, params, kind, **kwargs):
+            assert tool_name == "query_entries"
+            observed["state"] = ctx.deps.state
+            items = [
+                {
+                    "entry_id": int(entry.id),
+                    "title": entry.title,
+                    "project_name": project.name,
+                    "excerpt": entry.content,
+                }
+                for entry in entries
+            ]
+            for entry in entries:
+                ctx.deps.state.discovered_entry_ids.add(int(entry.id))
+                ctx.deps.state.discovered_entry_fingerprints[int(entry.id)] = (
+                    entry_fingerprint(entry_baseline(entry))
+                )
+            payload = {"items": items, "returned_count": len(items), "has_more": False}
+            semantics = loop_module._result_semantics(tool_name, params, payload)
+            semantics["result_role"] = "candidate"
+            handle = ctx.deps.state.store_result(
+                kind,
+                payload,
+                "completed",
+                "complete",
+                semantics=semantics,
+                displayable=False,
+            )
+            event = {
+                "tool": kwargs.get("surface_tool") or tool_name,
+                "shared_tool": tool_name,
+                "result_handle": handle,
+                "status": "completed",
+                "completeness": "complete",
+                "params": kwargs.get("audit_params") or params,
+                "shared_params": params,
+                "result_summary": {"returned_count": len(items), "has_more": False},
+                "error": None,
+                "duration_ms": 0,
+                "turn_index": ctx.deps.state.turn_index,
+            }
+            ctx.deps.state.tool_events.append(event)
+            return {**event, "result_role": "candidate", "payload": payload}
+
+        monkeypatch.setattr(loop_module, "_dispatch", fake_dispatch)
+
+        first_calls = 0
+
+        def unified_list(messages, info):
+            nonlocal first_calls
+            first_calls += 1
+            if not info.function_tools:
+                return ModelResponse(parts=[ToolCallPart(
+                    info.output_tools[0].name,
+                    {
+                        "blocks": [
+                            {"kind": "text", "text": "找到以下有用的相关记录。"},
+                            {
+                                "kind": "result",
+                                "result_handle": observed["selected_handle"],
+                            },
+                        ],
+                        "discussion_entry_id": int(entries[1].id),
+                    },
+                )])
+            if first_calls == 1:
+                observed["tools"].append("search_knowledge")
+                return ModelResponse(parts=[ToolCallPart(
+                    "search_knowledge",
+                    {
+                        "project_scope": "project",
+                        "project_name": project.name,
+                        "query": "甲醛相关知识",
+                    },
+                )])
+            if first_calls == 2:
+                candidate = tool_return(messages, "search_knowledge")
+                observed["tools"].append("select_relevant_entries")
+                return ModelResponse(parts=[ToolCallPart(
+                    "select_relevant_entries",
+                    {
+                        "candidate_result_handle": candidate["result_handle"],
+                        "classifications": [
+                            {
+                                "entry_id": int(entries[0].id),
+                                "relevance": "direct",
+                                "reason": "直接解释甲醛",
+                            },
+                            {
+                                "entry_id": int(entries[1].id),
+                                "relevance": "indirect",
+                                "reason": "帮助筛选低释放材料",
+                            },
+                            {
+                                "entry_id": int(entries[2].id),
+                                "relevance": "indirect",
+                                "reason": "提供可执行的窗帘处理方法",
+                            },
+                            {
+                                "entry_id": int(entries[3].id),
+                                "relevance": "unrelated",
+                                "reason": "只共享装修场景",
+                            },
+                        ],
+                    },
+                )])
+            state = observed["state"]
+            observed["selected_handle"] = next(
+                handle
+                for handle in state.current_handles
+                if state.result_sets[handle].semantics.get("relevance_scope")
+                == "related"
+            )
+            raise loop_module.FinalizeRequired("input_soft_limit")
+
+        second_calls = 0
+
+        def open_indirect_items(messages, info):
+            nonlocal second_calls
+            second_calls += 1
+            if second_calls <= 2:
+                observed["tools"].append("open_list_item")
+                return ModelResponse(parts=[ToolCallPart(
+                    "open_list_item",
+                    {
+                        "result_set_handle": observed["selected_handle"],
+                        "position": second_calls + 1,
+                    },
+                )])
+            results = [
+                part.content
+                for message in messages
+                for part in getattr(message, "parts", [])
+                if isinstance(part, ToolReturnPart)
+                and part.tool_name == "open_list_item"
+            ]
+            observed["opened"] = [
+                result["payload"]["items"][0]["entry_id"] for result in results
+            ]
+            return ModelResponse(parts=[ToolCallPart(
+                info.output_tools[0].name,
+                {
+                    "blocks": [
+                        {
+                            "kind": "text",
+                            "text": f"[[entry:{result['result_handle']}:1]]",
+                        }
+                        for result in results
+                    ]
+                },
+            )])
+
+        responders = [unified_list, open_indirect_items]
+
+        async def get_text_model(_db, _workspace_id):
+            nonlocal model_run
+            responder = responders[model_run]
+            model_run += 1
+            return FunctionModel(responder, model_name=f"unified-related-{model_run}")
+
+        monkeypatch.setattr("app.services.ai_models.get_text_model", get_text_model)
+
+        runs = []
+        for index, message in enumerate(
+            ("查找甲醛相关知识", "把后两条正文展示出来"),
+            start=1,
+        ):
+            _, run = await submit_message(
+                db,
+                conversation,
+                KnowledgeRunSubmitRequest(
+                    client_message_id=f"unified-related-{index}",
+                    message=message,
+                    basis_mode="auto",
+                ),
+            )
+            run.status = "processing"
+            run.current_step = "claim"
+            await db.commit()
+            await execute_dialogue_loop_run(db, run)
+            await db.commit()
+            await db.refresh(run)
+            assert run.status == "completed", (run.error, run.dialogue_loop_state_json)
+            runs.append(run)
+
+        first_snapshot = json.loads(runs[0].dialogue_loop_state_json)
+        first_blocks = first_snapshot["blocks"]
+        first_list = next(block for block in first_blocks if block["kind"] == "list")
+        assert [item["entry_id"] for item in first_list["items"]] == [
+            int(entries[0].id),
+            int(entries[1].id),
+            int(entries[2].id),
+        ]
+        assert any(
+            block["kind"] == "text" and "间接相关说明" in block["text"]
+            for block in first_blocks
+        )
+        first_events = first_snapshot["tool_events"]
+        assert any(
+            event.get("reason_code") == "discussion_association_not_read"
+            for event in first_events
+        ), first_events
+        assert observed["opened"] == [int(entries[1].id), int(entries[2].id)]
+        assert observed["tools"] == [
+            "search_knowledge",
+            "select_relevant_entries",
+            "open_list_item",
+            "open_list_item",
+        ]
 
 
 @pytest.mark.asyncio
@@ -754,6 +1037,9 @@ async def test_production_adapter_preserves_displayed_entry_discussion_and_candi
             )])
 
         def switch_second(_messages, info):
+            instructions = str(info.instructions)
+            observed["instructions"].append(instructions)
+            assert "保持上一轮明确采用的讨论方式" in instructions
             return ModelResponse(parts=[ToolCallPart(
                 info.output_tools[0].name,
                 {
@@ -796,7 +1082,7 @@ async def test_production_adapter_preserves_displayed_entry_discussion_and_candi
                 "逐条打开刚才三条正文",
                 "抛开知识库，第一条你觉得合理吗",
                 "按刚才分析改成候选",
-                "现在分析第二条",
+                "第二条也分析",
                 "甲醛是什么",
             ),
             start=1,
@@ -865,6 +1151,7 @@ async def test_production_adapter_preserves_displayed_entry_discussion_and_candi
         assert open_calls == 4
         assert len(observed["candidate_inputs"]) == 1
         assert "允许候选与原 Entry 不同" in str(observed["instructions"])
+        assert "输出落实这些分析的完整候选正文" in str(observed["instructions"])
         assert "第一条正文" in observed["candidate_inputs"][0]
         assert "第一条的条件性表达合理" in observed["candidate_inputs"][0]
 

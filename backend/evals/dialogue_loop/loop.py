@@ -116,11 +116,14 @@ SYSTEM_PROMPT = ASSISTANT_ROLE_PROMPT + "\n\n" + ANSWER_PROTOCOL_PROMPT + "\n\n"
 19. find 完整返回 not_found 后，直接说明指定目录不存在；必要时最多改用 contains 查找相近名称，
     不得再从项目根调用 children 逐层遍历，也不得把定位空结果改写成权限错误。
 20. 用户明确提到项目名并询问其中的知识时，search_knowledge 必须使用 project_scope=project 和准确
-    project_name；只有用户明确询问全部项目时才使用 all。项目范围搜索只返回严格语义相关的正式记录，
-    不要把相近主题候选当作目标知识。判断严格语义相关时以候选正文是否明确回答用户所问的对象、
-    动作或结果为准；材料、选材、等级、背景场景、可能影响因素以及检索命中词只能作为间接参考，
-    不能单独授权为 direct。
-21. 列举有哪些项目用 list_projects；介绍具体项目用 read_project_context 读取背景目标和已保存上下文，
+    project_name；只有用户明确询问全部项目时才使用 all。相关性筛选按 direct、indirect、unrelated
+    真实分类：direct 明确回答所问对象、动作或结果；indirect 虽不直接回答但对当前问题有实际帮助，
+    必须给出简短关联说明；只有弱语义相似或仅共享宽泛场景的内容归为 unrelated。最终用一个列表
+    按 direct 在前、indirect 在后展示，排除 unrelated，不默认读取正文。
+21. 同一轮已有成功语义搜索候选时，优先完成 select_relevant_entries，不再为相近措辞重复宽泛搜索。
+    用户明确排除上一组结果时，把最近实际展示的对象作为排除集合；搜索再次返回相同 Entry 时，
+    不得把它们声称为新增结果。
+22. 列举有哪些项目用 list_projects；介绍具体项目用 read_project_context 读取背景目标和已保存上下文，
     以自然段概括目的、背景和当前重点。材料依据不等于展示卡片，不自动追加统计、目录和记录列表。
     用户仅要求改为文本、精简或重述时，复用已有回答调整表达，不新增检索，不声称本轮重新核验。
     用户明确要求数量、分组、目录或具体知识时才使用对应工具。用户填写与纠正优先，
@@ -407,8 +410,8 @@ class RelevanceDecision(StrictModel):
     """同一对话 Agent 对真实候选作出的有界相关性分类。
 
     分类必须依据候选标题和正文与用户问题的实际关系，而不是检索命中词或主题背景：
-    direct 要求正文明确回答所问对象、动作或结果；只涉及材料、选材、等级、场景或
-    可能影响因素的记录属于 indirect；只有弱语义相似且不能回答问题的记录属于 unrelated。
+    direct 要求正文明确回答所问对象、动作或结果；indirect 虽不直接回答，但必须对
+    当前问题有实际帮助；只有弱语义相似、共享宽泛场景或不能帮助回答的记录属于 unrelated。
     """
 
     entry_id: int
@@ -801,43 +804,87 @@ def _entry_display_group(record: ResultRecord) -> str | None:
     return None
 
 
-def recent_entry_reference_handles(state: LoopState) -> set[str]:
-    """按最终回答实际引用保留最近两组 Entry 材料。"""
+def _delivered_entry_orders(
+    state: LoopState,
+) -> tuple[dict[str, tuple[int, int]], dict[str, tuple[int, int]]]:
+    """从历史数组顺序恢复展示先后，兼容旧快照中全部 turn 均为 1。"""
 
-    groups: dict[str, dict] = {}
-    for turn in state.history_turns:
-        turn_index = int(turn.get("turn") or 0)
+    group_orders: dict[str, tuple[int, int]] = {}
+    handle_orders: dict[str, tuple[int, int]] = {}
+    for history_position, turn in enumerate(state.history_turns):
         references = (turn.get("answer_summary") or {}).get("references") or []
-        for reference in references:
-            handle = reference.get("handle")
-            record = state.result_sets.get(str(handle)) if handle else None
+        delivered = [
+            str(reference["handle"])
+            for reference in references
+            if reference.get("handle")
+        ]
+        # 旧快照可能只有工具摘要；ordered_items 只会为实际交付列表保存。
+        delivered.extend(
+            str(tool["result_handle"])
+            for tool in turn.get("tools", [])
+            if tool.get("result_handle")
+            and tool.get("ordered_items")
+            and str(tool["result_handle"]) not in delivered
+        )
+        for reference_position, handle in enumerate(delivered):
+            record = state.result_sets.get(handle)
             if record is None:
                 continue
             group = _entry_display_group(record)
             if group is None:
                 continue
-            value = groups.setdefault(
-                group,
-                {"turn_index": 0, "handles": set(), "handle_turns": {}},
-            )
-            value["turn_index"] = max(value["turn_index"], turn_index)
-            value["handles"].add(record.handle)
-            value["handle_turns"][record.handle] = max(
-                turn_index,
-                value["handle_turns"].get(record.handle, 0),
-            )
-            if group in state.result_sets:
-                value["handles"].add(group)
+            order = (history_position, reference_position)
+            group_orders[group] = max(group_orders.get(group, (-1, -1)), order)
+            handle_orders[handle] = max(handle_orders.get(handle, (-1, -1)), order)
+    return group_orders, handle_orders
+
+
+def _record_recency_key(state: LoopState, record: ResultRecord) -> tuple[int, int, int]:
+    """统一正文选择与展示窗口的顺序；句柄序号只用于同轮内部结果破同序。"""
+
+    group_orders, handle_orders = _delivered_entry_orders(state)
+    order = handle_orders.get(record.handle)
+    if order is None:
+        group = _entry_display_group(record)
+        order = group_orders.get(group) if group is not None else None
+    try:
+        sequence = int(record.handle.rsplit("-", 1)[-1])
+    except (TypeError, ValueError):
+        sequence = 0
+    if order is not None:
+        return order[0], order[1], sequence
+    if record.handle in state.current_handles:
+        return len(state.history_turns), 0, sequence
+    return -1, -1, sequence
+
+
+def recent_entry_reference_handles(state: LoopState) -> set[str]:
+    """按最终回答实际交付序列保留最近两组 Entry 材料。"""
+
+    groups: dict[str, dict] = {}
+    group_orders, handle_orders = _delivered_entry_orders(state)
+    for handle in handle_orders:
+        record = state.result_sets.get(handle)
+        if record is None:
+            continue
+        group = _entry_display_group(record)
+        if group is None:
+            continue
+        value = groups.setdefault(group, {"order": (-1, -1), "handles": set()})
+        value["order"] = max(value["order"], group_orders[group])
+        value["handles"].add(record.handle)
+        if group in state.result_sets:
+            value["handles"].add(group)
     selected = sorted(
         groups.items(),
-        key=lambda item: (item[1]["turn_index"], item[0]),
+        key=lambda item: item[1]["order"],
         reverse=True,
     )[:RECENT_ENTRY_DISPLAY_GROUPS]
     retained: set[str] = set()
     for group, value in selected:
         if group in state.result_sets:
             retained.add(group)
-        latest_material: dict[str, tuple[int, str]] = {}
+        latest_material: dict[str, tuple[tuple[int, int], str]] = {}
         for handle in value["handles"]:
             record = state.result_sets.get(handle)
             if record is None or record.kind != "entries":
@@ -862,8 +909,8 @@ def recent_entry_reference_handles(state: LoopState) -> set[str]:
                 if deduplicable
                 else f"handle:{handle}"
             )
-            candidate = (int(value["handle_turns"].get(handle, 0)), handle)
-            if candidate > latest_material.get(key, (-1, "")):
+            candidate = (handle_orders.get(handle, (-1, -1)), handle)
+            if candidate > latest_material.get(key, ((-1, -1), "")):
                 latest_material[key] = candidate
         retained.update(handle for _, handle in latest_material.values())
     return retained
@@ -873,6 +920,7 @@ def _recent_displayed_entry_groups(state: LoopState) -> list[dict]:
     """给模型提供与用户实际展示顺序一致的、仅含已读取正文的对象提示。"""
 
     recent_handles = recent_entry_reference_handles(state) | state.current_handles
+    delivered_group_orders, _ = _delivered_entry_orders(state)
     groups: dict[str, dict] = {}
     for handle in recent_handles:
         record = state.result_sets[handle]
@@ -886,11 +934,14 @@ def _recent_displayed_entry_groups(state: LoopState) -> list[dict]:
             parent_handle,
             {
                 "result_set_handle": parent_handle,
-                "turn_index": record.turn_index,
+                "display_order": delivered_group_orders.get(parent_handle, (-1, -1)),
                 "items": {},
             },
         )
-        group["turn_index"] = max(group["turn_index"], record.turn_index)
+        group["display_order"] = max(
+            group["display_order"],
+            delivered_group_orders.get(parent_handle, (-1, -1)),
+        )
         for fallback_position, entry in enumerate(record.payload.get("items", []), start=1):
             entry_id = entry.get("entry_id")
             if entry_id is None:
@@ -911,7 +962,7 @@ def _recent_displayed_entry_groups(state: LoopState) -> list[dict]:
         }
         for value in sorted(
             groups.values(),
-            key=lambda item: (item["turn_index"], item["result_set_handle"]),
+            key=lambda item: item["display_order"],
             reverse=True,
         )
     ]
@@ -1019,7 +1070,7 @@ def _displayed_entry_material(
         )
         refs = (child.semantics.get("entry_validation_refs") or {}).get(str(entry_id))
         if entry is not None and isinstance(refs, dict):
-            matches.append((child.turn_index, child.handle, entry, refs))
+            matches.append((_record_recency_key(state, child), child.handle, entry, refs))
     if not matches:
         raise ValueError("该列表项只完成展示，尚未读取正文材料")
     _, _, entry, refs = max(matches, key=lambda item: (item[0], item[1]))
@@ -1545,6 +1596,7 @@ def _model_payload(kind: str, payload: dict) -> dict:
                         "matched_fields",
                         "match_hint",
                         "relevance_level",
+                        "relevance_reason",
                     }
                 }
             )
@@ -1555,7 +1607,6 @@ def _model_payload(kind: str, payload: dict) -> dict:
                 if key not in {
                     "items",
                     "internal_classifications",
-                    "internal_classified_items",
                 }
             },
             "items": items,
@@ -2482,7 +2533,7 @@ def output_errors(answer: DialogueAnswer, state: LoopState) -> list[str]:
         rejected_ids = {
             int(item["entry_id"])
             for item in record.payload.get("internal_classifications", [])
-            if item.get("relevance") != "direct"
+            if item.get("relevance") == "unrelated"
         }
         rejected_titles = {
             str(item.get("title") or "").strip()
@@ -2490,7 +2541,7 @@ def output_errors(answer: DialogueAnswer, state: LoopState) -> list[str]:
             if int(item["entry_id"]) in rejected_ids
         }
         if any(title and title in answer_text for title in rejected_titles):
-            errors.append("主答案包含间接相关或不相关候选的标题")
+            errors.append("主答案包含已判定为不相关候选的标题")
             break
     if _entry_content_requested(state.current_message):
         has_entry_result = any(
@@ -2519,13 +2570,13 @@ def output_errors(answer: DialogueAnswer, state: LoopState) -> list[str]:
         )
         if first_list is not None and (first_text is None or first_text > first_list):
             errors.append("定义型问题必须先回答概念和核心结论，再展示直接相关正式记录")
-        empty_direct_result = any(
+        empty_related_result = any(
             handle in state.current_handles
-            and record.semantics.get("relevance_scope") == "direct"
+            and record.semantics.get("relevance_scope") in {"direct", "related"}
             and not record.payload.get("items")
             for handle, record in state.result_sets.items()
         )
-        if empty_direct_result and not any(
+        if empty_related_result and not any(
             block.kind == "insufficient" for block in answer.blocks
         ):
             errors.append("定义型问题没有直接相关正式记录时必须明确说明结果不足")
@@ -3257,6 +3308,7 @@ async def _persist_discussion_answer(state: LoopState, answer: DialogueAnswer) -
             raise ModelRetry("讨论对象与已经复验的当前 Entry 不一致")
     elif target_id is not None:
         matches = []
+        read_target_present = False
         for handle in state.current_handles | recent_entry_reference_handles(state):
             record = state.result_sets[handle]
             if record.kind != "entries" or not record.displayable:
@@ -3264,13 +3316,31 @@ async def _persist_discussion_answer(state: LoopState, answer: DialogueAnswer) -
             for item in record.payload.get("items", []):
                 if int(item.get("entry_id", -1)) != target_id:
                     continue
+                read_target_present = True
                 refs = (record.semantics.get("entry_validation_refs") or {}).get(
                     str(target_id)
                 )
                 if isinstance(refs, dict):
-                    matches.append((record.turn_index, record.handle, item, refs))
+                    matches.append(
+                        (_record_recency_key(state, record), record.handle, item, refs)
+                    )
         if not matches:
-            raise ModelRetry("讨论对象不是最近已展示且已读取的 Entry")
+            if read_target_present:
+                raise ModelRetry("已读取讨论对象缺少材料校验引用，不能保存关联")
+            state.tool_events.append(
+                {
+                    "tool": "discussion_persistence",
+                    "shared_tool": "discussion_persistence",
+                    "status": "not_executed",
+                    "completeness": "unknown",
+                    "params": {"discussion_entry_id": target_id},
+                    "reason_code": "discussion_association_not_read",
+                    "error": "可选讨论关联未保存：对象只有标题结果，尚未读取正文",
+                    "duration_ms": 0,
+                    "turn_index": state.turn_index,
+                }
+            )
+            return
         _, _, entry, refs = max(matches, key=lambda item: (item[0], item[1]))
         if (
             target_id not in state.authorized_entry_ids
@@ -3335,23 +3405,6 @@ def build_agent(model) -> Agent[LoopDeps, DialogueAnswer]:
         state = ctx.deps.state
         task = state.editing_context
         recent_entry_sets = _recent_displayed_entry_groups(state)
-        available_indirect_sets = []
-        for handle in recent_entry_reference_handles(state):
-            record = state.result_sets.get(handle)
-            counts = record.semantics.get("classification_counts", {}) if record else {}
-            if (
-                record is not None
-                and record.kind == "list"
-                and record.semantics.get("relevance_scope") == "direct"
-                and int(counts.get("indirect", 0)) > 0
-                and record.payload.get("internal_classified_items")
-            ):
-                available_indirect_sets.append(
-                    {
-                        "result_set_handle": handle,
-                        "indirect_count": int(counts["indirect"]),
-                    }
-                )
         context = {
             "current_entry": {k: state.focused_entry.get(k) for k in ("entry_id", "title")}
             if state.focused_entry else None,
@@ -3360,7 +3413,6 @@ def build_agent(model) -> Agent[LoopDeps, DialogueAnswer]:
             "has_saved_draft": bool(task and task.draft),
             "editing_active": state.editing_active,
             "recent_displayed_entries": recent_entry_sets,
-            "available_indirect_sets": available_indirect_sets,
         }
         if state.editing_active and task is not None:
             context.update(candidate_draft=task.draft, user_decisions=task.decisions)
@@ -3382,10 +3434,10 @@ def build_agent(model) -> Agent[LoopDeps, DialogueAnswer]:
             "不得根据历史错误推断用户同意扩大范围。保存的旧材料只是线索，工具复验后才能使用。"
             "如果不调用 editing_context 而直接完成某个已读 Entry 的分析，必须在 final_result 填写"
             "该对象的 discussion_entry_id；独立问题或对象不明确时保持 null。"
-            "只有用户明确要求查看刚才已分类的间接相关记录时，才可对 available_indirect_sets 中"
-            "的句柄调用 select_relevant_entries，设置 relevance_scope=indirect 且 "
-            "classifications=[]；"
-            "不得为此重新搜索，也不得在默认回答中展示或读取这些记录。"
+            "连续追问同一展示组中的另一条时，保持上一轮明确采用的讨论方式；如果上一轮明确要求"
+            "不使用知识库，本轮没有改变要求，就继续做通用分析，不转成来源措辞评议。"
+            "用户要求结合已经采纳的分析补充或改写并交付时，输出落实这些分析的完整候选正文，"
+            "不要只列修改建议或在原文后追加“可考虑改为”。"
             + no_knowledge_boundary
             + json.dumps(context, ensure_ascii=False)
         )
@@ -3568,138 +3620,19 @@ def build_agent(model) -> Agent[LoopDeps, DialogueAnswer]:
     async def select_relevant_entries(
         ctx: RunContext[LoopDeps],
         candidate_result_handle: str,
-        classifications: list[RelevanceDecision] | None = None,
-        relevance_scope: Literal["direct", "indirect"] = "direct",
+        classifications: list[RelevanceDecision],
     ) -> dict:
-        """筛选语义候选，或按明确请求激活同次筛选的 indirect 集合。
+        """筛选语义候选并形成一个 direct 优先的有用相关标题列表。
 
         必须覆盖候选中的每个 entry_id 且不得新增或重复。direct 要求候选正文明确回答
-        用户所问的对象、动作或结果；只涉及相关材料、选材、等级、背景场景或可能影响
-        因素的内容必须是 indirect；只有弱语义相似且不能回答问题的内容是 unrelated。
-        检索命中词、matched_fields 或项目背景不能单独证明 direct。
-
-        用户明确要求查看刚才的间接相关记录时，candidate_result_handle 传入已展示的 direct
-        结果句柄，relevance_scope 设为 indirect 且 classifications 传空列表；工具复用原分类并
-        重新复验权限、范围、对象和指纹，只返回标题列表，不读取给模型正文。
+        用户所问的对象、动作或结果；虽不直接回答但对当前问题有实际帮助的内容是 indirect，
+        reason 必须简短说明关联；只有弱语义相似或只共享宽泛场景的内容是 unrelated。
+        检索命中词、matched_fields 或项目背景不能单独证明有用相关。
         """
 
         state = ctx.deps.state
         candidate_result_handle = _none_if_string_null(candidate_result_handle) or ""
         record = state.result_sets.get(candidate_result_handle)
-        if relevance_scope == "indirect":
-            if classifications:
-                raise ModelRetry("激活已分类间接记录时 classifications 必须为空")
-            if (
-                record is None
-                or candidate_result_handle not in recent_entry_reference_handles(state)
-                or record.kind != "list"
-                or not record.displayable
-                or record.semantics.get("relevance_scope") != "direct"
-            ):
-                raise ModelRetry("只能从最近实际展示的 direct 结果激活间接相关记录")
-            indirect_items = list(record.payload.get("internal_classified_items") or [])
-            if not indirect_items:
-                raise ModelRetry("该结果没有可复用的间接相关记录")
-            try:
-                await state.ledger.reserve_tool()
-                entry_ids = [int(item["entry_id"]) for item in indirect_items]
-                state.ledger.reserve_entries(entry_ids)
-                verified = await _revalidate_discovered_entries(state, entry_ids)
-            except BudgetExceeded as exc:
-                _mark_budget_stop(
-                    state,
-                    exc,
-                    tool_name="select_relevant_entries",
-                    params={"candidate_result_handle": candidate_result_handle},
-                )
-                raise
-            denied = verified.get("denied_entry_ids") or []
-            unavailable = verified.get("unavailable_entry_ids") or []
-            verified_ids = [int(item["entry_id"]) for item in verified.get("items", [])]
-            if denied or unavailable or verified_ids != entry_ids:
-                event = {
-                    "tool": "select_relevant_entries",
-                    "shared_tool": "select_relevant_entries",
-                    "status": "denied" if denied else "unavailable",
-                    "completeness": "unknown",
-                    "params": {
-                        "candidate_result_handle": candidate_result_handle,
-                        "relevance_scope": "indirect",
-                    },
-                    "result_summary": {
-                        "candidate_count": len(indirect_items),
-                        "returned_count": 0,
-                    },
-                    "reason_code": "classified_results_invalid",
-                    "error": "间接相关记录的权限、范围、对象或指纹已经变化",
-                    "duration_ms": 0,
-                    "turn_index": state.turn_index,
-                }
-                state.tool_events.append(event)
-                return event
-            payload = {
-                **{
-                    key: value
-                    for key, value in record.payload.items()
-                    if key not in {
-                        "items",
-                        "internal_classifications",
-                        "internal_classified_items",
-                        "returned_count",
-                        "has_more",
-                    }
-                },
-                "items": indirect_items,
-                "returned_count": len(indirect_items),
-                "has_more": False,
-            }
-            semantics = {
-                **record.semantics,
-                "relevance_scope": "indirect",
-                "display_name": "间接相关正式记录",
-                "source_result_handle": candidate_result_handle,
-                "total_count": len(indirect_items),
-                "returned_count": len(indirect_items),
-                "has_more": False,
-            }
-            handle = state.store_result(
-                "list",
-                payload,
-                "completed",
-                record.completeness,
-                semantics=semantics,
-                displayable=True,
-            )
-            event = {
-                "tool": "select_relevant_entries",
-                "shared_tool": "select_relevant_entries",
-                "result_handle": handle,
-                "status": "completed",
-                "completeness": record.completeness,
-                "params": {
-                    "candidate_result_handle": candidate_result_handle,
-                    "relevance_scope": "indirect",
-                },
-                "result_summary": {
-                    "candidate_count": len(indirect_items),
-                    "returned_count": len(indirect_items),
-                    "classification_counts": record.semantics.get(
-                        "classification_counts", {}
-                    ),
-                    "has_more": False,
-                },
-                "reason_code": "indirect_results_authorized",
-                "error": None,
-                "duration_ms": 0,
-                "turn_index": state.turn_index,
-            }
-            state.tool_events.append(event)
-            return {
-                **event,
-                "result_role": "authorized",
-                "relevance_scope": "indirect",
-                "payload": _model_payload("list", payload),
-            }
         if (
             record is None
             or candidate_result_handle not in state.current_handles
@@ -3707,7 +3640,6 @@ def build_agent(model) -> Agent[LoopDeps, DialogueAnswer]:
             or record.semantics.get("result_role") != "candidate"
         ):
             raise ModelRetry("candidate_result_handle 不是当前可分类的语义候选")
-        classifications = classifications or []
         candidate_items = record.payload.get("items", [])
         candidate_ids = [int(item["entry_id"]) for item in candidate_items]
         decision_ids = [item.entry_id for item in classifications]
@@ -3727,15 +3659,24 @@ def build_agent(model) -> Agent[LoopDeps, DialogueAnswer]:
             raise
         by_id = {item.entry_id: item for item in classifications}
         direct_items = [
-            {**item, "relevance_level": "direct"}
+            {
+                **item,
+                "relevance_level": "direct",
+                "relevance_reason": by_id[int(item["entry_id"])].reason[:300],
+            }
             for item in candidate_items
             if by_id[int(item["entry_id"])].relevance == "direct"
         ]
         indirect_items = [
-            {**item, "relevance_level": "indirect"}
+            {
+                **item,
+                "relevance_level": "indirect",
+                "relevance_reason": by_id[int(item["entry_id"])].reason[:300],
+            }
             for item in candidate_items
             if by_id[int(item["entry_id"])].relevance == "indirect"
         ]
+        related_items = [*direct_items, *indirect_items]
         counts = {
             level: sum(1 for item in classifications if item.relevance == level)
             for level in ("direct", "indirect", "unrelated")
@@ -3746,8 +3687,8 @@ def build_agent(model) -> Agent[LoopDeps, DialogueAnswer]:
                 for key, value in record.payload.items()
                 if key not in {"items", "returned_count", "has_more"}
             },
-            "items": direct_items,
-            "returned_count": len(direct_items),
+            "items": related_items,
+            "returned_count": len(related_items),
             "has_more": False,
             "candidate_count": len(candidate_items),
             "internal_classifications": [
@@ -3758,20 +3699,19 @@ def build_agent(model) -> Agent[LoopDeps, DialogueAnswer]:
                 }
                 for item in classifications
             ],
-            "internal_classified_items": indirect_items,
         }
         semantics = {
             **record.semantics,
             "result_role": "authorized",
-            "relevance_scope": "direct",
-            "display_name": "直接相关正式记录",
+            "relevance_scope": "related",
+            "display_name": "相关正式记录（直接相关优先）",
             "candidate_result_handle": candidate_result_handle,
             "classification_counts": counts,
-            "total_count": len(direct_items),
-            "returned_count": len(direct_items),
+            "total_count": len(related_items),
+            "returned_count": len(related_items),
             "has_more": False,
         }
-        status = "completed" if direct_items else "empty"
+        status = "completed" if related_items else "empty"
         handle = state.store_result(
             "list",
             payload,
@@ -3781,7 +3721,7 @@ def build_agent(model) -> Agent[LoopDeps, DialogueAnswer]:
             displayable=True,
         )
         state.authorized_entry_ids.update(
-            int(item["entry_id"]) for item in direct_items
+            int(item["entry_id"]) for item in related_items
         )
         search_key = record.semantics.get("search_key")
         if search_key:
@@ -3795,11 +3735,11 @@ def build_agent(model) -> Agent[LoopDeps, DialogueAnswer]:
             "params": {"candidate_result_handle": candidate_result_handle},
             "result_summary": {
                 "candidate_count": len(candidate_items),
-                "returned_count": len(direct_items),
+                "returned_count": len(related_items),
                 "classification_counts": counts,
                 "has_more": False,
             },
-            "reason_code": "direct_results_authorized",
+            "reason_code": "related_results_authorized",
             "error": None,
             "duration_ms": 0,
             "turn_index": state.turn_index,
@@ -4552,7 +4492,8 @@ FINALIZER_SYSTEM_PROMPT = (
 AI 回答或候选修改稿不得声称已经写入正式 Entry。
 唯一合法输出顶层是 DialogueAnswer 的 blocks、needs_clarification，以及可选的
 discussion_entry_id；只有明确分析某个已展示且已读取 Entry 时才填写该 ID，独立问题或对象
-不明确时保持 null。不要输出 answer_summary、completion 或其他自创顶层字段。text 块只填写
+不明确、只确认标题列表或没有读取正文时保持 null。不要输出 answer_summary、completion 或其他
+自创顶层字段。text 块只填写
 kind 与 text，不要添加 note。
 结构化材料只选 result 块的 result_handle，程序决定项目、统计、目录或 Entry 展示，
 不要猜类型。统计、项目枚举和目录结果只说明范围、过滤和完整性；
@@ -4619,6 +4560,8 @@ def build_finalizer_agent(model) -> Agent[LoopDeps, DialogueAnswer]:
                 "复验，不是模型的当前轮可引用材料。"
                 "用自然的一两句话说明候选基于现有记录、是否有模型增补及"
                 "尚未写入，不要堆叠固定章节。"
+                "候选正文必须是用户可直接审阅和采用的完整新版本；用户要求结合分析补充后交付时，"
+                "把已采纳修改落实进正文，不要只返回修改意见、点评或“可考虑改为”的并列建议。"
                 + semantic_limit
                 + draft_instruction
             )
@@ -4834,7 +4777,9 @@ def render_answer(answer: DialogueAnswer, state: LoopState) -> tuple[str, list[d
                     else "全部项目 · "
                 )
                 relevance_scope = semantics.get("relevance_scope")
-                if relevance_scope == "direct":
+                if relevance_scope == "related":
+                    title = f"{scope}相关正式记录（直接相关优先）"
+                elif relevance_scope == "direct":
                     title = f"{scope}直接相关正式记录"
                 elif relevance_scope == "indirect":
                     title = f"{scope}间接相关正式记录"
@@ -4855,9 +4800,18 @@ def render_answer(answer: DialogueAnswer, state: LoopState) -> tuple[str, list[d
                         f"（{item.get('status', '未知状态')}）"
                     )
                 else:
+                    relation = item.get("relevance_level")
+                    reason = str(item.get("relevance_reason") or "").strip()
+                    relation_note = ""
+                    if relation == "direct":
+                        relation_note = " · 直接相关"
+                    elif relation == "indirect":
+                        relation_note = " · 间接相关"
+                        if reason:
+                            relation_note += f"：{reason}"
                     lines.append(
                         f"{index}. {item.get('title', '未命名')}"
-                        f"（{item.get('project_name', '未知项目')}）"
+                        f"（{item.get('project_name', '未知项目')}{relation_note}）"
                     )
             rendered.append(
                 {
@@ -4871,6 +4825,16 @@ def render_answer(answer: DialogueAnswer, state: LoopState) -> tuple[str, list[d
                     "semantics": semantics,
                 }
             )
+            indirect_notes = [
+                f"第 {index} 条：{_shorten(str(item.get('relevance_reason') or '').strip(), 120)}"
+                for index, item in enumerate(items, 1)
+                if item.get("relevance_level") == "indirect"
+                and str(item.get("relevance_reason") or "").strip()
+            ]
+            if indirect_notes:
+                note = "间接相关说明：" + "；".join(indirect_notes) + "。"
+                lines.append(note)
+                rendered.append({"kind": "text", "text": note})
         elif block.kind == "text" and (reference := _entry_reference(block.text)):
             result_handle, position = reference
             record = state.result_sets[result_handle]

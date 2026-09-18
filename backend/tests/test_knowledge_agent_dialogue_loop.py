@@ -2023,10 +2023,10 @@ async def test_project_search_routes_to_strict_project_query(monkeypatch) -> Non
 
 
 @pytest.mark.asyncio
-async def test_semantic_selection_aligns_search_read_and_rendered_direct_set(
+async def test_semantic_selection_unifies_useful_related_titles(
     monkeypatch,
 ) -> None:
-    """原始候选不可展示，选择、读取和前端块只使用同一 direct 集合。"""
+    """原始候选不可展示，direct 与有帮助的 indirect 共用连续标题列表。"""
 
     state = _state()
     dispatched = []
@@ -2084,36 +2084,7 @@ async def test_semantic_selection_aligns_search_read_and_rendered_direct_set(
             }
             state.tool_events.append(event)
             return {**event, "result_role": "candidate", "payload": payload}
-        assert tool_name == "read_entries"
-        assert params == {"entry_ids": [11]}
-        payload = {
-            "items": [
-                {
-                    "entry_id": 11,
-                    "title": "窗帘安装前必须清洗",
-                    "content": "安装前清洗窗帘，能去除大部分甲醛和灰尘。",
-                    "project_name": "房子装修",
-                    "node_path": "材料 / 环保",
-                    "sources": [],
-                }
-            ],
-            "denied_entry_ids": [],
-            "unavailable_entry_ids": [],
-        }
-        handle = ctx.deps.state.store_result("entries", payload, "completed", "limited")
-        event = {
-            "tool": tool_name,
-            "shared_tool": tool_name,
-            "result_handle": handle,
-            "status": "completed",
-            "completeness": "limited",
-            "params": params,
-            "result_summary": {"returned_count": 1},
-            "error": None,
-            "turn_index": state.turn_index,
-        }
-        state.tool_events.append(event)
-        return {**event, "payload": payload}
+        raise AssertionError(f"标题查询不应自动读取正文：{tool_name} {params}")
 
     monkeypatch.setattr(loop_module, "_dispatch", fake_dispatch)
     calls = 0
@@ -2175,16 +2146,7 @@ async def test_semantic_selection_aligns_search_read_and_rendered_direct_set(
         selected = next(
             handle
             for handle in state.current_handles
-            if state.result_sets[handle].semantics.get("relevance_scope") == "direct"
-        )
-        if calls == 3:
-            return ModelResponse(
-                parts=[ToolCallPart("read_entries", {"entry_ids": [11]})]
-            )
-        read_handle = next(
-            handle
-            for handle in state.current_handles
-            if state.result_sets[handle].kind == "entries"
+            if state.result_sets[handle].semantics.get("relevance_scope") == "related"
         )
         return ModelResponse(
             parts=[
@@ -2193,8 +2155,7 @@ async def test_semantic_selection_aligns_search_read_and_rendered_direct_set(
                     {
                         "blocks": [
                             {"kind": "text", "text": "模型通用知识：甲醛是一种挥发性有机物。"},
-                            {"kind": "list", "result_handle": selected, "label": "直接相关"},
-                            {"kind": "text", "text": f"[[entry:{read_handle}:1]]"},
+                            {"kind": "list", "result_handle": selected, "label": "相关记录"},
                         ]
                     },
                 )
@@ -2207,176 +2168,39 @@ async def test_semantic_selection_aligns_search_read_and_rendered_direct_set(
 
     assert turn["status"] == "completed", turn
     list_block = next(block for block in turn["blocks"] if block["kind"] == "list")
-    assert [item["entry_id"] for item in list_block["items"]] == [11]
+    assert [item["entry_id"] for item in list_block["items"]] == [11, 22, 33]
+    assert [item["relevance_level"] for item in list_block["items"]] == [
+        "direct",
+        "indirect",
+        "indirect",
+    ]
+    assert list_block["items"][1]["relevance_reason"] == "只讨论装修选材和可能的甲醛影响"
     assert list_block["semantics"]["classification_counts"] == {
         "direct": 1,
         "indirect": 2,
         "unrelated": 1,
     }
-    assert [item[1] for item in dispatched if item[0] == "read_entries"] == [
-        {"entry_ids": [11]}
-    ]
+    assert [item for item in dispatched if item[0] == "read_entries"] == []
     selected_handle = next(
         handle
         for handle in state.current_handles
-        if state.result_sets[handle].semantics.get("relevance_scope") == "direct"
+        if state.result_sets[handle].semantics.get("relevance_scope") == "related"
     )
     assert list_position_entry_id(state, selected_handle, 1) == 11
-    with pytest.raises(ValueError):
-        list_position_entry_id(state, selected_handle, 2)
+    assert list_position_entry_id(state, selected_handle, 2) == 22
+    assert list_position_entry_id(state, selected_handle, 3) == 33
     assert "窗帘安装前必须清洗" in turn["answer"]
-    assert "墙面材料选乳胶漆" not in turn["answer"]
-    assert "甲醛环保等级" not in turn["answer"]
-    assert state.authorized_entry_ids == {11}
+    assert "墙面材料选乳胶漆" in turn["answer"]
+    assert "甲醛环保等级" in turn["answer"]
+    assert "客厅灯光搭配" not in turn["answer"]
+    assert state.authorized_entry_ids == {11, 22, 33}
+    assert all("content" not in item for item in list_block["items"])
     assert turn["blocks"][0]["kind"] == "text"
-
-    async def revalidate_indirect(_state, entry_ids):
-        assert entry_ids == [22, 33]
-        return {
-            "items": [{"entry_id": entry_id} for entry_id in entry_ids],
-            "denied_entry_ids": [],
-            "unavailable_entry_ids": [],
-        }
-
-    monkeypatch.setattr(
-        loop_module, "_revalidate_discovered_entries", revalidate_indirect
+    assert any(
+        block["kind"] == "text" and "间接相关说明" in block["text"]
+        for block in turn["blocks"]
     )
-    state.begin_turn(57, "把刚才两条间接相关记录展示出来")
-    indirect_calls = 0
-
-    def show_indirect(_messages, info):
-        nonlocal indirect_calls
-        indirect_calls += 1
-        if indirect_calls == 1:
-            assert selected_handle in str(info.instructions)
-            assert "indirect_count" in str(info.instructions)
-            return ModelResponse(parts=[ToolCallPart(
-                "select_relevant_entries",
-                {
-                    "candidate_result_handle": selected_handle,
-                    "classifications": [],
-                    "relevance_scope": "indirect",
-                },
-            )])
-        result = next(
-            message
-            for message in reversed(state.tool_events)
-            if message.get("reason_code") == "indirect_results_authorized"
-        )
-        return ModelResponse(parts=[ToolCallPart(
-            info.output_tools[0].name,
-            {"blocks": [{
-                "kind": "list",
-                "result_handle": result["result_handle"],
-                "label": "间接相关正式记录",
-            }]},
-        )])
-
-    indirect_turn, _ = await run_turn(
-        build_agent(FunctionModel(show_indirect)),
-        state,
-        state.current_message,
-        [],
-    )
-
-    assert indirect_turn["status"] == "completed", indirect_turn
-    indirect_block = next(
-        block for block in indirect_turn["blocks"] if block["kind"] == "list"
-    )
-    assert indirect_block["semantics"]["relevance_scope"] == "indirect"
-    assert [item["entry_id"] for item in indirect_block["items"]] == [22, 33]
-    assert "墙面材料选乳胶漆" in indirect_turn["answer"]
-    assert "甲醛环保等级" in indirect_turn["answer"]
-    assert all("content" not in item for item in indirect_block["items"])
     assert [item[0] for item in dispatched].count("query_entries") == 1
-
-
-@pytest.mark.asyncio
-async def test_indirect_activation_rejects_invalid_permission_or_fingerprint(
-    monkeypatch,
-) -> None:
-    """已分类集合仍须重新复验，失效时不能生成可展示句柄。"""
-
-    state = _state()
-    direct = state.store_result(
-        "list",
-        {
-            "items": [{"entry_id": 11, "title": "直接记录"}],
-            "internal_classified_items": [
-                {"entry_id": 22, "title": "间接记录", "relevance_level": "indirect"}
-            ],
-        },
-        "completed",
-        "limited",
-        semantics={
-            "result_role": "authorized",
-            "relevance_scope": "direct",
-            "classification_counts": {"direct": 1, "indirect": 1, "unrelated": 0},
-        },
-    )
-    state.remember_turn(
-        "查询相关记录",
-        "只展示直接相关记录",
-        [{"tool": "select_relevant_entries", "result_handle": direct}],
-        blocks=[{"kind": "list", "handle": direct}],
-        completion={"status": "completed"},
-    )
-    state.begin_turn(58, "展示刚才的间接相关记录")
-
-    async def invalid_material(_state, entry_ids):
-        assert entry_ids == [22]
-        return {
-            "items": [],
-            "denied_entry_ids": [22],
-            "unavailable_entry_ids": [],
-        }
-
-    monkeypatch.setattr(
-        loop_module, "_revalidate_discovered_entries", invalid_material
-    )
-    calls = 0
-
-    def respond(messages, info):
-        nonlocal calls
-        calls += 1
-        if calls == 1:
-            return ModelResponse(parts=[ToolCallPart(
-                "select_relevant_entries",
-                {
-                    "candidate_result_handle": direct,
-                    "classifications": [],
-                    "relevance_scope": "indirect",
-                },
-            )])
-        result = next(
-            part.content
-            for message in reversed(messages)
-            for part in getattr(message, "parts", [])
-            if isinstance(part, ToolReturnPart)
-            and part.tool_name == "select_relevant_entries"
-        )
-        assert result["status"] == "denied"
-        return ModelResponse(parts=[ToolCallPart(
-            info.output_tools[0].name,
-            {"blocks": [{
-                "kind": "insufficient",
-                "text": "间接相关记录已无法通过当前权限与材料校验。",
-            }]},
-        )])
-
-    turn, _ = await run_turn(
-        build_agent(FunctionModel(respond)),
-        state,
-        state.current_message,
-        [],
-    )
-
-    assert turn["status"] == "denied"
-    assert calls == 2
-    assert not any(
-        record.semantics.get("relevance_scope") == "indirect"
-        for record in state.result_sets.values()
-    )
 
 
 def test_candidate_handle_cannot_render_or_resolve_position() -> None:
@@ -2410,7 +2234,7 @@ def test_candidate_handle_cannot_render_or_resolve_position() -> None:
     assert not any(block["kind"] == "list" for block in blocks)
 
 
-def test_rejected_candidate_title_cannot_leak_into_answer_text() -> None:
+def test_unrelated_candidate_title_cannot_leak_but_indirect_is_allowed() -> None:
     state = _state()
     candidate = state.store_result(
         "list",
@@ -2418,6 +2242,7 @@ def test_rejected_candidate_title_cannot_leak_into_answer_text() -> None:
             "items": [
                 {"entry_id": 1, "title": "直接主题"},
                 {"entry_id": 2, "title": "间接材料"},
+                {"entry_id": 3, "title": "无关材料"},
             ]
         },
         "limited",
@@ -2428,10 +2253,14 @@ def test_rejected_candidate_title_cannot_leak_into_answer_text() -> None:
     state.store_result(
         "list",
         {
-            "items": [{"entry_id": 1, "title": "直接主题"}],
+            "items": [
+                {"entry_id": 1, "title": "直接主题"},
+                {"entry_id": 2, "title": "间接材料"},
+            ],
             "internal_classifications": [
                 {"entry_id": 1, "relevance": "direct"},
                 {"entry_id": 2, "relevance": "indirect"},
+                {"entry_id": 3, "relevance": "unrelated"},
             ],
         },
         "completed",
@@ -2441,13 +2270,15 @@ def test_rejected_candidate_title_cannot_leak_into_answer_text() -> None:
             "candidate_result_handle": candidate,
         },
     )
-    answer = DialogueAnswer.model_validate(
+    allowed = DialogueAnswer.model_validate(
         {"blocks": [{"kind": "text", "text": "还可以参考间接材料。"}]}
     )
-
-    assert "主答案包含间接相关或不相关候选的标题" in output_errors(
-        answer, state
+    rejected = DialogueAnswer.model_validate(
+        {"blocks": [{"kind": "text", "text": "还可以参考无关材料。"}]}
     )
+
+    assert output_errors(allowed, state) == []
+    assert "主答案包含已判定为不相关候选的标题" in output_errors(rejected, state)
 
 
 def test_definition_with_no_direct_records_requires_explicit_insufficient_block() -> None:
@@ -2581,7 +2412,7 @@ async def test_equivalent_semantic_tools_dispatch_only_one_search(monkeypatch) -
         selected = next(
             handle
             for handle in state.current_handles
-            if state.result_sets[handle].semantics.get("relevance_scope") == "direct"
+            if state.result_sets[handle].semantics.get("relevance_scope") == "related"
         )
         return ModelResponse(
             parts=[
@@ -2894,7 +2725,7 @@ async def test_search_success_read_failure_continues_without_repeating_search(
         selected = next(
             handle
             for handle in state.current_handles
-            if state.result_sets[handle].semantics.get("relevance_scope") == "direct"
+            if state.result_sets[handle].semantics.get("relevance_scope") == "related"
         )
         if calls == 3:
             return ModelResponse(parts=[ToolCallPart("read_entries", {"entry_ids": [9]})])
@@ -6269,6 +6100,150 @@ async def test_invalid_continuation_does_not_call_model_and_topic_switch_clears_
     assert "重新核验" in turn["answer"]
     assert calls == []
     assert state.continuation is None
+
+
+def test_recent_entry_references_follow_actual_delivery_order_with_legacy_turns() -> None:
+    """历史 turn 全为 1 时仍按交付顺序处理 9→10、重显和隐藏列表。"""
+
+    state = _state()
+    delivered = []
+    for index in range(1, 12):
+        handle = state.store_result(
+            "list",
+            {"items": [{"entry_id": index, "title": f"列表 {index}"}]},
+            "completed",
+            "limited",
+        )
+        delivered.append(handle)
+        state.remember_turn(
+            f"展示列表 {index}",
+            f"已展示列表 {index}",
+            [{"tool": "query_entries", "result_handle": handle}],
+            blocks=[{"kind": "list", "handle": handle}],
+            completion={"status": "completed"},
+        )
+
+    assert {turn["turn"] for turn in state.history_turns} == {1}
+    assert loop_module.recent_entry_reference_handles(state) == set(delivered[-2:])
+
+    hidden = state.store_result(
+        "list",
+        {"items": [{"entry_id": 99, "title": "内部列表"}]},
+        "completed",
+        "limited",
+    )
+    state.remember_turn(
+        "内部检索但不展示",
+        "只交付解释",
+        [{"tool": "query_entries", "result_handle": hidden}],
+        blocks=[{"kind": "text", "text": "只交付解释"}],
+        completion={"status": "completed"},
+    )
+    assert loop_module.recent_entry_reference_handles(state) == set(delivered[-2:])
+
+    state.remember_turn(
+        "重新展示旧列表",
+        "已重新展示",
+        [],
+        blocks=[{"kind": "list", "handle": delivered[1]}],
+        completion={"status": "completed"},
+    )
+    assert loop_module.recent_entry_reference_handles(state) == {
+        delivered[-1],
+        delivered[1],
+    }
+
+
+@pytest.mark.asyncio
+async def test_excluding_previous_results_receives_concrete_bounded_list_context() -> None:
+    """“除了这几条”同时获得已交付对象和排除合同。"""
+
+    state = _state()
+    handle = state.store_result(
+        "list",
+        {
+            "items": [
+                {"entry_id": index, "title": f"已展示记录 {index}"}
+                for index in range(1, 5)
+            ]
+        },
+        "completed",
+        "limited",
+    )
+    state.remember_turn(
+        "展示相关记录",
+        "已展示四条",
+        [{"tool": "query_entries", "result_handle": handle}],
+        blocks=[{"kind": "list", "handle": handle}],
+        completion={"status": "completed"},
+    )
+    state.begin_turn(56, "除了这四条，还有别的吗")
+
+    def respond(messages, info):
+        serialized = str(messages)
+        assert all(f"已展示记录 {index}" in serialized for index in range(1, 5))
+        assert "把最近实际展示的对象作为排除集合" in str(info.instructions)
+        return ModelResponse(parts=[ToolCallPart(
+            info.output_tools[0].name,
+            {"blocks": [{"kind": "text", "text": "已按上一组对象排除。"}]},
+        )])
+
+    turn, _ = await run_turn(
+        build_agent(FunctionModel(respond)),
+        state,
+        state.current_message,
+        build_compact_history(state),
+    )
+
+    assert turn["status"] == "completed", turn
+
+
+@pytest.mark.asyncio
+async def test_unread_discussion_id_does_not_reject_safe_title_answer() -> None:
+    """Run 899 风格的多填关联只跳过保存，不否决合格标题回答。"""
+
+    state = _state()
+    state.instrumentation.context_policy_enabled = True
+    handle = state.store_result(
+        "list",
+        {"items": [{"entry_id": 91, "title": "客厅地面瓷砖规格与光泽选择"}]},
+        "completed",
+        "limited",
+        semantics={"result_role": "authorized", "relevance_scope": "related"},
+    )
+
+    def solve(_messages, _info):
+        raise loop_module.FinalizeRequired("input_soft_limit")
+
+    def finalize(_messages, info):
+        return ModelResponse(parts=[ToolCallPart(
+            info.output_tools[0].name,
+            {
+                "blocks": [
+                    {"kind": "text", "text": "库里有一条相关记录。"},
+                    {"kind": "result", "result_handle": handle},
+                ],
+                "discussion_entry_id": 91,
+            },
+        )])
+
+    turn, _ = await run_turn(
+        build_agent(FunctionModel(solve)),
+        state,
+        "我库里有柔光砖记录吗",
+        [],
+        build_finalizer_agent(FunctionModel(finalize)),
+    )
+
+    assert turn["status"] == "completed", turn
+    assert "客厅地面瓷砖规格与光泽选择" in turn["answer"]
+    assert state.editing_context is None
+    diagnostic = next(
+        event
+        for event in state.tool_events
+        if event.get("reason_code") == "discussion_association_not_read"
+    )
+    assert diagnostic["status"] == "not_executed"
 
 
 def test_fourth_batch_keeps_all_frozen_budget_values() -> None:

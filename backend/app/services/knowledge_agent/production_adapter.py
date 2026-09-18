@@ -350,15 +350,8 @@ def _state_snapshot(state: LoopState, turn: dict, *, loop_status: str) -> dict:
         for handle, record in state.result_sets.items()
         if record.displayable and handle in retained_handles
     }
-    classified_entry_ids = {
-        int(item["entry_id"])
-        for handle in retained_handles
-        if (record := state.result_sets.get(handle)) is not None
-        for item in record.payload.get("internal_classified_items", [])
-        if item.get("entry_id") is not None
-    }
     restorable_entry_ids = sorted(
-        (state.authorized_entry_ids | classified_entry_ids)
+        state.authorized_entry_ids
         & state.discovered_entry_ids
         & state.discovered_entry_fingerprints.keys()
     )
@@ -437,12 +430,6 @@ def _restore_state(state: LoopState, snapshot: dict) -> None:
         "project_id": state.project_id,
     }
     restored_fingerprints = snapshot.get("discovered_entry_fingerprints") or {}
-    classified_entry_ids = {
-        int(item["entry_id"])
-        for record in state.result_sets.values()
-        for item in record.payload.get("internal_classified_items", [])
-        if item.get("entry_id") is not None
-    }
     if scope_matches and isinstance(restored_fingerprints, dict):
         for raw_entry_id in snapshot.get("discovered_entry_ids", []):
             try:
@@ -451,7 +438,7 @@ def _restore_state(state: LoopState, snapshot: dict) -> None:
                 continue
             fingerprint = restored_fingerprints.get(str(entry_id))
             if (
-                entry_id in state.authorized_entry_ids | classified_entry_ids
+                entry_id in state.authorized_entry_ids
                 and isinstance(fingerprint, str)
                 and len(fingerprint) == 64
                 and all(character in "0123456789abcdef" for character in fingerprint.lower())
