@@ -679,8 +679,11 @@ async def test_production_adapter_preserves_displayed_entry_discussion_and_candi
         def discuss_first(_messages, info):
             instructions = str(info.instructions)
             observed["instructions"].append(instructions)
-            assert displayed["parent_handle"] in instructions
-            assert displayed["titles"][0] in instructions
+            if info.function_tools:
+                assert displayed["parent_handle"] in instructions
+                assert displayed["titles"][0] in instructions
+                raise loop_module.FinalizeRequired("input_soft_limit")
+            assert "discussion_entry_id" in instructions
             return ModelResponse(parts=[ToolCallPart(
                 info.output_tools[0].name,
                 {

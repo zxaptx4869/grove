@@ -2291,6 +2291,94 @@ async def test_semantic_selection_aligns_search_read_and_rendered_direct_set(
     assert [item[0] for item in dispatched].count("query_entries") == 1
 
 
+@pytest.mark.asyncio
+async def test_indirect_activation_rejects_invalid_permission_or_fingerprint(
+    monkeypatch,
+) -> None:
+    """已分类集合仍须重新复验，失效时不能生成可展示句柄。"""
+
+    state = _state()
+    direct = state.store_result(
+        "list",
+        {
+            "items": [{"entry_id": 11, "title": "直接记录"}],
+            "internal_classified_items": [
+                {"entry_id": 22, "title": "间接记录", "relevance_level": "indirect"}
+            ],
+        },
+        "completed",
+        "limited",
+        semantics={
+            "result_role": "authorized",
+            "relevance_scope": "direct",
+            "classification_counts": {"direct": 1, "indirect": 1, "unrelated": 0},
+        },
+    )
+    state.remember_turn(
+        "查询相关记录",
+        "只展示直接相关记录",
+        [{"tool": "select_relevant_entries", "result_handle": direct}],
+        blocks=[{"kind": "list", "handle": direct}],
+        completion={"status": "completed"},
+    )
+    state.begin_turn(58, "展示刚才的间接相关记录")
+
+    async def invalid_material(_state, entry_ids):
+        assert entry_ids == [22]
+        return {
+            "items": [],
+            "denied_entry_ids": [22],
+            "unavailable_entry_ids": [],
+        }
+
+    monkeypatch.setattr(
+        loop_module, "_revalidate_discovered_entries", invalid_material
+    )
+    calls = 0
+
+    def respond(messages, info):
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            return ModelResponse(parts=[ToolCallPart(
+                "select_relevant_entries",
+                {
+                    "candidate_result_handle": direct,
+                    "classifications": [],
+                    "relevance_scope": "indirect",
+                },
+            )])
+        result = next(
+            part.content
+            for message in reversed(messages)
+            for part in getattr(message, "parts", [])
+            if isinstance(part, ToolReturnPart)
+            and part.tool_name == "select_relevant_entries"
+        )
+        assert result["status"] == "denied"
+        return ModelResponse(parts=[ToolCallPart(
+            info.output_tools[0].name,
+            {"blocks": [{
+                "kind": "insufficient",
+                "text": "间接相关记录已无法通过当前权限与材料校验。",
+            }]},
+        )])
+
+    turn, _ = await run_turn(
+        build_agent(FunctionModel(respond)),
+        state,
+        state.current_message,
+        [],
+    )
+
+    assert turn["status"] == "denied"
+    assert calls == 2
+    assert not any(
+        record.semantics.get("relevance_scope") == "indirect"
+        for record in state.result_sets.values()
+    )
+
+
 def test_candidate_handle_cannot_render_or_resolve_position() -> None:
     state = _state()
     candidate = state.store_result(

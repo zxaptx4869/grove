@@ -289,7 +289,7 @@
 
 ### Requirement: finalizer 必须保存明确关联的 Entry 分析
 
-普通回答与无工具 finalizer 的成功输出 MUST 通过同一入口处理明确关联的 Entry discussion。输出包含可验证的 `discussion_entry_id` 时，系统 MUST 复验已展示/已读取身份、Workspace、权限、范围和材料指纹后保存分析；没有关联 ID且没有活动对象时 MUST NOT 自动绑定旧焦点。finalizer 提示与输出 schema MUST 一致允许该可选关联字段，且不得为保存分析新增模型阶段或第二套讨论状态。
+普通回答与无工具 finalizer 的成功输出 MUST 通过同一入口处理明确关联的 Entry discussion。输出包含可验证的 `discussion_entry_id` 时，系统 MUST 复验已展示/已读取身份、Workspace、权限、范围和材料指纹后保存分析；没有关联 ID 且没有活动对象时 MUST NOT 自动绑定旧焦点。finalizer 提示与输出 schema MUST 一致允许该可选关联字段，且不得为保存分析新增模型阶段或第二套讨论状态。
 
 #### Scenario: 未预绑定对象的 finalizer 保存分析
 
