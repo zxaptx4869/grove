@@ -6,7 +6,10 @@
 
 - **BREAKING**：原生 App 只保留一套正式 Agent 对话实现，以服务端 `dialogue_*` 字段和块顺序为主合同；旧扁平回答只作为缺少结构化结果时的简单历史回退。
 - 原生端展示 text、list、statistic、entry、evidence、candidate、insufficient 等正式块，安全处理未知块，并避免与完整扁平答案重复。
-- 知识列表中的明确 Entry 项支持原位按需读取当前正文、收起、失败重试和不可访问状态；读取仅是客户端查看，不写入 Agent 上下文、不发送消息、不调用模型。
+- 知识列表中的明确 Entry 项以紧凑行展示，并通过底部只读详情按需读取当前正文、失败重试和不可访问状态；读取仅是客户端查看，不写入 Agent 上下文、不发送消息、不调用模型。
+- 恢复品牌、知识范围、对话历史的顶部入口顺序；历史 Sheet 保留新建对话，消息上下文设置不替代会话入口。
+- 区分消息请求进行中与提交结果未知，仅后者提供复用原 `client_message_id` 的恢复入口；首次进入或显式切换会话时可靠定位最新消息。
+- 活动 Run 使用紧凑的真实阶段反馈和轻量中性取消入口，不重复显示范围或伪进度。
 - 原生端使用真实阶段和终态，按当前 Conversation 的服务端 `can_continue` 提供正式续接；继续、提交结果未知重试与失败后重新提问使用不同的消息和幂等语义。
 - **BREAKING**：移除原生端快速/深度、强制结果形式、依据模式、旧结果纠正、固定“整理成知识”、Candidate Draft、Entry Revision、末尾旧引用条及其专用状态、组件、API 和测试。
 - 普通对话中的 candidate 块仅显示为“修改建议/候选稿，未应用”，不创建持久 Draft，也不提供知识写操作。
@@ -21,9 +24,9 @@
 
 ### Modified Capabilities
 
-- `native-knowledge-agent-conversation`：收敛提问设置，增加正式 dialogue 状态、continuation、恢复与三类重试语义，删除旧模式覆盖要求。
-- `native-knowledge-agent-answer`：以正式 dialogue blocks 展示回答与真实依据，移除旧 citations、Candidate Draft、Entry Revision 和复杂旧回答合同。
-- `native-knowledge-agent-entry-results`：将正式块中的知识列表按服务端原序展示，并支持明确 Entry 的当前正文按需原位展开。
+- `native-knowledge-agent-conversation`：收敛提问设置，增加正式 dialogue 状态、continuation、恢复与三类重试语义，明确顶部入口、提交进行中/结果未知和首次定位行为，删除旧模式覆盖要求。
+- `native-knowledge-agent-answer`：以正式 dialogue blocks 展示回答与真实依据，使用紧凑真实阶段和轻量取消入口，移除旧 citations、Candidate Draft、Entry Revision 和复杂旧回答合同。
+- `native-knowledge-agent-entry-results`：将正式块中的知识列表按服务端原序紧凑展示，并支持明确 Entry 的当前正文按需底部详情阅读。
 - `native-knowledge-agent-candidate-draft`：移除原生端持久 Candidate Draft 创建、编辑、确认、取消、重试和回执能力。
 - `native-knowledge-agent-entry-revision`：移除原生端 Entry Revision 发起、编辑、差异确认、应用、撤销和回执能力。
 

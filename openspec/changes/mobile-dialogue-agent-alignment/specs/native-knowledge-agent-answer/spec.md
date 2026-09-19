@@ -5,7 +5,7 @@
 
 #### Scenario: 正式 Run 处理中
 - **WHEN** `dialogue_loop_status` 为 waiting 或 processing 且存在已知 `dialogue_stage`
-- **THEN** 过程卡显示该真实阶段、生成时范围和取消入口
+- **THEN** Agent 标识附近以紧凑过程行显示一次真实阶段和轻量中性取消入口，不重复显示范围或使用大面积阴影卡
 
 #### Scenario: 步骤未知
 - **WHEN** 客户端收到未识别的 future `dialogue_stage`
@@ -14,6 +14,14 @@
 #### Scenario: Run 终态
 - **WHEN** `dialogue_loop_status` 进入 completed、partial、failed、cancelled、not_executed 或 unsupported
 - **THEN** 过程卡转为对应持久终态，不继续显示“正在处理”或进行中动效
+
+#### Scenario: 取消进行中
+- **WHEN** 用户已点击活动 Run 的取消入口且请求尚未完成
+- **THEN** 取消入口保持至少 44×44 触控尺寸、显示正在取消并禁止重复操作，阶段区不显示伪进度
+
+#### Scenario: 取消请求失败
+- **WHEN** 取消请求网络失败或服务端拒绝
+- **THEN** 紧凑过程区保留最后已知真实阶段并显示可见失败信息，用户仍可按现有语义重试取消
 
 ### Requirement: 结构化回答状态清晰区分
 原生 App MUST 以 `dialogue_loop_status` 结合 Run 状态区分 completed、partial、failed、cancelled、not_executed 和 unsupported，并从正式 `dialogue_blocks` 展示 insufficient 或 candidate 等内容语义。AI 即时回答 MUST 标识为即时结果，不得因存在 Entry 或 Evidence 就把整段回答默认标为“基于正式知识”，也不得显示为正式 Entry。
@@ -58,11 +66,11 @@
 - **THEN** 客户端以原问题和新的 `client_message_id` 创建新 Run，旧失败记录保持不变
 
 ### Requirement: 长内容层可滚动且恢复对话
-原生 App MUST 让 History、Scope 与上下文设置 Sheet 的长内容在 Sheet 内独立滚动，并让原位展开的长 Entry 正文跟随消息区滚动；关闭 Sheet 或收起正文后 MUST 保留对话阅读状态。长项目名、正文、错误或选项列表不得遮挡关闭、重试或 Composer。
+原生 App MUST 让 History、Scope、上下文设置与 Entry 详情 Sheet 的长内容在 Sheet 内独立滚动；关闭任何 Sheet 后 MUST 保留对话阅读状态。长项目名、正文、错误或选项列表不得遮挡关闭、重试或 Composer。
 
 #### Scenario: 长 Entry 正文
-- **WHEN** 用户展开超过一屏的当前 Entry 正文
-- **THEN** 正文随消息区滚动且可从同一列表项收起，不出现覆盖 Composer 的独立固定层
+- **WHEN** 用户在底部详情中阅读超过一屏的当前 Entry 正文
+- **THEN** 正文在详情 Sheet 内以正常阅读字号和行距滚动，关闭、遮罩、系统返回和安全区可用，关闭后主对话保持原阅读位置
 
 #### Scenario: 长历史或选项
 - **WHEN** History、Scope 或上下文设置列表超过可用高度
@@ -117,7 +125,7 @@
 
 #### Scenario: 点击展开当前正文
 - **WHEN** 用户点击知识列表中的 Entry 项
-- **THEN** 客户端只调用已有 Entry 只读接口并更新本地展开状态，不发送聊天消息、不调用模型、不推进工作集
+- **THEN** 客户端打开底部只读详情并只调用已有 Entry 只读接口，不发送聊天消息、不调用模型、不推进工作集
 
 ## REMOVED Requirements
 
@@ -170,4 +178,3 @@
 **Reason**: 正式 adapter 不交付旧 `answer_basis`，继续展示会产生伪依据或兼容分支。
 
 **Migration**: 只展示服务端正式 Entry/Evidence 等块的局部语义；无元数据时不推断全局依据。
-
