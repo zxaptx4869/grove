@@ -1,5 +1,6 @@
 import {
   applyRecentPage,
+  composeThread,
   emptyThread,
   prependOlderPage,
   upsertRun,
@@ -58,8 +59,12 @@ function run(status: KnowledgeRun["status"], updatedAt: string): KnowledgeRun {
   };
 }
 
-function page(items: KnowledgeMessage[], runs: KnowledgeRun[]): KnowledgeMessagePage {
-  return { items, nextCursor: null, runs };
+function page(
+  items: KnowledgeMessage[],
+  runs: KnowledgeRun[],
+  nextCursor: string | null = null,
+): KnowledgeMessagePage {
+  return { items, nextCursor, runs };
 }
 
 test("最近页与更早页保持服务端消息顺序并去重", () => {
@@ -72,4 +77,20 @@ test("同一 Run 以更新的服务端终态覆盖进行中状态", () => {
   let state = applyRecentPage(emptyThread(), page([], [run("processing", "2")]));
   state = upsertRun(state, run("completed", "3"));
   expect(state.runsById.get(1)?.status).toBe("completed");
+});
+
+test("连续加载两页历史保持时间正序并采用最早页游标", () => {
+  const state = composeThread(
+    page([message(5), message(6)], [], "c1"),
+    [
+      page([message(3), message(4), message(5)], [], "c2"),
+      page([message(1), message(2), message(3)], [], null),
+    ],
+    new Map(),
+    [],
+  );
+
+  expect(state.items.map((item) => item.id)).toEqual([1, 2, 3, 4, 5, 6]);
+  expect(state.nextCursor).toBeNull();
+  expect(state.hasMore).toBe(false);
 });

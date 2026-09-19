@@ -89,6 +89,15 @@ interface RunCancelError {
   message: string;
 }
 
+interface ConversationRequestOwner {
+  conversationId: number;
+  generation: number;
+}
+
+interface OlderPageRequest extends ConversationRequestOwner {
+  cursor: string;
+}
+
 function scopeLabelOf(scope: KnowledgeScopeChangeRequest): string {
   return scope.scopeType === "project" ? scope.projectName ?? "项目" : "全部知识";
 }
@@ -127,6 +136,9 @@ export function useConversationController(
   const [loadingOlder, setLoadingOlder] = useState(false);
   const [cancelError, setCancelError] = useState<RunCancelError | null>(null);
   const previousRunStatusRef = useRef<RunStatus | null>(null);
+  const [conversationGeneration, setConversationGeneration] = useState(0);
+  const conversationGenerationRef = useRef(0);
+  const olderPageRequestRef = useRef<OlderPageRequest | null>(null);
 
   useEffect(() => {
     modesRef.current = modes;
@@ -240,10 +252,15 @@ export function useConversationController(
   }, [queryClient, runQuery.data?.status, selectedConversationId]);
 
   const resetConversationLocalState = useCallback(() => {
+    const nextGeneration = conversationGenerationRef.current + 1;
+    conversationGenerationRef.current = nextGeneration;
+    setConversationGeneration(nextGeneration);
+    olderPageRequestRef.current = null;
     setOlderPages([]);
     setRunOverrides(new Map());
     setExtraMessages([]);
     setOlderError(null);
+    setLoadingOlder(false);
     setCancelError(null);
     previousRunStatusRef.current = null;
   }, []);
@@ -275,26 +292,50 @@ export function useConversationController(
     if (
       !token ||
       selectedConversationId === null ||
-      loadingOlder ||
+      olderPageRequestRef.current !== null ||
       !thread.nextCursor
     ) {
       return;
     }
+    const request: OlderPageRequest = {
+      conversationId: selectedConversationId,
+      generation: conversationGenerationRef.current,
+      cursor: thread.nextCursor,
+    };
+    olderPageRequestRef.current = request;
     setLoadingOlder(true);
     setOlderError(null);
     try {
       const page = await knowledgeAgentApi.listMessages(
         token,
-        selectedConversationId,
-        thread.nextCursor,
+        request.conversationId,
+        request.cursor,
       );
+      if (
+        olderPageRequestRef.current !== request ||
+        conversationGenerationRef.current !== request.generation
+      ) {
+        return;
+      }
       setOlderPages((previous) => [...previous, page]);
     } catch (error) {
+      if (
+        olderPageRequestRef.current !== request ||
+        conversationGenerationRef.current !== request.generation
+      ) {
+        return;
+      }
       setOlderError(toUserErrorMessage(error));
     } finally {
-      setLoadingOlder(false);
+      if (
+        olderPageRequestRef.current === request &&
+        conversationGenerationRef.current === request.generation
+      ) {
+        olderPageRequestRef.current = null;
+        setLoadingOlder(false);
+      }
     }
-  }, [loadingOlder, selectedConversationId, thread.nextCursor, token]);
+  }, [selectedConversationId, thread.nextCursor, token]);
 
   const performSubmission = useCallback(
     async (initial: PendingSubmission): Promise<boolean> => {
@@ -425,25 +466,32 @@ export function useConversationController(
   );
 
   const scopeMutation = useMutation({
-    mutationFn: (scope: KnowledgeScopeChangeRequest) =>
+    mutationFn: ({ conversationId, scope }: ConversationRequestOwner & {
+      scope: KnowledgeScopeChangeRequest;
+    }) =>
       knowledgeAgentApi.changeScope(
         token as string,
-        selectedConversationId as number,
+        conversationId,
         scope,
       ),
-    onSuccess: (conversation) => {
-      setScopeError(null);
+    onSuccess: (conversation, request) => {
       queryClient.setQueryData(
         knowledgeAgentKeys.conversation(conversation.id),
         conversation,
       );
-      resetConversationLocalState();
       void queryClient.invalidateQueries({
         queryKey: knowledgeAgentKeys.messages(conversation.id),
       });
       void queryClient.invalidateQueries({ queryKey: knowledgeAgentKeys.conversations() });
+      if (conversationGenerationRef.current !== request.generation) return;
+      setScopeError(null);
+      resetConversationLocalState();
     },
-    onError: (error) => setScopeError(toUserErrorMessage(error)),
+    onError: (error, request) => {
+      if (conversationGenerationRef.current === request.generation) {
+        setScopeError(toUserErrorMessage(error));
+      }
+    },
   });
 
   const changeScope = useCallback(
@@ -462,26 +510,43 @@ export function useConversationController(
         return;
       }
       if (sameScope(currentScope, scope)) return;
-      await scopeMutation.mutateAsync(scope).catch(() => undefined);
+      if (selectedConversationId === null) return;
+      await scopeMutation
+        .mutateAsync({
+          conversationId: selectedConversationId,
+          generation: conversationGenerationRef.current,
+          scope,
+        })
+        .catch(() => undefined);
     },
-    [activeRun, currentScope, isDraft, scopeMutation],
+    [activeRun, currentScope, isDraft, scopeMutation, selectedConversationId],
   );
 
   const cancelMutation = useMutation({
-    mutationFn: (runId: number) => knowledgeAgentApi.cancelRun(token as string, runId),
-    onSuccess: (run) => {
+    mutationFn: ({ runId }: ConversationRequestOwner & { runId: number }) =>
+      knowledgeAgentApi.cancelRun(token as string, runId),
+    onSuccess: (run, request) => {
+      void queryClient.invalidateQueries({ queryKey: knowledgeAgentKeys.run(run.id) });
+      if (conversationGenerationRef.current !== request.generation) return;
       setCancelError(null);
       setRunOverrides((previous) => new Map(previous).set(run.id, run));
-      void queryClient.invalidateQueries({ queryKey: knowledgeAgentKeys.run(run.id) });
     },
-    onError: (error, runId) => {
-      setCancelError({ runId, message: toUserErrorMessage(error) });
+    onError: (error, request) => {
+      if (conversationGenerationRef.current === request.generation) {
+        setCancelError({ runId: request.runId, message: toUserErrorMessage(error) });
+      }
     },
   });
 
   const requestCancelRun = useCallback(async () => {
     if (!activeRun) return;
-    await cancelMutation.mutateAsync(activeRun.id).catch(() => undefined);
+    await cancelMutation
+      .mutateAsync({
+        conversationId: activeRun.conversationId,
+        generation: conversationGenerationRef.current,
+        runId: activeRun.id,
+      })
+      .catch(() => undefined);
   }, [activeRun, cancelMutation]);
 
   return {
@@ -496,7 +561,9 @@ export function useConversationController(
     userInitiatedDraft: explicitChoice === "draft",
     currentScope,
     scopeLabel: scopeLabelOf(currentScope),
-    scopeBusy: scopeMutation.isPending,
+    scopeBusy:
+      scopeMutation.isPending &&
+      scopeMutation.variables?.generation === conversationGeneration,
     scopeError,
     changeScope,
     switchToConversation,
@@ -524,7 +591,10 @@ export function useConversationController(
     runPolling: Boolean(activeRun && runQuery.isFetching),
     runPollingError: runQuery.isError ? toUserErrorMessage(runQuery.error) : null,
     retryRunPolling: () => void runQuery.refetch(),
-    cancelling: cancelMutation.isPending,
+    cancelling:
+      cancelMutation.isPending &&
+      cancelMutation.variables?.generation === conversationGeneration &&
+      cancelMutation.variables.runId === activeRun?.id,
     cancelError:
       activeRun && cancelError?.runId === activeRun.id ? cancelError.message : null,
     requestCancelRun,

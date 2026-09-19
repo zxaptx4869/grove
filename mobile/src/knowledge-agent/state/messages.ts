@@ -90,8 +90,9 @@ export function composeThread(
 ): MessageThreadState {
   if (!recent) return emptyThread();
   let state = applyRecentPage(emptyThread(), recent);
-  for (let index = olderPages.length - 1; index >= 0; index -= 1) {
-    state = prependOlderPage(state, olderPages[index]);
+  // olderPages 按请求顺序保存：较近旧页在前，更早页在后；逐页前插才能保持时间正序。
+  for (const page of olderPages) {
+    state = prependOlderPage(state, page);
   }
   for (const run of runOverrides.values()) state = upsertRun(state, run);
   for (const message of extraMessages) state = upsertMessage(state, message);

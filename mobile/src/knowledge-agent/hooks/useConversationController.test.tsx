@@ -133,8 +133,19 @@ function run(
 function page(
   items: KnowledgeMessage[] = [],
   runs: KnowledgeRun[] = [],
+  nextCursor: string | null = null,
 ): KnowledgeMessagePage {
-  return { items, runs, nextCursor: null };
+  return { items, runs, nextCursor };
+}
+
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  let reject!: (reason: unknown) => void;
+  const promise = new Promise<T>((onResolve, onReject) => {
+    resolve = onResolve;
+    reject = onReject;
+  });
+  return { promise, resolve, reject };
 }
 
 async function setup(
@@ -257,6 +268,203 @@ test("切换会话后只恢复目标 Conversation 的服务端消息", async () 
   });
   await waitFor(() => expect(rendered.result.current.activeConversation?.id).toBe(2));
   await waitFor(() => expect(rendered.result.current.thread.items[0]?.content).toBe("会话二"));
+});
+
+test("会话 A 的迟到历史页成功响应不污染会话 B", async () => {
+  const older = deferred<KnowledgeMessagePage>();
+  const pages: Record<number, KnowledgeMessagePage> = {
+    1: page([message(5, "user", 15, 1, "会话一最近消息")], [], "a-older"),
+    2: page([message(20, "user", 20, 2, "会话二消息")], [], "b-older"),
+  };
+  const rendered = await setup([conversation(1), conversation(2)], pages);
+  await waitFor(() => expect(rendered.result.current.thread.nextCursor).toBe("a-older"));
+  api.listMessages.mockImplementation(async (_token, id, cursor) => {
+    if (id === 1 && cursor === "a-older") return older.promise;
+    return pages[id] ?? page();
+  });
+
+  let request!: Promise<void>;
+  await act(async () => {
+    request = rendered.result.current.loadOlderMessages();
+    await Promise.resolve();
+  });
+  await waitFor(() => expect(rendered.result.current.loadingOlder).toBe(true));
+  await act(async () => {
+    rendered.result.current.switchToConversation(2);
+  });
+  await waitFor(() => expect(rendered.result.current.activeConversation?.id).toBe(2));
+  await waitFor(() => expect(rendered.result.current.thread.items[0]?.id).toBe(20));
+
+  older.resolve(
+    page(
+      [message(3, "user", 13, 1, "会话一旧消息")],
+      [run(13, "completed", 1)],
+      null,
+    ),
+  );
+  await act(async () => {
+    await request;
+  });
+
+  expect(rendered.result.current.thread.items.map((item) => item.id)).toEqual([20]);
+  expect(rendered.result.current.thread.runsById.has(13)).toBe(false);
+  expect(rendered.result.current.thread.nextCursor).toBe("b-older");
+  expect(rendered.result.current.loadingOlder).toBe(false);
+  expect(rendered.result.current.olderError).toBeNull();
+});
+
+test("会话 A 的迟到历史页失败不污染新对话", async () => {
+  const older = deferred<KnowledgeMessagePage>();
+  const rendered = await setup([conversation(1)], {
+    1: page([message(5, "user", 15)], [], "a-older"),
+  });
+  await waitFor(() => expect(rendered.result.current.thread.nextCursor).toBe("a-older"));
+  api.listMessages.mockImplementation(async (_token, id, cursor) => {
+    if (id === 1 && cursor === "a-older") return older.promise;
+    return page();
+  });
+
+  let request!: Promise<void>;
+  await act(async () => {
+    request = rendered.result.current.loadOlderMessages();
+    await Promise.resolve();
+  });
+  await waitFor(() => expect(rendered.result.current.loadingOlder).toBe(true));
+  await act(async () => {
+    rendered.result.current.startNewConversation();
+  });
+  await waitFor(() => expect(rendered.result.current.isDraft).toBe(true));
+
+  older.reject(new TypeError("Network request failed"));
+  await act(async () => {
+    await request;
+  });
+
+  expect(rendered.result.current.thread.items).toEqual([]);
+  expect(rendered.result.current.loadingOlder).toBe(false);
+  expect(rendered.result.current.olderError).toBeNull();
+});
+
+test("会话 A 的迟到范围失败不改变会话 B 状态", async () => {
+  const scope = deferred<KnowledgeConversation>();
+  const rendered = await setup([conversation(1), conversation(2)], {
+    1: page([message(1, "user", 10, 1, "会话一")]),
+    2: page([message(5, "user", 20, 2, "会话二")]),
+  });
+  api.changeScope.mockReturnValue(scope.promise);
+  await waitFor(() => expect(rendered.result.current.activeConversation?.id).toBe(1));
+
+  let request!: Promise<void>;
+  await act(async () => {
+    request = rendered.result.current.changeScope({ scopeType: "project", projectId: 8 });
+    await Promise.resolve();
+  });
+  await waitFor(() => expect(rendered.result.current.scopeBusy).toBe(true));
+  await act(async () => {
+    rendered.result.current.switchToConversation(2);
+  });
+  await waitFor(() => expect(rendered.result.current.activeConversation?.id).toBe(2));
+  expect(rendered.result.current.scopeBusy).toBe(false);
+
+  scope.reject(new TypeError("Network request failed"));
+  await act(async () => {
+    await request;
+  });
+
+  expect(rendered.result.current.activeConversation?.id).toBe(2);
+  expect(rendered.result.current.scopeError).toBeNull();
+  expect(rendered.result.current.thread.items.map((item) => item.id)).toEqual([5]);
+});
+
+test("会话 A 的迟到范围成功不清空会话 B 已加载历史", async () => {
+  const scope = deferred<KnowledgeConversation>();
+  const recentPages: Record<number, KnowledgeMessagePage> = {
+    1: page([message(1, "user", 10, 1, "会话一")]),
+    2: page([message(6, "assistant", 20, 2, "会话二最近消息")], [], "b-older"),
+  };
+  const rendered = await setup([conversation(1), conversation(2)], recentPages);
+  api.changeScope.mockReturnValue(scope.promise);
+  await waitFor(() => expect(rendered.result.current.activeConversation?.id).toBe(1));
+
+  let scopeRequest!: Promise<void>;
+  await act(async () => {
+    scopeRequest = rendered.result.current.changeScope({
+      scopeType: "project",
+      projectId: 8,
+    });
+    await Promise.resolve();
+  });
+  await act(async () => {
+    rendered.result.current.switchToConversation(2);
+  });
+  await waitFor(() => expect(rendered.result.current.thread.nextCursor).toBe("b-older"));
+  api.listMessages.mockImplementation(async (_token, id, cursor) => {
+    if (id === 2 && cursor === "b-older") {
+      return page(
+        [message(4, "assistant", 19, 2, "会话二旧消息")],
+        [run(19, "completed", 2)],
+        null,
+      );
+    }
+    return recentPages[id] ?? page();
+  });
+  await act(async () => {
+    await rendered.result.current.loadOlderMessages();
+  });
+  await waitFor(() =>
+    expect(rendered.result.current.thread.items.map((item) => item.id)).toEqual([4, 6]),
+  );
+
+  scope.resolve({
+    ...conversation(1),
+    scopeType: "project",
+    projectId: 8,
+    projectName: "会话一项目",
+  });
+  await act(async () => {
+    await scopeRequest;
+  });
+
+  expect(rendered.result.current.activeConversation?.id).toBe(2);
+  expect(rendered.result.current.thread.items.map((item) => item.id)).toEqual([4, 6]);
+  expect(rendered.result.current.thread.runsById.has(19)).toBe(true);
+  expect(rendered.result.current.thread.hasMore).toBe(false);
+});
+
+test("会话 A 的迟到取消成功不改变会话 B 的活动 Run", async () => {
+  mockAppActive = false;
+  const cancellation = deferred<KnowledgeRun>();
+  const runA = run(10, "processing", 1);
+  const runB = run(20, "processing", 2);
+  const rendered = await setup([conversation(1), conversation(2)], {
+    1: page([message(1, "user", 10, 1), message(2, "assistant", 10, 1)], [runA]),
+    2: page([message(5, "user", 20, 2), message(6, "assistant", 20, 2)], [runB]),
+  });
+  api.cancelRun.mockReturnValue(cancellation.promise);
+  await waitFor(() => expect(rendered.result.current.activeRun?.id).toBe(10));
+
+  let request!: Promise<void>;
+  await act(async () => {
+    request = rendered.result.current.requestCancelRun();
+    await Promise.resolve();
+  });
+  await waitFor(() => expect(rendered.result.current.cancelling).toBe(true));
+  await act(async () => {
+    rendered.result.current.switchToConversation(2);
+  });
+  await waitFor(() => expect(rendered.result.current.activeRun?.id).toBe(20));
+  expect(rendered.result.current.cancelling).toBe(false);
+
+  cancellation.resolve(
+    run(10, "cancelled", 1, { updatedAt: "2026-09-19T10:01:00Z" }),
+  );
+  await act(async () => {
+    await request;
+  });
+
+  expect(rendered.result.current.activeRun?.id).toBe(20);
+  expect(rendered.result.current.thread.runsById.has(10)).toBe(false);
+  expect(rendered.result.current.cancelError).toBeNull();
 });
 
 test("App 在后台时不轮询，恢复前台后读取同一活动 Run", async () => {
