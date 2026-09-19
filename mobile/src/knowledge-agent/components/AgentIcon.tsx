@@ -18,7 +18,8 @@ export type AgentIconName =
   | "message"
   | "file"
   | "tune"
-  | "edit";
+  | "edit"
+  | "stop";
 
 const PATHS: Record<AgentIconName, string[]> = {
   history: [
@@ -52,6 +53,7 @@ const PATHS: Record<AgentIconName, string[]> = {
     "M4 21v-7M4 10V3M12 21v-9M12 8V3M20 21v-5M20 12V3M1 14h6M9 8h6M17 16h6",
   ],
   edit: ["M17 3a2.8 2.8 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5z"],
+  stop: ["M7 7h10v10H7z"],
 };
 
 export function AgentIcon({

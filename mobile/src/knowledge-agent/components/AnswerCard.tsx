@@ -1,13 +1,8 @@
-import { useState } from "react";
-import { ActivityIndicator, Pressable, StyleSheet, Text, View } from "react-native";
-import { useQuery } from "@tanstack/react-query";
+import { Pressable, StyleSheet, Text, View } from "react-native";
 
-import { useAuth } from "@/src/auth";
-import { knowledgeAgentApi } from "@/src/knowledge-agent/api";
 import { AgentIcon } from "@/src/knowledge-agent/components/AgentIcon";
+import type { EntryDetailTarget } from "@/src/knowledge-agent/components/EntryDetailSheet";
 import { AppButton, Badge, Card, CardBody } from "@/src/knowledge-agent/components/ui";
-import { classifyKnowledgeAgentError } from "@/src/knowledge-agent/errors";
-import { knowledgeAgentKeys } from "@/src/knowledge-agent/queryKeys";
 import type {
   KnowledgeAnswerBlock,
   KnowledgeRun,
@@ -66,14 +61,21 @@ function itemTitle(item: Record<string, unknown>, index: number): string {
   );
 }
 
-function itemSecondary(item: Record<string, unknown>): string | null {
+function itemPath(item: Record<string, unknown>): string | null {
   const project = stringValue(item.projectName);
   const path = stringValue(item.path) ?? stringValue(item.nodePath);
-  const summary =
-    stringValue(item.summary) ??
-    stringValue(item.excerpt) ??
-    stringValue(item.relevanceReason);
-  return [project, path, summary].filter(Boolean).join(" · ") || null;
+  return [project, path].filter(Boolean).join(" / ") || null;
+}
+
+function itemSummary(item: Record<string, unknown>): string | null {
+  return stringValue(item.summary) ?? stringValue(item.excerpt);
+}
+
+function relevanceLabel(value: string | null): string | null {
+  if (value === "direct") return "直接相关";
+  if (value === "indirect") return "间接相关";
+  if (value === "unrelated") return "不相关";
+  return value;
 }
 
 function StatusNotice({ run }: { run: KnowledgeRun }) {
@@ -93,99 +95,43 @@ function StatusNotice({ run }: { run: KnowledgeRun }) {
   );
 }
 
-function CurrentEntry({ entryId }: { entryId: number }) {
-  const { token } = useAuth();
-  const query = useQuery({
-    queryKey: knowledgeAgentKeys.entryCurrent(entryId),
-    queryFn: () => knowledgeAgentApi.getEntryCurrent(token as string, entryId),
-    enabled: Boolean(token),
-  });
-  if (query.isLoading) {
-    return (
-      <View style={styles.entryState} accessibilityRole="progressbar">
-        <ActivityIndicator color={theme.green} />
-        <Text style={styles.stateCopy}>正在读取当前知识…</Text>
-      </View>
-    );
-  }
-  if (query.isError) {
-    const error = classifyKnowledgeAgentError(query.error);
-    const unavailable = error.kind === "not_found" || error.kind === "auth";
-    return (
-      <View style={styles.entryState} accessibilityRole="alert">
-        <Text style={styles.stateTitle}>
-          {unavailable ? "该知识当前不可访问" : "当前知识读取失败"}
-        </Text>
-        <Text style={styles.stateCopy}>
-          {unavailable
-            ? "列表保留回答生成时的对象快照，当前正文不会泄露或替换历史结果。"
-            : error.message}
-        </Text>
-        {!unavailable ? (
-          <AppButton
-            label="重试读取"
-            onPress={() => void query.refetch()}
-            icon={<AgentIcon name="retry" size={15} color={theme.ink} />}
-          />
-        ) : null}
-      </View>
-    );
-  }
-  const current = query.data;
-  if (!current) return null;
-  return (
-    <View style={styles.currentEntry}>
-      <Text style={styles.currentLabel}>当前知识内容</Text>
-      <Text style={styles.currentTime}>
-        读取当前版本 · 更新于 {new Date(current.updatedAt).toLocaleString()}
-      </Text>
-      <Text style={styles.entryContent}>{current.content || "当前正文为空。"}</Text>
-      <Text style={styles.currentLabel}>当前知识的来源</Text>
-      <Text style={styles.sourceBoundary}>以下是当前 Entry 的来源摘要，不代表本轮 Agent 已核验。</Text>
-      {(current.evidences ?? []).length > 0 ? (
-        current.evidences?.map((evidence) => (
-          <View key={evidence.id} style={styles.sourceRow}>
-            <Text style={styles.sourceTitle}>· {evidence.sourceTitle}</Text>
-            {evidence.quote ? (
-              <Text style={styles.sourceQuote} numberOfLines={3}>
-                “{evidence.quote}”
-              </Text>
-            ) : null}
-          </View>
-        ))
-      ) : (
-        <Text style={styles.stateCopy}>当前没有可展示的来源摘要。</Text>
-      )}
-    </View>
-  );
-}
-
 function ListItem({
   item,
   index,
   expandable,
+  onOpenEntry,
 }: {
   item: Record<string, unknown>;
   index: number;
   expandable: boolean;
+  onOpenEntry: (target: EntryDetailTarget) => void;
 }) {
-  const [expanded, setExpanded] = useState(false);
   const entryId = expandable ? numberValue(item.entryId) : null;
   const canExpand = entryId !== null;
   const title = itemTitle(item, index);
-  const secondary = itemSecondary(item);
+  const path = itemPath(item);
+  const summary = itemSummary(item);
+  const relevance = relevanceLabel(stringValue(item.relevanceLevel));
+  const relevanceReason = stringValue(item.relevanceReason);
   return (
     <View style={styles.listItem}>
       <Pressable
         accessibilityRole={canExpand ? "button" : undefined}
         accessibilityLabel={
           canExpand
-            ? `第 ${index + 1} 条，${title}，${expanded ? "收起当前知识正文" : "展开当前知识正文"}`
+            ? `第 ${index + 1} 条，${title}，打开知识详情`
             : `第 ${index + 1} 项，${title}`
         }
-        accessibilityState={canExpand ? { expanded } : undefined}
         disabled={!canExpand}
-        onPress={() => canExpand && setExpanded((value) => !value)}
+        onPress={() => {
+          if (entryId === null) return;
+          onOpenEntry({
+            entryId,
+            title,
+            projectName: stringValue(item.projectName),
+            nodePath: stringValue(item.path) ?? stringValue(item.nodePath),
+          });
+        }}
         style={({ pressed }) => [styles.listPress, pressed && canExpand && styles.pressed]}
       >
         <View style={styles.indexBadge}>
@@ -193,23 +139,42 @@ function ListItem({
         </View>
         <View style={styles.listMain}>
           <Text style={styles.listItemTitle}>{title}</Text>
-          {secondary ? <Text style={styles.listSecondary}>{secondary}</Text> : null}
+          {path ? (
+            <Text style={styles.listPath} numberOfLines={1} ellipsizeMode="tail">
+              {path}
+            </Text>
+          ) : null}
+          {summary ? (
+            <Text style={styles.listSummary} numberOfLines={1} ellipsizeMode="tail">
+              {summary}
+            </Text>
+          ) : null}
+          {relevance || relevanceReason ? (
+            <Text style={styles.listRelevance}>
+              {[relevance, relevanceReason].filter(Boolean).join("：")}
+            </Text>
+          ) : null}
           {expandable && !canExpand ? (
             <Text style={styles.listUnavailable}>缺少明确 Entry 标识，不能读取正文。</Text>
           ) : null}
         </View>
         {canExpand ? (
-          <View style={expanded ? styles.chevronOpen : undefined}>
+          <View>
             <AgentIcon name="chevron" size={16} color={theme.muted} />
           </View>
         ) : null}
       </Pressable>
-      {expanded && entryId !== null ? <CurrentEntry entryId={entryId} /> : null}
     </View>
   );
 }
 
-function ListBlock({ block }: { block: KnowledgeAnswerBlock }) {
+function ListBlock({
+  block,
+  onOpenEntry,
+}: {
+  block: KnowledgeAnswerBlock;
+  onOpenEntry: (target: EntryDetailTarget) => void;
+}) {
   const subject = listSubject(block);
   const items = Array.isArray(block.items) ? block.items : [];
   const total = block.semantics?.totalCount;
@@ -238,6 +203,7 @@ function ListBlock({ block }: { block: KnowledgeAnswerBlock }) {
             item={item}
             index={index}
             expandable={subject === "entries"}
+            onOpenEntry={onOpenEntry}
           />
         ))
       )}
@@ -273,7 +239,13 @@ function StatisticBlock({ block }: { block: KnowledgeAnswerBlock }) {
   );
 }
 
-function AnswerBlock({ block }: { block: KnowledgeAnswerBlock }) {
+function AnswerBlock({
+  block,
+  onOpenEntry,
+}: {
+  block: KnowledgeAnswerBlock;
+  onOpenEntry: (target: EntryDetailTarget) => void;
+}) {
   if (block.kind === "text") {
     return block.text ? <Text style={styles.textBlock}>{block.text}</Text> : <UnknownBlock />;
   }
@@ -300,7 +272,9 @@ function AnswerBlock({ block }: { block: KnowledgeAnswerBlock }) {
       </View>
     );
   }
-  if (block.kind === "list") return <ListBlock block={block} />;
+  if (block.kind === "list") {
+    return <ListBlock block={block} onOpenEntry={onOpenEntry} />;
+  }
   if (block.kind === "statistic") return <StatisticBlock block={block} />;
   if (block.kind === "entry") {
     return (
@@ -351,12 +325,14 @@ export function AnswerCard({
   canContinue,
   onContinue,
   onRetry,
+  onOpenEntry,
 }: {
   run: KnowledgeRun;
   scopeLabel: string;
   canContinue: boolean;
   onContinue: () => void;
   onRetry: () => void;
+  onOpenEntry: (target: EntryDetailTarget) => void;
 }) {
   const blocks = Array.isArray(run.dialogueBlocks) ? run.dialogueBlocks : [];
   const fallbackText =
@@ -384,7 +360,11 @@ export function AnswerCard({
         </View>
         <View style={styles.blocks}>
           {blocks.map((block, index) => (
-            <AnswerBlock key={`${block.kind}-${index}`} block={block} />
+            <AnswerBlock
+              key={`${block.kind}-${index}`}
+              block={block}
+              onOpenEntry={onOpenEntry}
+            />
           ))}
           {fallbackText ? <Text style={styles.textBlock}>{fallbackText}</Text> : null}
           {!fallbackText && blocks.length === 0 ? (
@@ -461,20 +441,11 @@ const styles = StyleSheet.create({
   indexText: { color: theme.muted, fontSize: 11, fontWeight: "700" },
   listMain: { flex: 1, minWidth: 0 },
   listItemTitle: { color: theme.ink, fontSize: 13, lineHeight: 19, fontWeight: "600" },
-  listSecondary: { marginTop: 2, color: theme.muted, fontSize: 10, lineHeight: 16 },
+  listPath: { marginTop: 2, color: theme.muted, fontSize: 11, lineHeight: 17 },
+  listSummary: { marginTop: 2, color: theme.muted, fontSize: 12, lineHeight: 18 },
+  listRelevance: { marginTop: 3, color: theme.confirmed, fontSize: 11, lineHeight: 17 },
   listUnavailable: { marginTop: 3, color: theme.risk, fontSize: 10, lineHeight: 16 },
-  chevronOpen: { transform: [{ rotate: "90deg" }] },
-  entryState: { gap: 8, padding: 11, backgroundColor: theme.bg },
-  stateTitle: { color: theme.ink, fontSize: 12, fontWeight: "700" },
-  stateCopy: { color: theme.muted, fontSize: 11, lineHeight: 18 },
-  currentEntry: { gap: 7, padding: 11, backgroundColor: theme.soft },
-  currentLabel: { color: theme.confirmed, fontSize: 10, fontWeight: "700" },
-  currentTime: { color: theme.muted, fontSize: 10 },
   entryContent: { padding: 11, color: theme.ink, fontSize: 13, lineHeight: 22 },
-  sourceBoundary: { color: theme.muted, fontSize: 10, lineHeight: 16 },
-  sourceRow: { marginTop: 3 },
-  sourceTitle: { color: theme.ink, fontSize: 11, fontWeight: "600" },
-  sourceQuote: { marginTop: 2, color: theme.muted, fontSize: 10, lineHeight: 17 },
   statHead: { flexDirection: "row", gap: 12, padding: 11 },
   statValue: { color: theme.confirmed, fontSize: 23, fontWeight: "700" },
   bucketRow: {

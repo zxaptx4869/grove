@@ -65,6 +65,8 @@ export interface ConversationController {
   loadingOlder: boolean;
   olderError: string | null;
   pending: PendingSubmission | null;
+  submitting: boolean;
+  submissionResultUnknown: boolean;
   submitError: string | null;
   modes: ModeSelection;
   setContextMode: (mode: ContextMode) => void;
@@ -128,6 +130,8 @@ export function useConversationController(
   );
   const [extraMessages, setExtraMessages] = useState<KnowledgeMessage[]>([]);
   const [pending, setPending] = useState<PendingSubmission | null>(null);
+  const [submitting, setSubmitting] = useState(false);
+  const [submissionResultUnknown, setSubmissionResultUnknown] = useState(false);
   const [submitError, setSubmitError] = useState<string | null>(null);
   const [modes, setModesState] = useState<ModeSelection>(DEFAULT_MODES);
   const modesRef = useRef(modes);
@@ -139,6 +143,7 @@ export function useConversationController(
   const [conversationGeneration, setConversationGeneration] = useState(0);
   const conversationGenerationRef = useRef(0);
   const olderPageRequestRef = useRef<OlderPageRequest | null>(null);
+  const submissionRequestRef = useRef(false);
 
   useEffect(() => {
     modesRef.current = modes;
@@ -339,7 +344,10 @@ export function useConversationController(
 
   const performSubmission = useCallback(
     async (initial: PendingSubmission): Promise<boolean> => {
-      if (!token) return false;
+      if (!token || submissionRequestRef.current) return false;
+      submissionRequestRef.current = true;
+      setSubmitting(true);
+      setSubmissionResultUnknown(false);
       setSubmitError(null);
       setCancelError(null);
       let current = initial;
@@ -361,6 +369,7 @@ export function useConversationController(
           contextMode: current.contextMode,
         });
         setPending(null);
+        setSubmissionResultUnknown(false);
         setModesState(DEFAULT_MODES);
         setExtraMessages((previous) => [...previous, result.userMessage]);
         setRunOverrides((previous) => new Map(previous).set(result.run.id, result.run));
@@ -376,6 +385,7 @@ export function useConversationController(
         const classified = classifyKnowledgeAgentError(error);
         if (classified.kind === "conflict") {
           setPending(null);
+          setSubmissionResultUnknown(false);
           setSubmitError("已有进行中的回答，请等待完成或取消后再提问");
           const conversationId = current.conversationId ?? selectedConversationId;
           if (conversationId !== null) {
@@ -385,13 +395,18 @@ export function useConversationController(
           }
           return false;
         }
-        if (classified.retryable) {
+        if (classified.kind === "network") {
           setPending(current);
+          setSubmissionResultUnknown(true);
         } else {
           setPending(null);
+          setSubmissionResultUnknown(false);
         }
         setSubmitError(classified.message);
         return false;
+      } finally {
+        submissionRequestRef.current = false;
+        setSubmitting(false);
       }
     },
     [draftScope, queryClient, selectedConversationId, token],
@@ -400,7 +415,9 @@ export function useConversationController(
   const submitWithContext = useCallback(
     async (text: string, contextMode: ContextMode): Promise<boolean> => {
       const trimmed = text.trim();
-      if (!trimmed || pending || !token || activeRun) return false;
+      if (!trimmed || pending || submissionRequestRef.current || !token || activeRun) {
+        return false;
+      }
       const submission = createPendingSubmission({ text: trimmed, contextMode });
       setPending(submission);
       return performSubmission(submission);
@@ -440,9 +457,16 @@ export function useConversationController(
   );
 
   const retrySubmit = useCallback(() => {
-    if (!pending || !canRetrySubmission(pending)) return Promise.resolve(false);
+    if (
+      !pending ||
+      !submissionResultUnknown ||
+      submissionRequestRef.current ||
+      !canRetrySubmission(pending)
+    ) {
+      return Promise.resolve(false);
+    }
     return performSubmission(pending);
-  }, [pending, performSubmission]);
+  }, [pending, performSubmission, submissionResultUnknown]);
 
   const retryRun = useCallback(
     async (runId: number): Promise<boolean> => {
@@ -578,6 +602,8 @@ export function useConversationController(
     loadingOlder,
     olderError,
     pending,
+    submitting,
+    submissionResultUnknown,
     submitError,
     modes,
     setContextMode: (mode) => setModesState((previous) => withContextMode(previous, mode)),

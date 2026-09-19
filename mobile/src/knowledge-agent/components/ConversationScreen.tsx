@@ -1,4 +1,4 @@
-import { useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   ActivityIndicator,
   type NativeScrollEvent,
@@ -17,6 +17,10 @@ import { useAuth } from "@/src/auth";
 import { AgentIcon } from "@/src/knowledge-agent/components/AgentIcon";
 import { AnswerCard } from "@/src/knowledge-agent/components/AnswerCard";
 import { Composer } from "@/src/knowledge-agent/components/Composer";
+import {
+  EntryDetailSheet,
+  type EntryDetailTarget,
+} from "@/src/knowledge-agent/components/EntryDetailSheet";
 import { HistorySheet } from "@/src/knowledge-agent/components/HistorySheet";
 import { ModeSheet } from "@/src/knowledge-agent/components/ModeSheet";
 import { ProcessCard } from "@/src/knowledge-agent/components/ProcessCard";
@@ -46,14 +50,18 @@ export function ConversationScreen() {
   const scrollYRef = useRef(0);
   const stickToBottomRef = useRef(true);
   const olderAnchorRef = useRef<{ contentHeight: number; scrollY: number } | null>(null);
+  const positionedConversationRef = useRef<string | null>(null);
+  const layoutConversationRef = useRef<string | null>(null);
+  const followNextContentRef = useRef(false);
   const [text, setText] = useState("");
   const [historyOpen, setHistoryOpen] = useState(false);
   const [scopeOpen, setScopeOpen] = useState(false);
   const [modeOpen, setModeOpen] = useState(false);
+  const [entryDetail, setEntryDetail] = useState<EntryDetailTarget | null>(null);
   const projectsQuery = useQuery({
     queryKey: ["projects", "mobile-scope"],
     queryFn: () => getProjects(token as string),
-    enabled: Boolean(token),
+    enabled: Boolean(token && scopeOpen),
   });
 
   const runByAssistantMessage = useMemo(() => {
@@ -64,9 +72,41 @@ export function ConversationScreen() {
     return map;
   }, [controller.thread.runsById]);
 
+  const conversationKey = controller.isDraft
+    ? "draft"
+    : String(controller.activeConversation?.id ?? "restoring");
+  const initialPositionReady =
+    !controller.initialLoading &&
+    !controller.activeConversationLoading &&
+    !controller.messagesLoading;
+  const threadHasMessages = controller.thread.items.length > 0;
+
+  const scheduleInitialPosition = useCallback(() => {
+    if (
+      !initialPositionReady ||
+      !threadHasMessages ||
+      layoutConversationRef.current !== conversationKey ||
+      positionedConversationRef.current === conversationKey
+    ) {
+      return false;
+    }
+    scrollRef.current?.scrollToEnd({ animated: false });
+    positionedConversationRef.current = conversationKey;
+    stickToBottomRef.current = true;
+    followNextContentRef.current = false;
+    return true;
+  }, [conversationKey, initialPositionReady, threadHasMessages]);
+
+  useEffect(() => {
+    scheduleInitialPosition();
+  }, [scheduleInitialPosition]);
+
   const handleSend = async () => {
     const value = text.trim();
     if (!value) return;
+    stickToBottomRef.current = true;
+    followNextContentRef.current = true;
+    scrollRef.current?.scrollToEnd({ animated: true });
     const sent = await controller.submit(value);
     if (sent) setText("");
   };
@@ -96,7 +136,12 @@ export function ConversationScreen() {
       return;
     }
     contentHeightRef.current = height;
-    if (stickToBottomRef.current) scrollRef.current?.scrollToEnd({ animated: true });
+    layoutConversationRef.current = conversationKey;
+    if (scheduleInitialPosition()) return;
+    if (followNextContentRef.current || stickToBottomRef.current) {
+      scrollRef.current?.scrollToEnd({ animated: true });
+      followNextContentRef.current = false;
+    }
   };
 
   const handleLoadOlder = async () => {
@@ -118,35 +163,35 @@ export function ConversationScreen() {
     <SafeAreaView style={styles.safe} edges={["top"]}>
       <View style={styles.root}>
         <View style={styles.header}>
-          <Pressable
-            accessibilityRole="button"
-            accessibilityLabel="打开对话历史"
-            onPress={() => setHistoryOpen(true)}
-            style={({ pressed }) => [styles.iconButton, pressed && styles.pressed]}
-          >
-            <AgentIcon name="history" size={21} color={theme.ink} />
-          </Pressable>
-          <View style={styles.headerMain}>
-            <Text style={styles.title}>知识 Agent</Text>
-            <Text style={styles.subtitle} numberOfLines={1}>
-              {controller.isDraft ? "新对话" : controller.activeConversation?.title ?? "正在恢复"}
-            </Text>
+          <View style={styles.brandSlot} accessibilityLabel="Grove">
+            <View style={styles.brandMark}>
+              <Text style={styles.brandText}>G</Text>
+            </View>
           </View>
           <Pressable
             accessibilityRole="button"
-            accessibilityLabel={`当前知识范围：${controller.scopeLabel}`}
+            accessibilityLabel={`修改当前知识范围，当前为${controller.scopeLabel}`}
             onPress={() => setScopeOpen(true)}
             style={({ pressed }) => [styles.scopeButton, pressed && styles.pressed]}
           >
             <AgentIcon
               name={controller.currentScope.scopeType === "project" ? "folder" : "book"}
               size={15}
-              color={theme.green}
+              color={theme.muted}
             />
             <Text style={styles.scopeButtonText} numberOfLines={1}>
               {controller.scopeLabel}
             </Text>
-            <AgentIcon name="down" size={14} color={theme.green} />
+            <AgentIcon name="down" size={14} color={theme.muted} />
+          </Pressable>
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel="打开对话历史"
+            onPress={() => setHistoryOpen(true)}
+            style={({ pressed }) => [styles.historyButton, pressed && styles.pressed]}
+          >
+            <AgentIcon name="history" size={20} color={theme.ink} />
+            <Text style={styles.historyText}>历史</Text>
           </Pressable>
         </View>
 
@@ -156,6 +201,7 @@ export function ConversationScreen() {
           contentContainerStyle={styles.threadContent}
           keyboardShouldPersistTaps="handled"
           scrollEventThrottle={16}
+          accessibilityLabel="知识 Agent 对话"
           onScroll={handleScroll}
           onContentSizeChange={handleContentSizeChange}
         >
@@ -238,10 +284,24 @@ export function ConversationScreen() {
               onRetryPolling={controller.retryRunPolling}
               onContinue={(runId) => void controller.continueRun(runId)}
               onRetry={(runId) => void controller.retryRun(runId)}
+              onOpenEntry={setEntryDetail}
             />
           ))}
 
-          {controller.pending ? (
+          {controller.pending && controller.submitting ? (
+            <View style={styles.pendingMessage} accessibilityRole="progressbar">
+              <Text style={styles.pendingContext}>
+                {controller.pending.contextMode === "continue"
+                  ? "继续当前主题"
+                  : controller.pending.contextMode === "new_topic"
+                    ? "新话题"
+                    : "正在发送"}
+              </Text>
+              <View style={[styles.userBubble, styles.pendingBubble]}>
+                <Text style={styles.userText}>{controller.pending.text}</Text>
+              </View>
+            </View>
+          ) : controller.pending && controller.submissionResultUnknown ? (
             <View style={styles.pendingBox}>
               <Text style={styles.pendingTitle}>消息提交结果尚未确认</Text>
               <Text style={styles.stateCopy}>{controller.pending.text}</Text>
@@ -251,6 +311,7 @@ export function ConversationScreen() {
               <Pressable
                 accessibilityRole="button"
                 accessibilityLabel="使用同一标识重试提交"
+                disabled={controller.submitting}
                 onPress={() => void controller.retrySubmit()}
                 style={styles.retryButton}
               >
@@ -285,6 +346,7 @@ export function ConversationScreen() {
             disabled={
               controller.initialLoading ||
               controller.activeRun !== null ||
+              controller.submitting ||
               (controller.conversationsError !== null && !controller.userInitiatedDraft)
             }
           />
@@ -298,12 +360,20 @@ export function ConversationScreen() {
         loading={controller.initialLoading}
         error={controller.conversationsError}
         onSelect={(id) => {
-          stickToBottomRef.current = true;
+          if (!controller.pending) {
+            stickToBottomRef.current = true;
+            layoutConversationRef.current = null;
+            positionedConversationRef.current = null;
+          }
           controller.switchToConversation(id);
           setHistoryOpen(false);
         }}
         onNew={() => {
-          stickToBottomRef.current = true;
+          if (!controller.pending) {
+            stickToBottomRef.current = true;
+            layoutConversationRef.current = null;
+            positionedConversationRef.current = null;
+          }
           controller.startNewConversation();
           setHistoryOpen(false);
         }}
@@ -330,6 +400,7 @@ export function ConversationScreen() {
         onChange={controller.setModes}
         onClose={() => setModeOpen(false)}
       />
+      <EntryDetailSheet target={entryDetail} onClose={() => setEntryDetail(null)} />
     </SafeAreaView>
   );
 }
@@ -346,6 +417,7 @@ function ThreadMessage({
   onRetryPolling,
   onContinue,
   onRetry,
+  onOpenEntry,
 }: {
   message: KnowledgeMessage;
   run: KnowledgeRun | null;
@@ -358,6 +430,7 @@ function ThreadMessage({
   onRetryPolling: () => void;
   onContinue: (runId: number) => void;
   onRetry: (runId: number) => void;
+  onOpenEntry: (target: EntryDetailTarget) => void;
 }) {
   if (message.messageType === "scope_change") {
     return (
@@ -402,7 +475,6 @@ function ThreadMessage({
       ) : isRunActive(run.status) ? (
         <ProcessCard
           run={run}
-          scopeLabel={runScope}
           cancelling={cancelling && activeRun?.id === run.id}
           pollingError={activeRun?.id === run.id ? pollingError : null}
           cancelError={activeRun?.id === run.id ? cancelError : null}
@@ -416,6 +488,7 @@ function ThreadMessage({
           canContinue={resumableRunId === run.id}
           onContinue={() => onContinue(run.id)}
           onRetry={() => onRetry(run.id)}
+          onOpenEntry={onOpenEntry}
         />
       )}
     </View>
@@ -429,27 +502,44 @@ const styles = StyleSheet.create({
     minHeight: 58,
     flexDirection: "row",
     alignItems: "center",
-    gap: 8,
-    paddingHorizontal: 10,
+    justifyContent: "space-between",
+    gap: 6,
+    paddingHorizontal: 12,
     borderBottomWidth: 1,
     borderBottomColor: theme.border,
     backgroundColor: theme.surface,
   },
-  iconButton: { width: 42, height: 42, alignItems: "center", justifyContent: "center" },
-  headerMain: { flex: 1, minWidth: 0 },
-  title: { color: theme.ink, fontSize: 15, fontWeight: "700" },
-  subtitle: { marginTop: 2, color: theme.muted, fontSize: 10 },
+  brandSlot: { width: 58, alignItems: "flex-start" },
+  brandMark: {
+    width: 34,
+    height: 34,
+    alignItems: "center",
+    justifyContent: "center",
+    borderRadius: 8,
+    backgroundColor: theme.green,
+  },
+  brandText: { color: "#FFFFFF", fontSize: 14, fontWeight: "700" },
   scopeButton: {
-    maxWidth: 132,
-    minHeight: 38,
+    flex: 1,
+    maxWidth: 220,
+    minHeight: 44,
     flexDirection: "row",
     alignItems: "center",
+    justifyContent: "center",
     gap: 5,
-    paddingHorizontal: 9,
+    paddingHorizontal: 5,
     borderRadius: 8,
-    backgroundColor: theme.greenSoft,
   },
-  scopeButtonText: { flexShrink: 1, color: theme.green, fontSize: 11, fontWeight: "600" },
+  scopeButtonText: { flexShrink: 1, color: theme.ink, fontSize: 15, fontWeight: "700" },
+  historyButton: {
+    width: 58,
+    height: 44,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "flex-end",
+    gap: 3,
+  },
+  historyText: { color: theme.ink, fontSize: 11, fontWeight: "600" },
   thread: { flex: 1 },
   threadContent: { padding: 12, paddingBottom: 20 },
   loadOlder: {
@@ -494,6 +584,9 @@ const styles = StyleSheet.create({
   scopeLine: { flex: 1, height: 1, backgroundColor: theme.border },
   scopeEvent: { color: theme.muted, fontSize: 10 },
   userMessage: { alignItems: "flex-end", marginBottom: 14 },
+  pendingMessage: { alignItems: "flex-end", marginBottom: 14, opacity: 0.72 },
+  pendingContext: { marginBottom: 4, color: theme.muted, fontSize: 10, fontWeight: "600" },
+  pendingBubble: { backgroundColor: theme.green },
   contextTag: { marginBottom: 4, color: theme.green, fontSize: 10, fontWeight: "600" },
   userBubble: {
     maxWidth: "86%",

@@ -1,6 +1,7 @@
 import type { ReactNode } from "react";
 import {
   Modal,
+  type ModalProps,
   Pressable,
   ScrollView,
   StyleSheet,
@@ -139,14 +140,16 @@ export function Sheet({
   title,
   onClose,
   children,
+  animationType = "fade",
 }: {
   visible: boolean;
   title: string;
   onClose: () => void;
   children: ReactNode;
+  animationType?: ModalProps["animationType"];
 }) {
   return (
-    <Modal visible={visible} transparent animationType="fade" onRequestClose={onClose}>
+    <Modal visible={visible} transparent animationType={animationType} onRequestClose={onClose}>
       <View style={styles.modalRoot}>
         <Pressable
           accessibilityLabel="关闭弹层"

@@ -249,12 +249,71 @@ test("提交结果未知重试复用同一幂等键", async () => {
   });
   const stableId = rendered.result.current.pending?.clientMessageId;
   expect(stableId).toBe("new-client-id");
+  expect(rendered.result.current.submitting).toBe(false);
+  expect(rendered.result.current.submissionResultUnknown).toBe(true);
   await act(async () => {
     expect(await rendered.result.current.retrySubmit()).toBe(true);
   });
   expect(api.submitMessage).toHaveBeenCalledTimes(2);
   expect(api.submitMessage.mock.calls[0][2].clientMessageId).toBe(stableId);
   expect(api.submitMessage.mock.calls[1][2].clientMessageId).toBe(stableId);
+  expect(rendered.result.current.submissionResultUnknown).toBe(false);
+});
+
+test("正常提交进行中不能重复发送或恢复，且不进入结果未知", async () => {
+  const submission = deferred<{
+    userMessage: KnowledgeMessage;
+    run: KnowledgeRun;
+  }>();
+  const rendered = await setup();
+  api.submitMessage.mockReturnValue(submission.promise);
+  await waitFor(() => expect(rendered.result.current.activeConversation?.id).toBe(1));
+
+  let request!: Promise<boolean>;
+  await act(async () => {
+    request = rendered.result.current.submit("普通问题");
+    await Promise.resolve();
+  });
+  await waitFor(() => expect(rendered.result.current.submitting).toBe(true));
+  expect(rendered.result.current.submissionResultUnknown).toBe(false);
+  expect(await rendered.result.current.submit("重复问题")).toBe(false);
+  expect(await rendered.result.current.retrySubmit()).toBe(false);
+  expect(api.submitMessage).toHaveBeenCalledTimes(1);
+
+  submission.resolve({
+    userMessage: message(3, "user", 12, 1, "普通问题"),
+    run: run(12, "waiting"),
+  });
+  await act(async () => {
+    expect(await request).toBe(true);
+  });
+  expect(rendered.result.current.submitting).toBe(false);
+  expect(rendered.result.current.pending).toBeNull();
+});
+
+test("409 与明确服务端失败不伪装成提交结果未知", async () => {
+  const rendered = await setup();
+  await waitFor(() => expect(rendered.result.current.activeConversation?.id).toBe(1));
+
+  api.submitMessage.mockRejectedValueOnce(
+    Object.assign(new Error("已有进行中的回答"), { status: 409 }),
+  );
+  await act(async () => {
+    expect(await rendered.result.current.submit("冲突问题")).toBe(false);
+  });
+  expect(rendered.result.current.pending).toBeNull();
+  expect(rendered.result.current.submissionResultUnknown).toBe(false);
+  expect(rendered.result.current.submitError).toContain("已有进行中的回答");
+
+  api.submitMessage.mockRejectedValueOnce(
+    Object.assign(new Error("服务暂时不可用"), { status: 503 }),
+  );
+  await act(async () => {
+    expect(await rendered.result.current.submit("服务失败问题")).toBe(false);
+  });
+  expect(rendered.result.current.pending).toBeNull();
+  expect(rendered.result.current.submissionResultUnknown).toBe(false);
+  expect(rendered.result.current.submitError).toBe("服务暂时不可用");
 });
 
 test("切换会话后只恢复目标 Conversation 的服务端消息", async () => {

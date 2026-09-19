@@ -1,4 +1,4 @@
-import { act, cleanup, fireEvent, render, waitFor } from "@testing-library/react-native";
+import { act, cleanup, fireEvent, render } from "@testing-library/react-native";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 
 import { knowledgeAgentApi } from "@/src/knowledge-agent/api";
@@ -68,6 +68,7 @@ async function renderCard(
   clients.push(client);
   const onContinue = props.onContinue ?? jest.fn();
   const onRetry = props.onRetry ?? jest.fn();
+  const onOpenEntry = jest.fn();
   const rendered = await render(
     <QueryClientProvider client={client}>
       <AnswerCard
@@ -76,10 +77,11 @@ async function renderCard(
         canContinue={value.canContinue}
         onContinue={onContinue}
         onRetry={onRetry}
+        onOpenEntry={onOpenEntry}
       />
     </QueryClientProvider>,
   );
-  return { ...rendered, onContinue, onRetry };
+  return { ...rendered, onContinue, onRetry, onOpenEntry };
 }
 
 test("按服务端块顺序展示且不重复扁平答案", async () => {
@@ -99,46 +101,46 @@ test("按服务端块顺序展示且不重复扁平答案", async () => {
   expect(rendered.getByText("AI 修改建议 / 候选稿 · 未应用")).toBeTruthy();
 });
 
-test("知识列表首次点击才读取单个 Entry 并原位展开", async () => {
-  api.getEntryCurrent.mockResolvedValue({
-    id: 8,
-    projectId: 1,
-    nodeId: 2,
-    nodeName: "防水",
-    title: "闭水试验",
-    content: "当前正文",
-    mainType: "knowledge",
-    infoNature: null,
-    applicableCondition: null,
-    note: null,
-    createdAt: "2026-09-01T00:00:00Z",
-    updatedAt: "2026-09-19T00:00:00Z",
-    evidences: [{ id: 3, sourceId: 4, sourceTitle: "施工说明", quote: "至少 24 小时" }],
-  });
+test("知识列表保持紧凑层级并只把明确 Entry 交给详情", async () => {
   const rendered = await renderCard(
     run({
       dialogueBlocks: [
         {
           kind: "list",
           resultType: "entries",
-          items: [{ entryId: 8, title: "闭水试验", projectName: "装修" }],
+          items: [
+            {
+              entryId: 8,
+              title: "闭水试验",
+              projectName: "装修",
+              nodePath: "施工 / 防水",
+              summary: "这是一个很长的正文摘要，只允许在列表中显示一行。",
+              relevanceLevel: "indirect",
+              relevanceReason: "用于补充防水施工的验收背景",
+            },
+          ],
         },
       ],
     }),
   );
   expect(api.getEntryCurrent).not.toHaveBeenCalled();
+  expect(rendered.getByText("装修 / 施工 / 防水")).toBeTruthy();
+  expect(
+    rendered.getByText("这是一个很长的正文摘要，只允许在列表中显示一行。").props
+      .numberOfLines,
+  ).toBe(1);
+  expect(rendered.getByText("间接相关：用于补充防水施工的验收背景")).toBeTruthy();
   await act(async () => {
-    fireEvent.press(rendered.getByLabelText("第 1 条，闭水试验，展开当前知识正文"));
+    fireEvent.press(rendered.getByLabelText("第 1 条，闭水试验，打开知识详情"));
   });
-  await waitFor(() => expect(rendered.getByText("当前正文")).toBeTruthy());
-  expect(api.getEntryCurrent).toHaveBeenCalledWith("token", 8);
+  expect(rendered.onOpenEntry).toHaveBeenCalledWith({
+    entryId: 8,
+    title: "闭水试验",
+    projectName: "装修",
+    nodePath: "施工 / 防水",
+  });
+  expect(api.getEntryCurrent).not.toHaveBeenCalled();
   expect(api.submitMessage).not.toHaveBeenCalled();
-  expect(rendered.getByText("以下是当前 Entry 的来源摘要，不代表本轮 Agent 已核验。")).toBeTruthy();
-
-  await act(async () => {
-    fireEvent.press(rendered.getByLabelText("第 1 条，闭水试验，收起当前知识正文"));
-  });
-  await waitFor(() => expect(rendered.queryByText("当前正文")).toBeNull());
 });
 
 test("项目列表不提供 Entry 正文展开且保持原序编号", async () => {
