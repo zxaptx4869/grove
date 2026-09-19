@@ -1,13 +1,8 @@
-/** 幂等提交状态：稳定 client_message_id、懒创建对话与结果未知重试。 */
+/** 正式消息幂等提交：结果未知重试沿用同一 client_message_id。 */
 
 import * as Crypto from "expo-crypto";
 
-import type {
-  AnswerMode,
-  BasisMode,
-  ContextMode,
-  ResultMode,
-} from "@/src/knowledge-agent/types";
+import type { ContextMode } from "@/src/knowledge-agent/types";
 
 export type PendingPhase =
   | "creating_conversation"
@@ -19,12 +14,6 @@ export interface PendingSubmission {
   clientMessageId: string;
   text: string;
   contextMode: ContextMode;
-  answerMode: AnswerMode;
-  resultMode: ResultMode;
-  basisMode: BasisMode;
-  /** 模式纠正的来源 Run；普通问题不设置。 */
-  sourceRunId?: number;
-  /** 创建成功但提交结果未知时保留；网络重试不得再建对话或换幂等键。 */
   conversationId: number | null;
   phase: PendingPhase;
 }
@@ -33,28 +22,15 @@ export function nextClientMessageId(random: () => string = Crypto.randomUUID): s
   return random();
 }
 
-/** 确认操作的稳定幂等键：首次生成后未知结果重试必须复用同一键。 */
-export function nextClientOperationId(random: () => string = Crypto.randomUUID): string {
-  return random();
-}
-
 export function createPendingSubmission(input: {
   text: string;
   contextMode: ContextMode;
-  answerMode: AnswerMode;
-  resultMode: ResultMode;
-  basisMode: BasisMode;
-  sourceRunId?: number;
   random?: () => string;
 }): PendingSubmission {
   return {
     clientMessageId: nextClientMessageId(input.random),
     text: input.text,
     contextMode: input.contextMode,
-    answerMode: input.answerMode,
-    resultMode: input.resultMode,
-    basisMode: input.basisMode,
-    sourceRunId: input.sourceRunId,
     conversationId: null,
     phase: "creating_conversation",
   };
@@ -67,22 +43,14 @@ export function attachConversation(
   return { ...pending, conversationId, phase: "submitting" };
 }
 
-export function markConfirmed(pending: PendingSubmission): PendingSubmission {
-  return { ...pending, phase: "confirmed" };
-}
-
-export function markConflict(pending: PendingSubmission): PendingSubmission {
-  return { ...pending, phase: "conflict" };
-}
-
 export function canRetrySubmission(pending: PendingSubmission | null): boolean {
-  if (!pending) return false;
-  return (
-    pending.phase === "creating_conversation" || pending.phase === "submitting"
+  return Boolean(
+    pending &&
+      (pending.phase === "creating_conversation" || pending.phase === "submitting"),
   );
 }
 
-/** 终态 failed 的重新提问必须使用新标识创建新 Run。 */
+/** 终态失败重新提问与 continuation 都必须生成新的消息标识。 */
 export function retrySubmissionWithNewId(
   pending: PendingSubmission,
   random?: () => string,
@@ -90,10 +58,6 @@ export function retrySubmissionWithNewId(
   return createPendingSubmission({
     text: pending.text,
     contextMode: pending.contextMode,
-    answerMode: pending.answerMode,
-    resultMode: pending.resultMode,
-    basisMode: pending.basisMode,
-    sourceRunId: pending.sourceRunId,
     random,
   });
 }

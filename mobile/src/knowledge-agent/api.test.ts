@@ -1,6 +1,6 @@
 import type * as KnowledgeAgentApiModule from "@/src/knowledge-agent/api";
 
-describe("知识 Agent API 序列化", () => {
+describe("知识 Agent 正式对话 API", () => {
   let api: typeof KnowledgeAgentApiModule;
   const originalFetch = globalThis.fetch;
 
@@ -23,7 +23,7 @@ describe("知识 Agent API 序列化", () => {
     }) as unknown as typeof fetch;
   }
 
-  test("创建对话序列化 scope_type/project_id 并注入 Bearer", async () => {
+  test("创建对话注入 Bearer 并序列化范围", async () => {
     mockFetch({ id: 1, scope_type: "project" });
     await api.knowledgeAgentApi.createConversation("token-1", {
       scopeType: "project",
@@ -34,493 +34,78 @@ describe("知识 Agent API 序列化", () => {
       RequestInit,
     ];
     expect(url).toBe("http://example.test/api/knowledge-agent/conversations");
-    expect(init.method).toBe("POST");
-    expect((init.headers as Record<string, string>).Authorization).toBe(
-      "Bearer token-1",
-    );
+    expect((init.headers as Record<string, string>).Authorization).toBe("Bearer token-1");
     expect(JSON.parse(String(init.body))).toEqual({
       scope_type: "project",
       project_id: 7,
     });
   });
 
-  test("提交消息携带稳定 client_message_id 与模式参数", async () => {
+  test("消息提交只携带正式支持的上下文设置", async () => {
     mockFetch({ user_message: {}, run: {} }, 201);
     await api.knowledgeAgentApi.submitMessage("token-2", 9, {
       clientMessageId: "stable-id",
-      message: "闭水试验多久？",
+      message: "继续分析",
       contextMode: "continue",
-      answerMode: "investigate",
-      resultMode: "entries",
-      basisMode: "auto",
     });
-    const [url, init] = (globalThis.fetch as jest.Mock).mock.calls[0] as [
+    const [, init] = (globalThis.fetch as jest.Mock).mock.calls[0] as [
       string,
       RequestInit,
     ];
-    expect(url).toBe(
-      "http://example.test/api/knowledge-agent/conversations/9/messages",
-    );
     expect(JSON.parse(String(init.body))).toEqual({
       client_message_id: "stable-id",
-      message: "闭水试验多久？",
+      message: "继续分析",
       context_mode: "continue",
-      answer_mode: "investigate",
-      result_mode: "entries",
-      basis_mode: "auto",
     });
+    expect(String(init.body)).not.toMatch(/answer_mode|result_mode|basis_mode|source_run_id/);
   });
 
-  test("模式纠正提交来源 Run，由服务端恢复原问题上下文", async () => {
-    mockFetch({ user_message: {}, run: {} }, 201);
-    await api.knowledgeAgentApi.submitMessage("token-2", 9, {
-      clientMessageId: "resubmit-id",
-      message: "展示用问题",
-      contextMode: "auto",
-      answerMode: "auto",
-      resultMode: "answer",
-      basisMode: "auto",
-      sourceRunId: 17,
-    });
-    const [, init] = (globalThis.fetch as jest.Mock).mock.calls[0] as [
-      string,
-      RequestInit,
-    ];
-    expect(JSON.parse(String(init.body))).toEqual({
-      client_message_id: "resubmit-id",
-      message: "展示用问题",
-      context_mode: "auto",
-      answer_mode: "auto",
-      result_mode: "answer",
-      basis_mode: "auto",
-      source_run_id: 17,
-    });
-  });
-
-  test("消息分页使用不透明 before 游标", async () => {
+  test("递归归一化 dialogue 状态、块及列表字段", async () => {
     mockFetch({
-      items: [
+      id: 12,
+      conversation_id: 3,
+      dialogue_loop_status: "partial_completed",
+      dialogue_stage: null,
+      dialogue_blocks: [
         {
-          id: 1,
-          conversation_id: 4,
-          role: "user",
-          message_type: "user",
-          content: "问题",
-          client_message_id: "c-1",
-          run_id: 9,
-          scope_type: "project",
-          project_id: 7,
-          project_name: "项目",
-          request_context_mode: "auto",
-          context_decision: "new_topic",
-          standalone_query: "问题",
-          topic_label: "主题",
-          request_answer_mode: "auto",
-          actual_answer_mode: "quick",
-          current_round: 0,
-          input_context_version_id: null,
-          output_context_version_id: null,
-          created_at: "2026-08-29T10:00:00Z",
+          kind: "list",
+          result_type: "entries",
+          items: [{ entry_id: 8, project_name: "项目甲", node_path: "材料/板材" }],
+          semantics: { total_count: 1, returned_count: 1, result_role: "authorized" },
         },
       ],
-      next_cursor: "cursor-next",
-      runs: [
-        {
-          id: 9,
-          conversation_id: 4,
-          status: "completed",
-          scope_type: "project",
-          project_id: 7,
-          project_name: "项目",
-          answer: {
-            answer: "正文",
-            status: "completed",
-            insufficient_note: null,
-            citations: [],
-            conflicts: [],
-          },
-        },
-      ],
+      can_continue: true,
+      continuation: { task_type: "finalize_answer" },
     });
-    const page = await api.knowledgeAgentApi.listMessages(
-      "token-3",
-      4,
-      "before-cursor",
-    );
-    const [url] = (globalThis.fetch as jest.Mock).mock.calls[0] as [string];
-    expect(url).toContain(
-      "/conversations/4/messages?cursor=before-cursor&limit=30",
-    );
-    // snake_case → camelCase 归一化
-    expect(page.items[0].conversationId).toBe(4);
-    expect(page.items[0].runId).toBe(9);
-    expect(page.items[0].scopeType).toBe("project");
-    expect(page.nextCursor).toBe("cursor-next");
-    expect(page.runs[0].projectName).toBe("项目");
-    expect(page.runs[0].answer?.insufficientNote).toBeNull();
+    const run = await api.knowledgeAgentApi.getRun("token-3", 12);
+    expect(run.dialogueLoopStatus).toBe("partial_completed");
+    expect(run.dialogueBlocks[0].resultType).toBe("entries");
+    expect(run.dialogueBlocks[0].items?.[0]).toMatchObject({
+      entryId: 8,
+      projectName: "项目甲",
+      nodePath: "材料/板材",
+    });
+    expect(run.dialogueBlocks[0].semantics).toMatchObject({
+      totalCount: 1,
+      returnedCount: 1,
+      resultRole: "authorized",
+    });
+    expect(run.canContinue).toBe(true);
   });
 
-  test("Run 与结果分页递归适配 v2 结构化查询字段", async () => {
-    const structured = {
-      schema_version: "v2",
-      status: "completed",
-      completeness: "limited",
-      items: [],
-      returned_count: 0,
-      total_in_snapshot: 0,
-      candidate_limit: 6,
-      has_more: false,
-      next_cursor: null,
-      warning: null,
-      snapshot_updated_at: "2026-09-02T00:00:00Z",
-      set_summary: {
-        schema_version: "v1",
-        scope_type: "workspace",
-        project_id: null,
-        project_name: null,
-        semantic_query: "防水",
-        main_types: ["knowledge"],
-        info_natures: ["fact"],
-        updated_at_from: null,
-        updated_at_to: null,
-        completeness: "limited",
-      },
-      sort: {
-        field: "relevance",
-        direction: "desc",
-        tie_breaker: "entry_id",
-      },
-      count: { value: 3, completeness: "limited", status: "limited" },
-      group_counts: [
-        {
-          group_by: "info_nature",
-          buckets: [{ key: "unspecified", count: 1 }],
-          completeness: "limited",
-          status: "limited",
-          truncated: false,
-        },
-      ],
-      output_completeness: {
-        entries: "limited",
-        count: "limited",
-        group_count: { info_nature: "limited" },
-      },
-      warnings: ["语义查询只覆盖本次候选集合"],
-    };
-    mockFetch(structured);
-    const page = await api.knowledgeAgentApi.getEntryResults("token-v2", 8, null, 6);
-    expect(page.setSummary?.semanticQuery).toBe("防水");
-    expect(page.sort?.tieBreaker).toBe("entry_id");
-    expect(page.groupCounts?.[0].groupBy).toBe("info_nature");
-    expect(page.outputCompleteness?.groupCount.infoNature).toBe("limited");
-
-    mockFetch({
-      id: 8,
-      structured_query_plan: {
-        schema_version: "v1",
-        prompt_version: "v1",
-        entry_set: {
-          schema_version: "v1",
-          semantic_query: null,
-          main_types: ["knowledge"],
-          info_natures: [],
-          updated_at: null,
-        },
-        outputs: [{ kind: "group_count", group_by: "main_type" }],
-      },
-    });
-    const run = await api.knowledgeAgentApi.getRun("token-v2", 8);
-    expect(run.structuredQueryPlan?.entrySet.mainTypes).toEqual(["knowledge"]);
-    expect(run.structuredQueryPlan?.outputs[0]).toMatchObject({
-      kind: "group_count",
-      groupBy: "main_type",
-    });
-  });
-
-  test("复合回答可选字段递归适配且保留旧响应兼容", async () => {
-    mockFetch({
-      id: 18,
-      composite_answer_plan: {
-        schema_version: "v1",
-        requirements: [
-          {
-            id: "r1",
-            order: 0,
-            summary: "解释甲醛是什么",
-            kind: "explain",
-            basis_policy: "model_allowed",
-          },
-        ],
-        input_kinds: ["retrieval", "structured"],
-      },
-      composite_answer_coverage: {
-        schema_version: "v1",
-        requirements: [
-          {
-            requirement_id: "r1",
-            summary: "解释甲醛是什么",
-            status: "answered",
-            basis_kinds: ["model_knowledge"],
-            note: null,
-          },
-        ],
-      },
-      answer: {
-        answer: "甲醛是一种化合物。",
-        status: "completed",
-        points: [
-          {
-            section: "定义",
-            text: "甲醛是一种化合物。",
-            citations: [],
-            requirement_ids: ["r1"],
-          },
-        ],
-        citations: [],
-        conflicts: [],
-      },
-    });
-    const run = await api.knowledgeAgentApi.getRun("token-composite", 18);
-    expect(run.compositeAnswerPlan?.requirements[0].basisPolicy).toBe(
-      "model_allowed",
+  test("消息游标与 Entry 当前正文都使用只读 GET", async () => {
+    mockFetch({ items: [], next_cursor: null, runs: [] });
+    await api.knowledgeAgentApi.listMessages("token-4", 2, "opaque cursor");
+    expect((globalThis.fetch as jest.Mock).mock.calls[0][0]).toContain(
+      "/messages?cursor=opaque%20cursor&limit=30",
     );
-    expect(run.compositeAnswerCoverage?.requirements[0].basisKinds).toEqual([
-      "model_knowledge",
-    ]);
-    expect(run.answer?.points?.[0].requirementIds).toEqual(["r1"]);
+    expect((globalThis.fetch as jest.Mock).mock.calls[0][1].method).toBeUndefined();
 
-    mockFetch({ id: 19, answer: null });
-    const legacy = await api.knowledgeAgentApi.getRun("token-legacy", 19);
-    expect(legacy.compositeAnswerPlan).toBeUndefined();
-    expect(legacy.compositeAnswerCoverage).toBeUndefined();
-  });
-
-  test("提交修订动作序列化 source/target/instruction 并携带 client_message_id", async () => {
-    mockFetch({ user_message: {}, run: {}, draft: {} }, 201);
-    await api.knowledgeAgentApi.submitEntryRevision("token-r", 9, {
-      clientMessageId: "rev-1",
-      sourceRunId: 5,
-      targetEntryId: 3,
-      instruction: "补充适用条件",
-    });
-    const [url, init] = (globalThis.fetch as jest.Mock).mock.calls[0] as [
-      string,
-      RequestInit,
-    ];
-    expect(url).toBe(
-      "http://example.test/api/knowledge-agent/conversations/9/entry-revision-drafts",
+    mockFetch({ id: 18, title: "知识", content: "正文" });
+    await api.knowledgeAgentApi.getEntryCurrent("token-4", 18);
+    expect((globalThis.fetch as jest.Mock).mock.calls[0][0]).toBe(
+      "http://example.test/api/entries/18",
     );
-    expect(JSON.parse(String(init.body))).toEqual({
-      client_message_id: "rev-1",
-      source_run_id: 5,
-      target_entry_id: 3,
-      instruction: "补充适用条件",
-    });
-  });
-
-  test("编辑修订草稿序列化候选字段", async () => {
-    mockFetch({ id: 7 });
-    await api.knowledgeAgentApi.editEntryRevisionDraft("token-r", 7, {
-      title: "新标题",
-      content: "新内容",
-      applicableCondition: "南方潮湿地区",
-      changeSummary: "改写",
-    });
-    const [, init] = (globalThis.fetch as jest.Mock).mock.calls[0] as [
-      string,
-      RequestInit,
-    ];
-    expect(JSON.parse(String(init.body))).toEqual({
-      title: "新标题",
-      content: "新内容",
-      main_type: null,
-      info_nature: null,
-      applicable_condition: "南方潮湿地区",
-      note: null,
-      change_summary: "改写",
-    });
-  });
-
-  test("确认与撤销修订序列化 client_operation_id", async () => {
-    mockFetch({ draft: {}, execution: {}, entry: {} });
-    await api.knowledgeAgentApi.confirmEntryRevision("token-r", 7, {
-      clientOperationId: "confirm-1",
-    });
-    const [confirmUrl, confirmInit] = (globalThis.fetch as jest.Mock).mock
-      .calls[0] as [string, RequestInit];
-    expect(confirmUrl).toBe(
-      "http://example.test/api/knowledge-agent/entry-revision-drafts/7/confirm",
-    );
-    expect(JSON.parse(String(confirmInit.body))).toEqual({
-      client_operation_id: "confirm-1",
-    });
-
-    await api.knowledgeAgentApi.undoEntryRevision("token-r", 7, {
-      clientOperationId: "undo-1",
-    });
-    const [undoUrl, undoInit] = (globalThis.fetch as jest.Mock).mock
-      .calls[1] as [string, RequestInit];
-    expect(undoUrl).toBe(
-      "http://example.test/api/knowledge-agent/entry-revision-drafts/7/undo",
-    );
-    expect(JSON.parse(String(undoInit.body))).toEqual({
-      client_operation_id: "undo-1",
-    });
-  });
-
-  test("读取当前正式知识使用 Bearer 与 entry 路径", async () => {
-    mockFetch({ id: 3, title: "闭水试验", content: "内容", updated_at: "2026-08-29T10:00:00Z" });
-    const result = await api.knowledgeAgentApi.getEntryCurrent("token-r", 3);
-    const [url, init] = (globalThis.fetch as jest.Mock).mock.calls[0] as [
-      string,
-      RequestInit,
-    ];
-    expect(url).toBe("http://example.test/api/entries/3");
-    expect((init.headers as Record<string, string>).Authorization).toBe(
-      "Bearer token-r",
-    );
-    expect(result).toMatchObject({
-      id: 3,
-      title: "闭水试验",
-      content: "内容",
-      updatedAt: "2026-08-29T10:00:00Z",
-    });
-  });
-
-  test("整理动作序列化 source_run_id 与目标项目", async () => {
-    mockFetch(
-      {
-        user_message: {
-          id: 1,
-          conversation_id: 9,
-          role: "user",
-          message_type: "user",
-          content: "整理成知识",
-          client_message_id: "action-1",
-          run_id: 10,
-          scope_type: "project",
-          project_id: 7,
-          project_name: "项目",
-          created_at: "2026-08-29T10:00:00Z",
-        },
-        run: {
-          id: 10,
-          conversation_id: 9,
-          run_kind: "draft_candidate",
-          source_run_id: 5,
-          status: "waiting",
-          scope_type: "project",
-          project_id: 7,
-          project_name: "项目",
-          created_at: "2026-08-29T10:00:00Z",
-          updated_at: "2026-08-29T10:00:00Z",
-        },
-        draft: {
-          id: 3,
-          conversation_id: 9,
-          operation_run_id: 10,
-          source_run_id: 5,
-          target_project_id: 7,
-          target_project_name: "项目",
-          status: "generating",
-          evidence_handles: [],
-          evidence_summaries: [],
-          generation_degraded: false,
-          created_at: "2026-08-29T10:00:00Z",
-          updated_at: "2026-08-29T10:00:00Z",
-        },
-      },
-      201,
-    );
-    const result = await api.knowledgeAgentApi.submitDraftAction(
-      "token-5",
-      9,
-      { clientMessageId: "action-1", sourceRunId: 5, targetProjectId: 7 },
-    );
-    const [url, init] = (globalThis.fetch as jest.Mock).mock.calls[0] as [
-      string,
-      RequestInit,
-    ];
-    expect(url).toBe(
-      "http://example.test/api/knowledge-agent/conversations/9/drafts",
-    );
-    expect(JSON.parse(String(init.body))).toEqual({
-      client_message_id: "action-1",
-      source_run_id: 5,
-      target_project_id: 7,
-    });
-    expect(result.run.runKind).toBe("draft_candidate");
-    expect(result.run.sourceRunId).toBe(5);
-    expect(result.draft.targetProjectName).toBe("项目");
-    expect(result.draft.status).toBe("generating");
-  });
-
-  test("确认请求只序列化 client_operation_id，回执归一化", async () => {
-    mockFetch({
-      draft: {
-        id: 3,
-        conversation_id: 9,
-        operation_run_id: 10,
-        source_run_id: 5,
-        target_project_id: 7,
-        target_project_name: "项目",
-        status: "confirmed",
-        title: "闭水试验要点",
-        content: "闭水试验通常持续 24 小时。",
-        main_type: "knowledge",
-        evidence_handles: ["ev_1"],
-        evidence_summaries: [],
-        generation_degraded: false,
-        confirmed_candidate_id: 99,
-        created_at: "2026-08-29T10:00:00Z",
-        updated_at: "2026-08-29T10:00:00Z",
-      },
-      candidate: {
-        id: 99,
-        title: "闭水试验要点",
-        status: "pending",
-        source_id: 12,
-        routing_status: "pending",
-        relation_status: "pending",
-        created_at: "2026-08-29T10:00:00Z",
-      },
-    });
-    const result = await api.knowledgeAgentApi.confirmDraft("token-6", 3, {
-      clientOperationId: "op-1",
-    });
-    const [url, init] = (globalThis.fetch as jest.Mock).mock.calls[0] as [
-      string,
-      RequestInit,
-    ];
-    expect(url).toBe(
-      "http://example.test/api/knowledge-agent/drafts/3/confirm",
-    );
-    expect(JSON.parse(String(init.body))).toEqual({
-      client_operation_id: "op-1",
-    });
-    expect(result.draft.status).toBe("confirmed");
-    expect(result.draft.confirmedCandidateId).toBe(99);
-    expect(result.candidate.status).toBe("pending");
-  });
-
-  test("409 冲突与网络错误转换为可识别结果", async () => {
-    mockFetch({ detail: "存在进行中的问答" }, 409);
-    await expect(
-      api.knowledgeAgentApi.submitMessage("token-4", 1, {
-        clientMessageId: "x",
-        message: "问题",
-        contextMode: "auto",
-        answerMode: "auto",
-        resultMode: "auto",
-        basisMode: "knowledge_only",
-      }),
-    ).rejects.toMatchObject({ kind: "conflict", status: 409 });
-
-    (globalThis.fetch as jest.Mock).mockRejectedValueOnce(
-      new TypeError("Network request failed"),
-    );
-    await expect(
-      api.knowledgeAgentApi.getRun("token-4", 2),
-    ).rejects.toMatchObject({ kind: "network", retryable: true });
+    expect((globalThis.fetch as jest.Mock).mock.calls[0][1].method).toBeUndefined();
   });
 });

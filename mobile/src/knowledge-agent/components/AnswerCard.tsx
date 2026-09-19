@@ -1,888 +1,549 @@
-import { useState, type ReactNode } from "react";
-import {
-  Pressable,
-  ScrollView,
-  StyleSheet,
-  Text,
-  View,
-} from "react-native";
+import { useState } from "react";
+import { ActivityIndicator, Pressable, StyleSheet, Text, View } from "react-native";
+import { useQuery } from "@tanstack/react-query";
 
+import { useAuth } from "@/src/auth";
+import { knowledgeAgentApi } from "@/src/knowledge-agent/api";
 import { AgentIcon } from "@/src/knowledge-agent/components/AgentIcon";
-import {
-  AppButton,
-  Badge,
-  Card,
-  CardBody,
-  Eyebrow,
-  Sheet,
-  type BadgeTone,
-} from "@/src/knowledge-agent/components/ui";
-import {
-  answerBasisView,
-  cleanAnswerText,
-  draftActionEligibility,
-  investigationSummaryLine,
-  presentAnswer,
-  stopReasonLabel,
-} from "@/src/knowledge-agent/adapters/answer";
-import { presentFallback } from "@/src/knowledge-agent/adapters/fallback";
+import { AppButton, Badge, Card, CardBody } from "@/src/knowledge-agent/components/ui";
+import { classifyKnowledgeAgentError } from "@/src/knowledge-agent/errors";
+import { knowledgeAgentKeys } from "@/src/knowledge-agent/queryKeys";
 import type {
-  KnowledgeConflict,
-  KnowledgeAnswerPoint,
-  KnowledgeMessage,
+  KnowledgeAnswerBlock,
   KnowledgeRun,
-  KnowledgeRunCitation,
 } from "@/src/knowledge-agent/types";
+import { dialogueStatusOf } from "@/src/knowledge-agent/types";
 import { theme } from "@/src/theme";
 
-function ScopeStamp({ label }: { label: string }) {
-  return (
-    <View style={styles.scopeStamp}>
-      <AgentIcon name="folder" size={14} color={theme.muted} />
-      <Text style={styles.scopeStampText}>检索范围：{label}</Text>
-    </View>
-  );
+const STATUS_LABELS: Record<string, string> = {
+  completed: "已完成",
+  partial_completed: "部分完成",
+  failed: "失败",
+  cancelled: "已取消",
+  not_executed: "未执行",
+  unsupported: "暂不支持",
+};
+
+function stringValue(value: unknown): string | null {
+  return typeof value === "string" && value.trim() !== "" ? value.trim() : null;
 }
 
-function CitationStrip({
-  citations,
-  workspaceScope,
-  onCitationPress,
-}: {
-  citations: KnowledgeRunCitation[];
-  workspaceScope: boolean;
-  onCitationPress: (citation: KnowledgeRunCitation) => void;
-}) {
-  if (citations.length === 0) return null;
-  return (
-    <View style={styles.sourceStrip}>
-      <ScrollView
-        horizontal
-        showsHorizontalScrollIndicator={false}
-        contentContainerStyle={styles.sourceStripContent}
-      >
-        {citations.map((citation) => (
-          <Pressable
-            key={citation.evidenceId}
-            accessibilityRole="button"
-            accessibilityLabel={`查看引用：${citation.entryTitle}`}
-            onPress={() => onCitationPress(citation)}
-            style={({ pressed }) => [
-              styles.sourceChip,
-              pressed && styles.sourceChipPressed,
-            ]}
-          >
-            <AgentIcon name="quote" size={14} color={theme.muted} />
-            <Text style={styles.sourceChipText} numberOfLines={1}>
-              {workspaceScope && citation.projectName
-                ? `${citation.projectName} · ${citation.entryTitle}`
-                : citation.entryTitle}
-            </Text>
-          </Pressable>
-        ))}
-      </ScrollView>
-    </View>
-  );
+function numberValue(value: unknown): number | null {
+  return typeof value === "number" && Number.isFinite(value) ? value : null;
 }
 
-function AnswerBasisOverview({
-  run,
-  messagesById,
-  onCitationPress,
-  onLocateMessage,
-}: {
-  run: KnowledgeRun;
-  messagesById?: ReadonlyMap<number, KnowledgeMessage>;
-  onCitationPress: (citation: KnowledgeRunCitation) => void;
-  onLocateMessage?: (messageId: number) => void;
-}) {
-  const [open, setOpen] = useState(false);
-  const view = answerBasisView(run);
-  if (!view || (view.segments.length === 0 && !view.hasDetail)) {
-    return null;
+function listSubject(block: KnowledgeAnswerBlock): string {
+  if (block.resultType === "projects" || block.semantics?.subject === "projects") {
+    return "projects";
   }
-  const answer = run.answer;
-  const citations = answer?.citations ?? [];
-  const compactText = view.segments.join(" · ");
+  if (block.resultType === "directories" || block.semantics?.subject === "directories") {
+    return "directories";
+  }
+  if (block.resultType === "entries" || block.semantics?.subject === "entries") {
+    return "entries";
+  }
+  return "unknown";
+}
+
+function listTitle(block: KnowledgeAnswerBlock, subject: string): string {
+  if (block.label) return block.label;
+  if (subject === "projects") return "当前 Workspace 可访问项目";
+  if (subject === "directories") {
+    return `${block.semantics?.projectName ?? "当前项目"} · ${
+      block.semantics?.displayName ?? "项目目录"
+    }`;
+  }
+  if (subject === "entries") return "正式知识列表";
+  return "结果列表";
+}
+
+function itemTitle(item: Record<string, unknown>, index: number): string {
   return (
-    <>
-      <Pressable
-        accessibilityRole="button"
-        accessibilityLabel={`回答依据：${compactText}`}
-        onPress={() => setOpen(true)}
-        style={({ pressed }) => [
-          styles.basisRow,
-          pressed && styles.basisRowPressed,
-        ]}
-      >
-        <AgentIcon name="book" size={14} color={theme.green} />
-        <Text style={styles.basisRowText} numberOfLines={2}>
-          {compactText}
-        </Text>
-        <AgentIcon name="chevron" size={14} color={theme.muted} />
-      </Pressable>
-      <Sheet visible={open} title="回答依据" onClose={() => setOpen(false)}>
-        <View style={styles.basisHeadlineRow}>
-          <Text style={styles.basisHeadline}>{view.label}</Text>
-          <Text style={styles.basisHint}>依据来自本次回答的服务端快照</Text>
-        </View>
-        {citations.length > 0 && view.groveCitationCount > 0 && (
-          <View style={styles.basisSection}>
-            <Text style={styles.basisSectionTitle}>你的知识</Text>
-            {citations.slice(0, view.groveCitationCount).map((citation) => (
-              <Pressable
-                key={citation.evidenceId}
-                accessibilityRole="button"
-                accessibilityLabel={`查看知识条目：${citation.entryTitle}`}
-                onPress={() => onCitationPress(citation)}
-                style={({ pressed }) => [
-                  styles.basisItem,
-                  pressed && styles.basisRowPressed,
-                ]}
-              >
-                <View style={styles.basisItemMain}>
-                  <Text style={styles.basisItemTitle}>{citation.entryTitle}</Text>
-                  <Text style={styles.basisItemQuote} numberOfLines={2}>
-                    {citation.sourceTitle} · {citation.quote}
-                  </Text>
-                </View>
-                <AgentIcon name="chevron" size={14} color={theme.muted} />
-              </Pressable>
-            ))}
-          </View>
-        )}
-        {view.userStatementIds.length > 0 && (
-          <View style={styles.basisSection}>
-            <Text style={styles.basisSectionTitle}>你提供的信息</Text>
-            {view.userStatementIds.map((messageId) => {
-              const statement = messagesById?.get(messageId);
-              return (
-                <View key={messageId} style={styles.basisItem}>
-                  <View style={styles.basisItemMain}>
-                    <Text style={styles.basisItemQuote} numberOfLines={3}>
-                      {statement?.content ?? `用户消息 #${messageId}`}
-                    </Text>
-                    <Text style={styles.basisItemMeta}>
-                      只作为本次回答的个人前提，不是正式知识
-                    </Text>
-                  </View>
-                  {statement && onLocateMessage && (
-                    <Pressable
-                      accessibilityRole="button"
-                      accessibilityLabel={`定位到消息 ${messageId}`}
-                      onPress={() => {
-                        setOpen(false);
-                        onLocateMessage(messageId);
-                      }}
-                      hitSlop={8}
-                      style={styles.basisLocate}
-                    >
-                      <Text style={styles.basisLocateText}>定位</Text>
-                    </Pressable>
-                  )}
-                </View>
-              );
-            })}
-          </View>
-        )}
-        {view.modelKnowledgeUsed && (
-          <View style={styles.basisSection}>
-            <Text style={styles.basisSectionTitle}>AI 通用知识</Text>
-            <Text style={styles.basisBoundary}>
-              本回答使用了模型通用能力补充；通用知识不生成引用，不代表已核验事实。
-            </Text>
-          </View>
-        )}
-        {view.externalStatus === "required_unavailable" && (
-          <View style={styles.basisSection}>
-            <Text style={styles.basisSectionTitle}>外部材料边界</Text>
-            <Text style={styles.basisBoundary}>
-              当前未接入实时外部检索，本次没有核验实时政策/价格/规则等材料，
-              相关边界内容请另行核对。
-            </Text>
-          </View>
-        )}
-        <Text style={styles.basisFootnote}>
-          依据概览由服务端结构化字段生成；Grove 引用可打开原文，AI 通用知识与
-          你提供的信息不会显示为正式知识条目。
-        </Text>
-      </Sheet>
-    </>
+    stringValue(item.name) ??
+    stringValue(item.title) ??
+    stringValue(item.label) ??
+    `第 ${index + 1} 项`
   );
 }
 
-export function ConflictCard({
-  conflict,
-  onCitationPress,
-}: {
-  conflict: KnowledgeConflict;
-  onCitationPress: (citation: KnowledgeRunCitation) => void;
-}) {
-  return (
-    <Card accent="risk">
-      <CardBody>
-        <View style={styles.conflictHead}>
-          <View style={styles.headMain}>
-            <Eyebrow icon={<AgentIcon name="alert" size={14} color={theme.risk} />}>
-              冲突观点
-            </Eyebrow>
-            <Text style={styles.conflictTitle}>{conflict.summary}</Text>
-          </View>
-          <Badge tone="risk">需要判断</Badge>
-        </View>
-        <ConflictSide
-          label="观点 A"
-          entryTitle={conflict.entryTitleA}
-          citation={conflict.citationA}
-          onCitationPress={onCitationPress}
-        />
-        <ConflictSide
-          label="观点 B"
-          entryTitle={conflict.entryTitleB}
-          citation={conflict.citationB}
-          onCitationPress={onCitationPress}
-        />
-      </CardBody>
-    </Card>
-  );
+function itemSecondary(item: Record<string, unknown>): string | null {
+  const project = stringValue(item.projectName);
+  const path = stringValue(item.path) ?? stringValue(item.nodePath);
+  const summary =
+    stringValue(item.summary) ??
+    stringValue(item.excerpt) ??
+    stringValue(item.relevanceReason);
+  return [project, path, summary].filter(Boolean).join(" · ") || null;
 }
 
-function ConflictSide({
-  label,
-  entryTitle,
-  citation,
-  onCitationPress,
-}: {
-  label: string;
-  entryTitle: string;
-  citation: KnowledgeRunCitation | null;
-  onCitationPress: (citation: KnowledgeRunCitation) => void;
-}) {
+function StatusNotice({ run }: { run: KnowledgeRun }) {
+  const status = dialogueStatusOf(run);
+  if (status === "completed") return null;
+  const risk = status === "partial_completed" || status === "not_executed";
   return (
-    <View style={styles.conflictSide}>
-      <Text style={styles.conflictSideLabel}>
-        {label}：{entryTitle}
-      </Text>
-      {citation ? (
-        <Pressable
-          accessibilityRole="button"
-          accessibilityLabel={`查看${label}的证据原文`}
-          onPress={() => onCitationPress(citation)}
-          style={({ pressed }) => [
-            styles.conflictEvidenceButton,
-            pressed && styles.sourceChipPressed,
-          ]}
-        >
-          <AgentIcon name="file" size={14} color={theme.confirmed} />
-          <Text style={styles.conflictEvidenceText}>
-            {citation.sourceTitle} · 查看原文
-          </Text>
-        </Pressable>
-      ) : (
-        <Text style={styles.conflictMissing}>
-          历史回答未保存双边完整证据，仅保留标题摘要。
+    <View style={[styles.notice, !risk && styles.noticeError]} accessibilityRole="alert">
+      <AgentIcon name="alert" size={15} color={risk ? theme.risk : theme.error} />
+      <View style={styles.noticeMain}>
+        <Text style={[styles.noticeTitle, !risk && styles.noticeErrorText]}>
+          {STATUS_LABELS[status] ?? "本轮未完整完成"}
         </Text>
-      )}
-    </View>
-  );
-}
-
-function InvestigationSummary({
-  run,
-}: {
-  run: KnowledgeRun;
-}) {
-  const summary = run.investigationSummary;
-  const [expanded, setExpanded] = useState(false);
-  if (!summary) return null;
-  const stopReason = stopReasonLabel(summary.stopReason);
-  return (
-    <View style={styles.investigation}>
-      <View style={styles.investigationRow}>
-        <Text style={styles.investigationLine}>
-          {investigationSummaryLine(summary)}
-        </Text>
-        {stopReason && (
-          <Text style={styles.investigationStop}>停止原因：{stopReason}</Text>
-        )}
+        {run.error ? <Text style={styles.noticeCopy}>{run.error}</Text> : null}
       </View>
-      <Pressable
-        accessibilityRole="button"
-        accessibilityState={{ expanded }}
-        accessibilityLabel={expanded ? "收起调查摘要" : "展开调查摘要"}
-        onPress={() => setExpanded((value) => !value)}
-        style={styles.investigationToggle}
-      >
-        <Text style={styles.investigationToggleText}>
-          {expanded ? "收起覆盖、缺口与冲突" : "查看覆盖、缺口与冲突"}
+    </View>
+  );
+}
+
+function CurrentEntry({ entryId }: { entryId: number }) {
+  const { token } = useAuth();
+  const query = useQuery({
+    queryKey: knowledgeAgentKeys.entryCurrent(entryId),
+    queryFn: () => knowledgeAgentApi.getEntryCurrent(token as string, entryId),
+    enabled: Boolean(token),
+  });
+  if (query.isLoading) {
+    return (
+      <View style={styles.entryState} accessibilityRole="progressbar">
+        <ActivityIndicator color={theme.green} />
+        <Text style={styles.stateCopy}>正在读取当前知识…</Text>
+      </View>
+    );
+  }
+  if (query.isError) {
+    const error = classifyKnowledgeAgentError(query.error);
+    const unavailable = error.kind === "not_found" || error.kind === "auth";
+    return (
+      <View style={styles.entryState} accessibilityRole="alert">
+        <Text style={styles.stateTitle}>
+          {unavailable ? "该知识当前不可访问" : "当前知识读取失败"}
         </Text>
-      </Pressable>
-      {expanded && (
-        <View style={styles.investigationDetails}>
-          <InvestigationGroup label="覆盖" items={summary.coverage} />
-          <InvestigationGroup label="未解决缺口" items={summary.gaps} />
-          <InvestigationGroup label="冲突线索" items={summary.conflicts} />
-        </View>
+        <Text style={styles.stateCopy}>
+          {unavailable
+            ? "列表保留回答生成时的对象快照，当前正文不会泄露或替换历史结果。"
+            : error.message}
+        </Text>
+        {!unavailable ? (
+          <AppButton
+            label="重试读取"
+            onPress={() => void query.refetch()}
+            icon={<AgentIcon name="retry" size={15} color={theme.ink} />}
+          />
+        ) : null}
+      </View>
+    );
+  }
+  const current = query.data;
+  if (!current) return null;
+  return (
+    <View style={styles.currentEntry}>
+      <Text style={styles.currentLabel}>当前知识内容</Text>
+      <Text style={styles.currentTime}>
+        读取当前版本 · 更新于 {new Date(current.updatedAt).toLocaleString()}
+      </Text>
+      <Text style={styles.entryContent}>{current.content || "当前正文为空。"}</Text>
+      <Text style={styles.currentLabel}>当前知识的来源</Text>
+      <Text style={styles.sourceBoundary}>以下是当前 Entry 的来源摘要，不代表本轮 Agent 已核验。</Text>
+      {(current.evidences ?? []).length > 0 ? (
+        current.evidences?.map((evidence) => (
+          <View key={evidence.id} style={styles.sourceRow}>
+            <Text style={styles.sourceTitle}>· {evidence.sourceTitle}</Text>
+            {evidence.quote ? (
+              <Text style={styles.sourceQuote} numberOfLines={3}>
+                “{evidence.quote}”
+              </Text>
+            ) : null}
+          </View>
+        ))
+      ) : (
+        <Text style={styles.stateCopy}>当前没有可展示的来源摘要。</Text>
       )}
     </View>
   );
 }
 
-function InvestigationGroup({ label, items }: { label: string; items: string[] }) {
-  if (items.length === 0) return null;
+function ListItem({
+  item,
+  index,
+  expandable,
+}: {
+  item: Record<string, unknown>;
+  index: number;
+  expandable: boolean;
+}) {
+  const [expanded, setExpanded] = useState(false);
+  const entryId = expandable ? numberValue(item.entryId) : null;
+  const canExpand = entryId !== null;
+  const title = itemTitle(item, index);
+  const secondary = itemSecondary(item);
   return (
-    <View style={styles.investigationGroup}>
-      <Text style={styles.investigationGroupLabel}>{label}</Text>
-      {items.map((item, index) => (
-        <Text key={`${label}-${index}`} style={styles.investigationItem}>
-          · {item}
-        </Text>
-      ))}
+    <View style={styles.listItem}>
+      <Pressable
+        accessibilityRole={canExpand ? "button" : undefined}
+        accessibilityLabel={
+          canExpand
+            ? `第 ${index + 1} 条，${title}，${expanded ? "收起当前知识正文" : "展开当前知识正文"}`
+            : `第 ${index + 1} 项，${title}`
+        }
+        accessibilityState={canExpand ? { expanded } : undefined}
+        disabled={!canExpand}
+        onPress={() => canExpand && setExpanded((value) => !value)}
+        style={({ pressed }) => [styles.listPress, pressed && canExpand && styles.pressed]}
+      >
+        <View style={styles.indexBadge}>
+          <Text style={styles.indexText}>{index + 1}</Text>
+        </View>
+        <View style={styles.listMain}>
+          <Text style={styles.listItemTitle}>{title}</Text>
+          {secondary ? <Text style={styles.listSecondary}>{secondary}</Text> : null}
+          {expandable && !canExpand ? (
+            <Text style={styles.listUnavailable}>缺少明确 Entry 标识，不能读取正文。</Text>
+          ) : null}
+        </View>
+        {canExpand ? (
+          <View style={expanded ? styles.chevronOpen : undefined}>
+            <AgentIcon name="chevron" size={16} color={theme.muted} />
+          </View>
+        ) : null}
+      </Pressable>
+      {expanded && entryId !== null ? <CurrentEntry entryId={entryId} /> : null}
     </View>
   );
 }
 
-/** 结构化要点卡：分组标题 + 连续编号 + 正文（对齐原型 answer-points）。 */
-function AnswerPoints({
-  points,
-}: {
-  points: KnowledgeAnswerPoint[];
-}) {
-  const rows: ReactNode[] = [];
-  let lastSection: string | null = null;
-  let number = 0;
-  points.forEach((point, index) => {
-    const section = point.section ?? null;
-    if (section !== lastSection) {
-      if (section !== null) {
-        rows.push(
-          <Text key={`section-${index}`} style={styles.pointSection}>
-            ▍ {section}
-          </Text>,
-        );
-      }
-      lastSection = section;
-    }
-    number += 1;
-    rows.push(
-      <View key={`point-${index}`} style={styles.pointRow}>
-        <View style={styles.pointNumber}>
-          <Text style={styles.pointNumberText}>{number}</Text>
+function ListBlock({ block }: { block: KnowledgeAnswerBlock }) {
+  const subject = listSubject(block);
+  const items = Array.isArray(block.items) ? block.items : [];
+  const total = block.semantics?.totalCount;
+  const returned = block.semantics?.returnedCount ?? items.length;
+  return (
+    <View style={styles.blockBox}>
+      <View style={styles.blockHead}>
+        <AgentIcon
+          name={subject === "projects" || subject === "directories" ? "folder" : "book"}
+          size={16}
+          color={theme.confirmed}
+        />
+        <View style={styles.blockHeadMain}>
+          <Text style={styles.blockTitle}>{listTitle(block, subject)}</Text>
+          <Text style={styles.blockMeta}>
+            {typeof total === "number" ? `总数 ${total}，本次返回 ${returned}` : `${returned} 项`}
+          </Text>
         </View>
-        <View style={styles.pointMain}>
-          <Text style={styles.pointText}>{point.text}</Text>
+      </View>
+      {items.length === 0 ? (
+        <Text style={styles.emptyCopy}>本次没有返回可展示的列表项。</Text>
+      ) : (
+        items.map((item, index) => (
+          <ListItem
+            key={`${String(item.id ?? item.entryId ?? item.nodeId ?? index)}-${index}`}
+            item={item}
+            index={index}
+            expandable={subject === "entries"}
+          />
+        ))
+      )}
+    </View>
+  );
+}
+
+function StatisticBlock({ block }: { block: KnowledgeAnswerBlock }) {
+  return (
+    <View style={styles.blockBox}>
+      <View style={styles.statHead}>
+        <View style={styles.blockHeadMain}>
+          <Text style={styles.blockEyebrow}>知识统计</Text>
+          <Text style={styles.blockTitle}>{block.label ?? "统计结果"}</Text>
+          {block.semantics?.queryObject ? (
+            <Text style={styles.blockMeta}>{block.semantics.queryObject}</Text>
+          ) : null}
         </View>
-      </View>,
+        {block.value !== null && block.value !== undefined ? (
+          <Text style={styles.statValue}>{String(block.value)}</Text>
+        ) : null}
+      </View>
+      {(block.buckets ?? []).map((bucket, index) => (
+        <View key={`${bucket.key ?? bucket.label ?? index}-${index}`} style={styles.bucketRow}>
+          <Text style={styles.bucketLabel}>{bucket.label ?? bucket.key ?? "未命名"}</Text>
+          <Text style={styles.bucketCount}>{bucket.count ?? 0}</Text>
+        </View>
+      ))}
+      {block.completeness && block.completeness !== "complete" ? (
+        <Text style={styles.boundaryCopy}>统计只覆盖本次返回的有限结果。</Text>
+      ) : null}
+    </View>
+  );
+}
+
+function AnswerBlock({ block }: { block: KnowledgeAnswerBlock }) {
+  if (block.kind === "text") {
+    return block.text ? <Text style={styles.textBlock}>{block.text}</Text> : <UnknownBlock />;
+  }
+  if (block.kind === "insufficient") {
+    return (
+      <View style={styles.insufficient} accessibilityRole="alert">
+        <AgentIcon name="alert" size={16} color={theme.risk} />
+        <Text style={styles.insufficientText}>
+          {block.text || "当前材料不足，无法完成本轮回答。"}
+        </Text>
+      </View>
     );
-  });
-  return <View style={styles.points}>{rows}</View>;
+  }
+  if (block.kind === "candidate" || block.kind === "candidate_text_only") {
+    return (
+      <View style={styles.candidate}>
+        <View style={styles.candidateHead}>
+          <AgentIcon name="edit" size={15} color={theme.ai} />
+          <Text style={styles.candidateTitle}>AI 修改建议 / 候选稿 · 未应用</Text>
+        </View>
+        <Text style={styles.textBlock}>
+          {block.text || block.content || "候选内容为空。"}
+        </Text>
+      </View>
+    );
+  }
+  if (block.kind === "list") return <ListBlock block={block} />;
+  if (block.kind === "statistic") return <StatisticBlock block={block} />;
+  if (block.kind === "entry") {
+    return (
+      <View style={styles.blockBox}>
+        <View style={styles.blockHead}>
+          <AgentIcon name="book" size={16} color={theme.confirmed} />
+          <View style={styles.blockHeadMain}>
+            <Text style={styles.blockEyebrow}>本轮读取的知识正文</Text>
+            <Text style={styles.blockTitle}>
+              {block.title || block.entryTitle || "未命名知识"}
+            </Text>
+            <Text style={styles.blockMeta}>
+              {[block.projectName, block.nodePath].filter(Boolean).join(" · ") || "归属未标注"}
+            </Text>
+          </View>
+        </View>
+        <Text style={styles.entryContent}>{block.content || block.text || "正文为空。"}</Text>
+      </View>
+    );
+  }
+  if (block.kind === "evidence") {
+    return (
+      <View style={styles.evidence}>
+        <View style={styles.candidateHead}>
+          <AgentIcon name="quote" size={15} color={theme.confirmed} />
+          <Text style={styles.evidenceTitle}>本轮已核验依据</Text>
+        </View>
+        <Text style={styles.evidenceText}>
+          {block.text || block.content || "服务端未返回可展示的依据文本。"}
+        </Text>
+      </View>
+    );
+  }
+  return <UnknownBlock />;
+}
+
+function UnknownBlock() {
+  return (
+    <View style={styles.unknown} accessibilityRole="alert">
+      <Text style={styles.unknownText}>有一项结果暂不支持展示，其余内容不受影响。</Text>
+    </View>
+  );
 }
 
 export function AnswerCard({
   run,
   scopeLabel,
-  onCitationPress,
+  canContinue,
+  onContinue,
   onRetry,
-  onOrganize,
-  onRefineQuestion,
-  onListEntries,
-  messagesById,
-  onLocateMessage,
 }: {
   run: KnowledgeRun;
   scopeLabel: string;
-  onCitationPress: (citation: KnowledgeRunCitation) => void;
+  canContinue: boolean;
+  onContinue: () => void;
   onRetry: () => void;
-  onOrganize: (run: KnowledgeRun) => void;
-  onRefineQuestion?: (run: KnowledgeRun) => void;
-  /** 低强调「列出相关知识」：以新消息直接重新提交原问题。 */
-  onListEntries?: (run: KnowledgeRun) => void;
-  messagesById?: ReadonlyMap<number, KnowledgeMessage>;
-  onLocateMessage?: (messageId: number) => void;
 }) {
-  const answer = run.answer;
-  const presentation = presentAnswer(answer, run.status);
-  const fallback = presentFallback(run.fallbackSummary);
-  const tone: BadgeTone =
-    presentation.tone === "positive" ? "confirmed" : presentation.tone;
-  const workspaceScope = run.scopeType === "workspace";
-  const citations = answer?.citations ?? [];
-  const points = answer?.points ?? [];
-  const hasPoints = points.length > 0;
-  // partial 的「再问」不应原样重发同一问题：改为把原问题填回输入框，
-  // 由用户修改措辞或切换模式后再发送（失败/降级仍支持一键重试）。
-  const partialRefine = presentation.status === "partial";
-  const canRetry =
-    presentation.status === "failed" || fallback.hasFallback;
-  const projectCounts = new Map<string, number>();
-  for (const citation of citations) {
-    if (!citation.projectName) continue;
-    projectCounts.set(
-      citation.projectName,
-      (projectCounts.get(citation.projectName) ?? 0) + 1,
-    );
-  }
-  const organize = draftActionEligibility(run);
-  const basisView = answerBasisView(run);
-  const displayHeadline = basisView?.label ?? presentation.headline;
-
+  const blocks = Array.isArray(run.dialogueBlocks) ? run.dialogueBlocks : [];
+  const fallbackText =
+    blocks.length === 0 ? run.answer?.answer?.trim() || null : null;
+  const status = dialogueStatusOf(run);
   return (
-    <>
-      {presentation.status !== "cancelled" && (
-        <Card
-          accent={presentation.status === "insufficient" ? "risk" : undefined}
-          background={
-            presentation.status === "insufficient" ? theme.riskSoft : undefined
-          }
-        >
-          <CardBody>
-            <View style={styles.head}>
-              <View style={styles.headMain}>
-                <Eyebrow
-                  icon={
-                    <AgentIcon
-                      name={
-                        presentation.status === "completed" ? "book" : "alert"
-                      }
-                      size={14}
-                      color={
-                        presentation.status === "completed"
-                          ? theme.confirmed
-                          : theme.risk
-                      }
-                    />
-                  }
-                >
-                  {displayHeadline}
-                </Eyebrow>
-                <Text style={styles.answerTitle}>
-                  {presentation.status === "clarification"
-                    ? "需要你补充信息"
-                    : presentation.status === "insufficient"
-                      ? "当前知识不足以直接回答"
-                      : presentation.status === "failed"
-                        ? "这次回答没有完成"
-                        : "综合回答"}
-                </Text>
-              </View>
-              <Badge tone={tone}>
-                {presentation.status === "completed" ? displayHeadline : presentation.headline}
-              </Badge>
-            </View>
-            {presentation.note !== null && (
-              <Text
-                style={[
-                  styles.answerIntro,
-                  presentation.status === "insufficient" && styles.insufficientText,
-                ]}
-              >
-                {presentation.note}
-              </Text>
-            )}
-            {fallback.hasFallback && (
-              <View style={styles.fallbackBox}>
-                {fallback.lines.map((line) => (
-                  <Text key={line} style={styles.fallbackText}>
-                    {line}
-                  </Text>
-                ))}
-              </View>
-            )}
-            {answer &&
-              (hasPoints ? (
-                <AnswerPoints points={points} />
-              ) : (
-                answer.answer.trim() !== "" && (
-                  <Text style={styles.answerBody}>
-                    {cleanAnswerText(answer.answer)}
-                  </Text>
-                )
-              ))}
-            {answer && presentation.status !== "completed" && (
-              <InvestigationGroup label="未解决缺口" items={answer.gaps ?? []} />
-            )}
-            <InvestigationSummary run={run} />
-            {workspaceScope &&
-              projectCounts.size > 0 &&
-              [...projectCounts.entries()].map(([projectName, count]) => (
-                <View key={projectName} style={styles.projectHit}>
-                  <Text style={styles.projectHitTitle}>
-                    命中项目：{projectName}
-                  </Text>
-                  <Text style={styles.projectHitCopy}>{count} 条引用</Text>
-                </View>
-              ))}
-            <CitationStrip
-              citations={citations}
-              workspaceScope={workspaceScope}
-              onCitationPress={onCitationPress}
+    <Card>
+      <CardBody>
+        <View style={styles.answerHead}>
+          <View>
+            <Text style={styles.blockEyebrow}>AI 即时回答</Text>
+            <Text style={styles.scope}>范围：{scopeLabel}</Text>
+          </View>
+          <Badge
+            tone={
+              status === "completed"
+                ? "confirmed"
+                : status === "failed" || status === "unsupported"
+                  ? "error"
+                  : "risk"
+            }
+          >
+            {STATUS_LABELS[status] ?? "已结束"}
+          </Badge>
+        </View>
+        <View style={styles.blocks}>
+          {blocks.map((block, index) => (
+            <AnswerBlock key={`${block.kind}-${index}`} block={block} />
+          ))}
+          {fallbackText ? <Text style={styles.textBlock}>{fallbackText}</Text> : null}
+          {!fallbackText && blocks.length === 0 ? (
+            <UnknownBlock />
+          ) : null}
+        </View>
+        <StatusNotice run={run} />
+        {canContinue ? (
+          <View style={styles.continueBox}>
+            <Text style={styles.continueCopy}>已完成的材料已保留，可以继续未完成步骤。</Text>
+            <AppButton
+              label="继续"
+              onPress={onContinue}
+              icon={<AgentIcon name="retry" size={15} color={theme.ink} />}
             />
-            <AnswerBasisOverview
-              run={run}
-              messagesById={messagesById}
-              onCitationPress={onCitationPress}
-              onLocateMessage={onLocateMessage}
-            />
-            <ScopeStamp label={scopeLabel} />
-            {onListEntries !== undefined &&
-              presentation.status !== "failed" &&
-              (
-                <View style={styles.inlineActions}>
-                  <AppButton
-                    label="列出相关知识"
-                    variant="default"
-                    icon={<AgentIcon name="search" size={16} color={theme.muted} />}
-                    onPress={() => onListEntries(run)}
-                  />
-                </View>
-              )}
-            {organize.eligible && (
-              <View style={styles.organizeArea}>
-                {organize.note !== null && (
-                  <Text style={styles.organizeNote}>{organize.note}</Text>
-                )}
-                <Pressable
-                  accessibilityRole="button"
-                  accessibilityLabel="整理成知识"
-                  onPress={() => onOrganize(run)}
-                  style={({ pressed }) => [
-                    styles.organizeButton,
-                    pressed && styles.organizeButtonPressed,
-                  ]}
-                >
-                  <Text style={styles.organizeText}>整理成知识</Text>
-                  <AgentIcon name="edit" size={16} color={theme.ai} />
-                </Pressable>
-              </View>
-            )}
-            {partialRefine && onRefineQuestion !== undefined && (
-              <View style={styles.inlineActions}>
-                <AppButton
-                  label="修改问题再问"
-                  variant="default"
-                  icon={<AgentIcon name="edit" size={16} color={theme.ink} />}
-                  onPress={() => onRefineQuestion(run)}
-                />
-              </View>
-            )}
-            {canRetry && !partialRefine && (
-              <View style={styles.inlineActions}>
-                <AppButton
-                  label="重新提问"
-                  variant="primary"
-                  icon={<AgentIcon name="retry" size={16} color="#FFFFFF" />}
-                  onPress={onRetry}
-                />
-              </View>
-            )}
-          </CardBody>
-        </Card>
-      )}
-      {presentation.status === "cancelled" && (
-        <Card>
-          <CardBody>
-            <View style={styles.head}>
-              <View style={styles.headMain}>
-                <Eyebrow icon={<AgentIcon name="alert" size={14} color={theme.muted} />}>
-                  已取消
-                </Eyebrow>
-                <Text style={styles.answerTitle}>这次回答已取消</Text>
-              </View>
-              <Badge tone="neutral">已取消</Badge>
-            </View>
-            <Text style={styles.answerIntro}>
-              没有生成正常回答，可以重新提问。
-            </Text>
-            <View style={styles.inlineActions}>
-              <AppButton
-                label="重新提问"
-                variant="primary"
-                icon={<AgentIcon name="retry" size={16} color="#FFFFFF" />}
-                onPress={onRetry}
-              />
-            </View>
-          </CardBody>
-        </Card>
-      )}
-      {answer?.conflicts.map((conflict) => (
-        <ConflictCard
-          key={`${conflict.evidenceIdA}-${conflict.evidenceIdB}`}
-          conflict={conflict}
-          onCitationPress={onCitationPress}
-        />
-      ))}
-    </>
+          </View>
+        ) : null}
+        {status === "failed" ? (
+          <AppButton label="重新提问" onPress={onRetry} />
+        ) : null}
+      </CardBody>
+    </Card>
   );
 }
 
 const styles = StyleSheet.create({
-  head: {
+  answerHead: {
     flexDirection: "row",
-    alignItems: "flex-start",
     justifyContent: "space-between",
+    alignItems: "flex-start",
     gap: 10,
   },
-  headMain: { minWidth: 0, flex: 1 },
-  answerTitle: {
-    marginTop: 4,
-    fontSize: 16,
-    lineHeight: 23,
-    fontWeight: "700",
-    color: theme.ink,
+  scope: { marginTop: 3, color: theme.muted, fontSize: 11 },
+  blocks: { marginTop: 12, gap: 10 },
+  textBlock: { color: theme.ink, fontSize: 14, lineHeight: 23 },
+  blockBox: {
+    overflow: "hidden",
+    borderWidth: 1,
+    borderColor: theme.border,
+    borderRadius: 8,
+    backgroundColor: theme.surface,
   },
-  answerIntro: {
-    marginTop: 10,
-    fontSize: 14,
-    lineHeight: 23,
-    color: theme.ink,
-  },
-  answerBody: {
-    marginTop: 10,
-    fontSize: 14,
-    lineHeight: 23,
-    color: theme.ink,
-  },
-  points: {
-    marginTop: 14,
-    gap: 12,
-  },
-  pointSection: {
-    fontSize: 13,
-    fontWeight: "700",
-    color: theme.ink,
-  },
-  pointRow: {
+  blockHead: {
+    minHeight: 48,
     flexDirection: "row",
+    alignItems: "center",
     gap: 8,
+    paddingHorizontal: 11,
+    paddingVertical: 9,
+    borderBottomWidth: 1,
+    borderBottomColor: theme.border,
   },
-  pointNumber: {
-    width: 21,
-    height: 21,
-    marginTop: 1,
-    borderRadius: 6,
+  blockHeadMain: { flex: 1, minWidth: 0 },
+  blockEyebrow: { color: theme.muted, fontSize: 10, fontWeight: "700" },
+  blockTitle: { color: theme.ink, fontSize: 13, lineHeight: 19, fontWeight: "700" },
+  blockMeta: { marginTop: 2, color: theme.muted, fontSize: 10, lineHeight: 16 },
+  listItem: { borderTopWidth: 1, borderTopColor: theme.border },
+  listPress: {
+    minHeight: 56,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 9,
+    paddingHorizontal: 11,
+    paddingVertical: 9,
+  },
+  indexBadge: {
+    width: 24,
+    height: 24,
+    borderRadius: 5,
     alignItems: "center",
     justifyContent: "center",
-    backgroundColor: theme.greenSoft,
+    backgroundColor: theme.soft,
   },
-  pointNumberText: {
-    fontSize: 11,
-    fontWeight: "700",
-    color: theme.green,
+  indexText: { color: theme.muted, fontSize: 11, fontWeight: "700" },
+  listMain: { flex: 1, minWidth: 0 },
+  listItemTitle: { color: theme.ink, fontSize: 13, lineHeight: 19, fontWeight: "600" },
+  listSecondary: { marginTop: 2, color: theme.muted, fontSize: 10, lineHeight: 16 },
+  listUnavailable: { marginTop: 3, color: theme.risk, fontSize: 10, lineHeight: 16 },
+  chevronOpen: { transform: [{ rotate: "90deg" }] },
+  entryState: { gap: 8, padding: 11, backgroundColor: theme.bg },
+  stateTitle: { color: theme.ink, fontSize: 12, fontWeight: "700" },
+  stateCopy: { color: theme.muted, fontSize: 11, lineHeight: 18 },
+  currentEntry: { gap: 7, padding: 11, backgroundColor: theme.soft },
+  currentLabel: { color: theme.confirmed, fontSize: 10, fontWeight: "700" },
+  currentTime: { color: theme.muted, fontSize: 10 },
+  entryContent: { padding: 11, color: theme.ink, fontSize: 13, lineHeight: 22 },
+  sourceBoundary: { color: theme.muted, fontSize: 10, lineHeight: 16 },
+  sourceRow: { marginTop: 3 },
+  sourceTitle: { color: theme.ink, fontSize: 11, fontWeight: "600" },
+  sourceQuote: { marginTop: 2, color: theme.muted, fontSize: 10, lineHeight: 17 },
+  statHead: { flexDirection: "row", gap: 12, padding: 11 },
+  statValue: { color: theme.confirmed, fontSize: 23, fontWeight: "700" },
+  bucketRow: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    gap: 10,
+    paddingHorizontal: 11,
+    paddingVertical: 7,
+    borderTopWidth: 1,
+    borderTopColor: theme.border,
   },
-  pointMain: { minWidth: 0, flex: 1 },
-  pointText: {
-    fontSize: 13,
-    lineHeight: 21,
-    color: theme.ink,
-  },
-  insufficientText: { color: "#76501C" },
-  fallbackBox: {
-    marginTop: 10,
-    padding: 10,
-    borderRadius: 7,
+  bucketLabel: { flex: 1, color: theme.ink, fontSize: 12 },
+  bucketCount: { color: theme.confirmed, fontSize: 12, fontWeight: "700" },
+  boundaryCopy: { padding: 10, color: theme.risk, fontSize: 10, lineHeight: 16 },
+  insufficient: {
+    flexDirection: "row",
+    alignItems: "flex-start",
+    gap: 8,
+    padding: 11,
+    borderWidth: 1,
+    borderColor: "#EFD7A8",
+    borderRadius: 8,
     backgroundColor: theme.riskSoft,
   },
-  fallbackText: { color: "#76501C", fontSize: 12, lineHeight: 20 },
-  projectHit: {
-    marginTop: 10,
-    padding: 9,
-    borderWidth: 1,
-    borderColor: theme.border,
-    borderRadius: 7,
-    backgroundColor: theme.bg,
-  },
-  projectHitTitle: { fontSize: 12, fontWeight: "600", color: theme.ink },
-  projectHitCopy: {
-    marginTop: 3,
-    color: theme.muted,
-    fontSize: 11,
-    lineHeight: 18,
-  },
-  sourceStrip: {
-    marginTop: 14,
-    paddingTop: 12,
-    borderTopWidth: 1,
-    borderTopColor: theme.border,
-  },
-  sourceStripContent: { gap: 6, paddingRight: 6 },
-  sourceChip: {
-    minHeight: 40,
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 5,
-    paddingHorizontal: 10,
-    borderWidth: 1,
-    borderColor: theme.border,
-    borderRadius: 7,
-    backgroundColor: theme.surface,
-    maxWidth: 230,
-  },
-  sourceChipPressed: { opacity: 0.85, borderColor: theme.green },
-  sourceChipText: {
-    color: theme.muted,
-    fontSize: 11,
-    fontWeight: "600",
-    flexShrink: 1,
-  },
-  scopeStamp: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 6,
-    marginTop: 12,
-    paddingTop: 10,
-    borderTopWidth: 1,
-    borderTopColor: theme.border,
-  },
-  scopeStampText: { color: theme.muted, fontSize: 10, lineHeight: 16 },
-  organizeArea: { marginTop: 12 },
-  organizeNote: {
-    marginBottom: 8,
-    color: theme.muted,
-    fontSize: 11,
-    lineHeight: 17,
-  },
-  organizeButton: {
-    minHeight: 44,
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "center",
+  insufficientText: { flex: 1, color: theme.risk, fontSize: 12, lineHeight: 20 },
+  candidate: {
     gap: 7,
+    padding: 11,
     borderWidth: 1,
     borderColor: "#DACCDE",
-    borderRadius: 9,
+    borderRadius: 8,
     backgroundColor: theme.aiSoft,
   },
-  organizeButtonPressed: { opacity: 0.9 },
-  organizeText: { color: theme.ai, fontSize: 13, fontWeight: "600" },
-  inlineActions: { flexDirection: "row", gap: 8, marginTop: 12, flexWrap: "wrap" },
-  conflictHead: {
-    flexDirection: "row",
-    alignItems: "flex-start",
-    justifyContent: "space-between",
-    gap: 10,
-  },
-  conflictTitle: {
-    marginTop: 4,
-    fontSize: 16,
-    lineHeight: 23,
-    fontWeight: "700",
-    color: theme.ink,
-  },
-  conflictSide: {
-    marginTop: 10,
-    padding: 9,
-    borderWidth: 1,
-    borderColor: "#F0DFBA",
-    borderRadius: 7,
-    backgroundColor: "#FFFAF0",
-  },
-  conflictSideLabel: { fontSize: 12, lineHeight: 18, fontWeight: "700", color: theme.ink },
-  conflictEvidenceButton: {
-    minHeight: 40,
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 6,
-    marginTop: 6,
-  },
-  conflictEvidenceText: {
-    color: theme.confirmed,
-    fontSize: 12,
-    fontWeight: "600",
-    flexShrink: 1,
-  },
-  conflictMissing: {
-    marginTop: 6,
-    color: theme.muted,
-    fontSize: 11,
-    lineHeight: 18,
-  },
-  investigation: {
-    marginTop: 12,
-    paddingTop: 10,
-    borderTopWidth: 1,
-    borderTopColor: theme.border,
-  },
-  investigationRow: { gap: 4 },
-  investigationLine: { fontSize: 11, lineHeight: 17, color: theme.muted },
-  investigationStop: { fontSize: 11, lineHeight: 17, color: theme.risk },
-  investigationToggle: {
-    minHeight: 44,
-    justifyContent: "center",
-    marginTop: 4,
-  },
-  investigationToggleText: {
-    color: theme.green,
-    fontSize: 12,
-    fontWeight: "600",
-  },
-  investigationDetails: { gap: 8, marginTop: 4 },
-  investigationGroup: { gap: 2 },
-  investigationGroupLabel: {
-    fontSize: 10,
-    fontWeight: "700",
-    color: theme.muted,
-    letterSpacing: 0.2,
-  },
-  investigationItem: { fontSize: 11, lineHeight: 18, color: theme.muted },
-  basisRow: {
-    minHeight: 40,
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 6,
-    marginTop: 10,
-    paddingHorizontal: 9,
-    paddingVertical: 7,
-    borderWidth: 1,
-    borderColor: "#CFE4D7",
-    borderRadius: 7,
-    backgroundColor: theme.greenSoft,
-  },
-  basisRowPressed: { opacity: 0.85 },
-  basisRowText: {
-    flex: 1,
-    fontSize: 11,
-    lineHeight: 17,
-    color: theme.green,
-    fontWeight: "600",
-  },
-  basisHeadlineRow: { gap: 3, marginBottom: 4 },
-  basisHeadline: { fontSize: 15, lineHeight: 22, fontWeight: "700", color: theme.ink },
-  basisHint: { fontSize: 10, lineHeight: 16, color: theme.muted },
-  basisSection: { gap: 7, marginTop: 12 },
-  basisSectionTitle: {
-    fontSize: 10,
-    fontWeight: "700",
-    color: theme.muted,
-    letterSpacing: 0.2,
-  },
-  basisItem: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 8,
-    padding: 9,
+  candidateHead: { flexDirection: "row", alignItems: "center", gap: 6 },
+  candidateTitle: { color: theme.ai, fontSize: 11, fontWeight: "700" },
+  evidence: {
+    gap: 7,
+    padding: 11,
     borderWidth: 1,
     borderColor: theme.border,
-    borderRadius: 7,
-    backgroundColor: theme.surface,
+    borderRadius: 8,
+    backgroundColor: theme.confirmedSoft,
   },
-  basisItemMain: { flex: 1, minWidth: 0, gap: 3 },
-  basisItemTitle: { fontSize: 13, lineHeight: 18, fontWeight: "600", color: theme.ink },
-  basisItemQuote: { fontSize: 11, lineHeight: 17, color: theme.muted },
-  basisItemMeta: { fontSize: 10, lineHeight: 15, color: theme.muted },
-  basisLocate: {
-    minHeight: 32,
-    alignItems: "center",
-    justifyContent: "center",
-    paddingHorizontal: 8,
-    borderRadius: 6,
-    backgroundColor: theme.greenSoft,
+  evidenceTitle: { color: theme.confirmed, fontSize: 11, fontWeight: "700" },
+  evidenceText: { color: theme.ink, fontSize: 12, lineHeight: 20 },
+  unknown: {
+    padding: 10,
+    borderWidth: 1,
+    borderColor: theme.border,
+    borderRadius: 8,
+    backgroundColor: theme.soft,
   },
-  basisLocateText: { fontSize: 11, fontWeight: "600", color: theme.green },
-  basisBoundary: { fontSize: 12, lineHeight: 19, color: theme.ink },
-  basisFootnote: {
-    marginTop: 14,
-    fontSize: 10,
-    lineHeight: 16,
-    color: theme.muted,
+  unknownText: { color: theme.muted, fontSize: 11, lineHeight: 18 },
+  emptyCopy: { padding: 11, color: theme.muted, fontSize: 11 },
+  notice: {
+    marginTop: 11,
+    flexDirection: "row",
+    alignItems: "flex-start",
+    gap: 8,
+    padding: 10,
+    borderRadius: 8,
+    backgroundColor: theme.riskSoft,
   },
+  noticeError: { backgroundColor: theme.errorSoft },
+  noticeMain: { flex: 1 },
+  noticeTitle: { color: theme.risk, fontSize: 12, fontWeight: "700" },
+  noticeErrorText: { color: theme.error },
+  noticeCopy: { marginTop: 2, color: theme.muted, fontSize: 11, lineHeight: 18 },
+  continueBox: { marginTop: 11, gap: 8 },
+  continueCopy: { color: theme.muted, fontSize: 11, lineHeight: 18 },
+  pressed: { opacity: 0.82 },
 });

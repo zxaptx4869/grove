@@ -55,7 +55,7 @@
 
 ### 4. continuation 复用普通消息提交管线
 
-继续按钮只渲染在其所属 Run 卡上，并由控制器验证该 Run 属于当前 Conversation、`can_continue=true` 且没有活动 Run。点击后通过现有 pending submission 管线发送正文“继续”，生成新的 `client_message_id`；客户端不读取、复制或修改 `continuation`。
+继续按钮只渲染在其所属 Run 卡上，并由控制器验证该 Run 属于当前 Conversation、是会话 `recent_run_id` 指向的最新可恢复 Run（旧响应无该字段时退回当前已加载页中更新时间最新的可恢复 Run）、`can_continue=true` 且没有活动 Run。点击后通过现有 pending submission 管线发送正文“继续”，生成新的 `client_message_id`；客户端不读取、复制或修改 `continuation`。
 
 网络结果未知仍重放 pending submission 的原键；失败后重新提问与 continuation 都新建键。会话切换清除本地按钮动作上下文，显示完全由新 Conversation 的服务端页决定。
 

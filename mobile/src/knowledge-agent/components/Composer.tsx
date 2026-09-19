@@ -1,44 +1,14 @@
-import {
-  Pressable,
-  StyleSheet,
-  Text,
-  TextInput,
-  View,
-} from "react-native";
+import { Pressable, StyleSheet, Text, TextInput, View } from "react-native";
 
 import { AgentIcon } from "@/src/knowledge-agent/components/AgentIcon";
-import { hasModeOverrides } from "@/src/knowledge-agent/state/modes";
-import type { ModeSelection } from "@/src/knowledge-agent/state/modes";
-import type {
-  AnswerMode,
-  BasisMode,
-  ContextMode,
-  ResultMode,
-} from "@/src/knowledge-agent/types";
+import { hasModeOverrides, type ModeSelection } from "@/src/knowledge-agent/state/modes";
 import { theme } from "@/src/theme";
 
-const CONTEXT_LABELS: Record<ContextMode, string> = {
+const CONTEXT_LABELS = {
   auto: "",
   continue: "继续当前主题",
   new_topic: "新话题",
-};
-
-const ANSWER_LABELS: Record<AnswerMode, string> = {
-  auto: "",
-  quick: "快速回答",
-  investigate: "深度查找",
-};
-
-const RESULT_LABELS: Record<ResultMode, string> = {
-  auto: "",
-  answer: "综合回答",
-  entries: "知识列表",
-};
-
-const BASIS_LABELS: Record<BasisMode, string> = {
-  auto: "",
-  knowledge_only: "仅使用我的知识库",
-};
+} as const;
 
 export function Composer({
   value,
@@ -47,9 +17,6 @@ export function Composer({
   modes,
   onOpenModes,
   onRemoveContextOverride,
-  onRemoveAnswerOverride,
-  onRemoveResultOverride,
-  onRemoveBasisOverride,
   submitting,
   disabled,
 }: {
@@ -59,34 +26,27 @@ export function Composer({
   modes: ModeSelection;
   onOpenModes: () => void;
   onRemoveContextOverride: () => void;
-  onRemoveAnswerOverride: () => void;
-  onRemoveResultOverride: () => void;
-  onRemoveBasisOverride: () => void;
   submitting: boolean;
   disabled: boolean;
 }) {
-  const trimmed = value.trim();
-  const canSend = trimmed.length > 0 && !submitting && !disabled;
+  const canSend = value.trim().length > 0 && !submitting && !disabled;
   const contextLabel = CONTEXT_LABELS[modes.contextMode];
-  const answerLabel = ANSWER_LABELS[modes.answerMode];
-  const resultLabel = RESULT_LABELS[modes.resultMode];
-  const basisLabel = BASIS_LABELS[modes.basisMode];
   return (
     <View style={styles.wrap}>
-      {hasModeOverrides(modes) && (
+      {hasModeOverrides(modes) && contextLabel !== "" && (
         <View style={styles.chips}>
-          {contextLabel !== "" && (
-            <ModeChip label={contextLabel} onRemove={onRemoveContextOverride} />
-          )}
-          {answerLabel !== "" && (
-            <ModeChip label={answerLabel} onRemove={onRemoveAnswerOverride} />
-          )}
-          {resultLabel !== "" && (
-            <ModeChip label={resultLabel} onRemove={onRemoveResultOverride} />
-          )}
-          {basisLabel !== "" && (
-            <ModeChip label={basisLabel} onRemove={onRemoveBasisOverride} />
-          )}
+          <View style={styles.chip}>
+            <Text style={styles.chipText}>{contextLabel}</Text>
+            <Pressable
+              accessibilityRole="button"
+              accessibilityLabel={`移除${contextLabel}设置`}
+              onPress={onRemoveContextOverride}
+              hitSlop={8}
+              style={styles.chipRemove}
+            >
+              <AgentIcon name="close" size={12} color={theme.green} />
+            </Pressable>
+          </View>
         </View>
       )}
       <View style={styles.composer}>
@@ -101,24 +61,20 @@ export function Composer({
         <TextInput
           value={value}
           onChangeText={onChangeText}
-          placeholder="问知识，或说出要做的事"
+          placeholder="问知识，或说出要分析的内容"
           placeholderTextColor={theme.muted}
           multiline
           maxLength={2000}
           style={styles.input}
           accessibilityLabel="对话输入"
-          accessibilityHint="输入问题，发送后由知识 Agent 基于正式知识回答"
+          accessibilityHint="输入后发送给知识 Agent"
         />
         <Pressable
           accessibilityRole="button"
           accessibilityLabel={submitting ? "正在发送" : "发送"}
           accessibilityState={{ disabled: !canSend }}
           disabled={!canSend}
-          onPress={() => {
-            if (canSend) {
-              onSend();
-            }
-          }}
+          onPress={() => canSend && onSend()}
           style={({ pressed }) => [
             styles.sendButton,
             !canSend && styles.sendButtonDisabled,
@@ -132,23 +88,6 @@ export function Composer({
   );
 }
 
-function ModeChip({ label, onRemove }: { label: string; onRemove: () => void }) {
-  return (
-    <View style={styles.chip}>
-      <Text style={styles.chipText}>{label}</Text>
-      <Pressable
-        accessibilityRole="button"
-        accessibilityLabel={`移除${label}设置`}
-        onPress={onRemove}
-        hitSlop={8}
-        style={styles.chipRemove}
-      >
-        <AgentIcon name="close" size={12} color={theme.green} />
-      </Pressable>
-    </View>
-  );
-}
-
 const styles = StyleSheet.create({
   wrap: {
     paddingHorizontal: 12,
@@ -156,12 +95,7 @@ const styles = StyleSheet.create({
     paddingBottom: 6,
     backgroundColor: theme.bg,
   },
-  chips: {
-    flexDirection: "row",
-    flexWrap: "wrap",
-    gap: 7,
-    marginBottom: 7,
-  },
+  chips: { flexDirection: "row", flexWrap: "wrap", gap: 7, marginBottom: 7 },
   chip: {
     minHeight: 28,
     flexDirection: "row",
@@ -186,19 +120,8 @@ const styles = StyleSheet.create({
     borderColor: theme.border,
     borderRadius: 13,
     backgroundColor: theme.surface,
-    shadowColor: "#162B20",
-    shadowOpacity: 0.09,
-    shadowRadius: 24,
-    shadowOffset: { width: 0, height: 8 },
-    elevation: 3,
   },
-  toolButton: {
-    width: 40,
-    height: 40,
-    alignItems: "center",
-    justifyContent: "center",
-    borderRadius: 9,
-  },
+  toolButton: { width: 40, height: 40, alignItems: "center", justifyContent: "center" },
   input: {
     flex: 1,
     minHeight: 40,
