@@ -1,11 +1,13 @@
-import type { ReactNode } from "react";
+import { useCallback, useLayoutEffect, useRef, useState, type ReactNode } from "react";
 import {
+  Animated,
   Modal,
   Pressable,
   ScrollView,
   StyleSheet,
   Text,
   View,
+  type LayoutChangeEvent,
   type StyleProp,
   type ViewStyle,
 } from "react-native";
@@ -23,6 +25,13 @@ const BADGE_TONES: Record<BadgeTone, { color: string; background: string }> = {
   error: { color: theme.error, background: theme.errorSoft },
   neutral: { color: theme.muted, background: theme.soft },
 };
+
+const DEBUG_BOTTOM_SHEET =
+  __DEV__ && process.env.EXPO_PUBLIC_GROVE_BOTTOM_SHEET_DEBUG === "1";
+
+function traceBottomSheet(event: string, details: Record<string, number | boolean> = {}) {
+  if (DEBUG_BOTTOM_SHEET) console.debug("[Grove BottomSheet]", event, details);
+}
 
 export function Badge({
   tone = "neutral",
@@ -139,46 +148,301 @@ export function Sheet({
   title,
   onClose,
   children,
+  animationType = "fade",
+  scrollable = true,
+  presentation = "fade",
+  reduceMotion = false,
+  onPresented,
 }: {
   visible: boolean;
   title: string;
   onClose: () => void;
   children: ReactNode;
+  animationType?: "none" | "slide" | "fade";
+  scrollable?: boolean;
+  presentation?: "fade" | "bottom";
+  reduceMotion?: boolean;
+  onPresented?: () => void;
 }) {
+  const renderContent = (closeHandler: () => void) => (
+    <View
+      style={[styles.sheet, presentation === "bottom" && styles.bottomSheet]}
+      accessibilityViewIsModal
+    >
+      <View style={styles.sheetHead}>
+        <Text style={styles.sheetTitle}>{title}</Text>
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel="关闭"
+          onPress={closeHandler}
+          style={styles.sheetClose}
+        >
+          <AgentIcon name="close" size={20} color={theme.muted} />
+        </Pressable>
+      </View>
+      <SafeAreaView edges={["bottom"]} style={styles.sheetSafeArea}>
+        {scrollable ? (
+          <ScrollView
+            style={styles.sheetScroll}
+            contentContainerStyle={styles.sheetBody}
+            keyboardShouldPersistTaps="handled"
+          >
+            {children}
+          </ScrollView>
+        ) : (
+          children
+        )}
+      </SafeAreaView>
+    </View>
+  );
+  if (presentation === "bottom") {
+    return (
+      <BottomSheetMotion
+        visible={visible}
+        onClose={onClose}
+        reduceMotion={reduceMotion}
+        onPresented={onPresented}
+      >
+        {(requestClose) => renderContent(requestClose)}
+      </BottomSheetMotion>
+    );
+  }
   return (
-    <Modal visible={visible} transparent animationType="fade" onRequestClose={onClose}>
+    <Modal visible={visible} transparent animationType={animationType} onRequestClose={onClose}>
       <View style={styles.modalRoot}>
         <Pressable
           accessibilityLabel="关闭弹层"
           style={styles.scrim}
           onPress={onClose}
         />
-        <View style={styles.sheet} accessibilityViewIsModal>
-          <View style={styles.sheetHandle} />
-          <View style={styles.sheetHead}>
-            <Text style={styles.sheetTitle}>{title}</Text>
-            <Pressable
-              accessibilityRole="button"
-              accessibilityLabel="关闭"
-              onPress={onClose}
-              style={styles.sheetClose}
-            >
-              <AgentIcon name="close" size={20} color={theme.muted} />
-            </Pressable>
-          </View>
-          <SafeAreaView edges={["bottom"]} style={styles.sheetSafeArea}>
-            <ScrollView
-              style={styles.sheetScroll}
-              contentContainerStyle={styles.sheetBody}
-              keyboardShouldPersistTaps="handled"
-            >
-              {children}
-            </ScrollView>
-          </SafeAreaView>
-        </View>
+        {renderContent(onClose)}
       </View>
     </Modal>
   );
+}
+
+function BottomSheetMotion({
+  visible,
+  onClose,
+  reduceMotion,
+  onPresented,
+  children,
+}: {
+  visible: boolean;
+  onClose: () => void;
+  reduceMotion: boolean;
+  onPresented?: () => void;
+  children: (requestClose: () => void) => ReactNode;
+}) {
+  const [scrimOpacity] = useState(() => new Animated.Value(0));
+  const [panelOpacity] = useState(() => new Animated.Value(0));
+  const [translateY] = useState(() => new Animated.Value(0));
+  const cycleRef = useRef(0);
+  const modalShownRef = useRef(false);
+  const panelHeightRef = useRef(0);
+  const openingStartedRef = useRef(false);
+  const presentedRef = useRef(false);
+  const closingRef = useRef(false);
+  const openingAnimationRef = useRef<Animated.CompositeAnimation | null>(null);
+  const closingAnimationRef = useRef<Animated.CompositeAnimation | null>(null);
+  const finishPresentation = useCallback(
+    (cycle: number) => {
+      if (
+        cycle !== cycleRef.current ||
+        !visible ||
+        closingRef.current ||
+        presentedRef.current
+      ) {
+        return;
+      }
+      presentedRef.current = true;
+      scrimOpacity.setValue(1);
+      translateY.setValue(0);
+      panelOpacity.setValue(1);
+      onPresented?.();
+    },
+    [onPresented, panelOpacity, scrimOpacity, translateY, visible],
+  );
+
+  const startPresentationIfReady = useCallback(() => {
+    if (
+      !visible ||
+      closingRef.current ||
+      openingStartedRef.current ||
+      !modalShownRef.current ||
+      panelHeightRef.current <= 0
+    ) {
+      return;
+    }
+    const cycle = cycleRef.current;
+    openingStartedRef.current = true;
+    openingAnimationRef.current?.stop();
+    closingAnimationRef.current?.stop();
+    scrimOpacity.setValue(0);
+    translateY.setValue(panelHeightRef.current + 24);
+    panelOpacity.setValue(1);
+    traceBottomSheet("open_start", {
+      cycle,
+      panelHeight: panelHeightRef.current,
+      reduceMotion,
+    });
+    if (reduceMotion) {
+      finishPresentation(cycle);
+      return;
+    }
+    const opening = Animated.parallel([
+      Animated.timing(scrimOpacity, {
+        toValue: 1,
+        duration: 160,
+        useNativeDriver: true,
+      }),
+      Animated.timing(translateY, {
+        toValue: 0,
+        duration: 220,
+        useNativeDriver: true,
+      }),
+    ]);
+    openingAnimationRef.current = opening;
+    opening.start(({ finished }) => {
+      if (cycle !== cycleRef.current || openingAnimationRef.current !== opening) return;
+      openingAnimationRef.current = null;
+      traceBottomSheet(finished ? "open_complete" : "open_cancel", { cycle });
+      if (finished) finishPresentation(cycle);
+    });
+  }, [finishPresentation, panelOpacity, reduceMotion, scrimOpacity, translateY, visible]);
+
+  useLayoutEffect(() => {
+    cycleRef.current += 1;
+    traceBottomSheet("cycle_reset", { cycle: cycleRef.current, visible });
+    modalShownRef.current = false;
+    panelHeightRef.current = 0;
+    openingStartedRef.current = false;
+    presentedRef.current = false;
+    closingRef.current = false;
+    openingAnimationRef.current?.stop();
+    openingAnimationRef.current = null;
+    closingAnimationRef.current?.stop();
+    closingAnimationRef.current = null;
+    panelOpacity.stopAnimation();
+    scrimOpacity.setValue(0);
+    translateY.setValue(0);
+    panelOpacity.setValue(0);
+    return () => {
+      cycleRef.current += 1;
+      openingAnimationRef.current?.stop();
+      closingAnimationRef.current?.stop();
+      openingAnimationRef.current = null;
+      closingAnimationRef.current = null;
+    };
+  }, [panelOpacity, scrimOpacity, translateY, visible]);
+
+  useLayoutEffect(() => {
+    if (!visible || !reduceMotion || presentedRef.current || closingRef.current) return;
+    if (openingStartedRef.current) {
+      const cycle = cycleRef.current;
+      openingAnimationRef.current?.stop();
+      openingAnimationRef.current = null;
+      finishPresentation(cycle);
+      return;
+    }
+    startPresentationIfReady();
+  }, [finishPresentation, reduceMotion, startPresentationIfReady, visible]);
+
+  const handleModalShow = useCallback(() => {
+    modalShownRef.current = true;
+    traceBottomSheet("modal_show", { cycle: cycleRef.current });
+    startPresentationIfReady();
+  }, [startPresentationIfReady]);
+
+  const handlePanelLayout = useCallback(
+    (event: LayoutChangeEvent) => {
+      const measuredHeight = event.nativeEvent.layout.height;
+      if (measuredHeight <= 0 || !visible || closingRef.current) return;
+      panelHeightRef.current = measuredHeight;
+      traceBottomSheet("panel_layout", {
+        cycle: cycleRef.current,
+        panelHeight: measuredHeight,
+      });
+      startPresentationIfReady();
+    },
+    [startPresentationIfReady, visible],
+  );
+
+  const requestClose = useCallback(() => {
+    if (closingRef.current || !visible) return;
+    closingRef.current = true;
+    const cycle = cycleRef.current;
+    traceBottomSheet("close_start", { cycle, openingStarted: openingStartedRef.current });
+    openingAnimationRef.current?.stop();
+    openingAnimationRef.current = null;
+    if (reduceMotion || !openingStartedRef.current) {
+      onClose();
+      return;
+    }
+    const closing = Animated.parallel([
+      Animated.timing(scrimOpacity, {
+        toValue: 0,
+        duration: 150,
+        useNativeDriver: true,
+      }),
+      Animated.timing(translateY, {
+        toValue: panelHeightRef.current + 24,
+        duration: 190,
+        useNativeDriver: true,
+      }),
+    ]);
+    closingAnimationRef.current = closing;
+    closing.start(({ finished }) => {
+      if (cycle !== cycleRef.current || closingAnimationRef.current !== closing) return;
+      closingAnimationRef.current = null;
+      traceBottomSheet(finished ? "close_complete" : "close_cancel", { cycle });
+      if (finished) onClose();
+      else closingRef.current = false;
+    });
+  }, [onClose, reduceMotion, scrimOpacity, translateY, visible]);
+
+  return (
+    <Modal
+      testID="bottom-sheet-modal"
+      visible={visible}
+      transparent
+      animationType="none"
+      hardwareAccelerated
+      onRequestClose={requestClose}
+      onShow={handleModalShow}
+    >
+      <View style={styles.modalRoot}>
+        <Animated.View style={[styles.animatedScrim, { opacity: scrimOpacity }]}>
+          <Pressable
+            accessibilityLabel="关闭弹层"
+            style={styles.scrim}
+            onPress={requestClose}
+          />
+        </Animated.View>
+        <Animated.View
+          testID="bottom-sheet-panel"
+          collapsable={false}
+          onLayout={handlePanelLayout}
+          style={[
+            styles.bottomPanel,
+            { opacity: panelOpacity, transform: [{ translateY }] },
+          ]}
+        >
+          <BottomSheetContent render={children} onClose={requestClose} />
+        </Animated.View>
+      </View>
+    </Modal>
+  );
+}
+
+function BottomSheetContent({
+  render,
+  onClose,
+}: {
+  render: (requestClose: () => void) => ReactNode;
+  onClose: () => void;
+}) {
+  return <>{render(onClose)}</>;
 }
 
 const styles = StyleSheet.create({
@@ -245,6 +509,14 @@ const styles = StyleSheet.create({
     left: 0,
     backgroundColor: theme.scrim,
   },
+  animatedScrim: {
+    position: "absolute",
+    top: 0,
+    right: 0,
+    bottom: 0,
+    left: 0,
+  },
+  bottomPanel: { maxHeight: "84%" },
   sheet: {
     maxHeight: "84%",
     overflow: "hidden",
@@ -253,15 +525,7 @@ const styles = StyleSheet.create({
     backgroundColor: theme.surface,
     ...popShadow,
   },
-  sheetHandle: {
-    width: 36,
-    height: 4,
-    marginTop: 8,
-    marginBottom: 2,
-    alignSelf: "center",
-    borderRadius: 2,
-    backgroundColor: "#CAD2CD",
-  },
+  bottomSheet: { maxHeight: "100%" },
   sheetHead: {
     minHeight: 52,
     flexDirection: "row",

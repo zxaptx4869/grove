@@ -1,51 +1,4 @@
-# native-knowledge-agent-conversation Specification
-
-## Purpose
-定义原生移动端的知识范围、会话历史、默认新对话、未完成任务恢复、消息幂等和前后台轮询行为。移动端复用既有服务端对话合同，不引入新的 Agent 编排或跨会话事实记忆。
-
-## Requirements
-
-### Requirement: 对话历史稳定分页与切换
-原生 App MUST 显示当前用户的对话历史摘要，并按服务端游标恢复最近消息；初次加载 MUST 渲染最近一页且保持时间正序，用户滚动到顶部时 MUST 向前加载更早消息并按 message_id/run_id 去重，不得跳过、倒序或重复显示。
-
-#### Scenario: 打开历史列表
-- **WHEN** 用户打开对话历史 Sheet
-- **THEN** 系统按最近活动顺序显示标题、范围、活动主题、最近 Run 状态与时间，并允许切换对话
-
-#### Scenario: 恢复长对话
-- **WHEN** 对话消息多于一页
-- **THEN** 首屏显示最近消息，用户向上加载后更早页插入顶部且当前阅读位置不突然跳到底部
-
-#### Scenario: 历史页含关联 Run
-- **WHEN** 一页消息包含已完成或活动 Run
-- **THEN** 客户端使用同页返回的去重 Run 集合恢复结构化回答和状态，而不是逐消息发起 Run 请求
-
-#### Scenario: 历史请求失败
-- **WHEN** 对话列表或消息页网络请求失败
-- **THEN** 页面保留已知内容并显示就地重试，不把错误渲染为无历史空状态
-
-### Requirement: 范围持续可见且按对话切换
-原生对话顶栏 MUST 持续显示当前 Conversation 的 Workspace「全部知识」或具体项目范围；用户选择项 MUST 只有全部知识和当前 Workspace 项目。草稿范围只用于创建参数，既有对话切换 MUST 调用服务端；每个历史回答 MUST 显示生成时范围快照。
-
-#### Scenario: 草稿选择项目范围
-- **WHEN** 用户在尚未创建的对话选择当前 Workspace 某项目
-- **THEN** 顶栏立即显示该项目的真实名称，首次发送创建项目范围 Conversation
-
-#### Scenario: 既有空闲对话切换范围
-- **WHEN** 用户在无活动 Run 的既有对话从项目切换到全部知识
-- **THEN** 客户端提交范围变更、刷新对话与消息，并显示服务端范围事件和已失效的旧主题状态
-
-#### Scenario: 选择当前相同范围
-- **WHEN** 用户再次选择 Conversation 已有范围
-- **THEN** 客户端保持当前状态且服务端不新增范围事件
-
-#### Scenario: 活动 Run 期间切换
-- **WHEN** 用户在 waiting/processing Run 期间尝试切换范围
-- **THEN** 范围不改变，界面说明需等待或取消当前回答后再切换
-
-#### Scenario: 查看旧范围回答
-- **WHEN** 用户切换范围后滚动到更早回答
-- **THEN** 回答仍标明其生成时的全部知识或项目范围，不伪装成当前范围结果
+## MODIFIED Requirements
 
 ### Requirement: 消息提交幂等且可安全重试
 原生 App MUST 为每次用户发送生成稳定的 `client_message_id`，去除首尾空白并遵守服务端长度限制；提交结果未知时 MUST 保留 Conversation、文本、受支持的上下文设置和同一标识重试，收到确定成功响应后才清除 pending submission。continuation MUST 以新的正式消息和新标识提交；终态失败的重新提问也 MUST 使用新标识创建新 Run。
@@ -135,6 +88,8 @@
 #### Scenario: 使用读屏操作
 - **WHEN** 用户通过辅助技术访问范围、历史、上下文设置、发送、继续、取消和正文展开控件
 - **THEN** 每个控件有可理解名称、状态和顺序，不只通过图标或颜色表达
+
+## ADDED Requirements
 
 ### Requirement: 用户只可覆盖正式 Agent 支持的上下文行为
 原生 App MUST 默认按 `context_mode=auto` 提交，并只提供服务端正式支持且语义准确的“继续当前主题”和“新话题”一次性覆盖；非默认选择 MUST 在发送前可见、可移除，成功提交后 MUST 恢复默认，提交结果未知的重试 MUST 复用原选择和同一 `client_message_id`。原生 App MUST NOT 提供快速/深度、强制结果形式、依据模式或旧结果纠正入口，也 MUST NOT 为保留控件改变 Agent 路由、提示词或执行规则。
@@ -259,3 +214,15 @@
 #### Scenario: 旧历史 Run 不再可继续
 - **WHEN** 历史 Run 曾可继续但当前服务端响应为 `can_continue=false` 或已有更新 Run
 - **THEN** 客户端不根据旧缓存显示或执行继续
+
+## REMOVED Requirements
+
+### Requirement: 用户可覆盖上下文与回答模式
+**Reason**: 本轮已批准的正式移动端合同替代旧行为，旧模式与引用协议不再要求实现。
+
+**Migration**: 由“用户只可覆盖正式 Agent 支持的上下文行为”承接适用行为；不恢复已移除的移动端入口或修改共享后端。
+
+### Requirement: 原生 App 恢复最近对话并支持新建
+**Reason**: 本轮已批准的正式移动端合同替代旧行为，旧模式与引用协议不再要求实现。
+
+**Migration**: 由“冷启动默认新对话并只恢复移动端未完成工作”承接适用行为；不恢复已移除的移动端入口或修改共享后端。

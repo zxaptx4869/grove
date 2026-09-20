@@ -1,10 +1,8 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   ActivityIndicator,
-  LayoutAnimation,
-  NativeScrollEvent,
-  NativeSyntheticEvent,
-  Platform,
+  type NativeScrollEvent,
+  type NativeSyntheticEvent,
   Pressable,
   ScrollView,
   StyleSheet,
@@ -18,394 +16,307 @@ import { getProjects } from "@/src/api";
 import { useAuth } from "@/src/auth";
 import { AgentIcon } from "@/src/knowledge-agent/components/AgentIcon";
 import { AnswerCard } from "@/src/knowledge-agent/components/AnswerCard";
-import { CitationSheet } from "@/src/knowledge-agent/components/CitationSheet";
 import { Composer } from "@/src/knowledge-agent/components/Composer";
-import { EntryResultSheet } from "@/src/knowledge-agent/components/EntryResultSheet";
-import { EntryResultsCard } from "@/src/knowledge-agent/components/EntryResultsCard";
 import {
-  DraftCard,
-  DraftFailedCard,
-  DraftProcessCard,
-  DraftReceiptCard,
-} from "@/src/knowledge-agent/components/DraftCard";
-import { DraftConfirmSheet } from "@/src/knowledge-agent/components/DraftConfirmSheet";
-import { DraftEditSheet } from "@/src/knowledge-agent/components/DraftEditSheet";
+  EntryDetailSheet,
+  type EntryDetailTarget,
+} from "@/src/knowledge-agent/components/EntryDetailSheet";
 import { HistorySheet } from "@/src/knowledge-agent/components/HistorySheet";
 import { ModeSheet } from "@/src/knowledge-agent/components/ModeSheet";
 import { ProcessCard } from "@/src/knowledge-agent/components/ProcessCard";
-import { RevisionDiffScreen } from "@/src/knowledge-agent/components/RevisionDiffScreen";
-import {
-  RevisionDraftCard,
-  RevisionDraftFailedCard,
-  RevisionProcessCard,
-  RevisionReceiptCard,
-} from "@/src/knowledge-agent/components/RevisionDraftCard";
-import { RevisionConfirmSheet } from "@/src/knowledge-agent/components/RevisionConfirmSheet";
-import { RevisionEditSheet } from "@/src/knowledge-agent/components/RevisionEditSheet";
-import { RevisionInstructionSheet } from "@/src/knowledge-agent/components/RevisionInstructionSheet";
-import { RevisionUndoSheet } from "@/src/knowledge-agent/components/RevisionUndoSheet";
+import { RichText } from "@/src/knowledge-agent/components/RichText";
 import { ScopeSheet } from "@/src/knowledge-agent/components/ScopeSheet";
-import {
-  TargetProjectSheet,
-  type DraftTargetOption,
-} from "@/src/knowledge-agent/components/TargetProjectSheet";
-import {
-  useConversationController,
-  type EntryResultsState,
-} from "@/src/knowledge-agent/hooks/useConversationController";
-import { useKeyboardHeight } from "@/src/knowledge-agent/hooks/useKeyboardHeight";
-import { draftActionEligibility } from "@/src/knowledge-agent/adapters/answer";
-import {
-  revisionEligibility,
-  type RevisionTarget,
-} from "@/src/knowledge-agent/adapters/answer";
-import { scopeLabel } from "@/src/knowledge-agent/adapters/scope";
-import { resultModeLabel } from "@/src/knowledge-agent/adapters/entryResults";
 import { toUserErrorMessage } from "@/src/knowledge-agent/errors";
+import { useConversationController } from "@/src/knowledge-agent/hooks/useConversationController";
+import { useKeyboardHeight } from "@/src/knowledge-agent/hooks/useKeyboardHeight";
 import type {
-  KnowledgeCandidateDraft,
-  KnowledgeEntryRevisionDraft,
-  KnowledgeEntryResultItem,
+  KnowledgeConversation,
   KnowledgeMessage,
   KnowledgeRun,
-  KnowledgeRunCitation,
   KnowledgeScopeChangeRequest,
-  ResultMode,
 } from "@/src/knowledge-agent/types";
 import { isRunActive } from "@/src/knowledge-agent/types";
 import { theme } from "@/src/theme";
 
-const SUGGESTIONS = [
-  "帮我看看卫生间防水有哪些关键知识，有没有互相冲突的地方？",
-  "现有知识里有哪些适用条件或缺口？",
-];
+function scopeLabel(scopeType: string, projectName?: string | null): string {
+  return scopeType === "project" ? projectName ?? "项目" : "全部知识";
+}
 
 export function ConversationScreen() {
   const { token } = useAuth();
-  const controller = useConversationController(token);
   const insets = useSafeAreaInsets();
   const keyboardHeight = useKeyboardHeight(insets.bottom);
-  const previousKeyboardHeightRef = useRef(0);
-  // Android 键盘收起/弹出动画与 padding 瞬移不同步会导致输入框闪烁；
-  // 高度变化时用 LayoutAnimation 平滑过渡，让 composer 跟随键盘动画。
-  useEffect(() => {
-    if (
-      Platform.OS === "android" &&
-      previousKeyboardHeightRef.current !== keyboardHeight
-    ) {
-      LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
-    }
-    previousKeyboardHeightRef.current = keyboardHeight;
-  }, [keyboardHeight]);
-  const [text, setText] = useState("");
-  const [historyOpen, setHistoryOpen] = useState(false);
-  const [scopeOpen, setScopeOpen] = useState(false);
-  const [modeOpen, setModeOpen] = useState(false);
-  const [citationContext, setCitationContext] = useState<{
-    citation: KnowledgeRunCitation;
-    run: KnowledgeRun;
-  } | null>(null);
-  const [entryResultItem, setEntryResultItem] = useState<
-    KnowledgeEntryResultItem | null
-  >(null);
-  const [targetProject, setTargetProject] = useState<{
-    sourceRunId: number;
-    options: DraftTargetOption[];
-  } | null>(null);
-  const [editDraftId, setEditDraftId] = useState<number | null>(null);
-  const [confirmDraftId, setConfirmDraftId] = useState<number | null>(null);
-  // ---- 单 Entry 修订界面状态 ----
-  const [revisionTarget, setRevisionTarget] = useState<{
-    target: RevisionTarget;
-    sourceRunId: number;
-  } | null>(null);
-  const [revisionEditId, setRevisionEditId] = useState<number | null>(null);
-  const [revisionConfirmId, setRevisionConfirmId] = useState<number | null>(null);
-  const [revisionUndoId, setRevisionUndoId] = useState<number | null>(null);
-  const [revisionDiffId, setRevisionDiffId] = useState<number | null>(null);
+  const controller = useConversationController(token);
   const scrollRef = useRef<ScrollView>(null);
-  // 是否靠近消息底部：进入对话定位到底部，且新消息到达时若用户仍靠近底部则跟随滚动；
-  // 用户向上翻阅历史时保持不动，不做跳底。
-  const nearBottomRef = useRef(true);
-  // 已为当前对话做过一次初始定位（切换对话后重新定位）
+  const contentHeightRef = useRef(0);
+  const scrollYRef = useRef(0);
+  const stickToBottomRef = useRef(true);
+  const olderAnchorRef = useRef<{ contentHeight: number; scrollY: number } | null>(null);
   const positionedConversationRef = useRef<string | null>(null);
-
+  const layoutConversationRef = useRef<string | null>(null);
+  const followNextContentRef = useRef(false);
+  const [scopeOpen, setScopeOpen] = useState(false);
+  const [scopeRecoveryNotice, setScopeRecoveryNotice] = useState<string | null>(null);
+  const [modeOpen, setModeOpen] = useState(false);
+  const [entryDetail, setEntryDetail] = useState<EntryDetailTarget | null>(null);
+  const closeEntryDetail = useCallback(() => setEntryDetail(null), []);
   const projectsQuery = useQuery({
-    queryKey: ["projects"],
+    queryKey: ["projects", "mobile-scope"],
     queryFn: () => getProjects(token as string),
-    // 项目仅供范围 Sheet 使用，延迟读取能避免对话首屏多一次无关请求与状态更新。
-    enabled: Boolean(token && scopeOpen),
+    enabled: Boolean(
+      token &&
+        (scopeOpen ||
+          (controller.isDraft && controller.currentScope.scopeType === "project")),
+    ),
   });
 
-  const submitting =
-    controller.pending !== null &&
-    (controller.pending.phase === "creating_conversation" ||
-      controller.pending.phase === "submitting");
-
-  const handleSend = useCallback(() => {
-    // 先滚到底让 pending 气泡可见，提交成功后再对齐服务端消息
-    scrollRef.current?.scrollToEnd({ animated: true });
-    void controller.submit(text).then((submitted) => {
-      // 只有确定成功才清空输入与滚动；失败时保留文本便于就地修改重试
-      if (submitted) {
-        setText("");
-        scrollRef.current?.scrollToEnd({ animated: true });
-      }
-    });
-  }, [controller, text]);
-
-  const handleSuggestion = useCallback((suggestion: string) => {
-    setText(suggestion);
-  }, []);
-
-  /** 模式纠正：以新的 client_message_id 和相反结果形态直接重发原问题。 */
-  const handleResultModeResubmit = useCallback(
-    (run: KnowledgeRun, resultMode: ResultMode) => {
-      scrollRef.current?.scrollToEnd({ animated: true });
-      void controller.resubmitWithResultMode(run.id, resultMode);
-    },
-    [controller],
-  );
-
-  /** 「修改问题」：只把原问题填回 Composer，不改变模式、不自动发送。 */
-  const handleRefineEntrySearch = useCallback(
-    (run: KnowledgeRun) => {
-      const userMessage = controller.thread.items.find(
-        (item) => item.runId === run.id && item.role === "user",
-      );
-      if (!userMessage) return;
-      setText(userMessage.content);
-      scrollRef.current?.scrollToEnd({ animated: true });
-    },
-    [controller],
-  );
-
-  const entryResultsUi = {
-    stateFor: (runId: number): EntryResultsState | null =>
-      controller.entryResultsForRun(runId),
-    prime: (runId: number) => controller.primeEntryResults(runId),
-    loadMore: (runId: number) => controller.loadMoreEntryResults(runId),
-    retry: (runId: number) => controller.retryEntryResults(runId),
-    openItem: (item: KnowledgeEntryResultItem) => setEntryResultItem(item),
-    correctMode: (run: KnowledgeRun) =>
-      handleResultModeResubmit(run, "answer"),
-    refine: (run: KnowledgeRun) => handleRefineEntrySearch(run),
-  };
-
-  const handleScroll = useCallback(
-    (event: NativeSyntheticEvent<NativeScrollEvent>) => {
-      const { contentOffset, layoutMeasurement, contentSize } = event.nativeEvent;
-      nearBottomRef.current =
-        contentOffset.y + layoutMeasurement.height >= contentSize.height - 80;
-      if (contentOffset.y < 40) {
-        void controller.loadOlderMessages();
-      }
-    },
-    [controller],
-  );
-
-  const handleContentSizeChange = useCallback(() => {
-    // 进入对话时内容首次布局完成即定位到最近消息；之后仅在用户靠近底部时跟随新内容
-    if (nearBottomRef.current) {
-      // 同步调用可能早于布局完成：放到下一帧再滚，确保按最新内容高度定位
-      requestAnimationFrame(() => {
-        scrollRef.current?.scrollToEnd({ animated: false });
-      });
+  useEffect(() => {
+    if (
+      !controller.isDraft ||
+      controller.currentScope.scopeType !== "project" ||
+      controller.currentScope.projectId === null ||
+      projectsQuery.isLoading ||
+      projectsQuery.isError ||
+      !projectsQuery.data
+    ) {
+      return;
     }
-  }, []);
+    const projectStillAvailable = projectsQuery.data.some(
+      (project) => project.id === controller.currentScope.projectId,
+    );
+    if (projectStillAvailable) return;
+    let cancelled = false;
+    queueMicrotask(() => {
+      if (cancelled) return;
+      setScopeRecoveryNotice("上次使用的项目已不可用，已切换为全部知识。");
+      void controller.changeScope({ scopeType: "workspace", projectId: null });
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [controller, projectsQuery.data, projectsQuery.isError, projectsQuery.isLoading]);
 
-  const handleScopeChange = useCallback(
-    (scope: KnowledgeScopeChangeRequest) => {
-      setScopeOpen(false);
-      void controller.changeScope(scope);
-    },
-    [controller],
-  );
+  const validatingRestoredProject =
+    controller.isDraft &&
+    controller.currentScope.scopeType === "project" &&
+    projectsQuery.isLoading;
+  const restoredProjectValidationError =
+    controller.isDraft &&
+    controller.currentScope.scopeType === "project" &&
+    projectsQuery.isError;
 
-  const locateUserMessage = useCallback(
-    (messageId: number) => {
-      // 依据详情中的“定位”：把对话滚到包含该用户消息的区域附近。
-      // ScrollView 子项高度不固定，采用按消息序号估算的偏移；加载更早
-      // 消息后内容高度变化，仍可再次点击定位。
-      const index = controller.thread.items.findIndex(
-        (item) => item.id === messageId,
-      );
-      if (index < 0) return;
-      const estimatedY = Math.max(0, index * 140);
-      scrollRef.current?.scrollTo({ y: estimatedY, animated: true });
-    },
-    [controller.thread.items],
-  );
+  const runByAssistantMessage = useMemo(() => {
+    const map = new Map<number, KnowledgeRun>();
+    for (const run of controller.thread.runsById.values()) {
+      if (run.assistantMessageId !== null) map.set(run.assistantMessageId, run);
+    }
+    return map;
+  }, [controller.thread.runsById]);
 
-  const handleOrganize = useCallback(
-    (run: KnowledgeRun) => {
-      const eligibility = draftActionEligibility(run);
-      if (!eligibility.eligible || eligibility.sourceRunId === null) return;
-      if (eligibility.fixedProjectId !== null) {
-        void controller.submitDraftAction(
-          eligibility.sourceRunId,
-          eligibility.fixedProjectId,
-        );
-        return;
-      }
-      if (eligibility.projectOptions.length === 1) {
-        void controller.submitDraftAction(
-          eligibility.sourceRunId,
-          eligibility.projectOptions[0].id,
-        );
-        return;
-      }
-      setTargetProject({
-        sourceRunId: eligibility.sourceRunId,
-        options: eligibility.projectOptions,
-      });
-    },
-    [controller],
-  );
-
-  const handleTargetSelect = useCallback(
-    (sourceRunId: number, projectId: number) => {
-      setTargetProject(null);
-      void controller.submitDraftAction(sourceRunId, projectId);
-    },
-    [controller],
-  );
-
-  const handleRevise = useCallback(
-    (target: RevisionTarget, sourceRunId: number) => {
-      controller.clearRevisionEditError();
-      setCitationContext(null);
-      setRevisionTarget({ target, sourceRunId });
-    },
-    [controller],
-  );
-
-  const handleRevisionSubmit = useCallback(
-    (sourceRunId: number, targetEntryId: number, instruction: string) => {
-      void controller.submitEntryRevision(sourceRunId, targetEntryId, instruction).then(
-        (submitted) => {
-          if (submitted) setRevisionTarget(null);
-        },
-      );
-    },
-    [controller],
-  );
-
-  const editingDraft =
-    editDraftId !== null ? controller.draftsById.get(editDraftId) ?? null : null;
-  const confirmingDraft =
-    confirmDraftId !== null
-      ? controller.draftsById.get(confirmDraftId) ?? null
-      : null;
-  const editSaving = controller.draftEditBusy;
-  const editError = controller.draftEditError;
-  const confirmSaving = controller.confirmingDraftId !== null;
-  const confirmError = controller.draftConfirmError;
-  const editingRevisionDraft =
-    revisionEditId !== null
-      ? controller.revisionDraftsById.get(revisionEditId) ?? null
-      : null;
-  const confirmingRevisionDraft =
-    revisionConfirmId !== null
-      ? controller.revisionDraftsById.get(revisionConfirmId) ?? null
-      : null;
-  const undoingRevisionDraft =
-    revisionUndoId !== null
-      ? controller.revisionDraftsById.get(revisionUndoId) ?? null
-      : null;
-  const diffDraft =
-    revisionDiffId !== null
-      ? controller.revisionDraftsById.get(revisionDiffId) ?? null
-      : null;
-  const revisionSaving = controller.revisionEditBusy;
-  const revisionEditError = controller.revisionEditError;
-  const revisionConfirming = controller.confirmingRevisionDraftId !== null;
-  const revisionConfirmError = controller.revisionConfirmError;
-  const revisionUndoing = controller.undoingRevisionDraftId !== null;
-  const revisionUndoError = controller.revisionUndoError;
-
-  const threadHasMessages = controller.thread.items.length > 0;
   const conversationKey = controller.isDraft
     ? "draft"
-    : String(controller.activeConversation?.id ?? "none");
-  const draftIntroVisible =
-    controller.isDraft && !threadHasMessages && !controller.initialLoading;
+    : String(controller.activeConversation?.id ?? "restoring");
+  const initialPositionReady =
+    !controller.initialLoading &&
+    !controller.activeConversationLoading &&
+    !controller.messagesLoading;
+  const threadHasMessages = controller.thread.items.length > 0;
 
-  // 双保险：消息页加载完成后延迟定位一次（onContentSizeChange 时机在部分设备不可靠）
-  useEffect(() => {
-    if (controller.messagesLoading || controller.initialLoading) return;
-    if (!threadHasMessages) return;
-    if (positionedConversationRef.current === conversationKey) return;
+  const scheduleInitialPosition = useCallback(() => {
+    if (
+      !initialPositionReady ||
+      !threadHasMessages ||
+      layoutConversationRef.current !== conversationKey ||
+      positionedConversationRef.current === conversationKey
+    ) {
+      return false;
+    }
+    const savedOffset = controller.getReadingPosition(conversationKey);
+    if (savedOffset === null) {
+      scrollRef.current?.scrollToEnd({ animated: false });
+      stickToBottomRef.current = true;
+    } else {
+      scrollRef.current?.scrollTo({ y: savedOffset, animated: false });
+      stickToBottomRef.current = false;
+    }
     positionedConversationRef.current = conversationKey;
-    const timer = setTimeout(() => {
-      requestAnimationFrame(() => {
-        scrollRef.current?.scrollToEnd({ animated: false });
-      });
-    }, 0);
-    return () => clearTimeout(timer);
-  }, [
-    controller.messagesLoading,
-    controller.initialLoading,
-    threadHasMessages,
-    conversationKey,
-  ]);
+    followNextContentRef.current = false;
+    return true;
+  }, [controller, conversationKey, initialPositionReady, threadHasMessages]);
 
-  const headerScopeLabel =
-    controller.currentScope.scopeType === "project"
-      ? controller.currentScope.projectName ?? "项目"
-      : "全部知识";
+  useEffect(() => {
+    scheduleInitialPosition();
+  }, [scheduleInitialPosition]);
+
+  const handleSend = async () => {
+    const value = controller.input.trim();
+    if (!value) return;
+    stickToBottomRef.current = true;
+    followNextContentRef.current = true;
+    scrollRef.current?.scrollToEnd({ animated: true });
+    await controller.submit(value);
+  };
+
+  const handleScopeChange = async (scope: KnowledgeScopeChangeRequest) => {
+    setScopeRecoveryNotice(null);
+    await controller.changeScope(scope);
+    setScopeOpen(false);
+  };
+
+  const handleScroll = (event: NativeSyntheticEvent<NativeScrollEvent>) => {
+    const { contentOffset, contentSize, layoutMeasurement } = event.nativeEvent;
+    scrollYRef.current = contentOffset.y;
+    controller.setReadingPosition(conversationKey, contentOffset.y);
+    contentHeightRef.current = contentSize.height;
+    const distanceFromBottom = contentSize.height - contentOffset.y - layoutMeasurement.height;
+    stickToBottomRef.current = distanceFromBottom < 80;
+  };
+
+  const handleContentSizeChange = (_width: number, height: number) => {
+    const olderAnchor = olderAnchorRef.current;
+    if (olderAnchor && height > olderAnchor.contentHeight) {
+      scrollRef.current?.scrollTo({
+        y: olderAnchor.scrollY + height - olderAnchor.contentHeight,
+        animated: false,
+      });
+      olderAnchorRef.current = null;
+      contentHeightRef.current = height;
+      return;
+    }
+    contentHeightRef.current = height;
+    layoutConversationRef.current = conversationKey;
+    if (scheduleInitialPosition()) return;
+    if (followNextContentRef.current || stickToBottomRef.current) {
+      scrollRef.current?.scrollToEnd({ animated: true });
+      followNextContentRef.current = false;
+    }
+  };
+
+  const handleLoadOlder = async () => {
+    olderAnchorRef.current = {
+      contentHeight: contentHeightRef.current,
+      scrollY: scrollYRef.current,
+    };
+    stickToBottomRef.current = false;
+    await controller.loadOlderMessages();
+    requestAnimationFrame(() => {
+      olderAnchorRef.current = null;
+    });
+  };
+
+  const showInitialError =
+    controller.conversationsError !== null && !controller.userInitiatedDraft;
 
   return (
-    <SafeAreaView edges={["top"]} style={styles.page}>
-      <View style={styles.page}>
+    <SafeAreaView style={styles.safe} edges={["top"]}>
+      <View style={styles.root}>
         <View style={styles.header}>
-          <View style={styles.brandMark}>
-            <Text style={styles.brandText}>G</Text>
+          <View style={styles.brandSlot} accessibilityLabel="Grove">
+            <View style={styles.brandMark}>
+              <Text style={styles.brandText}>G</Text>
+            </View>
           </View>
           <Pressable
             accessibilityRole="button"
-            accessibilityLabel={`修改当前知识范围，当前为${headerScopeLabel}`}
+            accessibilityLabel={`修改当前知识范围，当前为${controller.scopeLabel}`}
             onPress={() => setScopeOpen(true)}
-            style={styles.scopeButton}
+            style={({ pressed }) => [styles.scopeButton, pressed && styles.pressed]}
           >
-            <Text numberOfLines={1} style={styles.scopeText}>
-              {headerScopeLabel}
+            <Text style={styles.scopeButtonText} numberOfLines={1}>
+              {controller.scopeLabel}
             </Text>
-            <AgentIcon name="down" size={15} color={theme.muted} />
+            <AgentIcon name="down" size={14} color={theme.muted} />
           </Pressable>
-          <Pressable
-            accessibilityRole="button"
-            accessibilityLabel="查看对话历史"
-            onPress={() => setHistoryOpen(true)}
-            style={styles.headerIcon}
-          >
-            <AgentIcon name="history" size={22} color={theme.muted} />
-          </Pressable>
+          <HistoryControl
+            conversations={controller.conversations}
+            activeConversationId={
+              controller.isDraft ? null : controller.activeConversation?.id ?? null
+            }
+            loading={controller.conversationsLoading}
+            error={controller.conversationsError}
+            onRetry={controller.retryConversations}
+            onSelect={(id) => {
+              if (!controller.pending) {
+                controller.clearReadingPosition(String(id));
+                stickToBottomRef.current = true;
+                layoutConversationRef.current = null;
+                positionedConversationRef.current = null;
+              }
+              controller.switchToConversation(id);
+            }}
+            onNew={() => {
+              if (!controller.pending) {
+                controller.clearReadingPosition("draft");
+                stickToBottomRef.current = true;
+                layoutConversationRef.current = null;
+                positionedConversationRef.current = null;
+              }
+              controller.startNewConversation();
+            }}
+          />
         </View>
 
         <ScrollView
           ref={scrollRef}
           style={styles.thread}
           contentContainerStyle={styles.threadContent}
+          keyboardShouldPersistTaps="handled"
+          scrollEventThrottle={16}
+          accessibilityLabel="知识 Agent 对话"
           onScroll={handleScroll}
           onContentSizeChange={handleContentSizeChange}
-          scrollEventThrottle={100}
-          keyboardShouldPersistTaps="handled"
-          accessibilityLabel="知识 Agent 对话"
         >
-          {controller.initialLoading && (
+          {controller.thread.hasMore ? (
+            <Pressable
+              accessibilityRole="button"
+              accessibilityLabel="加载更早消息"
+              disabled={controller.loadingOlder}
+              onPress={() => void handleLoadOlder()}
+              style={({ pressed }) => [styles.loadOlder, pressed && styles.pressed]}
+            >
+              {controller.loadingOlder ? <ActivityIndicator color={theme.green} /> : null}
+              <Text style={styles.loadOlderText}>
+                {controller.loadingOlder ? "正在加载…" : "加载更早消息"}
+              </Text>
+            </Pressable>
+          ) : null}
+
+          {controller.initialLoading || controller.activeConversationLoading ? (
             <View style={styles.centerState}>
               <ActivityIndicator color={theme.green} />
-              <Text style={styles.centerStateText}>正在恢复对话…</Text>
+              <Text style={styles.stateCopy}>正在恢复知识对话…</Text>
             </View>
-          )}
-          {controller.conversationsError !== null && (
-            <View style={styles.inlineError}>
-              <Text style={styles.inlineErrorTitle}>对话列表加载失败</Text>
-              <Text style={styles.inlineErrorCopy}>{controller.conversationsError}</Text>
+          ) : controller.recoveryError ? (
+            <View style={styles.centerState} accessibilityRole="alert">
+              <Text style={styles.errorTitle}>未能恢复上次移动任务</Text>
+              <Text style={styles.stateCopy}>{controller.recoveryError}</Text>
+              <View style={styles.recoveryActions}>
+                <Pressable
+                  accessibilityRole="button"
+                  accessibilityLabel="重试恢复移动任务"
+                  onPress={controller.retryRecovery}
+                  style={styles.retryButton}
+                >
+                  <AgentIcon name="retry" size={16} color={theme.green} />
+                  <Text style={styles.retryText}>重试恢复</Text>
+                </Pressable>
+                <Pressable
+                  accessibilityRole="button"
+                  accessibilityLabel="退出恢复并进入新对话"
+                  onPress={() => void controller.exitRecovery()}
+                  style={styles.retryButton}
+                >
+                  <Text style={styles.retryText}>退出恢复</Text>
+                </Pressable>
+              </View>
+            </View>
+          ) : showInitialError ? (
+            <View style={styles.centerState}>
+              <Text style={styles.errorTitle}>对话读取失败</Text>
+              <Text style={styles.stateCopy}>{controller.conversationsError}</Text>
               <Pressable
                 accessibilityRole="button"
-                accessibilityLabel="重试加载对话列表"
+                accessibilityLabel="重试读取对话"
                 onPress={controller.retryConversations}
                 style={styles.retryButton}
               >
@@ -413,829 +324,359 @@ export function ConversationScreen() {
                 <Text style={styles.retryText}>重试</Text>
               </Pressable>
             </View>
-          )}
-          {draftIntroVisible && (
-            <View style={styles.intro}>
-              <View style={styles.introMark}>
-                <AgentIcon name="message" size={20} color={theme.green} />
-              </View>
-              <Text style={styles.introTitle}>和你的知识一起想</Text>
-              <Text style={styles.introCopy}>
-                我会按问题需要结合「{headerScopeLabel}」中的正式知识、你提供的信息与 AI 通用能力，并说明回答依据；不会直接修改知识。
-              </Text>
-              <View style={styles.suggestions}>
-                {SUGGESTIONS.map((suggestion) => (
-                  <Pressable
-                    key={suggestion}
-                    accessibilityRole="button"
-                    accessibilityLabel={`填入建议问题：${suggestion}`}
-                    onPress={() => handleSuggestion(suggestion)}
-                    style={({ pressed }) => [
-                      styles.suggestion,
-                      pressed && styles.pressed,
-                    ]}
-                  >
-                    <View style={styles.suggestionIcon}>
-                      <AgentIcon name="search" size={16} color={theme.green} />
-                    </View>
-                    <Text style={styles.suggestionText}>{suggestion}</Text>
-                    <AgentIcon name="chevron" size={16} color={theme.muted} />
-                  </Pressable>
-                ))}
-              </View>
-            </View>
-          )}
-          {controller.messagesError !== null && threadHasMessages === false && (
-            <View style={styles.inlineError}>
-              <Text style={styles.inlineErrorTitle}>消息加载失败</Text>
-              <Text style={styles.inlineErrorCopy}>{controller.messagesError}</Text>
-            </View>
-          )}
-          {controller.loadingOlder && (
+          ) : controller.messagesError ? (
             <View style={styles.centerState}>
-              <ActivityIndicator color={theme.green} />
-              <Text style={styles.centerStateText}>正在加载更早消息…</Text>
+              <Text style={styles.errorTitle}>消息读取失败</Text>
+              <Text style={styles.stateCopy}>{controller.messagesError}</Text>
             </View>
-          )}
-          {controller.olderError !== null && (
+          ) : controller.thread.items.length === 0 ? (
+            <View style={styles.emptyState}>
+              <View style={styles.agentMark}>
+                <AgentIcon name="message" size={24} color={theme.ai} />
+              </View>
+              <Text style={styles.emptyTitle}>从一个问题开始</Text>
+              <Text style={styles.emptyCopy}>
+                当前范围是{controller.scopeLabel}。回答会按正式 Agent 结果原样展示。
+              </Text>
+            </View>
+          ) : null}
+
+          {controller.olderError ? (
             <View style={styles.inlineError}>
-              <Text style={styles.inlineErrorCopy}>{controller.olderError}</Text>
+              <Text style={styles.errorTitle}>更早消息加载失败</Text>
+              <Text style={styles.stateCopy}>{controller.olderError}</Text>
+            </View>
+          ) : null}
+
+          {scopeRecoveryNotice ? (
+            <View style={styles.inlineNotice} accessibilityRole="alert">
+              <Text style={styles.stateCopy}>{scopeRecoveryNotice}</Text>
+            </View>
+          ) : null}
+
+          {restoredProjectValidationError ? (
+            <View style={styles.inlineError} accessibilityRole="alert">
+              <Text style={styles.errorTitle}>上次的知识范围暂时无法确认</Text>
+              <Text style={styles.stateCopy}>
+                可重试确认，或打开顶部范围切换为全部知识。
+              </Text>
               <Pressable
                 accessibilityRole="button"
-                accessibilityLabel="重试加载更早消息"
-                onPress={() => void controller.loadOlderMessages()}
+                accessibilityLabel="重试确认上次知识范围"
+                onPress={() => void projectsQuery.refetch()}
                 style={styles.retryButton}
               >
-                <Text style={styles.retryText}>重试</Text>
+                <AgentIcon name="retry" size={16} color={theme.green} />
+                <Text style={styles.retryText}>重试确认</Text>
               </Pressable>
             </View>
-          )}
-          {threadHasMessages &&
-            controller.thread.items.map((message) => (
-              <ThreadMessage
-                key={message.id}
-                message={message}
-                allMessages={controller.thread.items}
-                onLocateMessage={locateUserMessage}
-                run={controller.thread.runsById.get(message.runId ?? -1) ?? null}
-                cancelling={controller.cancelling}
-                pollingError={controller.runPollingError}
-                cancelError={controller.cancelError}
-                onCancelRun={controller.requestCancelRun}
-                onRetryPolling={controller.retryRunPolling}
-                onRetryRun={(runId) => void controller.retryRun(runId)}
-                onCitationPress={(citation, run) =>
-                  setCitationContext({ citation, run })
-                }
-                onRefineQuestion={(run) => {
-                  const userMessage = controller.thread.items.find(
-                    (item) => item.runId === run.id && item.role === "user",
-                  );
-                  if (userMessage) {
-                    setText(userMessage.content);
-                    scrollRef.current?.scrollToEnd({ animated: true });
-                  }
-                }}
-                draft={controller.draftByRunId(message.runId ?? -1)}
-                revisionDraft={controller.revisionDraftByRunId(message.runId ?? -1)}
-                confirmingDraftId={controller.confirmingDraftId}
-                onEditDraft={(draftId) => {
-                  controller.clearDraftEditError();
-                  setEditDraftId(draftId);
-                }}
-                onConfirmDraft={setConfirmDraftId}
-                onCancelDraft={(draftId) => void controller.cancelDraft(draftId)}
-                onRetryDraft={(sourceRunId, targetProjectId) =>
-                  void controller.submitDraftAction(sourceRunId, targetProjectId)
-                }
-                confirmingRevisionDraftId={controller.confirmingRevisionDraftId}
-                undoingRevisionDraftId={controller.undoingRevisionDraftId}
-                revisionUndoError={controller.revisionUndoError}
-                revisionUndoErrorDraftId={controller.revisionUndoErrorDraftId}
-                revisionUndoRetryable={controller.revisionUndoRetryable}
-                onRetryUndoRevision={(draftId) =>
-                  void controller.retryUndoEntryRevision(draftId)
-                }
-                onEditRevision={(draftId) => {
-                  controller.clearRevisionEditError();
-                  setRevisionEditId(draftId);
-                }}
-                onConfirmRevision={setRevisionConfirmId}
-                onUndoRevision={setRevisionUndoId}
-                onViewRevisionDiff={setRevisionDiffId}
-                onCancelRevision={(draftId) =>
-                  void controller.cancelEntryRevision(draftId)
-                }
-                onRetryRevision={(draft) => {
-                  if (draft.sourceRunId !== null && draft.targetEntryId !== null) {
-                    void controller.submitEntryRevision(
-                      draft.sourceRunId,
-                      draft.targetEntryId,
-                      draft.instruction,
-                    );
-                  }
-                }}
-                onOrganize={handleOrganize}
-                entryResultsUi={entryResultsUi}
-                onListEntries={(run) => handleResultModeResubmit(run, "entries")}
-              />
-            ))}
-          {controller.pending !== null && (
-            <View>
-              <View style={styles.pendingBubble}>
-                <Text style={styles.pendingText}>{controller.pending.text}</Text>
+          ) : null}
+
+          {controller.thread.items.map((message) => (
+            <ThreadMessage
+              key={message.id}
+              message={message}
+              run={
+                message.role === "assistant"
+                  ? runByAssistantMessage.get(message.id) ??
+                    (message.runId !== null
+                      ? controller.thread.runsById.get(message.runId) ?? null
+                      : null)
+                  : null
+              }
+              activeRun={controller.activeRun}
+              resumableRunId={controller.resumableRunId}
+              cancelling={controller.cancelling}
+              pollingError={controller.runPollingError}
+              cancelError={controller.cancelError}
+              onCancel={() => void controller.requestCancelRun()}
+              onRetryPolling={controller.retryRunPolling}
+              onContinue={(runId) => void controller.continueRun(runId)}
+              onRetry={(runId) => void controller.retryRun(runId)}
+              onOpenEntry={setEntryDetail}
+            />
+          ))}
+
+          {controller.pending && controller.submitting ? (
+            <View style={styles.pendingMessage} accessibilityRole="progressbar">
+              <Text style={styles.pendingContext}>
+                {controller.pending.contextMode === "continue"
+                  ? "继续当前主题"
+                  : controller.pending.contextMode === "new_topic"
+                    ? "新话题"
+                    : "正在发送"}
+              </Text>
+              <View style={[styles.userBubble, styles.pendingBubble]}>
+                <Text style={styles.userText}>{controller.pending.text}</Text>
               </View>
-              <Text style={styles.pendingMeta}>
-                {controller.pending.phase === "creating_conversation"
-                  ? "正在创建对话并发送…"
-                  : "发送中…"}
+            </View>
+          ) : controller.pending && controller.conversationCreationUnknown ? (
+            <View style={styles.pendingBox} accessibilityRole="alert">
+              <Text style={styles.pendingTitle}>新对话创建结果无法确认</Text>
+              <Text style={styles.stateCopy}>
+                当前接口无法安全重试创建步骤。为避免重复会话，本次不会自动重发。
               </Text>
+              <Pressable
+                accessibilityRole="button"
+                accessibilityLabel="放弃本次恢复并返回新对话"
+                onPress={() => void controller.exitRecovery()}
+                style={styles.retryButton}
+              >
+                <Text style={styles.retryText}>返回新对话</Text>
+              </Pressable>
             </View>
-          )}
-          {controller.submitError !== null && (
-            <View style={styles.inlineError}>
-              <Text style={styles.inlineErrorTitle}>发送未完成</Text>
-              <Text style={styles.inlineErrorCopy}>{controller.submitError}</Text>
-              {controller.pending !== null && submitting && (
-                <Pressable
-                  accessibilityRole="button"
-                  accessibilityLabel="重试发送"
-                  onPress={() => void controller.retrySubmit()}
-                  style={styles.retryButton}
-                >
-                  <AgentIcon name="retry" size={16} color={theme.green} />
-                  <Text style={styles.retryText}>重试发送</Text>
-                </Pressable>
-              )}
+          ) : controller.pending && controller.submissionResultUnknown ? (
+            <View style={styles.pendingBox}>
+              <Text style={styles.pendingTitle}>消息提交结果尚未确认</Text>
+              <Text style={styles.stateCopy}>{controller.pending.text}</Text>
+              {controller.submitError ? (
+                <Text style={styles.pendingError}>{controller.submitError}</Text>
+              ) : null}
+              <Pressable
+                accessibilityRole="button"
+                accessibilityLabel="使用同一标识重试提交"
+                disabled={controller.submitting}
+                onPress={() => void controller.retrySubmit()}
+                style={styles.retryButton}
+              >
+                <AgentIcon name="retry" size={16} color={theme.green} />
+                <Text style={styles.retryText}>恢复这次提交</Text>
+              </Pressable>
             </View>
-          )}
-          {controller.draftActionError !== null && (
-            <View style={styles.inlineError}>
-              <Text style={styles.inlineErrorTitle}>整理未完成</Text>
-              <Text style={styles.inlineErrorCopy}>{controller.draftActionError}</Text>
-              {controller.draftActionPending && (
-                <Pressable
-                  accessibilityRole="button"
-                  accessibilityLabel="重试整理"
-                  onPress={() => void controller.retryDraftAction()}
-                  style={styles.retryButton}
-                >
-                  <AgentIcon name="retry" size={16} color={theme.green} />
-                  <Text style={styles.retryText}>重试整理</Text>
-                </Pressable>
-              )}
+          ) : controller.submitError ? (
+            <View style={styles.inlineError} accessibilityRole="alert">
+              <Text style={styles.errorTitle}>消息未发送</Text>
+              <Text style={styles.stateCopy}>{controller.submitError}</Text>
             </View>
-          )}
-          {controller.draftCancelError !== null && (
-            <View style={styles.inlineError}>
-              <Text style={styles.inlineErrorTitle}>取消未完成</Text>
-              <Text style={styles.inlineErrorCopy}>{controller.draftCancelError}</Text>
+          ) : null}
+
+          {controller.scopeError ? (
+            <View style={styles.inlineError} accessibilityRole="alert">
+              <Text style={styles.errorTitle}>范围未切换</Text>
+              <Text style={styles.stateCopy}>{controller.scopeError}</Text>
             </View>
-          )}
-          {controller.revisionActionError !== null && (
-            <View style={styles.inlineError}>
-              <Text style={styles.inlineErrorTitle}>修订未完成</Text>
-              <Text style={styles.inlineErrorCopy}>
-                {controller.revisionActionError}
-              </Text>
-              {controller.revisionActionPending && (
-                <Pressable
-                  accessibilityRole="button"
-                  accessibilityLabel="重试修订"
-                  onPress={() => void controller.retryEntryRevision()}
-                  style={styles.retryButton}
-                >
-                  <AgentIcon name="retry" size={16} color={theme.green} />
-                  <Text style={styles.retryText}>重试修订</Text>
-                </Pressable>
-              )}
+          ) : null}
+
+          {controller.persistenceError ? (
+            <View style={styles.inlineError} accessibilityRole="alert">
+              <Text style={styles.errorTitle}>移动任务状态未保存</Text>
+              <Text style={styles.stateCopy}>{controller.persistenceError}</Text>
+              <Pressable
+                accessibilityRole="button"
+                accessibilityLabel="重试保存移动任务状态"
+                onPress={controller.retryPersistence}
+                style={styles.retryButton}
+              >
+                <AgentIcon name="retry" size={16} color={theme.green} />
+                <Text style={styles.retryText}>重试保存</Text>
+              </Pressable>
             </View>
-          )}
-          {controller.revisionCancelError !== null && (
-            <View style={styles.inlineError}>
-              <Text style={styles.inlineErrorTitle}>取消修订未完成</Text>
-              <Text style={styles.inlineErrorCopy}>
-                {controller.revisionCancelError}
-              </Text>
-            </View>
-          )}
+          ) : null}
         </ScrollView>
 
         <View style={{ paddingBottom: keyboardHeight }}>
           <Composer
-            value={text}
-            onChangeText={setText}
-            onSend={handleSend}
+            value={controller.input}
+            onChangeText={controller.setInput}
+            onSend={() => void handleSend()}
             modes={controller.modes}
             onOpenModes={() => setModeOpen(true)}
             onRemoveContextOverride={() => controller.setContextMode("auto")}
-            onRemoveAnswerOverride={() => controller.setAnswerMode("auto")}
-            onRemoveResultOverride={() => controller.setResultMode("auto")}
-            onRemoveBasisOverride={() => controller.setBasisMode("auto")}
-            submitting={submitting}
+            submitting={controller.pending !== null}
             disabled={
               controller.initialLoading ||
-              (controller.conversationsError !== null &&
-                !controller.userInitiatedDraft)
+              controller.activeRun !== null ||
+              controller.submitting ||
+              controller.recoveryError !== null ||
+              controller.conversationCreationUnknown ||
+              validatingRestoredProject ||
+              restoredProjectValidationError ||
+              (controller.conversationsError !== null && !controller.userInitiatedDraft)
             }
           />
         </View>
       </View>
 
-      <HistorySheet
-        visible={historyOpen}
-        conversations={controller.conversations}
-        activeConversationId={
-          controller.isDraft ? null : controller.activeConversation?.id ?? null
-        }
-        loading={controller.initialLoading}
-        error={controller.conversationsError}
-        onSelect={(id) => {
-          controller.switchToConversation(id);
-          setHistoryOpen(false);
-        }}
-        onNew={() => {
-          controller.startNewConversation();
-          setHistoryOpen(false);
-        }}
-        onClose={() => setHistoryOpen(false)}
-      />
       <ScopeSheet
         visible={scopeOpen}
         current={controller.currentScope}
         projects={projectsQuery.data}
         loadingProjects={projectsQuery.isLoading}
-        projectsError={
-          projectsQuery.isError
-            ? toUserErrorMessage(projectsQuery.error)
-            : null
-        }
-        disabled={controller.activeRun !== null}
+        projectsError={projectsQuery.isError ? toUserErrorMessage(projectsQuery.error) : null}
+        disabled={controller.activeRun !== null || controller.scopeBusy}
         disabledNote={
           controller.activeRun !== null
             ? "正在回答中，完成或取消当前回答后再切换范围。"
             : null
         }
-        onChange={handleScopeChange}
+        onChange={(scope) => void handleScopeChange(scope)}
         onClose={() => setScopeOpen(false)}
       />
       <ModeSheet
         visible={modeOpen}
         modes={controller.modes}
-        onChange={(modes) => controller.setModes(modes)}
+        onChange={controller.setModes}
         onClose={() => setModeOpen(false)}
       />
-      <EntryResultSheet
-        item={entryResultItem}
-        onClose={() => setEntryResultItem(null)}
-      />
-      <CitationSheet
-        citation={citationContext?.citation ?? null}
-        sourceRunId={citationContext?.run.id ?? null}
-        revisionTargets={
-          citationContext ? revisionEligibility(citationContext.run).targets : []
-        }
-        onRevise={(target) => {
-          if (citationContext !== null) {
-            handleRevise(target, citationContext.run.id);
-          }
-        }}
-        onClose={() => setCitationContext(null)}
-      />
-      <TargetProjectSheet
-        visible={targetProject !== null}
-        options={targetProject?.options ?? []}
-        sourceRunId={targetProject?.sourceRunId ?? null}
-        submitting={controller.draftActionPending}
-        error={controller.draftActionError}
-        onSelect={handleTargetSelect}
-        onClose={() => setTargetProject(null)}
-      />
-      <DraftEditSheet
-        visible={editingDraft !== null}
-        draft={editingDraft}
-        saving={editSaving}
-        error={editError}
-        onSave={(title, content, mainType) => {
-          if (editingDraft === null) return;
-          void controller.editDraft(editingDraft.id, {
-            title,
-            content,
-            mainType,
-          }).then((saved) => {
-            if (saved) setEditDraftId(null);
-          });
-        }}
-        onClose={() => setEditDraftId(null)}
-      />
-      <DraftConfirmSheet
-        visible={confirmingDraft !== null}
-        draft={confirmingDraft}
-        confirming={confirmSaving}
-        error={confirmError}
-        onConfirm={() => {
-          if (confirmingDraft === null) return;
-          void controller.confirmDraft(confirmingDraft.id).then((confirmed) => {
-            if (confirmed) setConfirmDraftId(null);
-          });
-        }}
-        onClose={() => setConfirmDraftId(null)}
-      />
-      <RevisionInstructionSheet
-        visible={revisionTarget !== null}
-        target={revisionTarget?.target ?? null}
-        sourceRunId={revisionTarget?.sourceRunId ?? null}
-        submitting={controller.revisionActionPending}
-        error={controller.revisionActionError}
-        onSubmit={handleRevisionSubmit}
-        onClose={() => setRevisionTarget(null)}
-      />
-      <RevisionEditSheet
-        visible={editingRevisionDraft !== null}
-        draft={editingRevisionDraft}
-        saving={revisionSaving}
-        error={revisionEditError}
-        onSave={(fields) => {
-          if (editingRevisionDraft === null) return;
-          void controller
-            .editEntryRevision(editingRevisionDraft.id, fields)
-            .then((saved) => {
-              if (saved) setRevisionEditId(null);
-            });
-        }}
-        onClose={() => setRevisionEditId(null)}
-      />
-      <RevisionDiffScreen
-        visible={diffDraft !== null}
-        draft={diffDraft}
-        onConfirm={() => {
-          if (diffDraft === null) return;
-          setRevisionDiffId(null);
-          setRevisionConfirmId(diffDraft.id);
-        }}
-        onClose={() => setRevisionDiffId(null)}
-      />
-      <RevisionConfirmSheet
-        visible={confirmingRevisionDraft !== null}
-        draft={confirmingRevisionDraft}
-        confirming={revisionConfirming}
-        error={revisionConfirmError}
-        retryable={controller.revisionConfirmRetryable}
-        onConfirm={() => {
-          if (confirmingRevisionDraft === null) return;
-          void controller
-            .confirmEntryRevision(confirmingRevisionDraft.id)
-            .then((confirmed) => {
-              if (confirmed) setRevisionConfirmId(null);
-            });
-        }}
-        onClose={() => setRevisionConfirmId(null)}
-      />
-      <RevisionUndoSheet
-        visible={undoingRevisionDraft !== null}
-        draft={undoingRevisionDraft}
-        undoing={revisionUndoing}
-        error={revisionUndoError}
-        retryable={controller.revisionUndoRetryable}
-        onUndo={() => {
-          if (undoingRevisionDraft === null) return;
-          void controller.undoEntryRevision(undoingRevisionDraft.id).then((undone) => {
-            if (undone) setRevisionUndoId(null);
-          });
-        }}
-        onClose={() => setRevisionUndoId(null)}
-      />
+      <EntryDetailSheet target={entryDetail} onClose={closeEntryDetail} />
     </SafeAreaView>
   );
 }
 
+const HistoryControl = memo(function HistoryControl({
+  conversations,
+  activeConversationId,
+  loading,
+  error,
+  onRetry,
+  onSelect,
+  onNew,
+}: {
+  conversations: KnowledgeConversation[] | undefined;
+  activeConversationId: number | null;
+  loading: boolean;
+  error: string | null;
+  onRetry: () => void;
+  onSelect: (conversationId: number) => void;
+  onNew: () => void;
+}) {
+  const [open, setOpen] = useState(false);
+  return (
+    <>
+      <Pressable
+        accessibilityRole="button"
+        accessibilityLabel="打开对话历史"
+        onPress={() => setOpen(true)}
+        style={({ pressed }) => [styles.historyButton, pressed && styles.pressed]}
+      >
+        <AgentIcon name="history" size={21} color={theme.ink} />
+      </Pressable>
+      <HistorySheet
+        visible={open}
+        conversations={conversations}
+        activeConversationId={activeConversationId}
+        loading={loading}
+        error={error}
+        onRetry={onRetry}
+        onSelect={(id) => {
+          onSelect(id);
+          setOpen(false);
+        }}
+        onNew={() => {
+          onNew();
+          setOpen(false);
+        }}
+        onClose={() => setOpen(false)}
+      />
+    </>
+  );
+});
+
 function ThreadMessage({
   message,
   run,
+  activeRun,
+  resumableRunId,
   cancelling,
   pollingError,
   cancelError,
-  onCancelRun,
+  onCancel,
   onRetryPolling,
-  onRetryRun,
-  onCitationPress,
-  onRefineQuestion,
-  draft,
-  revisionDraft,
-  confirmingDraftId,
-  onEditDraft,
-  onConfirmDraft,
-  onCancelDraft,
-  onRetryDraft,
-  onOrganize,
-  entryResultsUi,
-  onListEntries,
-  confirmingRevisionDraftId,
-  undoingRevisionDraftId,
-  revisionUndoError,
-  revisionUndoErrorDraftId,
-  revisionUndoRetryable,
-  onRetryUndoRevision,
-  onEditRevision,
-  onConfirmRevision,
-  onUndoRevision,
-  onViewRevisionDiff,
-  onCancelRevision,
-  onRetryRevision,
-  allMessages,
-  onLocateMessage,
+  onContinue,
+  onRetry,
+  onOpenEntry,
 }: {
   message: KnowledgeMessage;
   run: KnowledgeRun | null;
+  activeRun: KnowledgeRun | null;
+  resumableRunId: number | null;
   cancelling: boolean;
   pollingError: string | null;
   cancelError: string | null;
-  onCancelRun: () => void;
+  onCancel: () => void;
   onRetryPolling: () => void;
-  onRetryRun: (runId: number) => void;
-  onCitationPress: (citation: KnowledgeRunCitation, run: KnowledgeRun) => void;
-  onRefineQuestion: (run: KnowledgeRun) => void;
-  draft: KnowledgeCandidateDraft | null;
-  revisionDraft: KnowledgeEntryRevisionDraft | null;
-  confirmingDraftId: number | null;
-  onEditDraft: (draftId: number) => void;
-  onConfirmDraft: (draftId: number) => void;
-  onCancelDraft: (draftId: number) => void;
-  onRetryDraft: (sourceRunId: number, targetProjectId: number | null) => void;
-  onOrganize: (run: KnowledgeRun) => void;
-  entryResultsUi: {
-    stateFor: (runId: number) => EntryResultsState | null;
-    prime: (runId: number) => void;
-    loadMore: (runId: number) => void;
-    retry: (runId: number) => void;
-    openItem: (item: KnowledgeEntryResultItem) => void;
-    correctMode: (run: KnowledgeRun) => void;
-    refine: (run: KnowledgeRun) => void;
-  };
-  onListEntries: (run: KnowledgeRun) => void;
-  confirmingRevisionDraftId: number | null;
-  undoingRevisionDraftId: number | null;
-  revisionUndoError: string | null;
-  revisionUndoErrorDraftId: number | null;
-  revisionUndoRetryable: boolean;
-  onRetryUndoRevision: (draftId: number) => void;
-  onEditRevision: (draftId: number) => void;
-  onConfirmRevision: (draftId: number) => void;
-  onUndoRevision: (draftId: number) => void;
-  onViewRevisionDiff: (draftId: number) => void;
-  onCancelRevision: (draftId: number) => void;
-  onRetryRevision: (draft: KnowledgeEntryRevisionDraft) => void;
-  allMessages?: KnowledgeMessage[];
-  onLocateMessage?: (messageId: number) => void;
+  onContinue: (runId: number) => void;
+  onRetry: (runId: number) => void;
+  onOpenEntry: (target: EntryDetailTarget) => void;
 }) {
-  const messagesById = useMemo(
-    () => new Map((allMessages ?? []).map((item) => [item.id, item])),
-    [allMessages],
-  );
   if (message.messageType === "scope_change") {
     return (
       <View style={styles.scopeDivider}>
-        <View style={styles.scopeDividerLine} />
-        <Text style={styles.scopeDividerText}>{message.content}</Text>
-        <View style={styles.scopeDividerLine} />
+        <View style={styles.scopeLine} />
+        <Text style={styles.scopeEvent}>{message.content}</Text>
+        <View style={styles.scopeLine} />
       </View>
     );
   }
   if (message.role === "user") {
-    const modeLabel = resultModeLabel(message.requestResultMode);
     return (
       <View style={styles.userMessage}>
-        {modeLabel !== "" && (
-          <View style={styles.userModeTag}>
-            <Text style={styles.userModeTagText}>以「{modeLabel}」发送</Text>
-          </View>
-        )}
+        {message.requestContextMode && message.requestContextMode !== "auto" ? (
+          <Text style={styles.contextTag}>
+            {message.requestContextMode === "continue" ? "继续当前主题" : "新话题"}
+          </Text>
+        ) : null}
         <View style={styles.userBubble}>
-          <Text style={styles.userBubbleText}>{message.content}</Text>
+          <Text style={styles.userText}>{message.content}</Text>
         </View>
       </View>
     );
   }
   const runScope = run
     ? scopeLabel(run.scopeType, run.projectName)
-    : message.projectName ?? "全部知识";
-  if (run?.runKind === "draft_candidate") {
-    if (isRunActive(run.status) || draft?.status === "generating") {
-      return (
-        <View>
-          <View style={styles.agentLabel}>
-            <View style={styles.agentDot}>
-              <Text style={styles.agentDotText}>G</Text>
-            </View>
-            <Text style={styles.agentLabelText}>知识 Agent</Text>
-          </View>
-          <DraftProcessCard
-            run={run}
-            cancelling={cancelling}
-            onCancel={onCancelRun}
-          />
-        </View>
-      );
-    }
-    if (draft === null) {
-      return (
-        <View>
-          <View style={styles.agentLabel}>
-            <View style={styles.agentDot}>
-              <Text style={styles.agentDotText}>G</Text>
-            </View>
-            <Text style={styles.agentLabelText}>知识 Agent</Text>
-          </View>
-          {message.content.trim() !== "" && (
-            <View style={styles.legacyAnswer}>
-              <Text style={styles.legacyAnswerText}>{message.content}</Text>
-            </View>
-          )}
-        </View>
-      );
-    }
-    if (draft.status === "confirmed") {
-      return (
-        <View>
-          <View style={styles.agentLabel}>
-            <View style={styles.agentDot}>
-              <Text style={styles.agentDotText}>G</Text>
-            </View>
-            <Text style={styles.agentLabelText}>知识 Agent</Text>
-          </View>
-          <DraftReceiptCard draft={draft} />
-        </View>
-      );
-    }
-    if (draft.status === "draft" || draft.status === "confirming") {
-      return (
-        <View>
-          <View style={styles.agentLabel}>
-            <View style={styles.agentDot}>
-              <Text style={styles.agentDotText}>G</Text>
-            </View>
-            <Text style={styles.agentLabelText}>知识 Agent</Text>
-          </View>
-          <DraftCard
-            draft={draft}
-            confirming={confirmingDraftId === draft.id}
-            onEdit={() => onEditDraft(draft.id)}
-            onConfirm={() => onConfirmDraft(draft.id)}
-            onCancel={() => onCancelDraft(draft.id)}
-          />
-        </View>
-      );
-    }
-    if (draft.status === "failed" || draft.status === "cancelled") {
-      return (
-        <View>
-          <View style={styles.agentLabel}>
-            <View style={styles.agentDot}>
-              <Text style={styles.agentDotText}>G</Text>
-            </View>
-            <Text style={styles.agentLabelText}>知识 Agent</Text>
-          </View>
-          <DraftFailedCard
-            draft={draft}
-            onRetry={() => {
-              if (draft.sourceRunId !== null) {
-                onRetryDraft(draft.sourceRunId, draft.targetProjectId);
-              }
-            }}
-          />
-        </View>
-      );
-    }
-  }
-  if (run?.runKind === "entry_revision") {
-    if (isRunActive(run.status) || revisionDraft?.status === "generating") {
-      return (
-        <View>
-          <View style={styles.agentLabel}>
-            <View style={styles.agentDot}>
-              <Text style={styles.agentDotText}>G</Text>
-            </View>
-            <Text style={styles.agentLabelText}>知识 Agent</Text>
-          </View>
-          <RevisionProcessCard
-            run={run}
-            cancelling={cancelling}
-            onCancel={onCancelRun}
-          />
-        </View>
-      );
-    }
-    if (revisionDraft === null) {
-      return (
-        <View>
-          <View style={styles.agentLabel}>
-            <View style={styles.agentDot}>
-              <Text style={styles.agentDotText}>G</Text>
-            </View>
-            <Text style={styles.agentLabelText}>知识 Agent</Text>
-          </View>
-          {message.content.trim() !== "" && (
-            <View style={styles.legacyAnswer}>
-              <Text style={styles.legacyAnswerText}>{message.content}</Text>
-            </View>
-          )}
-        </View>
-      );
-    }
-    if (
-      revisionDraft.status === "applied" ||
-      revisionDraft.status === "undone"
-    ) {
-      return (
-        <View>
-          <View style={styles.agentLabel}>
-            <View style={styles.agentDot}>
-              <Text style={styles.agentDotText}>G</Text>
-            </View>
-            <Text style={styles.agentLabelText}>知识 Agent</Text>
-          </View>
-          <RevisionReceiptCard
-            draft={revisionDraft}
-            undoing={undoingRevisionDraftId === revisionDraft.id}
-            undoError={
-              revisionUndoErrorDraftId === revisionDraft.id
-                ? revisionUndoError
-                : null
-            }
-            undoRetryable={
-              revisionUndoErrorDraftId === revisionDraft.id &&
-              revisionUndoRetryable
-            }
-            onViewDiff={() => onViewRevisionDiff(revisionDraft.id)}
-            onUndo={() => onUndoRevision(revisionDraft.id)}
-            onRetryUndo={() => onRetryUndoRevision(revisionDraft.id)}
-          />
-        </View>
-      );
-    }
-    if (
-      revisionDraft.status === "draft" ||
-      revisionDraft.status === "confirming"
-    ) {
-      return (
-        <View>
-          <View style={styles.agentLabel}>
-            <View style={styles.agentDot}>
-              <Text style={styles.agentDotText}>G</Text>
-            </View>
-            <Text style={styles.agentLabelText}>知识 Agent</Text>
-          </View>
-          <RevisionDraftCard
-            draft={revisionDraft}
-            confirming={confirmingRevisionDraftId === revisionDraft.id}
-            onEdit={() => onEditRevision(revisionDraft.id)}
-            onConfirm={() => onConfirmRevision(revisionDraft.id)}
-            onCancel={() => onCancelRevision(revisionDraft.id)}
-          />
-        </View>
-      );
-    }
-    if (
-      revisionDraft.status === "failed" ||
-      revisionDraft.status === "cancelled"
-    ) {
-      return (
-        <View>
-          <View style={styles.agentLabel}>
-            <View style={styles.agentDot}>
-              <Text style={styles.agentDotText}>G</Text>
-            </View>
-            <Text style={styles.agentLabelText}>知识 Agent</Text>
-          </View>
-          <RevisionDraftFailedCard
-            draft={revisionDraft}
-            onRetry={() => onRetryRevision(revisionDraft)}
-          />
-        </View>
-      );
-    }
-  }
-  if (run?.actualResultMode === "entries" && !isRunActive(run.status)) {
-    return (
-      <EntryResultsMessage
-        run={run}
-        scopeLabel={runScope}
-        ui={entryResultsUi}
-      />
-    );
-  }
+    : scopeLabel(message.scopeType, message.projectName);
   return (
-    <View>
+    <View style={styles.assistantMessage}>
       <View style={styles.agentLabel}>
         <View style={styles.agentDot}>
           <Text style={styles.agentDotText}>G</Text>
         </View>
         <Text style={styles.agentLabelText}>知识 Agent</Text>
       </View>
-      {run === null ? (
-        message.content.trim() !== "" && (
+      {!run ? (
+        message.content.trim() ? (
           <View style={styles.legacyAnswer}>
-            <Text style={styles.legacyAnswerText}>{message.content}</Text>
+            <RichText>{message.content}</RichText>
           </View>
-        )
+        ) : null
       ) : isRunActive(run.status) ? (
         <ProcessCard
           run={run}
-          scopeLabel={runScope}
-          cancelling={cancelling}
-          pollingError={pollingError}
-          cancelError={cancelError}
-          onCancel={onCancelRun}
+          cancelling={cancelling && activeRun?.id === run.id}
+          pollingError={activeRun?.id === run.id ? pollingError : null}
+          cancelError={activeRun?.id === run.id ? cancelError : null}
+          onCancel={onCancel}
           onRetryPolling={onRetryPolling}
         />
       ) : (
         <AnswerCard
           run={run}
           scopeLabel={runScope}
-          onCitationPress={(citation) => onCitationPress(citation, run)}
-          onOrganize={onOrganize}
-          onRefineQuestion={onRefineQuestion}
-          onListEntries={onListEntries}
-          onRetry={() => {
-            onRetryRun(run.id);
-          }}
-          messagesById={messagesById}
-          onLocateMessage={onLocateMessage}
+          canContinue={resumableRunId === run.id}
+          onContinue={() => onContinue(run.id)}
+          onRetry={() => onRetry(run.id)}
+          onOpenEntry={onOpenEntry}
         />
       )}
     </View>
   );
 }
 
-/** 结构化查找结果的对话消息：独立组件承载首屏/分页状态与挂载时游标获取。 */
-function EntryResultsMessage({
-  run,
-  scopeLabel,
-  ui,
-}: {
-  run: KnowledgeRun;
-  scopeLabel: string;
-  ui: {
-    stateFor: (runId: number) => EntryResultsState | null;
-    prime: (runId: number) => void;
-    loadMore: (runId: number) => void;
-    retry: (runId: number) => void;
-    openItem: (item: KnowledgeEntryResultItem) => void;
-    correctMode: (run: KnowledgeRun) => void;
-    refine: (run: KnowledgeRun) => void;
-  };
-}) {
-  // 挂载即获取服务端第一页（取得不透明游标）；重复调用由控制器幂等
-  useEffect(() => {
-    ui.prime(run.id);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [run.id]);
-  const state = ui.stateFor(run.id) ?? {
-    runId: run.id,
-    items: [],
-    nextCursor: null,
-    hasMore: false,
-    loadingMore: false,
-    error: null,
-    primed: false,
-  };
-  return (
-    <View>
-      <View style={styles.agentLabel}>
-        <View style={styles.agentDot}>
-          <Text style={styles.agentDotText}>G</Text>
-        </View>
-        <Text style={styles.agentLabelText}>知识 Agent</Text>
-      </View>
-      <EntryResultsCard
-        run={run}
-        scopeLabel={scopeLabel}
-        state={state}
-        onPrime={() => ui.prime(run.id)}
-        onLoadMore={() => ui.loadMore(run.id)}
-        onRetry={() => ui.retry(run.id)}
-        onOpenItem={ui.openItem}
-        onCorrectMode={() => ui.correctMode(run)}
-        onRefine={() => ui.refine(run)}
-      />
-    </View>
-  );
-}
-
 const styles = StyleSheet.create({
-  page: { flex: 1, backgroundColor: theme.bg },
+  safe: { flex: 1, backgroundColor: theme.bg },
+  root: { flex: 1, backgroundColor: theme.bg },
   header: {
     minHeight: 58,
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "space-between",
-    gap: 8,
-    paddingHorizontal: 14,
-    paddingVertical: 9,
+    gap: 6,
+    paddingHorizontal: 12,
     borderBottomWidth: 1,
     borderBottomColor: theme.border,
     backgroundColor: theme.surface,
   },
+  brandSlot: { width: 58, alignItems: "flex-start" },
   brandMark: {
     width: 34,
     height: 34,
@@ -1247,149 +688,92 @@ const styles = StyleSheet.create({
   brandText: { color: "#FFFFFF", fontSize: 14, fontWeight: "700" },
   scopeButton: {
     flex: 1,
-    alignSelf: "center",
-    minHeight: 40,
+    maxWidth: 220,
+    minHeight: 44,
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "center",
     gap: 5,
-    maxWidth: 220,
     paddingHorizontal: 5,
     borderRadius: 8,
   },
-  scopeText: {
-    fontSize: 15,
-    lineHeight: 21,
-    fontWeight: "700",
-    color: theme.ink,
-    maxWidth: 180,
-  },
-  headerIcon: {
-    width: 44,
+  scopeButtonText: { flexShrink: 1, color: theme.ink, fontSize: 15, fontWeight: "700" },
+  historyButton: {
+    width: 58,
     height: 44,
     alignItems: "center",
-    justifyContent: "center",
-    borderRadius: 9,
+    justifyContent: "flex-end",
   },
   thread: { flex: 1 },
-  // Composer 是正常布局兄弟节点，键盘高度由 composer 下方 padding 垫起；
-  // 这里只保留阅读呼吸空间，不重复预留固定 Composer 高度。
-  threadContent: { paddingHorizontal: 16, paddingTop: 18, paddingBottom: 18 },
-  intro: { paddingTop: 44 },
-  introMark: {
-    width: 38,
-    height: 38,
-    alignItems: "center",
-    justifyContent: "center",
-    borderRadius: 9,
-    backgroundColor: theme.greenSoft,
-    marginBottom: 20,
-  },
-  introTitle: {
-    fontSize: 23,
-    lineHeight: 31,
-    fontWeight: "700",
-    letterSpacing: -0.5,
-    color: theme.ink,
-  },
-  introCopy: {
-    marginTop: 8,
-    maxWidth: 315,
-    color: theme.muted,
-    fontSize: 13,
-    lineHeight: 21,
-  },
-  suggestions: { gap: 9, marginTop: 28 },
-  suggestion: {
-    minHeight: 52,
+  threadContent: { padding: 12, paddingBottom: 20 },
+  loadOlder: {
+    minHeight: 42,
     flexDirection: "row",
     alignItems: "center",
-    gap: 11,
-    paddingHorizontal: 12,
-    paddingVertical: 10,
-    borderWidth: 1,
-    borderColor: theme.border,
-    borderRadius: 10,
-    backgroundColor: theme.surface,
-    shadowColor: "#14281E",
-    shadowOpacity: 0.05,
-    shadowRadius: 8,
-    shadowOffset: { width: 0, height: 2 },
-    elevation: 2,
+    justifyContent: "center",
+    gap: 7,
+    marginBottom: 12,
   },
-  suggestionIcon: {
-    width: 30,
-    height: 30,
+  loadOlderText: { color: theme.green, fontSize: 12, fontWeight: "600" },
+  centerState: { alignItems: "center", gap: 9, paddingVertical: 42, paddingHorizontal: 24 },
+  stateCopy: { color: theme.muted, fontSize: 12, lineHeight: 20, textAlign: "center" },
+  errorTitle: { color: theme.error, fontSize: 13, fontWeight: "700" },
+  retryButton: {
+    minHeight: 40,
+    flexDirection: "row",
     alignItems: "center",
     justifyContent: "center",
-    borderRadius: 7,
+    gap: 6,
+    paddingHorizontal: 12,
+    borderRadius: 8,
     backgroundColor: theme.greenSoft,
   },
-  suggestionText: {
-    flex: 1,
-    minWidth: 0,
-    fontSize: 13,
-    fontWeight: "600",
-    color: theme.ink,
-  },
-  pressed: { opacity: 0.85 },
-  userMessage: { alignItems: "flex-end", marginBottom: 14 },
-  userModeTag: {
-    marginBottom: 4,
-    paddingHorizontal: 7,
-    paddingVertical: 2,
-    borderRadius: 5,
+  retryText: { color: theme.green, fontSize: 12, fontWeight: "700" },
+  recoveryActions: { flexDirection: "row", flexWrap: "wrap", gap: 8 },
+  emptyState: { alignItems: "center", paddingVertical: 48, paddingHorizontal: 28 },
+  agentMark: {
+    width: 48,
+    height: 48,
+    alignItems: "center",
+    justifyContent: "center",
+    borderRadius: 12,
     backgroundColor: theme.aiSoft,
   },
-  userModeTagText: { color: theme.ai, fontSize: 10, fontWeight: "600" },
+  emptyTitle: { marginTop: 14, color: theme.ink, fontSize: 16, fontWeight: "700" },
+  emptyCopy: { marginTop: 7, color: theme.muted, fontSize: 12, lineHeight: 20, textAlign: "center" },
+  inlineError: { gap: 7, marginBottom: 12, padding: 11, borderRadius: 8, backgroundColor: theme.errorSoft },
+  inlineNotice: { marginBottom: 12, padding: 11, borderRadius: 8, backgroundColor: theme.greenSoft },
+  pendingBox: { gap: 8, marginBottom: 12, padding: 11, borderRadius: 8, backgroundColor: theme.riskSoft },
+  pendingTitle: { color: theme.risk, fontSize: 12, fontWeight: "700" },
+  pendingError: { color: theme.error, fontSize: 11, lineHeight: 18 },
+  scopeDivider: { flexDirection: "row", alignItems: "center", gap: 8, marginVertical: 14 },
+  scopeLine: { flex: 1, height: 1, backgroundColor: theme.border },
+  scopeEvent: { color: theme.muted, fontSize: 10 },
+  userMessage: { alignItems: "flex-end", marginBottom: 14 },
+  pendingMessage: { alignItems: "flex-end", marginBottom: 14, opacity: 0.72 },
+  pendingContext: { marginBottom: 4, color: theme.muted, fontSize: 10, fontWeight: "600" },
+  pendingBubble: { backgroundColor: theme.green },
+  contextTag: { marginBottom: 4, color: theme.green, fontSize: 10, fontWeight: "600" },
   userBubble: {
-    maxWidth: "84%",
-    paddingHorizontal: 12,
-    paddingVertical: 9,
-    borderTopLeftRadius: 14,
-    borderTopRightRadius: 14,
-    borderBottomLeftRadius: 14,
-    borderBottomRightRadius: 4,
+    maxWidth: "86%",
+    paddingHorizontal: 13,
+    paddingVertical: 10,
+    borderRadius: 10,
     backgroundColor: theme.green,
   },
-  userBubbleText: { color: "#FFFFFF", fontSize: 14, lineHeight: 21 },
-  pendingBubble: {
-    alignSelf: "flex-end",
-    maxWidth: "84%",
-    paddingHorizontal: 12,
-    paddingVertical: 9,
-    borderTopLeftRadius: 14,
-    borderTopRightRadius: 14,
-    borderBottomLeftRadius: 14,
-    borderBottomRightRadius: 4,
-    backgroundColor: theme.green,
-    opacity: 0.72,
-  },
-  pendingText: { color: "#FFFFFF", fontSize: 14, lineHeight: 21 },
-  pendingMeta: {
-    alignSelf: "flex-end",
-    marginTop: 5,
-    marginBottom: 14,
-    color: theme.muted,
-    fontSize: 10,
-  },
-  agentLabel: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 6,
-    marginTop: 20,
-    marginBottom: 8,
-  },
+  userText: { color: "#FFFFFF", fontSize: 14, lineHeight: 22 },
+  assistantMessage: { marginBottom: 3 },
+  agentLabel: { flexDirection: "row", alignItems: "center", gap: 6, marginBottom: 7 },
   agentDot: {
-    width: 18,
-    height: 18,
+    width: 24,
+    height: 24,
     alignItems: "center",
     justifyContent: "center",
-    borderRadius: 5,
-    backgroundColor: theme.greenSoft,
+    borderRadius: 6,
+    backgroundColor: theme.aiSoft,
   },
-  agentDotText: { color: theme.green, fontSize: 10, fontWeight: "700" },
-  agentLabelText: { color: theme.muted, fontSize: 11, fontWeight: "600" },
+  agentDotText: { color: theme.ai, fontSize: 11, fontWeight: "800" },
+  agentLabelText: { color: theme.ink, fontSize: 12, fontWeight: "700" },
   legacyAnswer: {
     marginBottom: 12,
     padding: 13,
@@ -1398,42 +782,5 @@ const styles = StyleSheet.create({
     borderRadius: 10,
     backgroundColor: theme.surface,
   },
-  legacyAnswerText: { fontSize: 14, lineHeight: 23, color: theme.ink },
-  scopeDivider: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 9,
-    marginVertical: 13,
-  },
-  scopeDividerLine: { flex: 1, height: 1, backgroundColor: theme.border },
-  scopeDividerText: {
-    flexShrink: 1,
-    color: theme.muted,
-    fontSize: 10,
-  },
-  centerState: {
-    alignItems: "center",
-    paddingVertical: 36,
-    gap: 10,
-  },
-  centerStateText: { color: theme.muted, fontSize: 12 },
-  inlineError: {
-    marginBottom: 12,
-    padding: 13,
-    borderWidth: 1,
-    borderColor: "#EFCACA",
-    borderRadius: 10,
-    backgroundColor: theme.errorSoft,
-  },
-  inlineErrorTitle: { color: theme.error, fontSize: 13, fontWeight: "700" },
-  inlineErrorCopy: { marginTop: 4, color: "#7C2E2E", fontSize: 12, lineHeight: 19 },
-  retryButton: {
-    minHeight: 44,
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "center",
-    gap: 6,
-    marginTop: 8,
-  },
-  retryText: { color: theme.green, fontSize: 13, fontWeight: "600" },
+  pressed: { opacity: 0.82 },
 });

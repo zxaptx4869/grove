@@ -1,23 +1,86 @@
 import { act, renderHook, waitFor } from "@testing-library/react-native";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { AppState, type AppStateStatus } from "react-native";
 
 import { knowledgeAgentApi } from "@/src/knowledge-agent/api";
 import { useConversationController } from "@/src/knowledge-agent/hooks/useConversationController";
+import {
+  createPendingSubmission,
+  type PendingSubmission,
+} from "@/src/knowledge-agent/state/submission";
 import type {
-  KnowledgeCandidateDraft,
   KnowledgeConversation,
-  KnowledgeEntryRevisionDraft,
   KnowledgeMessage,
+  KnowledgeMessagePage,
   KnowledgeRun,
 } from "@/src/knowledge-agent/types";
 
-jest.mock("expo-crypto", () => ({
-  randomUUID: jest.fn(() => "test-client-id"),
+let mockAppActive = true;
+const mockExitRecovery = jest.fn();
+interface MockSessionSeed {
+  choice: number | "draft";
+  scope: { scopeType: "workspace" | "project"; projectId: number | null; projectName?: string };
+  input: string;
+  pending: PendingSubmission | null;
+  pendingState: "in_flight" | "result_unknown" | "creation_unknown" | null;
+  recoveryRun: { conversationId: number; runId: number } | null;
+  bootStatus: "idle" | "loading" | "ready" | "error";
+  bootError: string | null;
+  persistenceError: string | null;
+}
+
+let mockSessionInitial: MockSessionSeed = {
+  choice: 1 as number | "draft",
+  scope: { scopeType: "workspace" as const, projectId: null },
+  input: "",
+  pending: null,
+  pendingState: null,
+  recoveryRun: null,
+  bootStatus: "ready" as const,
+  bootError: null,
+  persistenceError: null,
+};
+
+jest.mock("@/src/knowledge-agent/hooks/useAppState", () => ({
+  useAppStateActive: () => mockAppActive,
 }));
 
-// eslint-disable-next-line @typescript-eslint/no-require-imports
-const cryptoMock = require("expo-crypto") as { randomUUID: jest.Mock };
+jest.mock("@/src/knowledge-agent/session/DialogueSessionProvider", () => {
+  const ReactModule = jest.requireActual<typeof import("react")>("react");
+  return {
+    useDialogueSession: () => {
+      const [state, setState] = ReactModule.useState(() => ({ ...mockSessionInitial }));
+      return {
+        ...state,
+        update: (patch: Partial<MockSessionSeed>) =>
+          setState((previous) => ({ ...previous, ...patch })),
+        retryBootstrap: jest.fn(),
+        retryPersistence: jest.fn(),
+        exitRecovery: async () => {
+          mockExitRecovery();
+          setState((previous) => ({
+            ...mockSessionInitial,
+            scope: previous.scope,
+            choice: "draft",
+            input: "",
+            pending: null,
+            pendingState: null,
+            recoveryRun: null,
+            bootStatus: "ready",
+            bootError: null,
+            persistenceError: null,
+          }));
+        },
+        getReadingPosition: jest.fn(() => null),
+        setReadingPosition: jest.fn(),
+        clearReadingPosition: jest.fn(),
+      };
+    },
+  };
+});
+
+jest.mock("expo-crypto", () => ({
+  randomUUID: jest.fn(() => "new-client-id"),
+}));
 
 jest.mock("@/src/knowledge-agent/api", () => ({
   knowledgeAgentApi: {
@@ -27,38 +90,41 @@ jest.mock("@/src/knowledge-agent/api", () => ({
     changeScope: jest.fn(),
     listMessages: jest.fn(),
     submitMessage: jest.fn(),
+    getEntryCurrent: jest.fn(),
     getRun: jest.fn(),
-    getEntryResults: jest.fn(),
     cancelRun: jest.fn(),
-    submitDraftAction: jest.fn(),
-    getDraft: jest.fn(),
-    editDraft: jest.fn(),
-    cancelDraft: jest.fn(),
-    confirmDraft: jest.fn(),
-    submitEntryRevision: jest.fn(),
-    getEntryRevisionDraft: jest.fn(),
-    editEntryRevisionDraft: jest.fn(),
-    cancelEntryRevisionDraft: jest.fn(),
-    confirmEntryRevision: jest.fn(),
-    undoEntryRevision: jest.fn(),
   },
 }));
 
 const api = knowledgeAgentApi as jest.Mocked<typeof knowledgeAgentApi>;
-
-const queryClients: QueryClient[] = [];
+const clients: QueryClient[] = [];
+const unmounts: (() => Promise<void>)[] = [];
 
 afterEach(async () => {
   await act(async () => {
-    await Promise.all(queryClients.map((client) => client.cancelQueries()));
+    await Promise.all(unmounts.map((unmount) => unmount()));
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    await Promise.all(clients.map((client) => client.cancelQueries()));
   });
-  for (const client of queryClients) {
-    client.clear();
-  }
-  queryClients.length = 0;
+  unmounts.length = 0;
+  clients.forEach((client) => client.clear());
+  clients.length = 0;
+  jest.clearAllMocks();
+  mockAppActive = true;
+  mockSessionInitial = {
+    choice: 1,
+    scope: { scopeType: "workspace", projectId: null },
+    input: "",
+    pending: null,
+    pendingState: null,
+    recoveryRun: null,
+    bootStatus: "ready",
+    bootError: null,
+    persistenceError: null,
+  };
 });
 
-function conversation(id: number, overrides: Partial<KnowledgeConversation> = {}): KnowledgeConversation {
+function conversation(id: number): KnowledgeConversation {
   return {
     id,
     title: `对话 ${id}`,
@@ -72,21 +138,21 @@ function conversation(id: number, overrides: Partial<KnowledgeConversation> = {}
     recentRunStatus: null,
     recentRunCurrentStep: null,
     recentRunUpdatedAt: null,
-    lastActivityAt: "2026-08-29T10:00:00Z",
-    createdAt: "2026-08-29T09:00:00Z",
-    ...overrides,
+    lastActivityAt: `2026-09-19T10:0${id}:00Z`,
+    createdAt: "2026-09-19T09:00:00Z",
   };
 }
 
 function message(
   id: number,
   role: "user" | "assistant",
-  runId: number | null,
-  content = "",
+  runId: number,
+  conversationId = 1,
+  content = "问题",
 ): KnowledgeMessage {
   return {
     id,
-    conversationId: 1,
+    conversationId,
     role,
     messageType: role,
     content,
@@ -95,17 +161,10 @@ function message(
     scopeType: "workspace",
     projectId: null,
     projectName: null,
-    requestContextMode: null,
+    requestContextMode: "auto",
     contextDecision: null,
     standaloneQuery: null,
     topicLabel: null,
-    requestAnswerMode: null,
-    actualAnswerMode: null,
-    requestResultMode: null,
-    actualResultMode: null,
-    currentRound: 0,
-    inputContextVersionId: null,
-    outputContextVersionId: null,
     createdAt: new Date(id * 1000).toISOString(),
   };
 }
@@ -113,1467 +172,628 @@ function message(
 function run(
   id: number,
   status: KnowledgeRun["status"],
-  updatedAt = "2026-08-29T10:00:00Z",
+  conversationId = 1,
+  overrides: Partial<KnowledgeRun> = {},
 ): KnowledgeRun {
   return {
     id,
-    conversationId: 1,
-    runKind: "answer",
-    sourceRunId: null,
+    conversationId,
     status,
-    currentStep: status === "processing" ? "search" : null,
+    currentStep: status === "processing" ? "dialogue_loop" : null,
     scopeType: "workspace",
     projectId: null,
     projectName: null,
     userMessageId: 1,
     assistantMessageId: 2,
     cancelRequested: false,
-    retryCount: 0,
-    maxRetries: 1,
     error: null,
-    requestContextMode: null,
+    requestContextMode: "auto",
     contextDecision: null,
     standaloneQuery: null,
     topicLabel: null,
-    requestAnswerMode: null,
-    actualAnswerMode: null,
-    requestResultMode: null,
-    actualResultMode: null,
-    currentRound: 0,
-    inputContextVersionId: null,
-    outputContextVersionId: null,
-    contextDegraded: false,
-    fallbackSummary: null,
-    investigationSummary: null,
     answer: null,
-    entryResult: null,
-    createdAt: updatedAt,
-    updatedAt,
-  };
-}
-
-function draft(
-  id: number,
-  overrides: Partial<KnowledgeCandidateDraft> = {},
-): KnowledgeCandidateDraft {
-  return {
-    id,
-    conversationId: 1,
-    operationRunId: 10,
-    sourceRunId: 5,
-    targetProjectId: 1,
-    targetProjectName: "新房装修",
-    status: "generating",
-    title: null,
-    content: null,
-    mainType: null,
-    infoNature: null,
-    evidenceHandles: [],
-    evidenceSummaries: [],
-    generationDegraded: false,
-    generationError: null,
-    confirmedCandidateId: null,
-    routingStatus: null,
-    relationStatus: null,
-    error: null,
-    createdAt: "2026-08-29T10:00:00Z",
-    updatedAt: "2026-08-29T10:00:00Z",
+    dialogueLoopStatus: status,
+    dialogueStage: status === "processing" ? "querying" : null,
+    dialogueBlocks: [],
+    canContinue: false,
+    continuation: null,
+    createdAt: "2026-09-19T10:00:00Z",
+    updatedAt: "2026-09-19T10:00:00Z",
     ...overrides,
   };
 }
 
-function revisionDraft(
-  id: number,
-  overrides: Partial<KnowledgeEntryRevisionDraft> = {},
-): KnowledgeEntryRevisionDraft {
-  return {
-    id,
-    conversationId: 1,
-    operationRunId: 20,
-    sourceRunId: 5,
-    targetEntryId: 1,
-    targetProjectId: 1,
-    targetProjectName: "新房装修",
-    instruction: "补充适用条件",
-    status: "generating",
-    title: null,
-    content: null,
-    mainType: null,
-    infoNature: null,
-    applicableCondition: null,
-    note: null,
-    changeSummary: null,
-    reason: null,
-    selectedEvidenceHandles: [],
-    evidenceSummaries: [],
-    changedFields: [],
-    generationDegraded: false,
-    generationError: null,
-    execution: null,
-    error: null,
-    createdAt: "2026-08-29T10:00:00Z",
-    updatedAt: "2026-08-29T10:00:00Z",
-    ...overrides,
-  };
+function page(
+  items: KnowledgeMessage[] = [],
+  runs: KnowledgeRun[] = [],
+  nextCursor: string | null = null,
+): KnowledgeMessagePage {
+  return { items, runs, nextCursor };
 }
 
-function answeredRun(
-  id: number,
-  status: "completed" | "partial",
-  overrides: Partial<KnowledgeRun> = {},
-): KnowledgeRun {
-  return {
-    ...run(id, status),
-    runKind: "answer",
-    scopeType: "project",
-    projectId: 1,
-    projectName: "新房装修",
-    answer: {
-      answer: "闭水试验通常持续 24 小时。",
-      status,
-      insufficientNote: null,
-      citations: [
-        {
-          evidenceId: 11,
-          evidenceHandle: "ev_1",
-          entryId: 1,
-          entryTitle: "闭水试验",
-          sourceId: 1,
-          sourceTitle: "验收手册",
-          attachmentId: 1,
-          quote: "闭水试验通常持续 24 小时",
-          scopeType: "project",
-          projectId: 1,
-          projectName: "新房装修",
-          nodePath: "施工",
-        },
-      ],
-      conflicts: [],
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  let reject!: (reason: unknown) => void;
+  const promise = new Promise<T>((onResolve, onReject) => {
+    resolve = onResolve;
+    reject = onReject;
+  });
+  return { promise, resolve, reject };
+}
+
+async function setup(
+  conversations: KnowledgeConversation[] = [conversation(1)],
+  pages: Record<number, KnowledgeMessagePage> = { 1: page() },
+  runLoader?: (runId: number) => Promise<KnowledgeRun>,
+  conversationLoader?: (conversationId: number) => Promise<KnowledgeConversation>,
+) {
+  api.listConversations.mockResolvedValue(conversations);
+  api.getConversation.mockImplementation(
+    async (_token, id) =>
+      conversationLoader
+        ? conversationLoader(id)
+        : conversations.find((item) => item.id === id) ?? conversation(id),
+  );
+  api.listMessages.mockImplementation(async (_token, id) => pages[id] ?? page());
+  api.getRun.mockImplementation(async (_token, id) => {
+    if (runLoader) return runLoader(id);
+    for (const value of Object.values(pages)) {
+      const existing = value.runs.find((item) => item.id === id);
+      if (existing) return existing;
+    }
+    return run(id, "completed");
+  });
+  const client = new QueryClient({
+    defaultOptions: {
+      queries: { retry: false, gcTime: Infinity },
+      mutations: { retry: false, gcTime: Infinity },
     },
-    ...overrides,
-  };
+  });
+  clients.push(client);
+  const rendered = await renderHook(() => useConversationController("token"), {
+    wrapper: ({ children }) => (
+      <QueryClientProvider client={client}>{children}</QueryClientProvider>
+    ),
+  });
+  unmounts.push(rendered.unmount);
+  return rendered;
 }
 
-function makeWrapper() {
-  const queryClient = new QueryClient({
-    defaultOptions: { queries: { retry: false, gcTime: 0 } },
+test("continuation 绑定当前 Run 并以新正式消息提交", async () => {
+  const sourceRun = run(10, "partial", 1, {
+    dialogueLoopStatus: "partial_completed",
+    canContinue: true,
   });
-  queryClients.push(queryClient);
-  return function Wrapper({ children }: { children: React.ReactNode }) {
-    return (
-      <QueryClientProvider client={queryClient}>{children}</QueryClientProvider>
-    );
-  };
-}
-
-async function renderController() {
-  const wrapper = makeWrapper();
-  return renderHook(() => useConversationController("token"), {
-    wrapper,
+  const rendered = await setup([conversation(1)], {
+    1: page([message(1, "user", 10), message(2, "assistant", 10, 1, "部分结果")], [sourceRun]),
   });
-}
-
-describe("useConversationController", () => {
-  beforeEach(() => {
-    // resetAllMocks 会连同 once 实现队列一起清空，避免分页 mock 跨测试串线
-    jest.resetAllMocks();
-    // expo-crypto 的默认幂等键实现也会被清空：恢复默认返回值
-    cryptoMock.randomUUID.mockReturnValue("test-client-id");
+  api.submitMessage.mockResolvedValue({
+    userMessage: message(3, "user", 11, 1, "继续"),
+    run: run(11, "waiting"),
   });
-
-  test("draft 首次发送懒创建对话并重置一次性模式", async () => {
-    api.listConversations.mockResolvedValue([]);
-    api.createConversation.mockResolvedValue(conversation(10));
-    api.getConversation.mockResolvedValue(conversation(10));
-    api.submitMessage.mockResolvedValue({
-      userMessage: message(11, "user", 5, "问题内容"),
-      run: run(5, "waiting"),
-    });
-    api.listMessages.mockResolvedValue({
-      items: [],
-      nextCursor: null,
-      runs: [],
-      candidateDrafts: [],
-    });
-
-    const rendered = await renderController();
-    await waitFor(() => expect(rendered.result.current.initialLoading).toBe(false));
-
-    await act(async () => {
-      rendered.result.current.setContextMode("continue");
-    });
-    await act(async () => {
-      rendered.result.current.setAnswerMode("investigate");
-    });
-    await act(async () => {
-      await rendered.result.current.submit("  问题内容  ");
-    });
-
-    expect(api.createConversation).toHaveBeenCalledWith("token", {
-      scopeType: "workspace",
-      projectId: null,
-    });
-    expect(api.submitMessage).toHaveBeenCalledWith("token", 10, {
-      clientMessageId: "test-client-id",
-      message: "问题内容",
-      contextMode: "continue",
-      answerMode: "investigate",
-      resultMode: "auto",
-      basisMode: "auto",
-    });
-    expect(rendered.result.current.pending).toBeNull();
-    expect(rendered.result.current.modes).toEqual({
-      contextMode: "auto",
-      answerMode: "auto",
-      resultMode: "auto",
-      basisMode: "auto",
-    });
-    await rendered.unmount();
+  await waitFor(() => expect(rendered.result.current.thread.runsById.get(10)).toBeDefined());
+  await act(async () => {
+    expect(await rendered.result.current.continueRun(10)).toBe(true);
   });
-
-  test("提交超时后重试复用同一 conversation_id 与 client_message_id", async () => {
-    api.listConversations.mockResolvedValue([]);
-    api.createConversation.mockResolvedValue(conversation(20));
-    api.getConversation.mockResolvedValue(conversation(20));
-    api.submitMessage
-      .mockRejectedValueOnce(new TypeError("Network request failed"))
-      .mockResolvedValueOnce({
-        userMessage: message(21, "user", 6, "问题"),
-        run: run(6, "waiting"),
-      });
-    api.listMessages.mockResolvedValue({
-      items: [],
-      nextCursor: null,
-      runs: [],
-      candidateDrafts: [],
-    });
-
-    const rendered = await renderController();
-    await waitFor(() => expect(rendered.result.current.initialLoading).toBe(false));
-    let firstResult: boolean | undefined;
-    await act(async () => {
-      firstResult = await rendered.result.current.submit("问题");
-    });
-
-    expect(firstResult).toBe(false);
-    expect(rendered.result.current.pending?.conversationId).toBe(20);
-    expect(rendered.result.current.pending?.clientMessageId).toBe("test-client-id");
-    expect(rendered.result.current.submitError).not.toBeNull();
-
-    let retryResult: boolean | undefined;
-    await act(async () => {
-      retryResult = await rendered.result.current.retrySubmit();
-    });
-    expect(retryResult).toBe(true);
-    expect(api.createConversation).toHaveBeenCalledTimes(1);
-    expect(api.submitMessage).toHaveBeenCalledTimes(2);
-    const firstCall = api.submitMessage.mock.calls[0];
-    const retryCall = api.submitMessage.mock.calls[1];
-    expect(retryCall[1]).toBe(20);
-    expect(retryCall[2].clientMessageId).toBe(firstCall[2].clientMessageId);
-    expect(rendered.result.current.pending).toBeNull();
-    await rendered.unmount();
-  });
-
-  test("已有对话时直接发送不创建新对话，连续追问进入同一对话", async () => {
-    api.listConversations.mockResolvedValue([conversation(1)]);
-    api.getConversation.mockResolvedValue(conversation(1));
-    api.listMessages.mockResolvedValue({
-      items: [],
-      nextCursor: null,
-      runs: [],
-      candidateDrafts: [],
-    });
-    api.submitMessage.mockResolvedValue({
-      userMessage: message(3, "user", 2, "第二轮问题"),
-      run: run(2, "waiting"),
-    });
-
-    const rendered = await renderController();
-    await waitFor(() => expect(rendered.result.current.isDraft).toBe(false));
-    await act(async () => {
-      await rendered.result.current.submit("第二轮问题");
-    });
-
-    // 直接提交到已恢复的对话，不得再创建 Conversation
-    expect(api.createConversation).not.toHaveBeenCalled();
-    expect(api.submitMessage).toHaveBeenCalledWith("token", 1, {
-      clientMessageId: "test-client-id",
-      message: "第二轮问题",
-      contextMode: "auto",
-      answerMode: "auto",
-      resultMode: "auto",
-      basisMode: "auto",
-    });
-    expect(rendered.result.current.isDraft).toBe(false);
-    await rendered.unmount();
-  });
-
-  test("活动 Run 409 时不创建第二个本地任务，只刷新服务端状态", async () => {
-    api.listConversations.mockResolvedValue([]);
-    api.createConversation.mockResolvedValue(conversation(30));
-    api.submitMessage.mockRejectedValue({ status: 409, message: "进行中" });
-    api.listMessages.mockResolvedValue({
-      items: [],
-      nextCursor: null,
-      runs: [],
-      candidateDrafts: [],
-    });
-    api.getConversation.mockResolvedValue(conversation(30));
-
-    const rendered = await renderController();
-    await waitFor(() => expect(rendered.result.current.initialLoading).toBe(false));
-    await act(async () => {
-      await rendered.result.current.submit("问题");
-    });
-
-    expect(api.submitMessage).toHaveBeenCalledTimes(1);
-    // 409 后不保留“发送中”气泡，错误文案说明冲突
-    expect(rendered.result.current.pending).toBeNull();
-    expect(rendered.result.current.submitError).toContain("进行中的回答");
-    // 刷新服务端最近 Run：对话与消息被重新获取
-    await waitFor(() => {
-      expect(api.getConversation).toHaveBeenCalled();
-      expect(api.listMessages).toHaveBeenCalled();
-    });
-    await rendered.unmount();
-  });
-
-  test("活动 Run 前台轮询并在终态停止", async () => {
-    jest.useFakeTimers();
-    const restoreAppState = mockAppStateActive();
-    try {
-      api.listConversations.mockResolvedValue([conversation(1)]);
-      api.getConversation.mockResolvedValue(conversation(1));
-      api.listMessages.mockResolvedValue({
-        items: [
-          message(1, "user", 7, "问题"),
-          message(2, "assistant", 7),
-        ],
-        nextCursor: null,
-        runs: [run(7, "processing")],
-        candidateDrafts: [],
-      });
-      api.getRun
-        .mockResolvedValueOnce(run(7, "processing"))
-        .mockResolvedValueOnce(run(7, "completed"));
-
-      const rendered = await renderController();
-      await waitFor(() => expect(rendered.result.current.activeRun).not.toBeNull());
-      await waitFor(() => {
-        expect(api.getRun).toHaveBeenCalledWith("token", 7);
-      });
-      expect(rendered.result.current.runPolling).toBe(true);
-
-      await act(async () => {
-        jest.advanceTimersByTime(2500);
-      });
-      await waitFor(() => {
-        expect(api.getRun).toHaveBeenCalledTimes(2);
-      });
-      await waitFor(() => {
-        expect(rendered.result.current.runPolling).toBe(false);
-      });
-      await rendered.unmount();
-    } finally {
-      restoreAppState();
-      jest.clearAllTimers();
-      jest.useRealTimers();
-    }
-  });
-
-  test("进入后台停止轮询，回到前台恢复", async () => {
-    jest.useFakeTimers();
-    let appStateHandler: ((state: AppStateStatus) => void) | null = null;
-    const originalState = AppState.currentState;
-    Object.defineProperty(AppState, "currentState", {
-      value: "active",
-      configurable: true,
-      writable: true,
-    });
-    const spy = jest
-      .spyOn(AppState, "addEventListener")
-      .mockImplementation(((type: string, handler: (state: AppStateStatus) => void) => {
-        appStateHandler = handler;
-        return { remove: jest.fn() } as never;
-      }) as never);
-    try {
-      api.listConversations.mockResolvedValue([conversation(1)]);
-      api.getConversation.mockResolvedValue(conversation(1));
-      api.listMessages.mockResolvedValue({
-        items: [message(1, "user", 8, "问题"), message(2, "assistant", 8)],
-        nextCursor: null,
-        runs: [run(8, "processing")],
-        candidateDrafts: [],
-      });
-      api.getRun.mockResolvedValue(run(8, "processing"));
-
-      const rendered = await renderController();
-      await waitFor(() => expect(rendered.result.current.activeRun).not.toBeNull());
-      const callsAfterForeground = api.getRun.mock.calls.length;
-
-      await act(async () => {
-        appStateHandler?.("background");
-      });
-      await act(async () => {
-        jest.advanceTimersByTime(4500);
-      });
-      expect(api.getRun.mock.calls.length).toBe(callsAfterForeground);
-
-      await act(async () => {
-        appStateHandler?.("active");
-      });
-      await waitFor(() => {
-        expect(api.getRun.mock.calls.length).toBeGreaterThan(callsAfterForeground);
-      });
-      await rendered.unmount();
-    } finally {
-      spy.mockRestore();
-      Object.defineProperty(AppState, "currentState", {
-        value: originalState,
-        configurable: true,
-        writable: true,
-      });
-      jest.clearAllTimers();
-      jest.useRealTimers();
-    }
-  });
-
-  test("取消活动 Run 提交取消并保持轮询", async () => {
-    jest.useFakeTimers();
-    const restoreAppState = mockAppStateActive();
-    try {
-      api.listConversations.mockResolvedValue([conversation(1)]);
-      api.getConversation.mockResolvedValue(conversation(1));
-      api.listMessages.mockResolvedValue({
-        items: [message(1, "user", 9, "问题"), message(2, "assistant", 9)],
-        nextCursor: null,
-        runs: [run(9, "processing")],
-        candidateDrafts: [],
-      });
-      api.getRun.mockResolvedValue(run(9, "processing"));
-      api.cancelRun.mockResolvedValue({ ...run(9, "processing"), cancelRequested: true });
-
-      const rendered = await renderController();
-      await waitFor(() => expect(rendered.result.current.activeRun).not.toBeNull());
-      await act(async () => {
-        rendered.result.current.requestCancelRun();
-      });
-      await waitFor(() => {
-        expect(api.cancelRun).toHaveBeenCalledWith("token", 9);
-      });
-      await rendered.unmount();
-    } finally {
-      restoreAppState();
-      jest.clearAllTimers();
-      jest.useRealTimers();
-    }
-  });
-
-  test("取消错误仅保留给原 Run，切换会话后清理", async () => {
-    jest.useFakeTimers();
-    const restoreAppState = mockAppStateActive();
-    try {
-      api.listConversations.mockResolvedValue([conversation(1), conversation(2)]);
-      api.getConversation.mockResolvedValue(conversation(1));
-      api.listMessages.mockResolvedValue({
-        items: [message(1, "user", 9, "问题"), message(2, "assistant", 9)],
-        nextCursor: null,
-        runs: [run(9, "processing")],
-        candidateDrafts: [],
-      });
-      api.getRun.mockResolvedValue(run(9, "processing"));
-      api.cancelRun.mockRejectedValue(new Error("取消请求失败"));
-
-      const rendered = await renderController();
-      await waitFor(() => expect(rendered.result.current.activeRun?.id).toBe(9));
-      await act(async () => {
-        rendered.result.current.requestCancelRun();
-      });
-      await waitFor(() => {
-        expect(rendered.result.current.cancelError).toContain("取消请求失败");
-      });
-
-      await act(async () => {
-        rendered.result.current.switchToConversation(2);
-      });
-      expect(rendered.result.current.cancelError).toBeNull();
-      await rendered.unmount();
-    } finally {
-      restoreAppState();
-      jest.clearAllTimers();
-      jest.useRealTimers();
-    }
-  });
-
-  test("提交整理动作：可见消息、operation Run 与草稿进入线程", async () => {
-    api.listConversations.mockResolvedValue([conversation(1)]);
-    api.getConversation.mockResolvedValue(conversation(1));
-    api.listMessages.mockResolvedValue({
-      items: [
-        message(1, "user", 9, "闭水试验通常持续多久？"),
-        message(2, "assistant", 9),
-      ],
-      nextCursor: null,
-      runs: [answeredRun(9, "completed")],
-      candidateDrafts: [],
-    });
-    api.submitDraftAction.mockResolvedValue({
-      userMessage: message(3, "user", 10, "整理成知识（目标项目：新房装修）"),
-      run: { ...run(10, "waiting"), runKind: "draft_candidate", sourceRunId: 9 },
-      draft: draft(1),
-    });
-    const rendered = await renderController();
-    await waitFor(() =>
-      expect(rendered.result.current.thread.runsById.get(9)?.status).toBe(
-        "completed",
-      ),
-    );
-
-    await act(async () => {
-      const submitted = await rendered.result.current.submitDraftAction(9);
-      expect(submitted).toBe(true);
-    });
-
-    await waitFor(() => {
-      expect(rendered.result.current.draftsById.get(1)?.status).toBe(
-        "generating",
-      );
-      expect(rendered.result.current.draftByRunId(10)?.id).toBe(1);
-    });
-    expect(
-      rendered.result.current.thread.items.some(
-        (item) => item.content === "整理成知识（目标项目：新房装修）",
-      ),
-    ).toBe(true);
-    expect(api.submitDraftAction).toHaveBeenCalledWith(
-      "token",
-      1,
-      expect.objectContaining({
-        sourceRunId: 9,
-        clientMessageId: "test-client-id",
-      }),
-    );
-  });
-
-  test("整理动作 409 冲突：显示错误且不保留重试状态", async () => {
-    api.listConversations.mockResolvedValue([conversation(1)]);
-    api.getConversation.mockResolvedValue(conversation(1));
-    api.listMessages.mockResolvedValue({
-      items: [message(1, "user", 9), message(2, "assistant", 9)],
-      nextCursor: null,
-      runs: [answeredRun(9, "completed")],
-      candidateDrafts: [],
-    });
-    (api.submitDraftAction as jest.Mock).mockRejectedValueOnce({
-      status: 409,
-      message: "对话存在进行中的问答",
-    });
-    const rendered = await renderController();
-    await waitFor(() =>
-      expect(rendered.result.current.thread.runsById.get(9)?.status).toBe(
-        "completed",
-      ),
-    );
-    await act(async () => {
-      const submitted = await rendered.result.current.submitDraftAction(9);
-      expect(submitted).toBe(false);
-    });
-    expect(rendered.result.current.draftActionError).toContain("进行中的回答");
-    expect(rendered.result.current.draftActionPending).toBe(false);
-    expect(rendered.result.current.draftsById.size).toBe(0);
-  });
-
-  test("整理动作网络结果未知：重试复用同一幂等键", async () => {
-    api.listConversations.mockResolvedValue([conversation(1)]);
-    api.getConversation.mockResolvedValue(conversation(1));
-    api.listMessages.mockResolvedValue({
-      items: [message(1, "user", 9), message(2, "assistant", 9)],
-      nextCursor: null,
-      runs: [answeredRun(9, "completed")],
-      candidateDrafts: [],
-    });
-    (api.submitDraftAction as jest.Mock)
-      .mockRejectedValueOnce(new TypeError("Network request failed"))
-      .mockResolvedValueOnce({
-        userMessage: message(3, "user", 10),
-        run: { ...run(10, "waiting"), runKind: "draft_candidate" },
-        draft: draft(1),
-      });
-    const rendered = await renderController();
-    await waitFor(() =>
-      expect(rendered.result.current.thread.runsById.get(9)?.status).toBe(
-        "completed",
-      ),
-    );
-    await act(async () => {
-      const first = await rendered.result.current.submitDraftAction(9);
-      expect(first).toBe(false);
-    });
-    expect(rendered.result.current.draftActionError).toContain(
-      "Network request failed",
-    );
-    await act(async () => {
-      const retried = await rendered.result.current.retryDraftAction();
-      expect(retried).toBe(true);
-    });
-    expect(api.submitDraftAction).toHaveBeenCalledTimes(2);
-    const calls = (api.submitDraftAction as jest.Mock).mock.calls;
-    expect(calls[0][2].clientMessageId).toBe(calls[1][2].clientMessageId);
-  });
-
-  test("确认草稿未知结果重试复用同一幂等键并更新草稿状态", async () => {
-    api.listConversations.mockResolvedValue([conversation(1)]);
-    api.getConversation.mockResolvedValue(conversation(1));
-    api.listMessages.mockResolvedValue({
-      items: [
-        message(1, "user", 10, "整理成知识"),
-        message(2, "assistant", 10),
-      ],
-      nextCursor: null,
-      runs: [{ ...run(10, "completed"), runKind: "draft_candidate" }],
-      candidateDrafts: [
-        draft(1, {
-          status: "draft",
-          title: "闭水试验要点",
-          content: "闭水试验通常持续 24 小时。",
-          evidenceHandles: ["ev_1"],
-        }),
-      ],
-    });
-    (api.confirmDraft as jest.Mock)
-      .mockRejectedValueOnce(new TypeError("Network request failed"))
-      .mockResolvedValueOnce({
-        draft: draft(1, {
-          status: "confirmed",
-          title: "闭水试验要点",
-          content: "闭水试验通常持续 24 小时。",
-          confirmedCandidateId: 99,
-        }),
-        candidate: {
-          id: 99,
-          title: "闭水试验要点",
-          status: "pending",
-          sourceId: 12,
-          routingStatus: "pending",
-          relationStatus: "pending",
-          createdAt: "2026-08-29T10:00:00Z",
-        },
-      });
-    const rendered = await renderController();
-    await waitFor(() =>
-      expect(rendered.result.current.draftsById.get(1)?.status).toBe("draft"),
-    );
-    await act(async () => {
-      const first = await rendered.result.current.confirmDraft(1);
-      expect(first).toBe(false);
-    });
-    expect(rendered.result.current.draftConfirmError).toContain(
-      "Network request failed",
-    );
-    await act(async () => {
-      const retried = await rendered.result.current.retryConfirmDraft(1);
-      expect(retried).toBe(true);
-    });
-    await waitFor(() =>
-      expect(rendered.result.current.draftsById.get(1)?.status).toBe(
-        "confirmed",
-      ),
-    );
-    const calls = (api.confirmDraft as jest.Mock).mock.calls;
-    expect(calls[0][2].clientOperationId).toBe(calls[1][2].clientOperationId);
-  });
-
-  test("编辑草稿更新服务端权威 Draft", async () => {
-    api.listConversations.mockResolvedValue([conversation(1)]);
-    api.getConversation.mockResolvedValue(conversation(1));
-    api.listMessages.mockResolvedValue({
-      items: [
-        message(1, "user", 10, "整理成知识"),
-        message(2, "assistant", 10),
-      ],
-      nextCursor: null,
-      runs: [{ ...run(10, "completed"), runKind: "draft_candidate" }],
-      candidateDrafts: [
-        draft(1, {
-          status: "draft",
-          title: "原标题",
-          content: "原内容",
-        }),
-      ],
-    });
-    api.editDraft.mockResolvedValue(
-      draft(1, { status: "draft", title: "新标题", content: "新内容" }),
-    );
-    const rendered = await renderController();
-    await waitFor(() =>
-      expect(rendered.result.current.draftsById.get(1)?.title).toBe("原标题"),
-    );
-    await act(async () => {
-      const edited = await rendered.result.current.editDraft(1, {
-        title: "新标题",
-        content: "新内容",
-      });
-      expect(edited).toBe(true);
-    });
-    expect(rendered.result.current.draftsById.get(1)?.title).toBe("新标题");
-    expect(api.editDraft).toHaveBeenCalledWith("token", 1, {
-      title: "新标题",
-      content: "新内容",
-    });
-  });
-
-  test("取消草稿失败展示独立错误，不写入编辑错误", async () => {
-    api.listConversations.mockResolvedValue([conversation(1)]);
-    api.getConversation.mockResolvedValue(conversation(1));
-    api.listMessages.mockResolvedValue({
-      items: [
-        message(1, "user", 10, "整理成知识"),
-        message(2, "assistant", 10),
-      ],
-      nextCursor: null,
-      runs: [{ ...run(10, "completed"), runKind: "draft_candidate" }],
-      candidateDrafts: [draft(1, { status: "draft" })],
-    });
-    (api.cancelDraft as jest.Mock).mockRejectedValue(new Error("取消失败"));
-    const rendered = await renderController();
-    await waitFor(() =>
-      expect(rendered.result.current.draftsById.get(1)?.status).toBe("draft"),
-    );
-    await act(async () => {
-      const cancelled = await rendered.result.current.cancelDraft(1);
-      expect(cancelled).toBe(false);
-    });
-    expect(rendered.result.current.draftCancelError).toContain("取消失败");
-    expect(rendered.result.current.draftEditError).toBeNull();
-    await act(async () => {
-      rendered.result.current.clearDraftCancelError();
-    });
-    expect(rendered.result.current.draftCancelError).toBeNull();
-    await rendered.unmount();
-  });
-
-  test("提交修订动作：创建消息与草稿并进入线程", async () => {
-    api.listConversations.mockResolvedValue([conversation(1)]);
-    api.getConversation.mockResolvedValue(conversation(1));
-    api.listMessages.mockResolvedValue({
-      items: [],
-      nextCursor: null,
-      runs: [],
-      candidateDrafts: [],
-    });
-    api.submitEntryRevision.mockResolvedValue({
-      userMessage: message(3, "user", 20, "修订《闭水试验》：补充适用条件"),
-      run: { ...run(20, "waiting"), runKind: "entry_revision", targetEntryId: 1 },
-      draft: revisionDraft(2),
-    });
-    const rendered = await renderController();
-    await waitFor(() => expect(rendered.result.current.initialLoading).toBe(false));
-
-    await act(async () => {
-      const submitted = await rendered.result.current.submitEntryRevision(
-        5,
-        1,
-        "补充适用条件",
-      );
-      expect(submitted).toBe(true);
-    });
-    expect(api.submitEntryRevision).toHaveBeenCalledWith("token", 1, {
-      clientMessageId: "test-client-id",
-      sourceRunId: 5,
-      targetEntryId: 1,
-      instruction: "补充适用条件",
-    });
-    expect(rendered.result.current.revisionDraftsById.get(2)?.status).toBe(
-      "generating",
-    );
-    expect(
-      rendered.result.current.revisionDraftByRunId(20)?.targetEntryId,
-    ).toBe(1);
-    await rendered.unmount();
-  });
-
-  test("确认修订成功且网络未知重试复用同一 client_operation_id", async () => {
-    api.listConversations.mockResolvedValue([conversation(1)]);
-    api.getConversation.mockResolvedValue(conversation(1));
-    api.listMessages.mockResolvedValue({
-      items: [
-        message(1, "user", 20, "修订《闭水试验》：补充适用条件"),
-        message(2, "assistant", 20),
-      ],
-      nextCursor: null,
-      runs: [{ ...run(20, "completed"), runKind: "entry_revision", targetEntryId: 1 }],
-      candidateDrafts: [],
-      entryRevisionDrafts: [
-        revisionDraft(2, { status: "draft", title: "候选标题" }),
-      ],
-    });
-    api.confirmEntryRevision
-      .mockRejectedValueOnce(new Error("网络中断"))
-      .mockResolvedValueOnce({
-        draft: revisionDraft(2, { status: "applied", title: "候选标题" }),
-        execution: {
-          id: 9,
-          draftId: 2,
-          entryId: 1,
-          status: "applied",
-          beforeVersionNumber: 1,
-          afterVersionNumber: 2,
-          addedEvidenceCount: 0,
-          error: null,
-          undoneAt: null,
-          createdAt: "2026-08-29T10:00:00Z",
-          updatedAt: "2026-08-29T10:00:00Z",
-        },
-        entry: {
-          id: 1,
-          title: "候选标题",
-          projectId: 1,
-          projectName: "新房装修",
-          nodeId: 1,
-          nodeName: "施工",
-          versionNumber: 2,
-          updatedAt: "2026-08-29T10:00:00Z",
-        },
-      });
-    const rendered = await renderController();
-    await waitFor(() =>
-      expect(rendered.result.current.revisionDraftsById.get(2)?.status).toBe(
-        "draft",
-      ),
-    );
-
-    let firstResult = false;
-    await act(async () => {
-      firstResult = await rendered.result.current.confirmEntryRevision(2);
-    });
-    expect(firstResult).toBe(false);
-    expect(rendered.result.current.revisionConfirmError).toContain("网络中断");
-    expect(rendered.result.current.revisionConfirmRetryable).toBe(true);
-
-    await act(async () => {
-      const retried = await rendered.result.current.retryConfirmEntryRevision(2);
-      expect(retried).toBe(true);
-    });
-    expect(rendered.result.current.revisionConfirmRetryable).toBe(false);
-    expect(api.confirmEntryRevision).toHaveBeenNthCalledWith(1, "token", 2, {
-      clientOperationId: "test-client-id",
-    });
-    expect(api.confirmEntryRevision).toHaveBeenNthCalledWith(2, "token", 2, {
-      clientOperationId: "test-client-id",
-    });
-    expect(rendered.result.current.revisionDraftsById.get(2)?.status).toBe(
-      "applied",
-    );
-    await rendered.unmount();
-  });
-
-  test("撤销修订成功且重复撤销复用同一撤销键", async () => {
-    api.listConversations.mockResolvedValue([conversation(1)]);
-    api.getConversation.mockResolvedValue(conversation(1));
-    api.listMessages.mockResolvedValue({
-      items: [
-        message(1, "user", 20, "修订《闭水试验》：补充适用条件"),
-        message(2, "assistant", 20),
-      ],
-      nextCursor: null,
-      runs: [{ ...run(20, "completed"), runKind: "entry_revision", targetEntryId: 1 }],
-      candidateDrafts: [],
-      entryRevisionDrafts: [
-        revisionDraft(2, {
-          status: "applied",
-          title: "候选标题",
-          execution: {
-            id: 9,
-            draftId: 2,
-            entryId: 1,
-            status: "applied",
-            beforeVersionNumber: 1,
-            afterVersionNumber: 2,
-            addedEvidenceCount: 0,
-            error: null,
-            undoneAt: null,
-            createdAt: "2026-08-29T10:00:00Z",
-            updatedAt: "2026-08-29T10:00:00Z",
-          },
-        }),
-      ],
-    });
-    api.undoEntryRevision
-      .mockRejectedValueOnce(new Error("网络中断"))
-      .mockResolvedValueOnce({
-        draft: revisionDraft(2, {
-          status: "undone",
-          title: "闭水试验",
-          execution: {
-            id: 9,
-            draftId: 2,
-            entryId: 1,
-            status: "undone",
-            beforeVersionNumber: 1,
-            afterVersionNumber: 2,
-            addedEvidenceCount: 0,
-            error: null,
-            undoneAt: "2026-08-29T10:01:00Z",
-            createdAt: "2026-08-29T10:00:00Z",
-            updatedAt: "2026-08-29T10:01:00Z",
-          },
-        }),
-        execution: {
-          id: 9,
-          draftId: 2,
-          entryId: 1,
-          status: "undone",
-          beforeVersionNumber: 1,
-          afterVersionNumber: 2,
-          addedEvidenceCount: 0,
-          error: null,
-          undoneAt: "2026-08-29T10:01:00Z",
-          createdAt: "2026-08-29T10:00:00Z",
-          updatedAt: "2026-08-29T10:01:00Z",
-        },
-        entry: {
-          id: 1,
-          title: "闭水试验",
-          projectId: 1,
-          projectName: "新房装修",
-          nodeId: 1,
-          nodeName: "施工",
-          versionNumber: 3,
-          updatedAt: "2026-08-29T10:01:00Z",
-        },
-      });
-    const rendered = await renderController();
-    await waitFor(() =>
-      expect(rendered.result.current.revisionDraftsById.get(2)?.status).toBe(
-        "applied",
-      ),
-    );
-
-    await act(async () => {
-      const first = await rendered.result.current.undoEntryRevision(2);
-      expect(first).toBe(false);
-    });
-    expect(rendered.result.current.revisionUndoError).toContain("网络中断");
-    expect(rendered.result.current.revisionUndoRetryable).toBe(true);
-    expect(rendered.result.current.revisionUndoErrorDraftId).toBe(2);
-    await act(async () => {
-      const retried = await rendered.result.current.retryUndoEntryRevision(2);
-      expect(retried).toBe(true);
-    });
-    expect(rendered.result.current.revisionUndoRetryable).toBe(false);
-    expect(api.undoEntryRevision).toHaveBeenNthCalledWith(1, "token", 2, {
-      clientOperationId: "test-client-id",
-    });
-    expect(api.undoEntryRevision).toHaveBeenNthCalledWith(2, "token", 2, {
-      clientOperationId: "test-client-id",
-    });
-    expect(rendered.result.current.revisionDraftsById.get(2)?.status).toBe(
-      "undone",
-    );
-    await rendered.unmount();
-  });
-
-  test("显式结果形式随下一条消息提交，成功后恢复 auto", async () => {
-    api.listConversations.mockResolvedValue([conversation(1)]);
-    api.getConversation.mockResolvedValue(conversation(1));
-    api.listMessages.mockResolvedValue({
-      items: [],
-      nextCursor: null,
-      runs: [],
-      candidateDrafts: [],
-    });
-    api.submitMessage.mockResolvedValue({
-      userMessage: message(3, "user", 2, "列出血压知识"),
-      run: run(2, "waiting"),
-    });
-
-    const rendered = await renderController();
-    await waitFor(() => expect(rendered.result.current.isDraft).toBe(false));
-    await act(async () => {
-      rendered.result.current.setResultMode("entries");
-    });
-    expect(rendered.result.current.modes.resultMode).toBe("entries");
-    await act(async () => {
-      await rendered.result.current.submit("列出血压知识");
-    });
-    expect(api.submitMessage).toHaveBeenCalledWith("token", 1, {
-      clientMessageId: "test-client-id",
-      message: "列出血压知识",
-      contextMode: "auto",
-      answerMode: "auto",
-      resultMode: "entries",
-      basisMode: "auto",
-    });
-    expect(rendered.result.current.modes.resultMode).toBe("auto");
-    await rendered.unmount();
-  });
-
-  test("设置结果形式不自动发送；发送失败保留用户选择", async () => {
-    api.listConversations.mockResolvedValue([conversation(1)]);
-    api.getConversation.mockResolvedValue(conversation(1));
-    api.listMessages.mockResolvedValue({
-      items: [],
-      nextCursor: null,
-      runs: [],
-      candidateDrafts: [],
-    });
-    api.submitMessage.mockRejectedValue(new TypeError("Network request failed"));
-
-    const rendered = await renderController();
-    await waitFor(() => expect(rendered.result.current.isDraft).toBe(false));
-    await act(async () => {
-      rendered.result.current.setResultMode("answer");
-    });
-    // 只设置模式不得触发发送
-    expect(api.submitMessage).not.toHaveBeenCalled();
-    await act(async () => {
-      await rendered.result.current.submit("闭水试验说明了什么");
-    });
-    expect(rendered.result.current.submitError).not.toBeNull();
-    // 失败后保留用户选择，便于重试
-    expect(rendered.result.current.modes.resultMode).toBe("answer");
-    expect(rendered.result.current.pending?.resultMode).toBe("answer");
-    await rendered.unmount();
-  });
-
-  test("结果分页首屏派生、下一页按 entry id 去重追加，失败保留已加载项", async () => {
-    api.listConversations.mockResolvedValue([conversation(1)]);
-    api.getConversation.mockResolvedValue(conversation(1));
-    const snapshot = {
-      schemaVersion: "v1",
-      query: "闭水试验",
-      status: "completed" as const,
-      completeness: "limited" as const,
-      items: [
-        {
-          entryId: 1,
-          title: "闭水试验 A",
-          excerpt: "摘要",
-          projectId: 1,
-          projectName: "新房装修",
-          nodeId: 1,
-          nodePath: "施工",
-          mainType: "knowledge",
-          infoNature: "fact",
-          updatedAt: "2026-08-29T10:00:00Z",
-          sourceCount: 1,
-          fingerprint: "fp-1",
-          matchHint: null,
-          matchedFields: ["title"],
-        },
-        {
-          entryId: 2,
-          title: "闭水试验 B",
-          excerpt: "摘要",
-          projectId: 1,
-          projectName: "新房装修",
-          nodeId: 1,
-          nodePath: "施工",
-          mainType: "knowledge",
-          infoNature: "fact",
-          updatedAt: "2026-08-29T10:00:00Z",
-          sourceCount: 1,
-          fingerprint: "fp-2",
-          matchHint: null,
-          matchedFields: ["title"],
-        },
-        {
-          entryId: 3,
-          title: "闭水试验 C",
-          excerpt: "摘要",
-          projectId: 1,
-          projectName: "新房装修",
-          nodeId: 1,
-          nodePath: "施工",
-          mainType: "knowledge",
-          infoNature: "fact",
-          updatedAt: "2026-08-29T10:00:00Z",
-          sourceCount: 1,
-          fingerprint: "fp-3",
-          matchHint: null,
-          matchedFields: ["title"],
-        },
-      ],
-      returnedCount: 3,
-      candidateLimit: 50,
-      warning: null,
-      snapshotUpdatedAt: "2026-08-29T10:00:00Z",
-    };
-    const entriesRun = {
-      ...run(9, "completed"),
-      actualResultMode: "entries" as const,
-      entryResult: snapshot,
-    };
-    api.listMessages.mockResolvedValue({
-      items: [
-        message(1, "user", 9, "列出闭水试验知识"),
-        message(2, "assistant", 9, "找到 3 条相关正式知识"),
-      ],
-      nextCursor: null,
-      runs: [entriesRun],
-      candidateDrafts: [],
-    });
-    api.getEntryResults
-      .mockResolvedValueOnce({
-        schemaVersion: "v1",
-        status: "completed",
-        completeness: "limited",
-        items: snapshot.items.slice(0, 6),
-        returnedCount: 3,
-        totalInSnapshot: 3,
-        candidateLimit: 50,
-        hasMore: false,
-        nextCursor: null,
-        warning: null,
-        snapshotUpdatedAt: "2026-08-29T10:00:00Z",
-      })
-      .mockResolvedValueOnce({
-        schemaVersion: "v1",
-        status: "completed",
-        completeness: "limited",
-        items: [snapshot.items[1], snapshot.items[2]],
-        returnedCount: 2,
-        totalInSnapshot: 3,
-        candidateLimit: 50,
-        hasMore: false,
-        nextCursor: null,
-        warning: null,
-        snapshotUpdatedAt: "2026-08-29T10:00:00Z",
-      });
-
-    const rendered = await renderController();
-    await waitFor(() => expect(rendered.result.current.isDraft).toBe(false));
-    await act(async () => {
-      rendered.result.current.primeEntryResults(9);
-    });
-    await waitFor(() => {
-      expect(rendered.result.current.entryResultsForRun(9)?.primed).toBe(true);
-    });
-    expect(api.getEntryResults).toHaveBeenCalledWith("token", 9, null, 6);
-    expect(rendered.result.current.entryResultsForRun(9)?.items).toHaveLength(3);
-    await rendered.unmount();
-  });
-
-  test("下一页失败保留已加载项并可重试", async () => {
-    api.listConversations.mockResolvedValue([conversation(1)]);
-    api.getConversation.mockResolvedValue(conversation(1));
-    const itemA = {
-      entryId: 1,
-      title: "闭水试验 A",
-      excerpt: "摘要",
-      projectId: 1,
-      projectName: "新房装修",
-      nodeId: 1,
-      nodePath: "施工",
-      mainType: "knowledge",
-      infoNature: "fact",
-      updatedAt: "2026-08-29T10:00:00Z",
-      sourceCount: 1,
-      fingerprint: "fp-1",
-      matchHint: null,
-      matchedFields: ["title"],
-    };
-    const itemB = {
-      entryId: 2,
-      title: "闭水试验 B",
-      excerpt: "摘要",
-      projectId: 1,
-      projectName: "新房装修",
-      nodeId: 1,
-      nodePath: "施工",
-      mainType: "knowledge",
-      infoNature: "fact",
-      updatedAt: "2026-08-29T10:00:00Z",
-      sourceCount: 1,
-      fingerprint: "fp-2",
-      matchHint: null,
-      matchedFields: ["title"],
-    };
-    const entriesRun = {
-      ...run(10, "completed"),
-      actualResultMode: "entries" as const,
-      entryResult: {
-        schemaVersion: "v1",
-        query: "闭水试验",
-        status: "completed" as const,
-        completeness: "limited" as const,
-        items: [itemA, itemB],
-        returnedCount: 2,
-        candidateLimit: 50,
-        warning: null,
-        snapshotUpdatedAt: "2026-08-29T10:00:00Z",
-      },
-    };
-    api.listMessages.mockResolvedValue({
-      items: [
-        message(1, "user", 10, "列出闭水试验知识"),
-        message(2, "assistant", 10, "找到 2 条相关正式知识"),
-      ],
-      nextCursor: null,
-      runs: [entriesRun],
-      candidateDrafts: [],
-    });
-    api.getEntryResults
-      .mockResolvedValueOnce({
-        schemaVersion: "v1",
-        status: "completed",
-        completeness: "limited",
-        items: [itemA],
-        returnedCount: 1,
-        totalInSnapshot: 2,
-        candidateLimit: 50,
-        hasMore: true,
-        nextCursor: "cursor-2",
-        warning: null,
-        snapshotUpdatedAt: "2026-08-29T10:00:00Z",
-      })
-      .mockRejectedValueOnce(new TypeError("Network request failed"))
-      .mockResolvedValueOnce({
-        schemaVersion: "v1",
-        status: "completed",
-        completeness: "limited",
-        items: [itemB],
-        returnedCount: 1,
-        totalInSnapshot: 2,
-        candidateLimit: 50,
-        hasMore: false,
-        nextCursor: null,
-        warning: null,
-        snapshotUpdatedAt: "2026-08-29T10:00:00Z",
-      });
-
-    const rendered = await renderController();
-    await waitFor(() => expect(rendered.result.current.isDraft).toBe(false));
-    await act(async () => {
-      rendered.result.current.primeEntryResults(10);
-    });
-    await waitFor(() => {
-      expect(rendered.result.current.entryResultsForRun(10)?.primed).toBe(true);
-    });
-    await act(async () => {
-      rendered.result.current.loadMoreEntryResults(10);
-      // 显式 flush 被拒绝的 Promise，确保错误状态在断言前落地
-      await new Promise((resolve) => setTimeout(resolve, 0));
-    });
-    await waitFor(() => {
-      expect(rendered.result.current.entryResultsForRun(10)?.error).not.toBeNull();
-    });
-    // 失败保留已加载项，不重新提交原问题
-    const afterFailure = rendered.result.current.entryResultsForRun(10);
-    expect(afterFailure?.items.map((item) => item.entryId)).toEqual([1]);
-    expect(api.submitMessage).not.toHaveBeenCalled();
-    await act(async () => {
-      rendered.result.current.retryEntryResults(10);
-    });
-    await waitFor(() => {
-      expect(
-        rendered.result.current.entryResultsForRun(10)?.items.map(
-          (item) => item.entryId,
-        ),
-      ).toEqual([1, 2]);
-    });
-    expect(rendered.result.current.entryResultsForRun(10)?.error).toBeNull();
-    await rendered.unmount();
-  });
-
-  test("模式纠正直接重发：新 client_message_id + 结果形态，不修改历史 Run", async () => {
-    api.listConversations.mockResolvedValue([conversation(1)]);
-    api.getConversation.mockResolvedValue(conversation(1));
-    api.listMessages.mockResolvedValue({
-      items: [
-        { ...message(1, "user", 5, "帮我找一下鞋柜防臭的知识"), requestContextMode: "continue" },
-        message(2, "assistant", 5, "综合回答"),
-      ],
-      nextCursor: null,
-      runs: [answeredRun(5, "completed")],
-      candidateDrafts: [],
-    });
-    api.submitMessage.mockResolvedValue({
-      userMessage: message(3, "user", 6, "帮我找一下鞋柜防臭的知识"),
-      run: run(6, "waiting"),
-    });
-    // 纠正必须使用新的 client_message_id，而不是复用原消息
-    cryptoMock.randomUUID.mockReturnValueOnce("resubmit-client-id");
-
-    const rendered = await renderController();
-    await waitFor(() => expect(rendered.result.current.isDraft).toBe(false));
-    await act(async () => {
-      const sent = await rendered.result.current.resubmitWithResultMode(5, "entries");
-      expect(sent).toBe(true);
-    });
-    expect(api.submitMessage).toHaveBeenCalledTimes(1);
-    expect(api.submitMessage).toHaveBeenCalledWith("token", 1, {
-      clientMessageId: "resubmit-client-id",
-      message: "帮我找一下鞋柜防臭的知识",
-      contextMode: "continue",
-      answerMode: "auto",
-      resultMode: "entries",
-      basisMode: "auto",
-      sourceRunId: 5,
-    });
-    // 新 Run 进入线程，原 Run 未被修改
-    expect(rendered.result.current.thread.runsById.get(5)?.status).toBe("completed");
-    expect(rendered.result.current.thread.runsById.has(6)).toBe(true);
-    expect(rendered.result.current.pending).toBeNull();
-    await rendered.unmount();
-  });
-
-  test("模式纠正网络失败保留同一幂等键可重试；409 冲突清空 pending", async () => {
-    api.listConversations.mockResolvedValue([conversation(1)]);
-    api.getConversation.mockResolvedValue(conversation(1));
-    api.listMessages.mockResolvedValue({
-      items: [message(1, "user", 5, "列出血压知识"), message(2, "assistant", 5, "回答")],
-      nextCursor: null,
-      runs: [answeredRun(5, "completed")],
-      candidateDrafts: [],
-    });
-    api.submitMessage
-      .mockRejectedValueOnce(new TypeError("Network request failed"))
-      .mockResolvedValueOnce({
-        userMessage: message(3, "user", 6, "列出血压知识"),
-        run: run(6, "waiting"),
-      });
-    cryptoMock.randomUUID
-      .mockReturnValueOnce("retry-resubmit-id")
-      .mockReturnValueOnce("retry-resubmit-id");
-
-    const rendered = await renderController();
-    await waitFor(() => expect(rendered.result.current.isDraft).toBe(false));
-    let firstResult: boolean | undefined;
-    await act(async () => {
-      firstResult = await rendered.result.current.resubmitWithResultMode(5, "answer");
-    });
-    expect(firstResult).toBe(false);
-    expect(rendered.result.current.pending?.clientMessageId).toBe("retry-resubmit-id");
-    expect(rendered.result.current.pending?.resultMode).toBe("answer");
-
-    let retried: boolean | undefined;
-    await act(async () => {
-      retried = await rendered.result.current.retrySubmit();
-    });
-    expect(retried).toBe(true);
-    const calls = api.submitMessage.mock.calls;
-    expect(calls[0][2].clientMessageId).toBe("retry-resubmit-id");
-    expect(calls[1][2].clientMessageId).toBe("retry-resubmit-id");
-    expect(calls[1][2].resultMode).toBe("answer");
-    expect(calls[1][2].sourceRunId).toBe(5);
-    await rendered.unmount();
-
-    // 409 冲突：不保留发送中状态，只刷新服务端
-    api.submitMessage.mockRejectedValue({ status: 409, message: "进行中" });
-    const conflictView = await renderController();
-    await waitFor(() => expect(conflictView.result.current.isDraft).toBe(false));
-    await act(async () => {
-      await conflictView.result.current.resubmitWithResultMode(5, "entries");
-    });
-    expect(conflictView.result.current.pending).toBeNull();
-    expect(conflictView.result.current.submitError).toContain("进行中的回答");
-    await conflictView.unmount();
-  });
-
-  test("模式纠正不依赖来源用户消息已加载", async () => {
-    api.listConversations.mockResolvedValue([conversation(1)]);
-    api.getConversation.mockResolvedValue(conversation(1));
-    api.listMessages.mockResolvedValue({
-      items: [message(2, "assistant", 5, "综合回答")],
-      nextCursor: "older-page",
-      runs: [
-        answeredRun(5, "completed", {
-          standaloneQuery: "鞋柜防臭知识",
-          requestContextMode: "continue",
-        }),
-      ],
-      candidateDrafts: [],
-    });
-    api.submitMessage.mockResolvedValue({
-      userMessage: message(3, "user", 6, "原始问题"),
-      run: run(6, "waiting"),
-    });
-
-    const rendered = await renderController();
-    await waitFor(() => expect(rendered.result.current.isDraft).toBe(false));
-    await act(async () => {
-      expect(
-        await rendered.result.current.resubmitWithResultMode(5, "entries"),
-      ).toBe(true);
-    });
-    expect(api.submitMessage).toHaveBeenCalledWith(
-      "token",
-      1,
-      expect.objectContaining({
-        sourceRunId: 5,
-        resultMode: "entries",
-        message: "鞋柜防臭知识",
-      }),
-    );
-    await rendered.unmount();
-  });
-
-  test("仅使用我的知识库覆盖：成功发送后重置，结果未知重试保留 basis 与幂等键", async () => {
-    api.listConversations.mockResolvedValue([]);
-    api.createConversation.mockResolvedValue(conversation(60));
-    api.getConversation.mockResolvedValue(conversation(60));
-    api.listMessages.mockResolvedValue({
-      items: [],
-      nextCursor: null,
-      runs: [],
-      candidateDrafts: [],
-    });
-    api.submitMessage
-      .mockRejectedValueOnce(new TypeError("Network request failed"))
-      .mockResolvedValueOnce({
-        userMessage: message(61, "user", 8, "只查我的预算记录"),
-        run: run(8, "waiting"),
-      });
-
-    const rendered = await renderController();
-    await waitFor(() => expect(rendered.result.current.initialLoading).toBe(false));
-    await act(async () => {
-      rendered.result.current.setBasisMode("knowledge_only");
-    });
-    expect(rendered.result.current.modes.basisMode).toBe("knowledge_only");
-
-    await act(async () => {
-      await rendered.result.current.submit("只查我的预算记录");
-    });
-    expect(rendered.result.current.pending?.basisMode).toBe("knowledge_only");
-    expect(rendered.result.current.pending?.clientMessageId).toBe(
-      "test-client-id",
-    );
-
-    await act(async () => {
-      await rendered.result.current.retrySubmit();
-    });
-    expect(api.submitMessage).toHaveBeenCalledTimes(2);
-    const firstCall = api.submitMessage.mock.calls[0];
-    const retryCall = api.submitMessage.mock.calls[1];
-    expect(retryCall[1]).toBe(60);
-    expect(retryCall[2].basisMode).toBe("knowledge_only");
-    expect(firstCall[2].basisMode).toBe("knowledge_only");
-    expect(retryCall[2].clientMessageId).toBe(firstCall[2].clientMessageId);
-    expect(rendered.result.current.pending).toBeNull();
-    expect(rendered.result.current.modes.basisMode).toBe("auto");
-    await rendered.unmount();
+  expect(api.submitMessage).toHaveBeenCalledWith("token", 1, {
+    clientMessageId: "new-client-id",
+    message: "继续",
+    contextMode: "auto",
   });
 });
 
-function mockAppStateActive() {
-  const originalState = AppState.currentState;
-  Object.defineProperty(AppState, "currentState", {
-    value: "active",
-    configurable: true,
-    writable: true,
+test("旧历史 Run 即使残留 can_continue 也不能续接当前任务", async () => {
+  const older = run(9, "partial", 1, {
+    dialogueLoopStatus: "partial_completed",
+    canContinue: true,
+    updatedAt: "2026-09-19T09:00:00Z",
   });
-  const listener = jest
-    .spyOn(AppState, "addEventListener")
-    .mockImplementation((() => ({ remove: jest.fn() })) as never);
-  return () => {
-    Object.defineProperty(AppState, "currentState", {
-      value: originalState,
-      configurable: true,
-      writable: true,
+  const current = run(10, "completed", 1, {
+    canContinue: false,
+    updatedAt: "2026-09-19T10:00:00Z",
+  });
+  const currentConversation = { ...conversation(1), recentRunId: 10 };
+  const rendered = await setup([currentConversation], {
+    1: page(
+      [
+        message(1, "user", 9),
+        message(2, "assistant", 9, 1, "旧的部分结果"),
+        message(3, "user", 10, 1, "新问题"),
+        message(4, "assistant", 10, 1, "新回答"),
+      ],
+      [older, current],
+    ),
+  });
+  await waitFor(() => expect(rendered.result.current.thread.runsById.get(9)).toBeDefined());
+  expect(rendered.result.current.resumableRunId).toBeNull();
+  await act(async () => {
+    expect(await rendered.result.current.continueRun(9)).toBe(false);
+  });
+  expect(api.submitMessage).not.toHaveBeenCalled();
+});
+
+test("提交结果未知重试复用同一幂等键", async () => {
+  const rendered = await setup();
+  api.submitMessage
+    .mockRejectedValueOnce(new TypeError("Network request failed"))
+    .mockResolvedValueOnce({
+      userMessage: message(3, "user", 12, 1, "普通问题"),
+      run: run(12, "waiting"),
     });
-    listener.mockRestore();
+  await waitFor(() => expect(rendered.result.current.activeConversation?.id).toBe(1));
+  await act(async () => {
+    expect(await rendered.result.current.submit("普通问题")).toBe(false);
+  });
+  const stableId = rendered.result.current.pending?.clientMessageId;
+  expect(stableId).toBe("new-client-id");
+  expect(rendered.result.current.submitting).toBe(false);
+  expect(rendered.result.current.submissionResultUnknown).toBe(true);
+  await act(async () => {
+    expect(await rendered.result.current.retrySubmit()).toBe(true);
+  });
+  expect(api.submitMessage).toHaveBeenCalledTimes(2);
+  expect(api.submitMessage.mock.calls[0][2].clientMessageId).toBe(stableId);
+  expect(api.submitMessage.mock.calls[1][2].clientMessageId).toBe(stableId);
+  expect(rendered.result.current.submissionResultUnknown).toBe(false);
+});
+
+test("无待恢复工作时默认空白新对话，首次发送才创建 Conversation", async () => {
+  mockSessionInitial = { ...mockSessionInitial, choice: "draft" };
+  const rendered = await setup();
+  await waitFor(() => expect(rendered.result.current.initialLoading).toBe(false));
+  expect(rendered.result.current.isDraft).toBe(true);
+  expect(rendered.result.current.activeConversation).toBeNull();
+  expect(api.createConversation).not.toHaveBeenCalled();
+
+  api.createConversation.mockResolvedValue(conversation(9));
+  api.submitMessage.mockResolvedValue({
+    userMessage: message(9, "user", 90, 9, "首次问题"),
+    run: run(90, "waiting", 9),
+  });
+  await act(async () => {
+    expect(await rendered.result.current.submit("首次问题")).toBe(true);
+  });
+  expect(api.createConversation).toHaveBeenCalledTimes(1);
+  expect(api.submitMessage).toHaveBeenCalledWith(
+    "token",
+    9,
+    expect.objectContaining({ message: "首次问题" }),
+  );
+});
+
+test("本地恢复失败时从历史新建会话可退出错误态", async () => {
+  mockSessionInitial = {
+    ...mockSessionInitial,
+    choice: "draft",
+    bootStatus: "error",
+    bootError: "恢复记录读取失败",
   };
-}
+  const rendered = await setup();
+  expect(rendered.result.current.recoveryError).toBe("恢复记录读取失败");
+
+  await act(async () => {
+    rendered.result.current.startNewConversation();
+    await Promise.resolve();
+  });
+
+  await waitFor(() => expect(rendered.result.current.recoveryError).toBeNull());
+  expect(mockExitRecovery).toHaveBeenCalledTimes(1);
+  expect(rendered.result.current.isDraft).toBe(true);
+});
+
+test("创建 Conversation 结果未知时不自动重建或提交消息", async () => {
+  mockSessionInitial = { ...mockSessionInitial, choice: "draft" };
+  const rendered = await setup();
+  api.createConversation.mockRejectedValueOnce(new TypeError("Network request failed"));
+
+  await act(async () => {
+    expect(await rendered.result.current.submit("不能重建的问题")).toBe(false);
+  });
+  expect(rendered.result.current.conversationCreationUnknown).toBe(true);
+  expect(rendered.result.current.pending?.clientMessageId).toBe("new-client-id");
+  expect(await rendered.result.current.retrySubmit()).toBe(false);
+  expect(api.createConversation).toHaveBeenCalledTimes(1);
+  expect(api.submitMessage).not.toHaveBeenCalled();
+});
+
+test("恢复时先用 client_message_id 对账，已存在则不重复提交", async () => {
+  const pending = {
+    ...createPendingSubmission({ text: "已到达问题", contextMode: "auto" }),
+    clientMessageId: "stable-client-id",
+    conversationId: 1,
+  };
+  mockSessionInitial = {
+    ...mockSessionInitial,
+    choice: 1,
+    input: "已到达问题",
+    pending,
+    pendingState: "result_unknown",
+  };
+  const confirmed = {
+    ...message(3, "user", 12, 1, "已到达问题"),
+    clientMessageId: "stable-client-id",
+  };
+  const rendered = await setup([conversation(1)], {
+    1: page([confirmed], [run(12, "completed")]),
+  });
+
+  await waitFor(() => expect(rendered.result.current.pending).toBeNull());
+  expect(rendered.result.current.submissionResultUnknown).toBe(false);
+  expect(api.submitMessage).not.toHaveBeenCalled();
+});
+
+test("服务端恢复失败时保留明确错误并可重试", async () => {
+  mockSessionInitial = { ...mockSessionInitial, input: "待恢复输入" };
+  let shouldFail = true;
+  const rendered = await setup(
+    [conversation(1)],
+    { 1: page() },
+    undefined,
+    async (id) => {
+      if (shouldFail) throw new TypeError("Network request failed");
+      return conversation(id);
+    },
+  );
+  await waitFor(() => expect(rendered.result.current.recoveryError).not.toBeNull());
+
+  shouldFail = false;
+  await act(async () => {
+    rendered.result.current.retryRecovery();
+  });
+  await waitFor(() => expect(rendered.result.current.activeConversation?.id).toBe(1));
+  expect(rendered.result.current.recoveryError).toBeNull();
+});
+
+test("离开期间完成的活动 Run 恢复终态结果", async () => {
+  mockSessionInitial = {
+    ...mockSessionInitial,
+    recoveryRun: { conversationId: 1, runId: 10 },
+  };
+  const processing = run(10, "processing");
+  const completed = run(10, "completed", 1, {
+    dialogueBlocks: [{ kind: "text", text: "离开期间已完成" }],
+    updatedAt: "2026-09-20T10:05:00Z",
+  });
+  const rendered = await setup(
+    [conversation(1)],
+    {
+      1: page(
+        [message(1, "user", 10), message(2, "assistant", 10, 1, "")],
+        [processing],
+      ),
+    },
+    async () => completed,
+  );
+
+  await waitFor(() =>
+    expect(rendered.result.current.thread.runsById.get(10)?.status).toBe("completed"),
+  );
+  expect(rendered.result.current.activeRun).toBeNull();
+  expect(api.getRun).toHaveBeenCalledWith("token", 10);
+});
+
+test("正常提交进行中不能重复发送或恢复，且不进入结果未知", async () => {
+  const submission = deferred<{
+    userMessage: KnowledgeMessage;
+    run: KnowledgeRun;
+  }>();
+  const rendered = await setup();
+  api.submitMessage.mockReturnValue(submission.promise);
+  await waitFor(() => expect(rendered.result.current.activeConversation?.id).toBe(1));
+
+  let request!: Promise<boolean>;
+  await act(async () => {
+    request = rendered.result.current.submit("普通问题");
+    await Promise.resolve();
+  });
+  await waitFor(() => expect(rendered.result.current.submitting).toBe(true));
+  expect(rendered.result.current.submissionResultUnknown).toBe(false);
+  expect(await rendered.result.current.submit("重复问题")).toBe(false);
+  expect(await rendered.result.current.retrySubmit()).toBe(false);
+  expect(api.submitMessage).toHaveBeenCalledTimes(1);
+
+  submission.resolve({
+    userMessage: message(3, "user", 12, 1, "普通问题"),
+    run: run(12, "waiting"),
+  });
+  await act(async () => {
+    expect(await request).toBe(true);
+  });
+  expect(rendered.result.current.submitting).toBe(false);
+  expect(rendered.result.current.pending).toBeNull();
+});
+
+test("409 与明确服务端失败不伪装成提交结果未知", async () => {
+  const rendered = await setup();
+  await waitFor(() => expect(rendered.result.current.activeConversation?.id).toBe(1));
+
+  api.submitMessage.mockRejectedValueOnce(
+    Object.assign(new Error("已有进行中的回答"), { status: 409 }),
+  );
+  await act(async () => {
+    expect(await rendered.result.current.submit("冲突问题")).toBe(false);
+  });
+  expect(rendered.result.current.pending).toBeNull();
+  expect(rendered.result.current.submissionResultUnknown).toBe(false);
+  expect(rendered.result.current.submitError).toContain("已有进行中的回答");
+
+  api.submitMessage.mockRejectedValueOnce(
+    Object.assign(new Error("服务暂时不可用"), { status: 503 }),
+  );
+  await act(async () => {
+    expect(await rendered.result.current.submit("服务失败问题")).toBe(false);
+  });
+  expect(rendered.result.current.pending).toBeNull();
+  expect(rendered.result.current.submissionResultUnknown).toBe(false);
+  expect(rendered.result.current.submitError).toBe("服务暂时不可用");
+});
+
+test("切换会话后只恢复目标 Conversation 的服务端消息", async () => {
+  const rendered = await setup([conversation(1), conversation(2)], {
+    1: page([message(1, "user", 10, 1, "会话一")]),
+    2: page([message(5, "user", 20, 2, "会话二")]),
+  });
+  await waitFor(() => expect(rendered.result.current.thread.items[0]?.content).toBe("会话一"));
+  await act(async () => {
+    rendered.result.current.switchToConversation(2);
+  });
+  await waitFor(() => expect(rendered.result.current.activeConversation?.id).toBe(2));
+  await waitFor(() => expect(rendered.result.current.thread.items[0]?.content).toBe("会话二"));
+});
+
+test("会话 A 的迟到历史页成功响应不污染会话 B", async () => {
+  const older = deferred<KnowledgeMessagePage>();
+  const pages: Record<number, KnowledgeMessagePage> = {
+    1: page([message(5, "user", 15, 1, "会话一最近消息")], [], "a-older"),
+    2: page([message(20, "user", 20, 2, "会话二消息")], [], "b-older"),
+  };
+  const rendered = await setup([conversation(1), conversation(2)], pages);
+  await waitFor(() => expect(rendered.result.current.thread.nextCursor).toBe("a-older"));
+  api.listMessages.mockImplementation(async (_token, id, cursor) => {
+    if (id === 1 && cursor === "a-older") return older.promise;
+    return pages[id] ?? page();
+  });
+
+  let request!: Promise<void>;
+  await act(async () => {
+    request = rendered.result.current.loadOlderMessages();
+    await Promise.resolve();
+  });
+  await waitFor(() => expect(rendered.result.current.loadingOlder).toBe(true));
+  await act(async () => {
+    rendered.result.current.switchToConversation(2);
+  });
+  await waitFor(() => expect(rendered.result.current.activeConversation?.id).toBe(2));
+  await waitFor(() => expect(rendered.result.current.thread.items[0]?.id).toBe(20));
+
+  older.resolve(
+    page(
+      [message(3, "user", 13, 1, "会话一旧消息")],
+      [run(13, "completed", 1)],
+      null,
+    ),
+  );
+  await act(async () => {
+    await request;
+  });
+
+  expect(rendered.result.current.thread.items.map((item) => item.id)).toEqual([20]);
+  expect(rendered.result.current.thread.runsById.has(13)).toBe(false);
+  expect(rendered.result.current.thread.nextCursor).toBe("b-older");
+  expect(rendered.result.current.loadingOlder).toBe(false);
+  expect(rendered.result.current.olderError).toBeNull();
+});
+
+test("会话 A 的迟到历史页失败不污染新对话", async () => {
+  const older = deferred<KnowledgeMessagePage>();
+  const rendered = await setup([conversation(1)], {
+    1: page([message(5, "user", 15)], [], "a-older"),
+  });
+  await waitFor(() => expect(rendered.result.current.thread.nextCursor).toBe("a-older"));
+  api.listMessages.mockImplementation(async (_token, id, cursor) => {
+    if (id === 1 && cursor === "a-older") return older.promise;
+    return page();
+  });
+
+  let request!: Promise<void>;
+  await act(async () => {
+    request = rendered.result.current.loadOlderMessages();
+    await Promise.resolve();
+  });
+  await waitFor(() => expect(rendered.result.current.loadingOlder).toBe(true));
+  await act(async () => {
+    rendered.result.current.startNewConversation();
+  });
+  await waitFor(() => expect(rendered.result.current.isDraft).toBe(true));
+
+  older.reject(new TypeError("Network request failed"));
+  await act(async () => {
+    await request;
+  });
+
+  expect(rendered.result.current.thread.items).toEqual([]);
+  expect(rendered.result.current.loadingOlder).toBe(false);
+  expect(rendered.result.current.olderError).toBeNull();
+});
+
+test("会话 A 的迟到范围失败不改变会话 B 状态", async () => {
+  const scope = deferred<KnowledgeConversation>();
+  const rendered = await setup([conversation(1), conversation(2)], {
+    1: page([message(1, "user", 10, 1, "会话一")]),
+    2: page([message(5, "user", 20, 2, "会话二")]),
+  });
+  api.changeScope.mockReturnValue(scope.promise);
+  await waitFor(() => expect(rendered.result.current.activeConversation?.id).toBe(1));
+
+  let request!: Promise<void>;
+  await act(async () => {
+    request = rendered.result.current.changeScope({ scopeType: "project", projectId: 8 });
+    await Promise.resolve();
+  });
+  await waitFor(() => expect(rendered.result.current.scopeBusy).toBe(true));
+  await act(async () => {
+    rendered.result.current.switchToConversation(2);
+  });
+  await waitFor(() => expect(rendered.result.current.activeConversation?.id).toBe(2));
+  expect(rendered.result.current.scopeBusy).toBe(false);
+
+  scope.reject(new TypeError("Network request failed"));
+  await act(async () => {
+    await request;
+  });
+
+  expect(rendered.result.current.activeConversation?.id).toBe(2);
+  expect(rendered.result.current.scopeError).toBeNull();
+  expect(rendered.result.current.thread.items.map((item) => item.id)).toEqual([5]);
+});
+
+test("会话 A 的迟到范围成功不清空会话 B 已加载历史", async () => {
+  const scope = deferred<KnowledgeConversation>();
+  const recentPages: Record<number, KnowledgeMessagePage> = {
+    1: page([message(1, "user", 10, 1, "会话一")]),
+    2: page([message(6, "assistant", 20, 2, "会话二最近消息")], [], "b-older"),
+  };
+  const rendered = await setup([conversation(1), conversation(2)], recentPages);
+  api.changeScope.mockReturnValue(scope.promise);
+  await waitFor(() => expect(rendered.result.current.activeConversation?.id).toBe(1));
+
+  let scopeRequest!: Promise<void>;
+  await act(async () => {
+    scopeRequest = rendered.result.current.changeScope({
+      scopeType: "project",
+      projectId: 8,
+    });
+    await Promise.resolve();
+  });
+  await act(async () => {
+    rendered.result.current.switchToConversation(2);
+  });
+  await waitFor(() => expect(rendered.result.current.thread.nextCursor).toBe("b-older"));
+  api.listMessages.mockImplementation(async (_token, id, cursor) => {
+    if (id === 2 && cursor === "b-older") {
+      return page(
+        [message(4, "assistant", 19, 2, "会话二旧消息")],
+        [run(19, "completed", 2)],
+        null,
+      );
+    }
+    return recentPages[id] ?? page();
+  });
+  await act(async () => {
+    await rendered.result.current.loadOlderMessages();
+  });
+  await waitFor(() =>
+    expect(rendered.result.current.thread.items.map((item) => item.id)).toEqual([4, 6]),
+  );
+
+  scope.resolve({
+    ...conversation(1),
+    scopeType: "project",
+    projectId: 8,
+    projectName: "会话一项目",
+  });
+  await act(async () => {
+    await scopeRequest;
+  });
+
+  expect(rendered.result.current.activeConversation?.id).toBe(2);
+  expect(rendered.result.current.thread.items.map((item) => item.id)).toEqual([4, 6]);
+  expect(rendered.result.current.thread.runsById.has(19)).toBe(true);
+  expect(rendered.result.current.thread.hasMore).toBe(false);
+});
+
+test("会话 A 的迟到取消成功不改变会话 B 的活动 Run", async () => {
+  mockAppActive = false;
+  const cancellation = deferred<KnowledgeRun>();
+  const runA = run(10, "processing", 1);
+  const runB = run(20, "processing", 2);
+  const rendered = await setup([conversation(1), conversation(2)], {
+    1: page([message(1, "user", 10, 1), message(2, "assistant", 10, 1)], [runA]),
+    2: page([message(5, "user", 20, 2), message(6, "assistant", 20, 2)], [runB]),
+  });
+  api.cancelRun.mockReturnValue(cancellation.promise);
+  await waitFor(() => expect(rendered.result.current.activeRun?.id).toBe(10));
+
+  let request!: Promise<void>;
+  await act(async () => {
+    request = rendered.result.current.requestCancelRun();
+    await Promise.resolve();
+  });
+  await waitFor(() => expect(rendered.result.current.cancelling).toBe(true));
+  await act(async () => {
+    rendered.result.current.switchToConversation(2);
+  });
+  await waitFor(() => expect(rendered.result.current.activeRun?.id).toBe(20));
+  expect(rendered.result.current.cancelling).toBe(false);
+
+  cancellation.resolve(
+    run(10, "cancelled", 1, { updatedAt: "2026-09-19T10:01:00Z" }),
+  );
+  await act(async () => {
+    await request;
+  });
+
+  expect(rendered.result.current.activeRun?.id).toBe(20);
+  expect(rendered.result.current.thread.runsById.has(10)).toBe(false);
+  expect(rendered.result.current.cancelError).toBeNull();
+});
+
+test("App 在后台时不轮询，恢复前台后读取同一活动 Run", async () => {
+  mockAppActive = false;
+  const processing = run(10, "processing");
+  const rendered = await setup(
+    [conversation(1)],
+    {
+      1: page([message(1, "user", 10), message(2, "assistant", 10)], [processing]),
+    },
+    () => new Promise<KnowledgeRun>(() => undefined),
+  );
+  api.getRun.mockResolvedValue(run(10, "completed", 1, { dialogueBlocks: [{ kind: "text", text: "完成" }] }));
+  await waitFor(() => expect(rendered.result.current.activeRun?.id).toBe(10));
+  expect(api.getRun).not.toHaveBeenCalled();
+
+  mockAppActive = true;
+  await rendered.rerender(undefined);
+  await waitFor(() => expect(api.getRun).toHaveBeenCalledWith("token", 10));
+  await waitFor(() => expect(rendered.result.current.activeRun).toBeNull());
+});
+
+test("失败后重新提问创建新的 Run，不复用旧消息标识", async () => {
+  const failed = run(10, "failed", 1, { error: "服务失败" });
+  const rendered = await setup([conversation(1)], {
+    1: page([message(1, "user", 10, 1, "原问题"), message(2, "assistant", 10)], [failed]),
+  });
+  api.submitMessage.mockResolvedValue({
+    userMessage: message(3, "user", 11, 1, "原问题"),
+    run: run(11, "waiting"),
+  });
+  await waitFor(() => expect(rendered.result.current.thread.runsById.get(10)).toBeDefined());
+  await act(async () => {
+    expect(await rendered.result.current.retryRun(10)).toBe(true);
+  });
+  expect(api.submitMessage.mock.calls[0][2]).toMatchObject({
+    clientMessageId: "new-client-id",
+    message: "原问题",
+  });
+});
+
+test("取消只提交当前活动 Run", async () => {
+  const processing = run(10, "processing");
+  const rendered = await setup(
+    [conversation(1)],
+    {
+      1: page([message(1, "user", 10), message(2, "assistant", 10)], [processing]),
+    },
+    () => new Promise<KnowledgeRun>(() => undefined),
+  );
+  const cancelled = run(10, "cancelled", 1, {
+    updatedAt: "2026-09-19T10:01:00Z",
+  });
+  api.cancelRun.mockResolvedValue(cancelled);
+  await waitFor(() => expect(rendered.result.current.activeRun?.id).toBe(10));
+  await act(async () => {
+    await rendered.result.current.requestCancelRun();
+  });
+  expect(api.cancelRun).toHaveBeenCalledWith("token", 10);
+  await waitFor(() => expect(rendered.result.current.activeRun).toBeNull());
+});

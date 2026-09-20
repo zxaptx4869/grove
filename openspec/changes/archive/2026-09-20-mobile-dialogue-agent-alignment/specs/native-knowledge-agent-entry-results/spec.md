@@ -1,9 +1,4 @@
-# native-knowledge-agent-entry-results Specification
-
-## Purpose
-定义正式移动端的对象列表、知识结果扫描和按需只读详情交互。列表快照、当前 Entry 内容和本轮 Evidence 分别表达，客户端展开不提交聊天消息、不调用模型、不推进 Agent 上下文。
-
-## Requirements
+## ADDED Requirements
 
 ### Requirement: 原生对话按正式块区分对象与文本
 原生 App MUST 按正式 dialogue blocks 区分文本、项目列表、目录列表、知识列表、统计和明确 Entry 对象；所有块与列表项 MUST 保持服务端原序和生成时范围。项目或目录项 MUST NOT 提供知识正文展开，知识列表只有在列表项携带明确 Entry 标识时才能读取当前正文；客户端 MUST NOT 把计划、统计、排序说明或匹配项标成 Evidence。
@@ -89,3 +84,40 @@
 #### Scenario: 知识写操作不抢跑
 - **WHEN** 正式页面渲染知识列表或当前 Entry 正文
 - **THEN** 不出现整理、保存、修订、撤销、勾选、批量操作或确认应用文案
+
+## REMOVED Requirements
+
+### Requirement: 原生对话明确区分综合回答与 Entry 查找结果
+**Reason**: 本轮已批准的正式移动端合同替代旧行为，旧模式与引用协议不再要求实现。
+
+**Migration**: 由“原生对话按正式块区分对象与文本”承接适用行为；不恢复已移除的移动端入口或修改共享后端。
+
+### Requirement: Entry 结果卡提供稳定扫描信息与当前对象详情
+**Reason**: 本轮已批准的正式移动端合同替代旧行为，旧模式与引用协议不再要求实现。
+
+**Migration**: 由“知识列表提供紧凑扫描信息与底部只读详情”承接适用行为；不恢复已移除的移动端入口或修改共享后端。
+
+### Requirement: 原生 Entry 结果严格遵循移动原型与可访问性基线
+**Reason**: 本轮已批准的正式移动端合同替代旧行为，旧模式与引用协议不再要求实现。
+
+**Migration**: 由“原生知识列表与详情遵循移动原型与可访问性基线”承接适用行为；不恢复已移除的移动端入口或修改共享后端。
+
+### Requirement: 用户可以在发送前覆盖结果形态并纠正自动判断
+**Reason**: 正式 adapter 不执行移动端旧 `result_mode` 控件，保留入口会误导用户并形成第二套路由。
+
+**Migration**: 用户用自然语言提出所需结果，客户端按服务端 dialogue blocks 展示；不提供旧结果纠正重提。
+
+### Requirement: 分页、空结果和部分失败在原位可恢复
+**Reason**: 旧 v1/v2 Entry Result 专用分页合同不再作为正式移动端输出主合同。
+
+**Migration**: list 与 insufficient 块按服务端本轮交付内容展示；单 Entry 当前正文读取可独立重试。
+
+### Requirement: 原生端按完整性展示结构化筛选与聚合
+**Reason**: 客户端不再维护旧 v2 Entry Result 专用筛选与聚合适配器。
+
+**Migration**: 正式 statistic 与 list 块按其公开字段和原序展示，不从卡片数量推断统计。
+
+### Requirement: 原生端兼容 v1/v2 历史结果并保持当前对象复验
+**Reason**: 移动端尚未上线，不为旧测试 Run 保留复杂 v1/v2 渲染双轨。
+
+**Migration**: 旧 Run 仅在有扁平 answer 时做简单文本回退；当前正式链路历史按 dialogue blocks 恢复。

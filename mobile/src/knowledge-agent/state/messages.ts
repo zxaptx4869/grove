@@ -1,8 +1,6 @@
-/** 消息页状态：最近页替换、向前分页 prepend 与按 id 去重。 */
+/** 消息页状态：服务端 Run 为权威，按 id 归并且保持消息原序。 */
 
 import type {
-  KnowledgeCandidateDraft,
-  KnowledgeEntryRevisionDraft,
   KnowledgeMessage,
   KnowledgeMessagePage,
   KnowledgeRun,
@@ -11,77 +9,31 @@ import type {
 export interface MessageThreadState {
   items: KnowledgeMessage[];
   runsById: Map<number, KnowledgeRun>;
-  draftsById: Map<number, KnowledgeCandidateDraft>;
-  revisionDraftsById: Map<number, KnowledgeEntryRevisionDraft>;
   nextCursor: string | null;
   hasMore: boolean;
 }
 
 export function emptyThread(): MessageThreadState {
-  return {
-    items: [],
-    runsById: new Map(),
-    draftsById: new Map(),
-    revisionDraftsById: new Map(),
-    nextCursor: null,
-    hasMore: false,
-  };
+  return { items: [], runsById: new Map(), nextCursor: null, hasMore: false };
 }
 
 function dedupeById(items: KnowledgeMessage[]): KnowledgeMessage[] {
   const seen = new Set<number>();
-  const result: KnowledgeMessage[] = [];
-  for (const item of items) {
-    if (seen.has(item.id)) continue;
+  return items.filter((item) => {
+    if (seen.has(item.id)) return false;
     seen.add(item.id);
-    result.push(item);
-  }
-  return result;
+    return true;
+  });
 }
 
 function mergeRuns(
-  runsById: Map<number, KnowledgeRun>,
-  runs: KnowledgeRun[],
+  previous: Map<number, KnowledgeRun>,
+  incoming: KnowledgeRun[],
 ): Map<number, KnowledgeRun> {
-  const next = new Map(runsById);
-  for (const run of runs) {
+  const next = new Map(previous);
+  for (const run of incoming) {
     const existing = next.get(run.id);
-    // 服务端数据是权威状态：同 id 时以更新的 updated_at 为准
-    if (
-      existing === undefined ||
-      run.updatedAt >= existing.updatedAt
-    ) {
-      next.set(run.id, run);
-    }
-  }
-  return next;
-}
-
-function mergeDrafts(
-  draftsById: Map<number, KnowledgeCandidateDraft>,
-  drafts: KnowledgeCandidateDraft[],
-): Map<number, KnowledgeCandidateDraft> {
-  const next = new Map(draftsById);
-  for (const draft of drafts) {
-    const existing = next.get(draft.id);
-    // 服务端是权威状态：同 id 时以更新的 updated_at 为准
-    if (existing === undefined || draft.updatedAt >= existing.updatedAt) {
-      next.set(draft.id, draft);
-    }
-  }
-  return next;
-}
-
-function mergeRevisionDrafts(
-  revisionDraftsById: Map<number, KnowledgeEntryRevisionDraft>,
-  drafts: KnowledgeEntryRevisionDraft[],
-): Map<number, KnowledgeEntryRevisionDraft> {
-  const next = new Map(revisionDraftsById);
-  for (const draft of drafts) {
-    const existing = next.get(draft.id);
-    if (existing === undefined || draft.updatedAt >= existing.updatedAt) {
-      next.set(draft.id, draft);
-    }
+    if (!existing || run.updatedAt >= existing.updatedAt) next.set(run.id, run);
   }
   return next;
 }
@@ -93,11 +45,6 @@ export function applyRecentPage(
   return {
     items: dedupeById(page.items),
     runsById: mergeRuns(state.runsById, page.runs),
-    draftsById: mergeDrafts(state.draftsById, page.candidateDrafts),
-    revisionDraftsById: mergeRevisionDrafts(
-      state.revisionDraftsById,
-      page.entryRevisionDrafts ?? [],
-    ),
     nextCursor: page.nextCursor,
     hasMore: page.nextCursor !== null,
   };
@@ -107,19 +54,11 @@ export function prependOlderPage(
   state: MessageThreadState,
   page: KnowledgeMessagePage,
 ): MessageThreadState {
-  // 更早页整体插到当前消息之前：重复消息保留现有（更晚）版本及其位置，
-  // 只把旧页独有的消息前置，不改变已有消息的相对顺序。
   const existingIds = new Set(state.items.map((item) => item.id));
   const pageOnly = page.items.filter((item) => !existingIds.has(item.id));
-  const merged = [...pageOnly, ...state.items];
   return {
-    items: merged,
+    items: [...pageOnly, ...state.items],
     runsById: mergeRuns(state.runsById, page.runs),
-    draftsById: mergeDrafts(state.draftsById, page.candidateDrafts),
-    revisionDraftsById: mergeRevisionDrafts(
-      state.revisionDraftsById,
-      page.entryRevisionDrafts ?? [],
-    ),
     nextCursor: page.nextCursor,
     hasMore: page.nextCursor !== null,
   };
@@ -130,13 +69,10 @@ export function upsertMessage(
   message: KnowledgeMessage,
 ): MessageThreadState {
   const index = state.items.findIndex((item) => item.id === message.id);
-  if (index >= 0) {
-    // 同一消息已存在：原位替换内容，不改变消息顺序
-    const items = [...state.items];
-    items[index] = message;
-    return { ...state, items };
-  }
-  return { ...state, items: [...state.items, message] };
+  if (index < 0) return { ...state, items: [...state.items, message] };
+  const items = [...state.items];
+  items[index] = message;
+  return { ...state, items };
 }
 
 export function upsertRun(
@@ -146,52 +82,19 @@ export function upsertRun(
   return { ...state, runsById: mergeRuns(state.runsById, [run]) };
 }
 
-export function upsertDraft(
-  state: MessageThreadState,
-  draft: KnowledgeCandidateDraft,
-): MessageThreadState {
-  return { ...state, draftsById: mergeDrafts(state.draftsById, [draft]) };
-}
-
-export function upsertRevisionDraft(
-  state: MessageThreadState,
-  draft: KnowledgeEntryRevisionDraft,
-): MessageThreadState {
-  return {
-    ...state,
-    revisionDraftsById: mergeRevisionDrafts(state.revisionDraftsById, [draft]),
-  };
-}
-
-export function threadFromPage(page: KnowledgeMessagePage): MessageThreadState {
-  return applyRecentPage(emptyThread(), page);
-}
-
-/** 由服务端最近页、向前加载的旧页、轮询 Run 覆盖与本地提交消息组合线程。 */
 export function composeThread(
   recent: KnowledgeMessagePage | undefined,
   olderPages: KnowledgeMessagePage[],
   runOverrides: Map<number, KnowledgeRun>,
   extraMessages: KnowledgeMessage[],
-  draftOverrides: Map<number, KnowledgeCandidateDraft> = new Map(),
-  revisionDraftOverrides: Map<number, KnowledgeEntryRevisionDraft> = new Map(),
 ): MessageThreadState {
   if (!recent) return emptyThread();
-  let state = threadFromPage(recent);
-  for (let index = olderPages.length - 1; index >= 0; index -= 1) {
-    state = prependOlderPage(state, olderPages[index]);
+  let state = applyRecentPage(emptyThread(), recent);
+  // olderPages 按请求顺序保存：较近旧页在前，更早页在后；逐页前插才能保持时间正序。
+  for (const page of olderPages) {
+    state = prependOlderPage(state, page);
   }
-  for (const run of runOverrides.values()) {
-    state = upsertRun(state, run);
-  }
-  for (const message of extraMessages) {
-    state = upsertMessage(state, message);
-  }
-  for (const draft of draftOverrides.values()) {
-    state = upsertDraft(state, draft);
-  }
-  for (const draft of revisionDraftOverrides.values()) {
-    state = upsertRevisionDraft(state, draft);
-  }
+  for (const run of runOverrides.values()) state = upsertRun(state, run);
+  for (const message of extraMessages) state = upsertMessage(state, message);
   return state;
 }

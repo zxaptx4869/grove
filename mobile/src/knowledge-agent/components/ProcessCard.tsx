@@ -1,14 +1,21 @@
-import { Pressable, StyleSheet, Text, View } from "react-native";
+import { ActivityIndicator, Pressable, StyleSheet, Text, View } from "react-native";
 
 import { AgentIcon } from "@/src/knowledge-agent/components/AgentIcon";
-import { Badge, Card, CardBody, Eyebrow } from "@/src/knowledge-agent/components/ui";
-import { presentRunStep } from "@/src/knowledge-agent/adapters/steps";
+import { AppButton } from "@/src/knowledge-agent/components/ui";
+import { useReducedMotion } from "@/src/knowledge-agent/hooks/useReducedMotion";
 import type { KnowledgeRun } from "@/src/knowledge-agent/types";
 import { theme } from "@/src/theme";
 
+const STAGE_LABELS: Record<string, string> = {
+  organizing: "正在组织回答",
+  querying: "正在查询知识库",
+  reading_entries: "正在读取知识",
+  reading_sources: "正在核验来源",
+  finalizing: "正在整理回答",
+};
+
 export function ProcessCard({
   run,
-  scopeLabel,
   cancelling,
   pollingError,
   cancelError,
@@ -16,121 +23,93 @@ export function ProcessCard({
   onRetryPolling,
 }: {
   run: KnowledgeRun;
-  scopeLabel: string;
   cancelling: boolean;
   pollingError: string | null;
   cancelError: string | null;
   onCancel: () => void;
   onRetryPolling: () => void;
 }) {
-  const step = presentRunStep(run);
-  const eyebrow =
-    run.scopeType === "project" ? "检索项目知识" : "检索 Workspace 知识";
+  const reducedMotion = useReducedMotion();
+  const stage = run.dialogueStage
+    ? STAGE_LABELS[run.dialogueStage] ?? "正在处理"
+    : run.status === "waiting"
+      ? "等待执行"
+      : "正在准备本轮回答";
   return (
-    <Card>
-      <CardBody>
-        <View style={styles.head}>
-          <View style={styles.headMain}>
-            <Eyebrow icon={<AgentIcon name="search" size={14} color={theme.muted} />}>
-              {eyebrow}
-            </Eyebrow>
-            <Text style={styles.title}>{step.title}</Text>
+    <View style={styles.root}>
+      <View style={styles.head} accessibilityRole="progressbar">
+        {reducedMotion ? (
+          <View testID="agent-stage-static">
+            <AgentIcon name="message" size={16} color={theme.ai} />
           </View>
-          <Badge tone={pollingError !== null ? "error" : "neutral"}>
-            {cancelling
-              ? "正在取消"
-              : pollingError !== null
-                ? "状态异常"
-                : "进行中"}
-          </Badge>
-        </View>
-        <View style={styles.scopeRow}>
-          <AgentIcon name="folder" size={14} color={theme.muted} />
-          <Text style={styles.scopeText}>检索范围：{scopeLabel}</Text>
-        </View>
-        {(pollingError !== null || cancelError !== null) && (
-          <View style={styles.pollingErrorBox}>
-            <Text style={styles.pollingErrorText}>
-              {cancelError !== null
-                ? `取消未完成：${cancelError}`
-                : `状态更新失败：${pollingError}`}
-            </Text>
-            <Pressable
-              accessibilityRole="button"
-              accessibilityLabel="重试获取回答状态"
-              onPress={cancelError !== null ? onCancel : onRetryPolling}
-              style={({ pressed }) => [
-                styles.cancel,
-                pressed && styles.cancelPressed,
-              ]}
-            >
-              <Text style={styles.cancelText}>
-                {cancelError !== null ? "重试取消" : "重试"}
-              </Text>
-            </Pressable>
-          </View>
+        ) : (
+          <ActivityIndicator testID="agent-stage-spinner" size="small" color={theme.ai} />
         )}
-        {!cancelling && pollingError === null && cancelError === null && (
-          <Pressable
-            accessibilityRole="button"
-            accessibilityLabel="取消当前回答"
-            onPress={onCancel}
-            style={({ pressed }) => [styles.cancel, pressed && styles.cancelPressed]}
-          >
-            <Text style={styles.cancelText}>取消</Text>
-          </Pressable>
-        )}
-      </CardBody>
-    </Card>
+        <Text style={styles.title}>{cancelling ? "正在取消" : stage}</Text>
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel={cancelling ? "正在取消回答" : "停止当前回答"}
+          accessibilityState={{ disabled: cancelling }}
+          disabled={cancelling}
+          onPress={onCancel}
+          style={({ pressed }) => [
+            styles.stopButton,
+            cancelling && styles.stopButtonDisabled,
+            pressed && !cancelling && styles.pressed,
+          ]}
+        >
+          <AgentIcon name="stop" size={20} color={theme.ink} />
+        </Pressable>
+      </View>
+      {pollingError ? (
+        <View style={styles.errorBox} accessibilityRole="alert">
+          <Text style={styles.errorTitle}>连接中断，服务端状态未知</Text>
+          <Text style={styles.errorCopy}>{pollingError}</Text>
+          <AppButton
+            label="刷新状态"
+            variant="ghost"
+            onPress={onRetryPolling}
+            icon={<AgentIcon name="retry" size={15} color={theme.ink} />}
+          />
+        </View>
+      ) : null}
+      {cancelError ? (
+        <View style={styles.errorBox} accessibilityRole="alert">
+          <Text style={styles.errorTitle}>取消请求未完成</Text>
+          <Text style={styles.errorCopy}>{cancelError}</Text>
+          <AppButton label="重试取消" variant="ghost" onPress={onCancel} />
+        </View>
+      ) : null}
+    </View>
   );
 }
 
 const styles = StyleSheet.create({
+  root: { marginBottom: 12 },
   head: {
-    flexDirection: "row",
-    alignItems: "flex-start",
-    justifyContent: "space-between",
-    gap: 10,
-  },
-  headMain: { minWidth: 0, flex: 1 },
-  title: {
-    marginTop: 4,
-    fontSize: 16,
-    lineHeight: 23,
-    fontWeight: "700",
-    color: theme.ink,
-  },
-  scopeRow: {
+    minHeight: 44,
     flexDirection: "row",
     alignItems: "center",
-    gap: 6,
-    marginTop: 12,
-    paddingTop: 10,
-    borderTopWidth: 1,
-    borderTopColor: theme.border,
+    gap: 8,
+    paddingLeft: 3,
   },
-  scopeText: {
-    color: theme.muted,
-    fontSize: 10,
-    lineHeight: 16,
-  },
-  cancel: {
-    minHeight: 44,
+  title: { flex: 1, minWidth: 0, color: theme.muted, fontSize: 13, lineHeight: 20 },
+  stopButton: {
+    width: 44,
+    height: 44,
     alignItems: "center",
     justifyContent: "center",
-    marginTop: 12,
-    borderWidth: 1,
-    borderColor: theme.border,
     borderRadius: 8,
-    backgroundColor: theme.surface,
   },
-  cancelPressed: { opacity: 0.9 },
-  cancelText: { fontSize: 13, fontWeight: "600", color: theme.ink },
-  pollingErrorBox: { marginTop: 12 },
-  pollingErrorText: {
-    color: theme.error,
-    fontSize: 12,
-    lineHeight: 19,
-    marginBottom: 8,
+  stopButtonDisabled: { opacity: 0.48 },
+  errorBox: {
+    marginTop: 6,
+    gap: 7,
+    padding: 10,
+    borderRadius: 8,
+    backgroundColor: theme.errorSoft,
   },
+  errorTitle: { color: theme.error, fontSize: 12, fontWeight: "700" },
+  errorCopy: { color: theme.muted, fontSize: 11, lineHeight: 18 },
+  pressed: { backgroundColor: theme.soft },
 });

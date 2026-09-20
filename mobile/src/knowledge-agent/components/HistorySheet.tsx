@@ -1,7 +1,7 @@
-import { Pressable, StyleSheet, Text, View } from "react-native";
+import { FlatList, Pressable, StyleSheet, Text, View } from "react-native";
 
 import { AgentIcon } from "@/src/knowledge-agent/components/AgentIcon";
-import { Badge, Sheet } from "@/src/knowledge-agent/components/ui";
+import { AppButton, Badge, Sheet } from "@/src/knowledge-agent/components/ui";
 import type {
   KnowledgeConversation,
   RunStatus,
@@ -46,6 +46,7 @@ export function HistorySheet({
   activeConversationId,
   loading,
   error,
+  onRetry,
   onSelect,
   onNew,
   onClose,
@@ -55,65 +56,98 @@ export function HistorySheet({
   activeConversationId: number | null;
   loading: boolean;
   error: string | null;
+  onRetry: () => void;
   onSelect: (conversationId: number) => void;
   onNew: () => void;
   onClose: () => void;
 }) {
   return (
-    <Sheet visible={visible} title="对话历史" onClose={onClose}>
-      <View style={styles.newRow}>
-        <Pressable
-          accessibilityRole="button"
-          accessibilityLabel="新建对话"
-          onPress={onNew}
-          style={({ pressed }) => [styles.newButton, pressed && styles.pressed]}
-        >
-          <AgentIcon name="plus" size={16} color={theme.green} />
-          <Text style={styles.newButtonText}>新建对话</Text>
-        </Pressable>
-      </View>
-      {loading && <Text style={styles.hint}>正在加载对话历史…</Text>}
-      {error !== null && <Text style={styles.error}>对话历史加载失败：{error}</Text>}
-      {!loading && error === null && conversations?.length === 0 && (
-        <Text style={styles.hint}>还没有对话，发送第一条问题即可创建。</Text>
-      )}
-      {conversations?.map((conversation) => {
-        const selected = conversation.id === activeConversationId;
-        return (
+    <Sheet visible={visible} title="对话历史" onClose={onClose} scrollable={false}>
+      <View style={styles.body}>
+        <View style={styles.newRow}>
           <Pressable
-            key={conversation.id}
             accessibilityRole="button"
-            accessibilityLabel={`切换到对话：${conversation.title}`}
-            accessibilityState={{ selected }}
-            onPress={() => onSelect(conversation.id)}
-            style={({ pressed }) => [styles.row, pressed && styles.pressed]}
+            accessibilityLabel="新建对话"
+            onPress={onNew}
+            style={({ pressed }) => [styles.newButton, pressed && styles.pressed]}
           >
-            <View style={styles.rowTop}>
-              <Badge tone={selected ? "confirmed" : "neutral"}>
-                {conversation.scopeType === "project"
-                  ? conversation.projectName ?? "项目"
-                  : "全部知识"}
-              </Badge>
-              <Text style={styles.time}>{relativeTime(conversation.lastActivityAt)}</Text>
-            </View>
-            <Text style={styles.rowTitle} numberOfLines={1}>
-              {conversation.title}
-            </Text>
-            <Text style={styles.rowStatus}>
-              {conversation.activeTopicLabel
-                ? `主题：${conversation.activeTopicLabel} · `
-                : ""}
-              {conversationStatus(conversation)}
-            </Text>
+            <AgentIcon name="plus" size={16} color={theme.green} />
+            <Text style={styles.newButtonText}>新建对话</Text>
           </Pressable>
-        );
-      })}
+        </View>
+        <FlatList
+          testID="conversation-history-list"
+          data={conversations ?? []}
+          keyExtractor={(conversation) => String(conversation.id)}
+          initialNumToRender={12}
+          maxToRenderPerBatch={12}
+          windowSize={5}
+          removeClippedSubviews
+          keyboardShouldPersistTaps="handled"
+          style={styles.list}
+          contentContainerStyle={styles.listContent}
+          ListHeaderComponent={
+            <View>
+            {loading ? <Text style={styles.hint}>正在加载对话历史…</Text> : null}
+            {error !== null ? (
+              <View style={styles.errorBox} accessibilityRole="alert">
+                <Text style={styles.error}>对话历史加载失败：{error}</Text>
+                <AppButton
+                  label="重试加载历史"
+                  variant="ghost"
+                  onPress={onRetry}
+                  icon={<AgentIcon name="retry" size={15} color={theme.ink} />}
+                />
+              </View>
+            ) : null}
+            </View>
+          }
+          ListEmptyComponent={
+            !loading && error === null ? (
+              <Text style={styles.hint}>还没有对话，发送第一条问题即可创建。</Text>
+            ) : null
+          }
+          renderItem={({ item: conversation }) => {
+          const selected = conversation.id === activeConversationId;
+          return (
+            <Pressable
+              accessibilityRole="button"
+              accessibilityLabel={`切换到对话：${conversation.title}`}
+              accessibilityState={{ selected }}
+              onPress={() => onSelect(conversation.id)}
+              style={({ pressed }) => [styles.row, pressed && styles.pressed]}
+            >
+              <View style={styles.rowTop}>
+                <Badge tone={selected ? "confirmed" : "neutral"}>
+                  {conversation.scopeType === "project"
+                    ? conversation.projectName ?? "项目"
+                    : "全部知识"}
+                </Badge>
+                <Text style={styles.time}>{relativeTime(conversation.lastActivityAt)}</Text>
+              </View>
+              <Text style={styles.rowTitle} numberOfLines={1}>
+                {conversation.title}
+              </Text>
+              <Text style={styles.rowStatus}>
+                {conversation.activeTopicLabel
+                  ? `主题：${conversation.activeTopicLabel} · `
+                  : ""}
+                {conversationStatus(conversation)}
+              </Text>
+            </Pressable>
+          );
+          }}
+        />
+      </View>
     </Sheet>
   );
 }
 
 const styles = StyleSheet.create({
-  newRow: { marginBottom: 10 },
+  body: { flexShrink: 1 },
+  list: { flexGrow: 0 },
+  listContent: { paddingHorizontal: 16, paddingBottom: 18 },
+  newRow: { paddingHorizontal: 16, paddingTop: 8, paddingBottom: 10 },
   newButton: {
     minHeight: 44,
     flexDirection: "row",
@@ -153,5 +187,6 @@ const styles = StyleSheet.create({
     lineHeight: 18,
   },
   hint: { color: theme.muted, paddingVertical: 18, fontSize: 12 },
-  error: { color: theme.error, paddingVertical: 18, fontSize: 12 },
+  error: { color: theme.error, paddingVertical: 12, fontSize: 12 },
+  errorBox: { marginBottom: 8 },
 });

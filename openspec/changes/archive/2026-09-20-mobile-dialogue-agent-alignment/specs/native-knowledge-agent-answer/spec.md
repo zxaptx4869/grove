@@ -1,9 +1,4 @@
-# native-knowledge-agent-answer Specification
-
-## Purpose
-定义原生移动端对正式 dialogue blocks、真实执行状态、依据语义和 Markdown 文本的展示要求。回答始终为即时结果或未应用候选，不构成正式知识写入；共享后端和 Web 行为由各自规格约束。
-
-## Requirements
+## ADDED Requirements
 
 ### Requirement: 正式 Run 过程只展示可验证阶段
 原生 App MUST 以服务端 `dialogue_stage` 和 `dialogue_loop_status` 展示准备、检索知识、读取 Entry、核验证据、综合回答等用户可验证状态；`current_step` 只能用于旧响应回退。客户端 MUST NOT 展示隐藏推理、内部 continuation、控制器理由或与服务端无关的伪进度，且任一终态 MUST 停止进行中动效。
@@ -144,3 +139,75 @@
 #### Scenario: 选择复制
 - **WHEN** 用户长按回答、候选、Evidence、Entry 块或当前知识正文
 - **THEN** 原生文本可选择并复制完整内容，不出现 blocks 与扁平全文重复，也不影响列表点击、滚动或关闭
+
+## REMOVED Requirements
+
+### Requirement: Run 过程只展示可验证阶段
+**Reason**: 本轮已批准的正式移动端合同替代旧行为，旧模式与引用协议不再要求实现。
+
+**Migration**: 由“正式 Run 过程只展示可验证阶段”承接适用行为；不恢复已移除的移动端入口或修改共享后端。
+
+### Requirement: 结构化回答状态清晰区分
+**Reason**: 本轮已批准的正式移动端合同替代旧行为，旧模式与引用协议不再要求实现。
+
+**Migration**: 由“正式回答终态与内容语义清晰区分”承接适用行为；不恢复已移除的移动端入口或修改共享后端。
+
+### Requirement: 降级、取消与网络错误有稳定恢复
+**Reason**: 本轮已批准的正式移动端合同替代旧行为，旧模式与引用协议不再要求实现。
+
+**Migration**: 由“正式回答与网络错误保留稳定恢复”承接适用行为；不恢复已移除的移动端入口或修改共享后端。
+
+### Requirement: 长内容 Sheet 可滚动且恢复对话
+**Reason**: 本轮已批准的正式移动端合同替代旧行为，旧模式与引用协议不再要求实现。
+
+**Migration**: 由“对话弹层长内容可滚动且恢复阅读位置”承接适用行为；不恢复已移除的移动端入口或修改共享后端。
+
+### Requirement: 调查摘要有限且可解释
+**Reason**: 正式移动端只消费统一 dialogue 状态和块，不再维护旧 investigate 摘要、轮次、停止原因的专用渲染合同。
+
+**Migration**: 服务端明确交付的阶段、partial、insufficient 与其他块按新正式合同展示；共享调查能力不删除。
+
+### Requirement: 引用 Sheet 区分回答、Entry 与 Source 原文
+**Reason**: 旧 citation 来源条与详情由已空置的兼容字段驱动，容易把知识命中、Entry 当前内容和 Evidence 混为一体。
+
+**Migration**: Evidence 块按真实语义原位展示；明确 Entry 可按需读取当前正文，不重建旧 citation。
+
+### Requirement: 冲突双方证据可分别核验
+**Reason**: 旧 `answer.conflicts` 不再是正式 dialogue 交付合同。
+
+**Migration**: 服务端交付的 text、Evidence 或 insufficient 内容按块展示；不从旧扁平字段恢复专用冲突 UI。
+
+### Requirement: 回答后续动作使用结构化协议
+**Reason**: 原生端不再提供固定“整理成知识”或持久 Candidate Draft 写操作。
+
+**Migration**: dialogue candidate 块只作未应用建议展示；共享 Candidate 服务保留给其他调用方。
+
+### Requirement: 回答、草稿与 Candidate 回执语义分离
+**Reason**: 原生端不再创建或恢复持久 Candidate Draft/Candidate 回执。
+
+**Migration**: AI 即时回答与 dialogue candidate 块仍使用不同文案，旧测试数据不迁移。
+
+### Requirement: 回答正文的要点卡渲染
+**Reason**: 旧 `answer.points` 被正式 `dialogue_blocks` 取代，保留专用渲染会形成双轨。
+
+**Migration**: 历史回答仅保留简单扁平文本回退，新回答按 blocks 原序展示。
+
+### Requirement: 底部来源条可核验可访问
+**Reason**: 旧末尾 citations 条会重复排列知识并错误承接正式 Agent 的依据语义。
+
+**Migration**: Evidence 块原位显示；Entry 当前正文从明确 Entry 对象按需读取。
+
+### Requirement: 回答引用详情提供 Entry 定向后续操作
+**Reason**: 原生端本轮移除 Entry Revision 写操作。
+
+**Migration**: Entry 详情保持只读；共享 Revision 服务不删除。
+
+### Requirement: 回答、Candidate Draft 与 Entry Revision 语义不混淆
+**Reason**: 两类持久写操作均从原生端移除，不再需要并列操作语义。
+
+**Migration**: dialogue candidate 块继续明确“未应用”，不映射为持久 Draft。
+
+### Requirement: 回答下展示服务端确认的紧凑依据概览
+**Reason**: 正式 adapter 不交付旧 `answer_basis`，继续展示会产生伪依据或兼容分支。
+
+**Migration**: 只展示服务端正式 Entry/Evidence 等块的局部语义；无元数据时不推断全局依据。
