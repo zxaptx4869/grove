@@ -59,6 +59,7 @@ export function ConversationScreen() {
   const [scopeRecoveryNotice, setScopeRecoveryNotice] = useState<string | null>(null);
   const [modeOpen, setModeOpen] = useState(false);
   const [entryDetail, setEntryDetail] = useState<EntryDetailTarget | null>(null);
+  const closeEntryDetail = useCallback(() => setEntryDetail(null), []);
   const projectsQuery = useQuery({
     queryKey: ["projects", "mobile-scope"],
     queryFn: () => getProjects(token as string),
@@ -517,7 +518,7 @@ export function ConversationScreen() {
         onChange={controller.setModes}
         onClose={() => setModeOpen(false)}
       />
-      <EntryDetailSheet target={entryDetail} onClose={() => setEntryDetail(null)} />
+      <EntryDetailSheet target={entryDetail} onClose={closeEntryDetail} />
     </SafeAreaView>
   );
 }

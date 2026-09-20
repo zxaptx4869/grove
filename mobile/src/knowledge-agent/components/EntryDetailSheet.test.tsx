@@ -1,14 +1,26 @@
 import { act, cleanup, fireEvent, render, waitFor } from "@testing-library/react-native";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { Animated, LayoutAnimation } from "react-native";
+import { Animated, LayoutAnimation, Text } from "react-native";
 
 import { knowledgeAgentApi } from "@/src/knowledge-agent/api";
 import { EntryDetailSheet } from "@/src/knowledge-agent/components/EntryDetailSheet";
 import { knowledgeAgentKeys } from "@/src/knowledge-agent/queryKeys";
 
-jest.mock("@/src/auth", () => ({
-  useAuth: () => ({ token: "token", me: null }),
-}));
+const mockUseAuth = jest.fn(() => ({ token: "token", me: null }));
+const mockRichTextRender = jest.fn();
+
+jest.mock("@/src/auth", () => ({ useAuth: () => mockUseAuth() }));
+
+jest.mock("@/src/knowledge-agent/components/RichText", () => {
+  const React = jest.requireActual<typeof import("react")>("react");
+  const { Text: NativeText } = jest.requireActual<typeof import("react-native")>("react-native");
+  return {
+    RichText: ({ children }: { children: string }) => {
+      mockRichTextRender(children);
+      return React.createElement(NativeText, null, children);
+    },
+  };
+});
 
 jest.mock("@/src/knowledge-agent/hooks/useReducedMotion", () => ({
   useReducedMotion: () => false,
@@ -133,6 +145,52 @@ test("快速读取完成前不打开空弹层，正文就绪后一次呈现", as
   await waitFor(() => expect(rendered.getByText("知识详情")).toBeTruthy());
   expect(rendered.getByText("当前正文采用正常阅读字号。")).toBeTruthy();
   expect(rendered.queryByText("正在读取当前知识…")).toBeNull();
+});
+
+test("已有内容入场收尾不额外提交，父级更新不重渲染详情查询树", async () => {
+  const animationCallbacks = mockParallelAnimations();
+  const layoutTransition = jest.spyOn(LayoutAnimation, "configureNext").mockImplementation();
+  let resolveEntry!: (value: typeof ENTRY_DETAIL) => void;
+  api.getEntryCurrent.mockImplementation(
+    () => new Promise((resolve) => {
+      resolveEntry = resolve;
+    }),
+  );
+  const client = new QueryClient({
+    defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
+  });
+  client.setQueryData(knowledgeAgentKeys.entryCurrent(8), ENTRY_DETAIL);
+  clients.push(client);
+  const target = { entryId: 8, title: "闭水试验", projectName: null, nodePath: null };
+  const onClose = jest.fn();
+  const renderDetail = (marker: string) => (
+    <QueryClientProvider client={client}>
+      <EntryDetailSheet target={target} onClose={onClose} />
+      <Text>{marker}</Text>
+    </QueryClientProvider>
+  );
+  const rendered = await render(renderDetail("初始父级"));
+
+  await waitFor(() => expect(rendered.getByText("当前正文采用正常阅读字号。")).toBeTruthy());
+  mockUseAuth.mockClear();
+  await rendered.rerender(renderDetail("更新后的父级"));
+  expect(mockUseAuth).not.toHaveBeenCalled();
+
+  await presentSheet(rendered, 260);
+  expect(animationCallbacks).toHaveLength(1);
+  mockUseAuth.mockClear();
+  mockRichTextRender.mockClear();
+  await act(async () => resolveEntry({ ...ENTRY_DETAIL }));
+  await waitFor(() =>
+    expect(client.getQueryState(knowledgeAgentKeys.entryCurrent(8))?.fetchStatus).toBe("idle"),
+  );
+  expect(mockUseAuth).not.toHaveBeenCalled();
+  expect(mockRichTextRender).not.toHaveBeenCalled();
+
+  await act(() => animationCallbacks[0]?.({ finished: true }));
+
+  expect(mockRichTextRender).not.toHaveBeenCalled();
+  expect(layoutTransition).not.toHaveBeenCalled();
 });
 
 test("慢读取在入场期间完成时保持 loading 快照，入场结束后再显示正文", async () => {

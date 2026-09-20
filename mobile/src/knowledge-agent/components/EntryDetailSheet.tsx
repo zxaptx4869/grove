@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { ActivityIndicator, LayoutAnimation, StyleSheet, Text, View } from "react-native";
 import { useQuery } from "@tanstack/react-query";
 
@@ -34,7 +34,7 @@ function formatTime(value: string): string {
   return Number.isNaN(date.getTime()) ? "时间未知" : date.toLocaleString();
 }
 
-export function EntryDetailSheet({
+export const EntryDetailSheet = memo(function EntryDetailSheet({
   target,
   onClose,
 }: {
@@ -43,7 +43,7 @@ export function EntryDetailSheet({
 }) {
   if (!target) return null;
   return <ActiveEntryDetailSheet key={target.entryId} target={target} onClose={onClose} />;
-}
+});
 
 function ActiveEntryDetailSheet({
   target,
@@ -61,15 +61,16 @@ function ActiveEntryDetailSheet({
     queryFn: () => knowledgeAgentApi.getEntryCurrent(token as string, entryId),
     enabled: Boolean(token),
   });
+  const debugFetching = DEBUG_ENTRY_DETAIL ? query.isFetching : false;
   useEffect(() => {
     if (!DEBUG_ENTRY_DETAIL) return;
     console.debug("[Grove EntryDetail]", "query_state", {
       entryId,
       loading: query.isLoading,
-      fetching: query.isFetching,
+      fetching: debugFetching,
       error: query.isError,
     });
-  }, [entryId, query.isError, query.isFetching, query.isLoading]);
+  }, [debugFetching, entryId, query.isError, query.isLoading]);
   useEffect(() => {
     if (presentationRequested) return;
     const timer = setTimeout(
@@ -78,7 +79,10 @@ function ActiveEntryDetailSheet({
     );
     return () => clearTimeout(timer);
   }, [presentationRequested, query.isLoading]);
-  const error = query.isError ? classifyKnowledgeAgentError(query.error) : null;
+  const error = useMemo(
+    () => (query.isError ? classifyKnowledgeAgentError(query.error) : null),
+    [query.error, query.isError],
+  );
   const unavailable = error?.kind === "not_found" || error?.kind === "auth";
   const current = query.data ?? null;
   const liveState = useMemo<EntryDetailViewState>(
@@ -96,6 +100,10 @@ function ActiveEntryDetailSheet({
           : { kind: "ready", current },
     [current, error, query.isLoading, unavailable],
   );
+  const refetch = query.refetch;
+  const handleRetry = useCallback(() => {
+    void refetch();
+  }, [refetch]);
 
   if (!presentationRequested) return null;
   return (
@@ -103,13 +111,13 @@ function ActiveEntryDetailSheet({
       target={target}
       reducedMotion={reducedMotion}
       liveState={liveState}
-      onRetry={() => void query.refetch()}
+      onRetry={handleRetry}
       onClose={onClose}
     />
   );
 }
 
-function EntryDetailPresentation({
+const EntryDetailPresentation = memo(function EntryDetailPresentation({
   target,
   reducedMotion,
   liveState,
@@ -123,24 +131,37 @@ function EntryDetailPresentation({
   onClose: () => void;
 }) {
   const [displayedState, setDisplayedState] = useState(liveState);
-  const [presented, setPresented] = useState(false);
+  const displayedStateRef = useRef(displayedState);
+  const latestLiveStateRef = useRef(liveState);
+  const presentedRef = useRef(false);
+  useLayoutEffect(() => {
+    latestLiveStateRef.current = liveState;
+  }, [liveState]);
   const current = displayedState.kind === "ready" ? displayedState.current : null;
   const path = [target.projectName, target.nodePath ?? current?.nodeName]
     .filter(Boolean)
     .join(" / ");
-  const handlePresented = useCallback(() => setPresented(true), []);
-  useEffect(() => {
-    if (!presented || displayedState === liveState) return;
-    const timer = setTimeout(() => {
+  const applyLiveState = useCallback(
+    (nextState: EntryDetailViewState) => {
+      if (displayedStateRef.current === nextState) return;
       if (!reducedMotion) {
         LayoutAnimation.configureNext(
           LayoutAnimation.create(180, LayoutAnimation.Types.easeInEaseOut, "opacity"),
         );
       }
-      setDisplayedState(liveState);
-    }, 0);
-    return () => clearTimeout(timer);
-  }, [displayedState, liveState, presented, reducedMotion]);
+      displayedStateRef.current = nextState;
+      setDisplayedState(nextState);
+    },
+    [reducedMotion],
+  );
+  const handlePresented = useCallback(() => {
+    presentedRef.current = true;
+    applyLiveState(latestLiveStateRef.current);
+  }, [applyLiveState]);
+  useEffect(() => {
+    if (!presentedRef.current) return;
+    applyLiveState(liveState);
+  }, [applyLiveState, liveState]);
 
   return (
     <Sheet
@@ -187,9 +208,13 @@ function EntryDetailPresentation({
       </View>
     </Sheet>
   );
-}
+});
 
-function ReadyEntryDetail({ current }: { current: KnowledgeEntryCurrent }) {
+const ReadyEntryDetail = memo(function ReadyEntryDetail({
+  current,
+}: {
+  current: KnowledgeEntryCurrent;
+}) {
   return (
     <View>
       <Text style={styles.updatedAt}>更新于 {formatTime(current.updatedAt)}</Text>
@@ -214,7 +239,7 @@ function ReadyEntryDetail({ current }: { current: KnowledgeEntryCurrent }) {
       )}
     </View>
   );
-}
+});
 
 const styles = StyleSheet.create({
   headingRow: { flexDirection: "row", alignItems: "center", gap: 8 },
