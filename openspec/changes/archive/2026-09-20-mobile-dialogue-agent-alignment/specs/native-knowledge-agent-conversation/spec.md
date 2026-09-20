@@ -290,4 +290,3 @@
 #### Scenario: 旧历史 Run 不再可继续
 - **WHEN** 历史 Run 曾可继续但当前服务端响应为 `can_continue=false` 或已有更新 Run
 - **THEN** 客户端不根据旧缓存显示或执行继续
-
