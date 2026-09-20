@@ -1,49 +1,12 @@
 # native-knowledge-agent-conversation Specification
 
 ## Purpose
-TBD - created by archiving change add-native-knowledge-agent-conversation. Update Purpose after archive.
+定义原生移动端的知识范围、会话历史、默认新对话、未完成任务恢复、消息幂等和前后台轮询行为。移动端复用既有服务端对话合同，不引入新的 Agent 编排或跨会话事实记忆。
+
 ## Requirements
-### Requirement: 原生 App 恢复最近对话并支持新建
-原生 App MUST 区分真正的 App 启动与前后台、栏目往返、弹层开关或页面普通重挂载。没有本账号、本 Workspace 的移动端待恢复工作时，冷启动 MUST 显示沿用最后有效知识范围的空白新对话，并只在首次发送时创建服务端 Conversation。当前进程内的短暂离开 MUST 保留会话、未发送输入和阅读位置，不得按固定闲置时长或模型判断自动切断。
-
-#### Scenario: 无待办冷启动
-- **WHEN** 账号和 Workspace 已确认且没有未发送输入、活动/待查看 Run 或结果未知提交记录
-- **THEN** 对话首页显示空白新对话，不选择最近已完成历史，也不调用创建 Conversation 接口
-
-#### Scenario: 短暂离开再返回
-- **WHEN** 用户切后台、切换其他 App 栏目或打开关闭弹层后返回
-- **THEN** 页面保留当前 Conversation 或空白草稿、输入、范围和阅读位置，不重新执行冷启动选择
-
-#### Scenario: 新对话沿用范围
-- **WHEN** 用户冷启动进入空白页或从历史 Sheet 手动新建
-- **THEN** 页面沿用该身份最后有效的 Workspace/项目范围；项目失权或删除时明确提示并回到 Workspace 范围，不携带旧会话、continuation 或对象绑定
-
-#### Scenario: 启动恢复最近对话
-- **WHEN** 已登录用户启动 App 且当前 Workspace 存在多个知识对话
-- **THEN** 对话页打开最近活动对话并恢复其范围、最近消息、活动主题与 Run 状态
-
-#### Scenario: 没有历史对话
-- **WHEN** 当前用户在 Workspace 内没有知识对话
-- **THEN** 对话页显示可输入的空状态和当前草稿范围，不提前创建服务端空对话
-
-#### Scenario: 新建但未发送
-- **WHEN** 用户点击「新对话」后退出页面且未发送消息
-- **THEN** 系统不创建服务端 Conversation，历史列表不出现空记录
-
-#### Scenario: 新对话首次发送
-- **WHEN** 用户在草稿对话选择范围并首次发送非空问题
-- **THEN** 客户端先按该范围创建 Conversation，再向同一 Conversation 提交消息
 
 ### Requirement: 对话历史稳定分页与切换
-原生 App MUST 在对话页挂载时请求现有全量历史摘要，并在打开历史时复用当前 loading/data/error 状态；MUST NOT 把点击历史误报为网络请求起点。历史列表 MUST 使用不嵌套于同方向 ScrollView 的虚拟列表并限制首批渲染，弹层开关 SHOULD NOT 触发消息树无关重渲染。新建入口 MUST 在首次加载、刷新、空态和失败态持续可用；失败 MUST 可重试，已有列表刷新 MUST NOT 清空闪烁。
-
-#### Scenario: 历史首次加载或失败
-- **WHEN** 用户在摘要请求尚未完成或已失败时打开历史 Sheet
-- **THEN** Sheet 立即显示顶部新建入口和独立加载或失败重试状态，新建不等待历史返回
-
-#### Scenario: 大量历史摘要
-- **WHEN** 全量接口返回大量 Conversation 摘要
-- **THEN** 客户端以虚拟列表分批挂载行且不嵌套纵向 ScrollView；本轮不声称减少了网络响应体或 JSON 解析成本
+原生 App MUST 显示当前用户的对话历史摘要，并按服务端游标恢复最近消息；初次加载 MUST 渲染最近一页且保持时间正序，用户滚动到顶部时 MUST 向前加载更早消息并按 message_id/run_id 去重，不得跳过、倒序或重复显示。
 
 #### Scenario: 打开历史列表
 - **WHEN** 用户打开对话历史 Sheet
@@ -62,15 +25,7 @@ TBD - created by archiving change add-native-knowledge-agent-conversation. Updat
 - **THEN** 页面保留已知内容并显示就地重试，不把错误渲染为无历史空状态
 
 ### Requirement: 范围持续可见且按对话切换
-原生对话页 MUST 在顶部左侧显示不可点击的 G 品牌标识、中间仅显示可点击的当前知识范围文字与轻量下拉箭头、右侧仅显示清晰可辨且可访问的对话历史图标。长项目名 MUST NOT 挤压两侧稳定触控区。历史 Sheet MUST 在顶部提供明显的新建对话入口；范围切换、历史会话切换与新建对话 MUST 实际可用。消息 `context_mode` 设置 MUST NOT 替代或暗示上述会话操作，顶部或 Composer 外 MUST NOT 增加第二个新建入口。
-
-#### Scenario: 打开知识范围
-- **WHEN** 用户点击顶部中间的当前知识范围
-- **THEN** 页面打开既有范围 Sheet，并可在没有活动 Run 时切换 Workspace 或项目范围
-
-#### Scenario: 打开历史并新建对话
-- **WHEN** 用户点击顶部右侧历史入口后选择历史会话或“新建对话”
-- **THEN** 页面分别切换到所选 Conversation 或进入新对话草稿，且消息上下文覆盖不参与该操作
+原生对话顶栏 MUST 持续显示当前 Conversation 的 Workspace「全部知识」或具体项目范围；用户选择项 MUST 只有全部知识和当前 Workspace 项目。草稿范围只用于创建参数，既有对话切换 MUST 调用服务端；每个历史回答 MUST 显示生成时范围快照。
 
 #### Scenario: 草稿选择项目范围
 - **WHEN** 用户在尚未创建的对话选择当前 Workspace 某项目
@@ -123,49 +78,6 @@ TBD - created by archiving change add-native-knowledge-agent-conversation. Updat
 - **WHEN** 输入为空白或超过服务端最大长度
 - **THEN** 发送按钮禁用或显示本地校验，且不创建 Conversation、消息或 Run
 
-### Requirement: 用户可覆盖上下文与回答模式
-原生 App MUST 默认按 `context_mode=auto` 提交，并只提供服务端正式支持且语义准确的“继续当前主题”和“新话题”一次性覆盖；非默认选择 MUST 在发送前可见、可移除，成功提交后 MUST 恢复默认，提交结果未知的重试 MUST 复用原选择和同一 `client_message_id`。原生 App MUST NOT 提供快速/深度、强制结果形式、依据模式或旧结果纠正入口，也 MUST NOT 为保留控件改变 Agent 路由、提示词或执行规则。
-
-#### Scenario: 默认自动上下文
-- **WHEN** 用户不打开上下文设置直接发送
-- **THEN** 客户端提交 `context_mode=auto` 且输入区不显示设置标签
-
-#### Scenario: 强制继续当前主题
-- **WHEN** 用户为下一条消息选择继续当前主题
-- **THEN** 客户端提交 `context_mode=continue`，保留服务端可能要求澄清或拒绝续接的结果
-
-#### Scenario: 强制新话题
-- **WHEN** 用户为下一条消息选择新话题
-- **THEN** 客户端提交 `context_mode=new_topic`，并在确定成功后清除该一次性覆盖
-
-#### Scenario: 上下文设置结果未知
-- **WHEN** 非默认上下文消息提交结果未知
-- **THEN** 客户端保留原 Conversation、文本、上下文模式和 `client_message_id` 重试，不恢复 auto 或创建第二条本地消息
-
-#### Scenario: 不再展示废弃设置
-- **WHEN** 用户打开本次提问设置
-- **THEN** 页面不存在快速/深度、综合回答/知识列表、仅知识库或旧结果纠正选项
-
-#### Scenario: 默认自动模式
-- **WHEN** 用户不打开模式设置直接发送
-- **THEN** 客户端提交四种 `auto` 且不在输入区堆叠模式标签
-
-#### Scenario: 强制深度查找
-- **WHEN** 用户选择深度查找后发送下一条消息
-- **THEN** 客户端提交 `answer_mode=investigate`，发送前显示该选择，成功后下一条恢复 auto
-
-#### Scenario: 仅使用我的知识库
-- **WHEN** 用户为下一条消息选择“仅使用我的知识库”
-- **THEN** Composer 显示可移除的一次性依据 Chip，提交 `basis_mode=knowledge_only`，成功后下一条恢复 auto
-
-#### Scenario: 依据模式网络重试
-- **WHEN** `knowledge_only` 消息提交结果未知
-- **THEN** 客户端保留原 Conversation、文本、四类模式和 `client_message_id` 重试，不改回 auto 或创建第二条本地消息
-
-#### Scenario: 旧服务端缺少依据能力
-- **WHEN** 原生 App 收到不包含 basis 字段的旧响应或服务端明确不接受新字段
-- **THEN** 已有对话、回答、范围、上下文和回答模式继续可用，界面不伪造依据记录
-
 ### Requirement: 活动 Run 前台轮询并可取消恢复
 原生 App MUST 只在 App 前台对 waiting/processing Run 轮询服务端；进入后台 MUST 停止本地轮询但不得取消服务端 Run，恢复前台、重启或重新打开对话时 MUST 立即从服务端恢复。活动 Run MUST 提供取消操作并等待服务端进入取消终态；终态 Run MUST 停止轮询并以服务端 `dialogue_loop_status`、`dialogue_stage`、`dialogue_blocks` 和 `can_continue` 为正式显示状态。
 
@@ -203,7 +115,7 @@ TBD - created by archiving change add-native-knowledge-agent-conversation. Updat
 
 #### Scenario: 回到前台
 - **WHEN** 用户回到 App 或重新打开有活动 Run 的对话
-- **THEN** 客户端立即 refetch Run 并从最新服务端状态继续展示
+- **THEN** 客户端立即读取服务端最新 Run，并继续同一任务的展示而不重复提交
 
 ### Requirement: 原生对话状态可访问且不遮挡
 原生对话页 MUST 使用安全区、可滚动消息区、真实系统键盘和每个平台唯一的键盘避让负责人；Android `resize` 时 MUST NOT 再以完整 keyboardHeight 补偿 Composer，iOS MUST 使用平台原生避让与安全区。输入聚焦时底栏 MUST 隐藏，composer、长消息、历史 Sheet 和上下文设置 Sheet MUST 在 360×800、390×844、412×915 下可操作且无横向溢出。交互控件 MUST 有辅助名称和非颜色状态表达。
@@ -223,6 +135,66 @@ TBD - created by archiving change add-native-knowledge-agent-conversation. Updat
 #### Scenario: 使用读屏操作
 - **WHEN** 用户通过辅助技术访问范围、历史、上下文设置、发送、继续、取消和正文展开控件
 - **THEN** 每个控件有可理解名称、状态和顺序，不只通过图标或颜色表达
+
+### Requirement: 用户只可覆盖正式 Agent 支持的上下文行为
+原生 App MUST 默认按 `context_mode=auto` 提交，并只提供服务端正式支持且语义准确的“继续当前主题”和“新话题”一次性覆盖；非默认选择 MUST 在发送前可见、可移除，成功提交后 MUST 恢复默认，提交结果未知的重试 MUST 复用原选择和同一 `client_message_id`。原生 App MUST NOT 提供快速/深度、强制结果形式、依据模式或旧结果纠正入口，也 MUST NOT 为保留控件改变 Agent 路由、提示词或执行规则。
+
+#### Scenario: 默认自动上下文
+- **WHEN** 用户不打开上下文设置直接发送
+- **THEN** 客户端提交 `context_mode=auto` 且输入区不显示设置标签
+
+#### Scenario: 强制继续当前主题
+- **WHEN** 用户为下一条消息选择继续当前主题
+- **THEN** 客户端提交 `context_mode=continue`，保留服务端可能要求澄清或拒绝续接的结果
+
+#### Scenario: 强制新话题
+- **WHEN** 用户为下一条消息选择新话题
+- **THEN** 客户端提交 `context_mode=new_topic`，并在确定成功后清除该一次性覆盖
+
+#### Scenario: 上下文设置结果未知
+- **WHEN** 非默认上下文消息提交结果未知
+- **THEN** 客户端保留原 Conversation、文本、上下文模式和 `client_message_id` 重试，不恢复 auto 或创建第二条本地消息
+
+#### Scenario: 不再展示废弃设置
+- **WHEN** 用户打开本次提问设置
+- **THEN** 页面不存在快速/深度、综合回答/知识列表、仅知识库或旧结果纠正选项
+
+### Requirement: 顶部入口保持品牌、范围与会话职责
+原生对话页 MUST 在顶部左侧显示不可点击的 G 品牌标识、中间仅显示可点击的当前知识范围文字与轻量下拉箭头、右侧仅显示清晰可辨且可访问的对话历史图标。长项目名 MUST NOT 挤压两侧稳定触控区。历史 Sheet MUST 在顶部提供明显的新建对话入口；范围切换、历史会话切换与新建对话 MUST 实际可用。消息 `context_mode` 设置 MUST NOT 替代或暗示上述会话操作，顶部或 Composer 外 MUST NOT 增加第二个新建入口。
+
+#### Scenario: 打开知识范围
+- **WHEN** 用户点击顶部中间的当前知识范围
+- **THEN** 页面打开既有范围 Sheet，并可在没有活动 Run 时切换 Workspace 或项目范围
+
+#### Scenario: 打开历史并新建对话
+- **WHEN** 用户点击顶部右侧历史入口后选择历史会话或“新建对话”
+- **THEN** 页面分别切换到所选 Conversation 或进入新对话草稿，且消息上下文覆盖不参与该操作
+
+### Requirement: 历史弹层快速响应且新建不依赖摘要请求
+原生 App MUST 在对话页挂载时请求现有全量历史摘要，并在打开历史时复用当前 loading/data/error 状态；MUST NOT 把点击历史误报为网络请求起点。历史列表 MUST 使用不嵌套于同方向 ScrollView 的虚拟列表并限制首批渲染，弹层开关 SHOULD NOT 触发消息树无关重渲染。新建入口 MUST 在首次加载、刷新、空态和失败态持续可用；失败 MUST 可重试，已有列表刷新 MUST NOT 清空闪烁。
+
+#### Scenario: 历史首次加载或失败
+- **WHEN** 用户在摘要请求尚未完成或已失败时打开历史 Sheet
+- **THEN** Sheet 立即显示顶部新建入口和独立加载或失败重试状态，新建不等待历史返回
+
+#### Scenario: 大量历史摘要
+- **WHEN** 全量接口返回大量 Conversation 摘要
+- **THEN** 客户端以虚拟列表分批挂载行且不嵌套纵向 ScrollView；本轮不声称减少了网络响应体或 JSON 解析成本
+
+### Requirement: 冷启动默认新对话并只恢复移动端未完成工作
+原生 App MUST 区分真正的 App 启动与前后台、栏目往返、弹层开关或页面普通重挂载。没有本账号、本 Workspace 的移动端待恢复工作时，冷启动 MUST 显示沿用最后有效知识范围的空白新对话，并只在首次发送时创建服务端 Conversation。当前进程内的短暂离开 MUST 保留会话、未发送输入和阅读位置，不得按固定闲置时长或模型判断自动切断。
+
+#### Scenario: 无待办冷启动
+- **WHEN** 账号和 Workspace 已确认且没有未发送输入、活动/待查看 Run 或结果未知提交记录
+- **THEN** 对话首页显示空白新对话，不选择最近已完成历史，也不调用创建 Conversation 接口
+
+#### Scenario: 短暂离开再返回
+- **WHEN** 用户切后台、切换其他 App 栏目或打开关闭弹层后返回
+- **THEN** 页面保留当前 Conversation 或空白草稿、输入、范围和阅读位置，不重新执行冷启动选择
+
+#### Scenario: 新对话沿用范围
+- **WHEN** 用户冷启动进入空白页或从历史 Sheet 手动新建
+- **THEN** 页面沿用该身份最后有效的 Workspace/项目范围；项目失权或删除时明确提示并回到 Workspace 范围，不携带旧会话、continuation 或对象绑定
 
 ### Requirement: 客户端工作记录按身份隔离并由服务端复验
 原生 App MUST 仅持久化恢复所需的 Conversation/Run 引用、范围、未发送输入、稳定提交标识与提交阶段，不持久化第二份消息历史或 Agent 内部快照。记录 MUST 按账号和 Workspace 隔离；退出登录 MUST 清理当前身份记录，身份变化 MUST NOT 读取其他身份记录。恢复 MUST 先完成本地记录读取和现有服务端 API 复验；读取、网络、权限或对象删除失败 MUST 显示可重试或退出状态，不得静默视为无待恢复工作。
@@ -287,4 +259,3 @@ TBD - created by archiving change add-native-knowledge-agent-conversation. Updat
 #### Scenario: 旧历史 Run 不再可继续
 - **WHEN** 历史 Run 曾可继续但当前服务端响应为 `can_continue=false` 或已有更新 Run
 - **THEN** 客户端不根据旧缓存显示或执行继续
-

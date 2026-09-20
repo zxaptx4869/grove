@@ -1,9 +1,11 @@
 # native-knowledge-agent-entry-results Specification
 
 ## Purpose
-TBD - created by archiving change add-knowledge-agent-structured-entry-search. Update Purpose after archive.
+定义正式移动端的对象列表、知识结果扫描和按需只读详情交互。列表快照、当前 Entry 内容和本轮 Evidence 分别表达，客户端展开不提交聊天消息、不调用模型、不推进 Agent 上下文。
+
 ## Requirements
-### Requirement: 原生对话明确区分综合回答与 Entry 查找结果
+
+### Requirement: 原生对话按正式块区分对象与文本
 原生 App MUST 按正式 dialogue blocks 区分文本、项目列表、目录列表、知识列表、统计和明确 Entry 对象；所有块与列表项 MUST 保持服务端原序和生成时范围。项目或目录项 MUST NOT 提供知识正文展开，知识列表只有在列表项携带明确 Entry 标识时才能读取当前正文；客户端 MUST NOT 把计划、统计、排序说明或匹配项标成 Evidence。
 
 #### Scenario: 知识列表
@@ -22,19 +24,7 @@ TBD - created by archiving change add-knowledge-agent-structured-entry-search. U
 - **WHEN** 知识列表来自 Workspace 全部知识且条目包含项目归属
 - **THEN** 每项按服务端元数据展示项目归属，列表头不把某一个项目误标为整个结果范围
 
-#### Scenario: 自动返回 Entry 列表
-- **WHEN** `actual_result_mode=entries` 的 Run 成功完成且只有 Entry 列表输出
-- **THEN** thread 显示“找到 N 条相关知识”及 Entry 卡列表，不先输出一段重复的综合描述
-
-#### Scenario: 自动返回综合回答
-- **WHEN** `actual_result_mode=answer`
-- **THEN** App 继续使用现有结构化回答、引用、调查摘要与冲突界面，不混入 Entry 结果卡语义
-
-#### Scenario: 自动返回统计与 Entry 列表
-- **WHEN** `actual_result_mode=entries` 的 v2 结果包含 count、group_count 和 entries
-- **THEN** thread 先展示结构化范围/筛选与统计，再展示排序说明和 Entry 卡，不生成重复 AI 综合正文
-
-### Requirement: Entry 结果卡提供稳定扫描信息与当前对象详情
+### Requirement: 知识列表提供紧凑扫描信息与底部只读详情
 每个明确 Entry 列表项 MUST 以标题为主，独立紧凑展示服务端提供的项目/目录归属；列表 MUST NOT 显示正文 `summary/excerpt`。服务端提供的 direct/indirect 性质与关联说明 MUST 保持准确并独立表达，不能把它改写为知识总结。动态长标题、空目录或跨项目归属 MUST 不造成横向溢出。点击带明确 Entry 标识的项 MUST 打开底部只读详情并按需调用现有 Entry GET；快速读取 MUST 直接呈现正文而不闪现瞬时加载弹层，读取持续时加载、失败重试和当前不可访问状态 MUST 在详情内显示，且不得改变列表顺序和序号。详情面板 MUST 按当前单条 Entry 内容自适应高度并受视口最大高度约束，不得沿用同批其他 Entry 的高度。
 
 #### Scenario: 紧凑列表信息
@@ -73,13 +63,7 @@ TBD - created by archiving change add-knowledge-agent-structured-entry-search. U
 - **WHEN** 用户打开或关闭 Entry 详情
 - **THEN** 客户端最多调用该 Entry 的只读 GET，不提交聊天消息、不调用模型、不注入上下文，也不出现引用条、修订或候选保存入口
 
-#### Scenario: 打开仍可用的结果
-- **WHEN** 用户点击一张当前仍有权限的 Entry 卡
-- **THEN** Sheet 展示当前正式知识完整内容、项目/目录、类型、更新时间与来源摘要，并允许关闭返回原滚动位置
-
-#### Scenario: Entry 已变化
-- **WHEN** 当前 Entry 与结果快照的更新时间或内容不同
-- **THEN** Sheet 显示当前内容并提示“结果生成后已更新”，历史卡仍保留原快照语义### Requirement: 原生 Entry 结果严格遵循移动原型与可访问性基线
+### Requirement: 原生知识列表与详情遵循移动原型与可访问性基线
 原生 App MUST 复用当前 Grove 主题、原创 Agent 图标、Card/Button、ConversationScreen 和现有键盘避让规则；正式实现 MUST NOT 复制原型 HTML/CSS/静态数据。结果列表和底部详情 MUST 在 360×800、390×844、412×915 下无非预期遮挡或横向溢出，打开、关闭和重试控件具有辅助名称、稳定触控尺寸和非颜色状态。详情正文 SHOULD 从 16sp、24–26 行高开始核对并支持系统字体缩放；滑入效果 MUST 只作用于详情，系统减少动态效果时 MUST 停用非必要动画。
 
 详情遮罩 MUST 原地淡入淡出，只有底部面板上下移动；关闭动画完成前 MUST 保持 Modal 对背景点击的拦截。没有拖拽行为时 MUST NOT 显示拖拽横条。关闭按钮、遮罩和 Android 系统返回均可关闭详情，长正文在面板内部滚动，其他共享 Sheet 的既有展示语义不得被详情动效意外改变。
@@ -105,19 +89,3 @@ TBD - created by archiving change add-knowledge-agent-structured-entry-search. U
 #### Scenario: 知识写操作不抢跑
 - **WHEN** 正式页面渲染知识列表或当前 Entry 正文
 - **THEN** 不出现整理、保存、修订、撤销、勾选、批量操作或确认应用文案
-
-### Requirement: 原生 Entry 结果严格遵循移动原型与可访问性基线
-原生 App MUST 复用当前 Grove 主题、原创 Agent 图标、Card/Sheet/Button、ConversationScreen 和现有键盘避让规则；正式实现 MUST NOT 复制原型 HTML/CSS/静态数据。结果列表、详情 Sheet、模式选择与分页 MUST 在 360×800、390×844、412×915 下无非预期遮挡或横向溢出，纯图标与状态具有辅助名称且不只依赖颜色表达。
-
-#### Scenario: 三尺寸长结果走查
-- **WHEN** 三种目标尺寸展示长标题、长摘要、多个项目、分页提示和展开详情
-- **THEN** 顶栏、thread、Composer、键盘、Sheet、底栏与安全区不互相遮挡，消息区和详情可独立滚动
-
-#### Scenario: 使用读屏浏览结果
-- **WHEN** 用户通过辅助技术访问结果列表
-- **THEN** 每张卡读出正式知识、标题、项目/目录和序号，加载更多、纠正模式、关闭和重试具有明确辅助名称与状态
-
-#### Scenario: 多 Entry 操作不抢跑
-- **WHEN** 正式页面渲染结构化查找结果
-- **THEN** 不出现勾选、全选、批量修订、合并、移动、删除或确认执行文案
-

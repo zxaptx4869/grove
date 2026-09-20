@@ -1,22 +1,16 @@
 # native-knowledge-agent-answer Specification
 
 ## Purpose
-TBD - created by archiving change add-native-knowledge-agent-conversation. Update Purpose after archive.
+定义原生移动端对正式 dialogue blocks、真实执行状态、依据语义和 Markdown 文本的展示要求。回答始终为即时结果或未应用候选，不构成正式知识写入；共享后端和 Web 行为由各自规格约束。
+
 ## Requirements
-### Requirement: Run 过程只展示可验证阶段
+
+### Requirement: 正式 Run 过程只展示可验证阶段
 原生 App MUST 以服务端 `dialogue_stage` 和 `dialogue_loop_status` 展示准备、检索知识、读取 Entry、核验证据、综合回答等用户可验证状态；`current_step` 只能用于旧响应回退。客户端 MUST NOT 展示隐藏推理、内部 continuation、控制器理由或与服务端无关的伪进度，且任一终态 MUST 停止进行中动效。
 
 #### Scenario: 正式 Run 处理中
 - **WHEN** `dialogue_loop_status` 为 waiting 或 processing 且存在已知 `dialogue_stage`
 - **THEN** Agent 标识附近以紧凑过程行显示一次真实阶段和轻量中性取消入口，不重复显示范围或使用大面积阴影卡
-
-#### Scenario: quick Run 处理中
-- **WHEN** quick Run 正在搜索或读取证据
-- **THEN** 过程卡显示对应可验证动作和生成时范围，并提供取消，不编造详细思考步骤
-
-#### Scenario: 调查进行到第二轮
-- **WHEN** investigate Run 的 `current_round=2` 且仍 processing
-- **THEN** 过程卡显示深度查找和当前轮次，不能显示超过服务端预算的虚假总进度
 
 #### Scenario: 步骤未知
 - **WHEN** 客户端收到未识别的 future `dialogue_stage`
@@ -34,7 +28,7 @@ TBD - created by archiving change add-native-knowledge-agent-conversation. Updat
 - **WHEN** 取消请求网络失败或服务端拒绝
 - **THEN** 紧凑过程区保留最后已知真实阶段并显示可见失败信息，用户仍可按现有语义重试取消
 
-### Requirement: 结构化回答状态清晰区分
+### Requirement: 正式回答终态与内容语义清晰区分
 原生 App MUST 以 `dialogue_loop_status` 结合 Run 状态区分 completed、partial、failed、cancelled、not_executed 和 unsupported，并从正式 `dialogue_blocks` 展示 insufficient 或 candidate 等内容语义。AI 即时回答 MUST 标识为即时结果，不得因存在 Entry 或 Evidence 就把整段回答默认标为“基于正式知识”，也不得显示为正式 Entry。
 
 #### Scenario: 完成回答
@@ -53,31 +47,7 @@ TBD - created by archiving change add-native-knowledge-agent-conversation. Updat
 - **WHEN** dialogue 状态为 failed、cancelled、not_executed 或 unsupported
 - **THEN** 页面显示对应持久状态和适用恢复动作，不伪造回答内容
 
-#### Scenario: 正常带引用回答
-- **WHEN** answer 为 completed 且有有效 citations，basis 只包含 Grove
-- **THEN** 页面展示回答正文、生成时范围、来源条与“基于你的知识”依据语义
-
-#### Scenario: 正常无引用回答
-- **WHEN** answer 为 completed、citations 为空且 basis 合法标记模型通用知识或用户陈述
-- **THEN** 页面展示正常即时回答和实际依据，不因为没有 Citation 显示知识不足或“基于正式知识”
-
-#### Scenario: 部分回答
-- **WHEN** answer 为 partial 且仍有有效内容
-- **THEN** 页面保留有效回答、实际依据和可用引用，并在内容附近说明哪些部分降级、失效或未覆盖
-
-#### Scenario: 知识不足
-- **WHEN** answer.status 为 insufficient，无论 quick Run 是 completed 还是调查 Run 是 partial
-- **THEN** 页面统一显示依据不足语义、`insufficient_note` 和可用 gaps，不使用成功完成文案掩盖不足
-
-#### Scenario: 澄清回答
-- **WHEN** answer.status 为 clarification
-- **THEN** 页面显示需要用户补充的信息并允许在同一 Conversation 继续回复，不把它当失败或事实答案
-
-#### Scenario: 回答失败
-- **WHEN** answer.status 为 failed 或 Run 为 failed
-- **THEN** 页面显示持久错误、已知原因和重新提问操作，不用 toast 代替可恢复状态
-
-### Requirement: 降级、取消与网络错误有稳定恢复
+### Requirement: 正式回答与网络错误保留稳定恢复
 原生 App MUST 保留服务端已交付的有效块并表达 partial 或失败边界；cancelled、not_executed、unsupported、请求错误和服务端 failed MUST 使用彼此可区分的持久状态。客户端 MUST NOT 默认暴露 provider、model、堆栈或原始错误，也 MUST NOT 把移动网络错误改写成服务端执行失败。
 
 #### Scenario: 部分块已交付
@@ -100,23 +70,7 @@ TBD - created by archiving change add-native-knowledge-agent-conversation. Updat
 - **WHEN** 用户在 failed 终态选择重新提问
 - **THEN** 客户端以原问题和新的 `client_message_id` 创建新 Run，旧失败记录保持不变
 
-#### Scenario: auto 路由降级到 quick
-- **WHEN** Run 实际模式为 quick 且 fallback 表示回答模式路由不可用
-- **THEN** 页面说明已改用快速回答并保留回答，不伪装成按计划完成深度查找
-
-#### Scenario: 工具部分失败
-- **WHEN** fallback_summary 显示部分检索或证据步骤失败但仍有有效回答
-- **THEN** 页面标记部分结果并保留有效引用，提供重试但不隐藏失败范围
-
-#### Scenario: partial 或可恢复降级
-- **WHEN** answer.status 为 partial，或 fallback_summary 指示已有有效结果但可通过新 Run 补查
-- **THEN** 页面提供重新提问或适配的恢复入口，不自行把 insufficient 改写为 partial
-
-#### Scenario: partial 或 fallback 重新提问
-- **WHEN** 用户从 partial 或带可恢复 fallback 的回答选择重新提问
-- **THEN** 客户端以原问题创建新的 Run，并保留旧回答和旧引用快照
-
-### Requirement: 长内容 Sheet 可滚动且恢复对话
+### Requirement: 对话弹层长内容可滚动且恢复阅读位置
 原生 App MUST 让 History、Scope、上下文设置与 Entry 详情 Sheet 的长内容在 Sheet 内独立滚动；关闭任何 Sheet 后 MUST 保留对话阅读状态。长项目名、正文、错误或选项列表不得遮挡关闭、重试或 Composer。
 
 #### Scenario: 长 Entry 正文
@@ -126,10 +80,6 @@ TBD - created by archiving change add-native-knowledge-agent-conversation. Updat
 #### Scenario: 长历史或选项
 - **WHEN** History、Scope 或上下文设置列表超过可用高度
 - **THEN** 对应 Sheet 内可滚动，关闭后对话仍保留原消息位置和输入状态
-
-#### Scenario: 长引用原文
-- **WHEN** Citation quote 或 Source 标题超过一屏
-- **THEN** 用户可在 Citation Sheet 内滚动到全部内容并始终可关闭 Sheet
 
 ### Requirement: 正式回答按 dialogue blocks 原序渲染
 原生 App MUST 按服务端数组原序渲染 `text`、`list`、`statistic`、`entry`、`evidence`、`candidate` 与 `insufficient` 块，并保持列表项顺序和服务端编号语义。存在可展示块时 MUST NOT 再显示完整扁平 `answer`；没有结构化块时 MAY 显示简单文本回退。未知块或单块字段异常 MUST 安全降级并保留同轮其他块，不得伪造字段、解析自然语言补元数据或静默丢掉整轮回答。
@@ -163,7 +113,7 @@ TBD - created by archiving change add-native-knowledge-agent-conversation. Updat
 
 #### Scenario: Entry 详情的来源信息
 - **WHEN** 用户展开当前 Entry 且只读接口返回该知识的来源摘要
-- **THEN** 页面标注为“当前知识的来源信息”，不宣称该来源已被本轮 Agent 核验
+- **THEN** 页面标注为“关联来源”，不宣称该来源已被本轮 Agent 核验
 
 #### Scenario: Candidate 块
 - **WHEN** 结果包含 candidate 块
@@ -194,4 +144,3 @@ TBD - created by archiving change add-native-knowledge-agent-conversation. Updat
 #### Scenario: 选择复制
 - **WHEN** 用户长按回答、候选、Evidence、Entry 块或当前知识正文
 - **THEN** 原生文本可选择并复制完整内容，不出现 blocks 与扁平全文重复，也不影响列表点击、滚动或关闭
-
