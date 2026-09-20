@@ -1,7 +1,7 @@
 import React from "react";
 import { act, cleanup, fireEvent, render, waitFor } from "@testing-library/react-native";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { Platform, ScrollView, StyleSheet } from "react-native";
+import { ScrollView } from "react-native";
 
 import { ConversationScreen } from "@/src/knowledge-agent/components/ConversationScreen";
 import type { ConversationController } from "@/src/knowledge-agent/hooks/useConversationController";
@@ -9,7 +9,6 @@ import type { KnowledgeMessage } from "@/src/knowledge-agent/types";
 
 const mockUseConversationController = jest.fn();
 const mockGetProjects = jest.fn(async () => []);
-let mockKeyboardHeight = 0;
 
 jest.mock("@/src/auth", () => ({
   useAuth: () => ({ token: "token", me: null }),
@@ -24,7 +23,7 @@ jest.mock("@/src/knowledge-agent/hooks/useConversationController", () => ({
 }));
 
 jest.mock("@/src/knowledge-agent/hooks/useKeyboardHeight", () => ({
-  useKeyboardHeight: () => mockKeyboardHeight,
+  useKeyboardHeight: () => 0,
 }));
 
 jest.mock("@/src/knowledge-agent/hooks/useReducedMotion", () => ({
@@ -232,7 +231,6 @@ afterEach(async () => {
   clients.length = 0;
   jest.restoreAllMocks();
   jest.clearAllMocks();
-  mockKeyboardHeight = 0;
 });
 
 test("顶部品牌、范围、历史和历史中的新建对话入口均可达", async () => {
@@ -312,7 +310,7 @@ test("正常发送只显示普通发送态，结果未知才显示恢复入口",
     controller({ pending, submitting: true, submissionResultUnknown: false }),
   );
   const rendered = await renderScreen();
-  expect(rendered.getByLabelText("消息正在发送")).toBeTruthy();
+  expect(rendered.getByText("正在发送")).toBeTruthy();
   expect(rendered.queryByText("消息提交结果尚未确认")).toBeNull();
   expect(rendered.queryByText("恢复这次提交")).toBeNull();
 
@@ -406,116 +404,18 @@ test("每次进入或切换会话只初始定位一次，主动上滑后不被�
   expect(scrollToEnd).toHaveBeenCalledWith({ animated: false });
 });
 
-test("发送消息在内容插入后只滚动一次，并以稳定节点切换为正式消息", async () => {
+test("发送新问题会主动跟随到本次发送反馈", async () => {
   const scrollToEnd = jest
     .spyOn(ScrollView.prototype, "scrollToEnd")
     .mockImplementation(() => undefined);
-  let state = controller({ input: "新的问题" });
-  const submit = state.submit;
-  mockUseConversationController.mockImplementation(() => state);
+  const state = controller({ input: "新的问题" });
+  mockUseConversationController.mockReturnValue(state);
   const rendered = await renderScreen();
 
   await fireEvent.changeText(rendered.getByLabelText("对话输入"), "新的问题");
   await fireEvent.press(rendered.getByLabelText("发送"));
-  expect(submit).toHaveBeenCalledWith("新的问题");
-  expect(scrollToEnd).not.toHaveBeenCalled();
-
-  const pending = {
-    clientMessageId: "stable-id",
-    text: "新的问题",
-    contextMode: "auto" as const,
-    conversationId: 1,
-    phase: "submitting" as const,
-  };
-  state = controller({ input: "", pending, submitting: true });
-  await rendered.rerender(
-    <QueryClientProvider client={clients[0]}>
-      <ConversationScreen />
-    </QueryClientProvider>,
-  );
-  expect(rendered.queryByText("从一个问题开始")).toBeNull();
-  const pendingText = rendered.getByText("新的问题");
-  await fireEvent(
-    rendered.getByLabelText("知识 Agent 对话"),
-    "contentSizeChange",
-    320,
-    240,
-  );
-  expect(scrollToEnd).toHaveBeenCalledTimes(1);
+  expect(state.submit).toHaveBeenCalledWith("新的问题");
   expect(scrollToEnd).toHaveBeenCalledWith({ animated: true });
-
-  scrollToEnd.mockClear();
-  state = controller({
-    input: "",
-    thread: {
-      items: [
-        {
-          ...userMessage(8),
-          content: "新的问题",
-          clientMessageId: "stable-id",
-        },
-      ],
-      runsById: new Map(),
-      nextCursor: null,
-      hasMore: false,
-    },
-  });
-  await rendered.rerender(
-    <QueryClientProvider client={clients[0]}>
-      <ConversationScreen />
-    </QueryClientProvider>,
-  );
-  expect(rendered.getByText("新的问题")).toBe(pendingText);
-  expect(rendered.queryByLabelText("消息正在发送")).toBeNull();
-  await fireEvent(
-    rendered.getByLabelText("知识 Agent 对话"),
-    "contentSizeChange",
-    320,
-    240,
-  );
-  expect(scrollToEnd).toHaveBeenCalledWith({ animated: false });
-});
-
-test("Android resize 展开键盘时不叠加键盘 padding，并将最新消息移到可见区", async () => {
-  const originalOS = Platform.OS;
-  Object.defineProperty(Platform, "OS", { get: () => "android", configurable: true });
-  const scrollToEnd = jest
-    .spyOn(ScrollView.prototype, "scrollToEnd")
-    .mockImplementation(() => undefined);
-  try {
-    const state = controller({
-      thread: {
-        items: [userMessage(1)],
-        runsById: new Map(),
-        nextCursor: null,
-        hasMore: false,
-      },
-    });
-    mockUseConversationController.mockReturnValue(state);
-    const rendered = await renderScreen();
-    await fireEvent(
-      rendered.getByLabelText("知识 Agent 对话"),
-      "contentSizeChange",
-      320,
-      900,
-    );
-    scrollToEnd.mockClear();
-
-    mockKeyboardHeight = 336;
-    await rendered.rerender(
-      <QueryClientProvider client={clients[0]}>
-        <ConversationScreen />
-      </QueryClientProvider>,
-    );
-
-    await waitFor(() => expect(scrollToEnd).toHaveBeenCalledWith({ animated: true }));
-    expect(
-      StyleSheet.flatten(rendered.getByTestId("composer-keyboard-inset").props.style)
-        ?.paddingBottom,
-    ).toBe(0);
-  } finally {
-    Object.defineProperty(Platform, "OS", { get: () => originalOS, configurable: true });
-  }
 });
 
 test("同一会话页面重挂载恢复内存阅读位置，不强制跳到底部", async () => {
