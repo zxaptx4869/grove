@@ -86,8 +86,16 @@ const rules: RenderRules = {
 };
 
 const normalStyles = {
+  root: { width: "100%" as const, maxWidth: "100%" as const, alignSelf: "stretch" as const },
   text: { color: theme.ink, fontSize: 14, lineHeight: 23 },
-  paragraph: { color: theme.ink, fontSize: 14, lineHeight: 23, marginBottom: 10 },
+  paragraph: {
+    width: "100%" as const,
+    flexShrink: 1,
+    color: theme.ink,
+    fontSize: 14,
+    lineHeight: 23,
+    marginBottom: 10,
+  },
   heading: { color: theme.ink, fontWeight: "700" as const, marginTop: 10, marginBottom: 6 },
   heading1: { fontSize: 20, lineHeight: 28 },
   heading2: { fontSize: 18, lineHeight: 26 },
@@ -103,9 +111,24 @@ const normalStyles = {
     paddingRight: 0,
     marginBottom: 10,
   },
-  list: { marginBottom: 10 },
-  listUnorderedItemIcon: { color: theme.muted, lineHeight: 23 },
-  listOrderedItemIcon: { color: theme.muted, lineHeight: 23 },
+  list: { width: "100%" as const, maxWidth: "100%" as const, marginBottom: 10 },
+  listItem: { flexGrow: 1, flexShrink: 1, flexBasis: 0, minWidth: 0, maxWidth: "100%" as const },
+  listUnorderedItem: {
+    width: "100%" as const,
+    maxWidth: "100%" as const,
+    flexDirection: "row" as const,
+    alignItems: "flex-start" as const,
+    marginTop: 4,
+  },
+  listOrderedItem: {
+    width: "100%" as const,
+    maxWidth: "100%" as const,
+    flexDirection: "row" as const,
+    alignItems: "flex-start" as const,
+    marginTop: 4,
+  },
+  listUnorderedItemIcon: { flexShrink: 0, color: theme.muted, lineHeight: 23 },
+  listOrderedItemIcon: { flexShrink: 0, color: theme.muted, lineHeight: 23 },
   codeInline: { color: theme.ink, backgroundColor: theme.soft, fontSize: 13 },
   codeBlock: {
     color: theme.ink,
@@ -126,7 +149,14 @@ const normalStyles = {
 const mutedStyles = {
   ...normalStyles,
   text: { color: theme.muted, fontSize: 13, lineHeight: 21 },
-  paragraph: { color: theme.muted, fontSize: 13, lineHeight: 21, marginBottom: 8 },
+  paragraph: {
+    width: "100%" as const,
+    flexShrink: 1,
+    color: theme.muted,
+    fontSize: 13,
+    lineHeight: 21,
+    marginBottom: 8,
+  },
 };
 
 function openSafeLink(url: string) {

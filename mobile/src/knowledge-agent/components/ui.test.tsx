@@ -1,5 +1,5 @@
 import { fireEvent, render } from "@testing-library/react-native";
-import { Text } from "react-native";
+import { StyleSheet, Text } from "react-native";
 
 import { Sheet } from "@/src/knowledge-agent/components/ui";
 
@@ -32,4 +32,37 @@ test("减少动态效果时底部 Sheet 通过遮罩立即关闭", async () => {
 
   await fireEvent.press(rendered.getByLabelText("关闭弹层"));
   expect(onClose).toHaveBeenCalledTimes(1);
+});
+
+test("底部 Sheet 在加载与正文切换时保持稳定高度", async () => {
+  const rendered = await render(
+    <Sheet
+      visible
+      title="知识详情"
+      onClose={jest.fn()}
+      presentation="bottom"
+      reduceMotion
+    >
+      <Text>短加载内容</Text>
+    </Sheet>,
+  );
+
+  const fixedHeightLayers =
+    rendered.root?.queryAll((node) => StyleSheet.flatten(node.props.style)?.height === "84%") ?? [];
+  expect(fixedHeightLayers).toHaveLength(1);
+
+  await rendered.rerender(
+    <Sheet
+      visible
+      title="知识详情"
+      onClose={jest.fn()}
+      presentation="bottom"
+      reduceMotion
+    >
+      <Text>{"长正文".repeat(100)}</Text>
+    </Sheet>,
+  );
+  expect(
+    rendered.root?.queryAll((node) => StyleSheet.flatten(node.props.style)?.height === "84%"),
+  ).toHaveLength(1);
 });

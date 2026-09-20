@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState, type ReactNode } from "react";
+import { useCallback, useLayoutEffect, useState, type ReactNode } from "react";
 import {
   Animated,
   Modal,
@@ -223,14 +223,16 @@ function BottomSheetMotion({
   children: (requestClose: () => void) => ReactNode;
 }) {
   const [scrimOpacity] = useState(() => new Animated.Value(0));
-  const [translateY] = useState(() => new Animated.Value(900));
-  const [closing, setClosing] = useState(false);
   const { height: windowHeight } = useWindowDimensions();
   const hiddenOffset = Math.max(windowHeight, 900);
+  const [translateY] = useState(() => new Animated.Value(hiddenOffset));
+  const [closing, setClosing] = useState(false);
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     if (!visible) return;
     queueMicrotask(() => setClosing(false));
+    scrimOpacity.stopAnimation();
+    translateY.stopAnimation();
     if (reduceMotion) {
       scrimOpacity.setValue(1);
       translateY.setValue(0);
@@ -238,7 +240,7 @@ function BottomSheetMotion({
     }
     scrimOpacity.setValue(0);
     translateY.setValue(hiddenOffset);
-    Animated.parallel([
+    const opening = Animated.parallel([
       Animated.timing(scrimOpacity, {
         toValue: 1,
         duration: 160,
@@ -249,7 +251,12 @@ function BottomSheetMotion({
         duration: 220,
         useNativeDriver: true,
       }),
-    ]).start();
+    ]);
+    const frame = requestAnimationFrame(() => opening.start());
+    return () => {
+      cancelAnimationFrame(frame);
+      opening.stop();
+    };
   }, [hiddenOffset, reduceMotion, scrimOpacity, translateY, visible]);
 
   const requestClose = useCallback(() => {
@@ -365,7 +372,7 @@ const styles = StyleSheet.create({
     bottom: 0,
     left: 0,
   },
-  bottomPanel: { maxHeight: "84%" },
+  bottomPanel: { height: "84%", maxHeight: "84%" },
   sheet: {
     maxHeight: "84%",
     overflow: "hidden",
@@ -374,7 +381,7 @@ const styles = StyleSheet.create({
     backgroundColor: theme.surface,
     ...popShadow,
   },
-  bottomSheet: { maxHeight: "100%" },
+  bottomSheet: { height: "100%", maxHeight: "100%" },
   sheetHead: {
     minHeight: 52,
     flexDirection: "row",
