@@ -58,7 +58,7 @@ export function ProcessCard({
             pressed && !cancelling && styles.pressed,
           ]}
         >
-          <AgentIcon name="stop" size={17} color={theme.muted} />
+          <AgentIcon name="stop" size={20} color={theme.ink} />
         </Pressable>
       </View>
       {pollingError ? (

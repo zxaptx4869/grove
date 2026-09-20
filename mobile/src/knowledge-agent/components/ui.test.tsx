@@ -34,7 +34,7 @@ test("减少动态效果时底部 Sheet 通过遮罩立即关闭", async () => {
   expect(onClose).toHaveBeenCalledTimes(1);
 });
 
-test("底部 Sheet 在加载与正文切换时保持稳定高度", async () => {
+test("底部 Sheet 按当前内容自适应并受最大高度约束", async () => {
   const rendered = await render(
     <Sheet
       visible
@@ -49,7 +49,10 @@ test("底部 Sheet 在加载与正文切换时保持稳定高度", async () => {
 
   const fixedHeightLayers =
     rendered.root?.queryAll((node) => StyleSheet.flatten(node.props.style)?.height === "84%") ?? [];
-  expect(fixedHeightLayers).toHaveLength(1);
+  const cappedLayers =
+    rendered.root?.queryAll((node) => StyleSheet.flatten(node.props.style)?.maxHeight === "84%") ?? [];
+  expect(fixedHeightLayers).toHaveLength(0);
+  expect(cappedLayers).toHaveLength(1);
 
   await rendered.rerender(
     <Sheet
@@ -64,5 +67,5 @@ test("底部 Sheet 在加载与正文切换时保持稳定高度", async () => {
   );
   expect(
     rendered.root?.queryAll((node) => StyleSheet.flatten(node.props.style)?.height === "84%"),
-  ).toHaveLength(1);
+  ).toHaveLength(0);
 });

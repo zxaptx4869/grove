@@ -1,4 +1,4 @@
-import Svg, { Circle, Path } from "react-native-svg";
+import Svg, { Circle, Path, Rect } from "react-native-svg";
 
 export type AgentIconName =
   | "history"
@@ -53,7 +53,7 @@ const PATHS: Record<AgentIconName, string[]> = {
     "M4 21v-7M4 10V3M12 21v-9M12 8V3M20 21v-5M20 12V3M1 14h6M9 8h6M17 16h6",
   ],
   edit: ["M17 3a2.8 2.8 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5z"],
-  stop: ["M7 7h10v10H7z"],
+  stop: [],
 };
 
 export function AgentIcon({
@@ -74,6 +74,27 @@ export function AgentIcon({
       )}
       {name === "circleCheck" && (
         <Circle cx={12} cy={12} r={9} fill="none" stroke={color} strokeWidth={strokeWidth} />
+      )}
+      {name === "stop" && (
+        <>
+          <Circle
+            cx={12}
+            cy={12}
+            r={9}
+            fill="none"
+            stroke={color}
+            strokeWidth={strokeWidth}
+          />
+          <Rect
+            testID="stop-icon-glyph"
+            x={8.5}
+            y={8.5}
+            width={7}
+            height={7}
+            rx={1}
+            fill={color}
+          />
+        </>
       )}
       {PATHS[name].map((d) => (
         <Path

@@ -284,7 +284,13 @@ function BottomSheetMotion({
   }, [closing, hiddenOffset, onClose, reduceMotion, scrimOpacity, translateY]);
 
   return (
-    <Modal visible={visible} transparent animationType="none" onRequestClose={requestClose}>
+    <Modal
+      visible={visible}
+      transparent
+      animationType="none"
+      hardwareAccelerated
+      onRequestClose={requestClose}
+    >
       <View style={styles.modalRoot}>
         <Animated.View style={[styles.animatedScrim, { opacity: scrimOpacity }]}>
           <Pressable
@@ -372,7 +378,7 @@ const styles = StyleSheet.create({
     bottom: 0,
     left: 0,
   },
-  bottomPanel: { height: "84%", maxHeight: "84%" },
+  bottomPanel: { maxHeight: "84%" },
   sheet: {
     maxHeight: "84%",
     overflow: "hidden",
@@ -381,7 +387,7 @@ const styles = StyleSheet.create({
     backgroundColor: theme.surface,
     ...popShadow,
   },
-  bottomSheet: { height: "100%", maxHeight: "100%" },
+  bottomSheet: { maxHeight: "100%" },
   sheetHead: {
     minHeight: 52,
     flexDirection: "row",

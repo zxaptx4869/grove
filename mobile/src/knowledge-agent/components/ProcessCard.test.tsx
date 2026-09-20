@@ -56,6 +56,7 @@ test("过程卡展示真实 dialogue_stage", async () => {
   );
   expect(rendered.getByText("正在读取知识")).toBeTruthy();
   expect(rendered.queryByText("范围：全部知识")).toBeNull();
+  expect(rendered.getByTestId("stop-icon-glyph").props.fill).toBeTruthy();
   fireEvent.press(rendered.getByLabelText("停止当前回答"));
   expect(onCancel).toHaveBeenCalledTimes(1);
 });

@@ -22,6 +22,24 @@ jest.mock("@/src/knowledge-agent/api", () => ({
 const api = knowledgeAgentApi as jest.Mocked<typeof knowledgeAgentApi>;
 const clients: QueryClient[] = [];
 
+const ENTRY_DETAIL = {
+  id: 8,
+  projectId: 1,
+  nodeId: 2,
+  nodeName: "防水",
+  title: "闭水试验",
+  content: "当前正文采用正常阅读字号。",
+  mainType: "knowledge" as const,
+  infoNature: null,
+  applicableCondition: null,
+  note: null,
+  createdAt: "2026-09-01T00:00:00Z",
+  updatedAt: "2026-09-19T00:00:00Z",
+  evidences: [
+    { id: 3, sourceId: 4, sourceTitle: "施工说明", quote: "至少 24 小时" },
+  ],
+};
+
 afterEach(async () => {
   cleanup();
   await act(async () => {
@@ -33,23 +51,7 @@ afterEach(async () => {
 });
 
 test("底部详情首次打开只读取单个 Entry，关闭不触发消息或模型", async () => {
-  api.getEntryCurrent.mockResolvedValue({
-    id: 8,
-    projectId: 1,
-    nodeId: 2,
-    nodeName: "防水",
-    title: "闭水试验",
-    content: "当前正文采用正常阅读字号。",
-    mainType: "knowledge",
-    infoNature: null,
-    applicableCondition: null,
-    note: null,
-    createdAt: "2026-09-01T00:00:00Z",
-    updatedAt: "2026-09-19T00:00:00Z",
-    evidences: [
-      { id: 3, sourceId: 4, sourceTitle: "施工说明", quote: "至少 24 小时" },
-    ],
-  });
+  api.getEntryCurrent.mockResolvedValue(ENTRY_DETAIL);
   const onClose = jest.fn();
   const client = new QueryClient({
     defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
@@ -80,6 +82,33 @@ test("底部详情首次打开只读取单个 Entry，关闭不触发消息或�
   fireEvent.press(rendered.getByLabelText("关闭"));
   await waitFor(() => expect(onClose).toHaveBeenCalledTimes(1));
   expect(api.submitMessage).not.toHaveBeenCalled();
+});
+
+test("快速读取完成前不打开空弹层，正文就绪后一次呈现", async () => {
+  let resolveEntry!: (value: typeof ENTRY_DETAIL) => void;
+  api.getEntryCurrent.mockImplementation(
+    () => new Promise((resolve) => {
+      resolveEntry = resolve;
+    }),
+  );
+  const client = new QueryClient({
+    defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
+  });
+  clients.push(client);
+  const rendered = await render(
+    <QueryClientProvider client={client}>
+      <EntryDetailSheet
+        target={{ entryId: 8, title: "闭水试验", projectName: null, nodePath: null }}
+        onClose={jest.fn()}
+      />
+    </QueryClientProvider>,
+  );
+
+  expect(rendered.queryByText("知识详情")).toBeNull();
+  await act(async () => resolveEntry(ENTRY_DETAIL));
+  await waitFor(() => expect(rendered.getByText("知识详情")).toBeTruthy());
+  expect(rendered.getByText("当前正文采用正常阅读字号。")).toBeTruthy();
+  expect(rendered.queryByText("正在读取当前知识…")).toBeNull();
 });
 
 test("详情网络失败可重试，当前不可访问不泄露正文", async () => {
