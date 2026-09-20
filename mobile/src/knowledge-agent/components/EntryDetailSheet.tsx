@@ -1,5 +1,5 @@
-import { useEffect, useState } from "react";
-import { ActivityIndicator, StyleSheet, Text, View } from "react-native";
+import { useCallback, useEffect, useMemo, useState } from "react";
+import { ActivityIndicator, LayoutAnimation, StyleSheet, Text, View } from "react-native";
 import { useQuery } from "@tanstack/react-query";
 
 import { useAuth } from "@/src/auth";
@@ -10,6 +10,7 @@ import { AppButton, Badge, Sheet } from "@/src/knowledge-agent/components/ui";
 import { classifyKnowledgeAgentError } from "@/src/knowledge-agent/errors";
 import { useReducedMotion } from "@/src/knowledge-agent/hooks/useReducedMotion";
 import { knowledgeAgentKeys } from "@/src/knowledge-agent/queryKeys";
+import type { KnowledgeEntryCurrent } from "@/src/knowledge-agent/types";
 import { theme } from "@/src/theme";
 
 export interface EntryDetailTarget {
@@ -20,6 +21,13 @@ export interface EntryDetailTarget {
 }
 
 const LOADING_PRESENTATION_DELAY_MS = 140;
+const DEBUG_ENTRY_DETAIL =
+  __DEV__ && process.env.EXPO_PUBLIC_GROVE_BOTTOM_SHEET_DEBUG === "1";
+
+type EntryDetailViewState =
+  | { kind: "loading" }
+  | { kind: "error"; unavailable: boolean; message: string }
+  | { kind: "ready"; current: KnowledgeEntryCurrent };
 
 function formatTime(value: string): string {
   const date = new Date(value);
@@ -46,7 +54,7 @@ function ActiveEntryDetailSheet({
 }) {
   const { token } = useAuth();
   const reducedMotion = useReducedMotion();
-  const [showDelayedLoading, setShowDelayedLoading] = useState(false);
+  const [presentationRequested, setPresentationRequested] = useState(false);
   const entryId = target.entryId;
   const query = useQuery({
     queryKey: knowledgeAgentKeys.entryCurrent(entryId),
@@ -54,24 +62,94 @@ function ActiveEntryDetailSheet({
     enabled: Boolean(token),
   });
   useEffect(() => {
-    if (!query.isLoading) return;
-    const timer = setTimeout(() => setShowDelayedLoading(true), LOADING_PRESENTATION_DELAY_MS);
+    if (!DEBUG_ENTRY_DETAIL) return;
+    console.debug("[Grove EntryDetail]", "query_state", {
+      entryId,
+      loading: query.isLoading,
+      fetching: query.isFetching,
+      error: query.isError,
+    });
+  }, [entryId, query.isError, query.isFetching, query.isLoading]);
+  useEffect(() => {
+    if (presentationRequested) return;
+    const timer = setTimeout(
+      () => setPresentationRequested(true),
+      query.isLoading ? LOADING_PRESENTATION_DELAY_MS : 0,
+    );
     return () => clearTimeout(timer);
-  }, [query.isLoading]);
+  }, [presentationRequested, query.isLoading]);
   const error = query.isError ? classifyKnowledgeAgentError(query.error) : null;
   const unavailable = error?.kind === "not_found" || error?.kind === "auth";
   const current = query.data ?? null;
+  const liveState = useMemo<EntryDetailViewState>(
+    () =>
+      query.isLoading
+        ? { kind: "loading" }
+        : error || !current
+          ? {
+              kind: "error",
+              unavailable,
+              message: unavailable
+                ? "这条历史结果仍会保留，但当前正文可能已删除、移出范围或不可访问。"
+                : error?.message ?? "暂时无法读取当前知识。",
+            }
+          : { kind: "ready", current },
+    [current, error, query.isLoading, unavailable],
+  );
+
+  if (!presentationRequested) return null;
+  return (
+    <EntryDetailPresentation
+      target={target}
+      reducedMotion={reducedMotion}
+      liveState={liveState}
+      onRetry={() => void query.refetch()}
+      onClose={onClose}
+    />
+  );
+}
+
+function EntryDetailPresentation({
+  target,
+  reducedMotion,
+  liveState,
+  onRetry,
+  onClose,
+}: {
+  target: EntryDetailTarget;
+  reducedMotion: boolean;
+  liveState: EntryDetailViewState;
+  onRetry: () => void;
+  onClose: () => void;
+}) {
+  const [displayedState, setDisplayedState] = useState(liveState);
+  const [presented, setPresented] = useState(false);
+  const current = displayedState.kind === "ready" ? displayedState.current : null;
   const path = [target.projectName, target.nodePath ?? current?.nodeName]
     .filter(Boolean)
     .join(" / ");
+  const handlePresented = useCallback(() => setPresented(true), []);
+  useEffect(() => {
+    if (!presented || displayedState === liveState) return;
+    const timer = setTimeout(() => {
+      if (!reducedMotion) {
+        LayoutAnimation.configureNext(
+          LayoutAnimation.create(180, LayoutAnimation.Types.easeInEaseOut, "opacity"),
+        );
+      }
+      setDisplayedState(liveState);
+    }, 0);
+    return () => clearTimeout(timer);
+  }, [displayedState, liveState, presented, reducedMotion]);
 
   return (
     <Sheet
-      visible={!query.isLoading || showDelayedLoading}
+      visible
       title="知识详情"
       onClose={onClose}
       presentation="bottom"
       reduceMotion={reducedMotion}
+      onPresented={handlePresented}
     >
       <View>
         <View style={styles.headingRow}>
@@ -84,55 +162,57 @@ function ActiveEntryDetailSheet({
         </View>
         <Text style={styles.title}>{current?.title || target.title}</Text>
 
-        {query.isLoading ? (
+        {displayedState.kind === "loading" ? (
           <View style={styles.stateBox} accessibilityRole="progressbar">
             <ActivityIndicator color={theme.green} />
             <Text style={styles.stateText}>正在读取当前知识…</Text>
           </View>
-        ) : error || !current ? (
+        ) : displayedState.kind === "error" ? (
           <View style={styles.stateBox} accessibilityRole="alert">
             <Text style={styles.stateTitle}>
-              {unavailable ? "该知识当前不可访问" : "当前知识读取失败"}
+              {displayedState.unavailable ? "该知识当前不可访问" : "当前知识读取失败"}
             </Text>
-            <Text style={styles.stateText}>
-              {unavailable
-                ? "这条历史结果仍会保留，但当前正文可能已删除、移出范围或不可访问。"
-                : error?.message ?? "暂时无法读取当前知识。"}
-            </Text>
-            {!unavailable ? (
+            <Text style={styles.stateText}>{displayedState.message}</Text>
+            {!displayedState.unavailable ? (
               <AppButton
                 label="重试读取"
-                onPress={() => void query.refetch()}
+                onPress={onRetry}
                 icon={<AgentIcon name="retry" size={15} color={theme.ink} />}
               />
             ) : null}
           </View>
         ) : (
-          <View>
-            <Text style={styles.updatedAt}>更新于 {formatTime(current.updatedAt)}</Text>
-            <View style={styles.content}>
-              <RichText>{current.content || "当前正文为空。"}</RichText>
-            </View>
-
-            <Text style={styles.sectionLabel}>关联来源</Text>
-            {(current.evidences ?? []).length > 0 ? (
-              current.evidences?.map((evidence) => (
-                <View key={evidence.id} style={styles.sourceRow}>
-                  <Text style={styles.sourceTitle}>{evidence.sourceTitle}</Text>
-                  {evidence.quote ? (
-                    <View style={styles.sourceQuote}>
-                      <RichText tone="muted">{evidence.quote}</RichText>
-                    </View>
-                  ) : null}
-                </View>
-              ))
-            ) : (
-              <Text style={styles.stateText}>当前没有可展示的来源摘要。</Text>
-            )}
-          </View>
+          <ReadyEntryDetail current={displayedState.current} />
         )}
       </View>
     </Sheet>
+  );
+}
+
+function ReadyEntryDetail({ current }: { current: KnowledgeEntryCurrent }) {
+  return (
+    <View>
+      <Text style={styles.updatedAt}>更新于 {formatTime(current.updatedAt)}</Text>
+      <View style={styles.content}>
+        <RichText>{current.content || "当前正文为空。"}</RichText>
+      </View>
+
+      <Text style={styles.sectionLabel}>关联来源</Text>
+      {(current.evidences ?? []).length > 0 ? (
+        current.evidences?.map((evidence) => (
+          <View key={evidence.id} style={styles.sourceRow}>
+            <Text style={styles.sourceTitle}>{evidence.sourceTitle}</Text>
+            {evidence.quote ? (
+              <View style={styles.sourceQuote}>
+                <RichText tone="muted">{evidence.quote}</RichText>
+              </View>
+            ) : null}
+          </View>
+        ))
+      ) : (
+        <Text style={styles.stateText}>当前没有可展示的来源摘要。</Text>
+      )}
+    </View>
   );
 }
 
