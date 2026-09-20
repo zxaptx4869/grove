@@ -1,0 +1,16 @@
+{
+  "cli": {
+    "version": ">= 25.4.0"
+  },
+  "build": {
+    "production-apk": {
+      "distribution": "internal",
+      "env": {
+        "EXPO_PUBLIC_API_BASE_URL": "https://47.115.167.166"
+      },
+      "android": {
+        "buildType": "apk"
+      }
+    }
+  }
+}

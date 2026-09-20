@@ -18,6 +18,8 @@
       "supportsTablet": true
     },
     "android": {
+      "package": "com.zxaptx4869.grove",
+      "versionCode": 1,
       "adaptiveIcon": {
         "backgroundColor": "#F7F8F7"
       },
