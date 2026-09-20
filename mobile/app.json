@@ -24,6 +24,13 @@
         "backgroundColor": "#F7F8F7"
       },
       "softwareKeyboardLayoutMode": "resize"
-    }
+    },
+    "extra": {
+      "router": {},
+      "eas": {
+        "projectId": "9d4fc4cf-db29-4af2-9169-2c2b35b6b1d4"
+      }
+    },
+    "owner": "sherry4869"
   }
 }
