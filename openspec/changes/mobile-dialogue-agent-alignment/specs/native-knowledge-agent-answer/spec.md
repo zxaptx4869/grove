@@ -127,6 +127,21 @@
 - **WHEN** 用户点击知识列表中的 Entry 项
 - **THEN** 客户端打开底部只读详情并只调用已有 Entry 只读接口，不发送聊天消息、不调用模型、不推进工作集
 
+### Requirement: 回答文本使用安全的原生 Markdown 并可选择复制
+原生 App MUST 仅在移动展示层使用原生组件解析适用的 text、candidate、Entry 正文、Evidence 文本和扁平历史回退，不修改服务端文本、存储、提示词或 Web。渲染 MUST 支持段落、移动端适度标题、强调、列表、引用、代码与链接；MUST 禁止原始 HTML 执行和图片加载，并限制链接为安全协议。长链接、代码和表格 MUST 不撑破屏宽，表格 MAY 使用横向滚动阅读回退。结构化块的外层语义、顺序、状态和去重规则 MUST 保持不变。
+
+#### Scenario: Markdown 与普通文本
+- **WHEN** 文本包含 Markdown 或普通纯文本
+- **THEN** 客户端按原文渲染已有格式，普通文本内容不被补写或重排，未换行的自然语言编号不被擅自转成列表
+
+#### Scenario: 不安全内容
+- **WHEN** 文本包含原始 HTML、图片或非 `https/http/mailto` 链接
+- **THEN** 客户端不执行 HTML、不加载图片、不打开不安全协议，且其余文本仍可阅读
+
+#### Scenario: 选择复制
+- **WHEN** 用户长按回答、候选、Evidence、Entry 块或当前知识正文
+- **THEN** 原生文本可选择并复制完整内容，不出现 blocks 与扁平全文重复，也不影响列表点击、滚动或关闭
+
 ## REMOVED Requirements
 
 ### Requirement: 调查摘要有限且可解释

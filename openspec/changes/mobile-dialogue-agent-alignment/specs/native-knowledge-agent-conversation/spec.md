@@ -109,7 +109,7 @@
 - **THEN** 每个控件有可理解名称、状态和顺序，不只通过图标或颜色表达
 
 ### Requirement: 顶部入口保持品牌、范围与会话职责
-原生对话页 MUST 在顶部左侧显示不可点击的 G 品牌标识、中间显示可点击的当前知识范围、右侧显示清晰可辨且可访问的对话历史入口。历史 Sheet MUST 提供明显的新建对话入口；范围切换、历史会话切换与新建对话 MUST 实际可用。消息 `context_mode` 设置 MUST NOT 替代或暗示上述会话操作。
+原生对话页 MUST 在顶部左侧显示不可点击的 G 品牌标识、中间仅显示可点击的当前知识范围文字与轻量下拉箭头、右侧仅显示清晰可辨且可访问的对话历史图标。长项目名 MUST NOT 挤压两侧稳定触控区。历史 Sheet MUST 在顶部提供明显的新建对话入口；范围切换、历史会话切换与新建对话 MUST 实际可用。消息 `context_mode` 设置 MUST NOT 替代或暗示上述会话操作，顶部或 Composer 外 MUST NOT 增加第二个新建入口。
 
 #### Scenario: 打开知识范围
 - **WHEN** 用户点击顶部中间的当前知识范围
@@ -118,6 +118,66 @@
 #### Scenario: 打开历史并新建对话
 - **WHEN** 用户点击顶部右侧历史入口后选择历史会话或“新建对话”
 - **THEN** 页面分别切换到所选 Conversation 或进入新对话草稿，且消息上下文覆盖不参与该操作
+
+### Requirement: 历史弹层快速响应且新建不依赖摘要请求
+原生 App MUST 在对话页挂载时请求现有全量历史摘要，并在打开历史时复用当前 loading/data/error 状态；MUST NOT 把点击历史误报为网络请求起点。历史列表 MUST 使用不嵌套于同方向 ScrollView 的虚拟列表并限制首批渲染，弹层开关 SHOULD NOT 触发消息树无关重渲染。新建入口 MUST 在首次加载、刷新、空态和失败态持续可用；失败 MUST 可重试，已有列表刷新 MUST NOT 清空闪烁。
+
+#### Scenario: 历史首次加载或失败
+- **WHEN** 用户在摘要请求尚未完成或已失败时打开历史 Sheet
+- **THEN** Sheet 立即显示顶部新建入口和独立加载或失败重试状态，新建不等待历史返回
+
+#### Scenario: 大量历史摘要
+- **WHEN** 全量接口返回大量 Conversation 摘要
+- **THEN** 客户端以虚拟列表分批挂载行且不嵌套纵向 ScrollView；本轮不声称减少了网络响应体或 JSON 解析成本
+
+### Requirement: 冷启动默认新对话并只恢复移动端未完成工作
+原生 App MUST 区分真正的 App 启动与前后台、栏目往返、弹层开关或页面普通重挂载。没有本账号、本 Workspace 的移动端待恢复工作时，冷启动 MUST 显示沿用最后有效知识范围的空白新对话，并只在首次发送时创建服务端 Conversation。当前进程内的短暂离开 MUST 保留会话、未发送输入和阅读位置，不得按固定闲置时长或模型判断自动切断。
+
+#### Scenario: 无待办冷启动
+- **WHEN** 账号和 Workspace 已确认且没有未发送输入、活动/待查看 Run 或结果未知提交记录
+- **THEN** 对话首页显示空白新对话，不选择最近已完成历史，也不调用创建 Conversation 接口
+
+#### Scenario: 短暂离开再返回
+- **WHEN** 用户切后台、切换其他 App 栏目或打开关闭弹层后返回
+- **THEN** 页面保留当前 Conversation 或空白草稿、输入、范围和阅读位置，不重新执行冷启动选择
+
+#### Scenario: 新对话沿用范围
+- **WHEN** 用户冷启动进入空白页或从历史 Sheet 手动新建
+- **THEN** 页面沿用该身份最后有效的 Workspace/项目范围；项目失权或删除时明确提示并回到 Workspace 范围，不携带旧会话、continuation 或对象绑定
+
+### Requirement: 客户端工作记录按身份隔离并由服务端复验
+原生 App MUST 仅持久化恢复所需的 Conversation/Run 引用、范围、未发送输入、稳定提交标识与提交阶段，不持久化第二份消息历史或 Agent 内部快照。记录 MUST 按账号和 Workspace 隔离；退出登录 MUST 清理当前身份记录，身份变化 MUST NOT 读取其他身份记录。恢复 MUST 先完成本地记录读取和现有服务端 API 复验；读取、网络、权限或对象删除失败 MUST 显示可重试或退出状态，不得静默视为无待恢复工作。
+
+#### Scenario: 销毁后恢复未发送输入
+- **WHEN** App 在存在非空未发送输入时被销毁并由同一账号/Workspace 重启
+- **THEN** 页面恢复原输入、范围及其所属 Conversation 或空白草稿，不创建会话、不发送消息
+
+#### Scenario: 恢复活动或离开期间完成的 Run
+- **WHEN** 持久记录指向活动 Run，且重启复验发现其仍活动或已在离开期间完成但尚未展示
+- **THEN** 页面恢复所属 Conversation 和服务端最新消息/Run；活动时继续前台轮询，已完成时先展示结果而不是跳到空白页
+
+#### Scenario: 身份或 Workspace 变化
+- **WHEN** 登录身份或 Workspace 与工作记录归属不一致，或用户退出登录
+- **THEN** 客户端隔离或清理对应记录，不恢复输入、pending、Conversation、Run 或范围到新身份
+
+#### Scenario: 恢复复验失败
+- **WHEN** 本地记录读取成功但会话/Run 复验遇到网络、权限变化或对象删除
+- **THEN** 页面保留明确恢复错误及重试/退出入口，不自动选择最近历史或创建新会话
+
+### Requirement: 未知提交恢复保持消息幂等且不伪造创建幂等
+已有 Conversation 的提交结果未知时，客户端 MUST 保留原目标 Conversation、正文、上下文与 `client_message_id`；恢复后 MUST 先按服务端消息对账，已存在则不得重发，不存在时才允许复用原键重试。创建 Conversation 响应未知时，由于现有接口没有创建幂等键，客户端 MUST NOT 自动再次创建或声称已恢复，MUST 显示无法安全确认的状态和退出路径。
+
+#### Scenario: 已有 Conversation 提交已到达
+- **WHEN** 重启后消息页已包含本地 pending 的 `client_message_id`
+- **THEN** 客户端清除结果未知状态并恢复该消息/Run，不再次提交
+
+#### Scenario: 已有 Conversation 提交未到达
+- **WHEN** 重启对账完成且消息页不含原 `client_message_id`
+- **THEN** 客户端提供恢复入口并以同一目标 Conversation 和同一消息键重试
+
+#### Scenario: 创建 Conversation 响应未知
+- **WHEN** 首条发送在创建 Conversation 阶段发生网络中断或超时且未得到 Conversation ID
+- **THEN** 客户端说明无法安全自动恢复，不重复创建、不发送消息，并允许用户退出到空白新对话
 
 ### Requirement: 对话初始定位与历史阅读互不干扰
 原生 App MUST 在首次进入对话页和显式切换历史 Conversation 后，于最新消息数据和内容布局就绪时为该会话执行一次必要的底部定位。轮询、前后台切换、关闭详情或普通重渲染 MUST NOT 反复强制定位；用户上滑或加载更早历史时 MUST 保留阅读位置。发送新问题后 MUST 让本次发送反馈可见。
