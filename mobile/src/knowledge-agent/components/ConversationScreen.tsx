@@ -3,13 +3,14 @@ import {
   ActivityIndicator,
   type NativeScrollEvent,
   type NativeSyntheticEvent,
+  Platform,
   Pressable,
   ScrollView,
   StyleSheet,
   Text,
   View,
 } from "react-native";
-import { SafeAreaView, useSafeAreaInsets } from "react-native-safe-area-context";
+import { SafeAreaView } from "react-native-safe-area-context";
 import { useQuery } from "@tanstack/react-query";
 
 import { getProjects } from "@/src/api";
@@ -44,8 +45,8 @@ function scopeLabel(scopeType: string, projectName?: string | null): string {
 
 export function ConversationScreen() {
   const { token } = useAuth();
-  const insets = useSafeAreaInsets();
-  const keyboardHeight = useKeyboardHeight(insets.bottom);
+  const keyboardHeight = useKeyboardHeight();
+  const composerKeyboardInset = Platform.OS === "ios" ? keyboardHeight : 0;
   const controller = useConversationController(token);
   const scrollRef = useRef<ScrollView>(null);
   const contentHeightRef = useRef(0);
@@ -55,6 +56,7 @@ export function ConversationScreen() {
   const positionedConversationRef = useRef<string | null>(null);
   const layoutConversationRef = useRef<string | null>(null);
   const followNextContentRef = useRef(false);
+  const keyboardVisibleRef = useRef(false);
   const [scopeOpen, setScopeOpen] = useState(false);
   const [scopeRecoveryNotice, setScopeRecoveryNotice] = useState<string | null>(null);
   const [modeOpen, setModeOpen] = useState(false);
@@ -148,12 +150,21 @@ export function ConversationScreen() {
     scheduleInitialPosition();
   }, [scheduleInitialPosition]);
 
+  useEffect(() => {
+    const keyboardVisible = keyboardHeight > 0;
+    if (keyboardVisible && !keyboardVisibleRef.current) {
+      stickToBottomRef.current = true;
+      followNextContentRef.current = false;
+      scrollRef.current?.scrollToEnd({ animated: true });
+    }
+    keyboardVisibleRef.current = keyboardVisible;
+  }, [keyboardHeight]);
+
   const handleSend = async () => {
     const value = controller.input.trim();
     if (!value) return;
     stickToBottomRef.current = true;
     followNextContentRef.current = true;
-    scrollRef.current?.scrollToEnd({ animated: true });
     await controller.submit(value);
   };
 
@@ -186,9 +197,13 @@ export function ConversationScreen() {
     contentHeightRef.current = height;
     layoutConversationRef.current = conversationKey;
     if (scheduleInitialPosition()) return;
-    if (followNextContentRef.current || stickToBottomRef.current) {
+    if (followNextContentRef.current) {
       scrollRef.current?.scrollToEnd({ animated: true });
       followNextContentRef.current = false;
+      return;
+    }
+    if (stickToBottomRef.current) {
+      scrollRef.current?.scrollToEnd({ animated: false });
     }
   };
 
@@ -206,6 +221,64 @@ export function ConversationScreen() {
 
   const showInitialError =
     controller.conversationsError !== null && !controller.userInitiatedDraft;
+  const pendingAlreadyConfirmed = Boolean(
+    controller.pending &&
+      controller.thread.items.some(
+        (message) => message.clientMessageId === controller.pending?.clientMessageId,
+      ),
+  );
+  const showSendingMessage = Boolean(
+    controller.pending && controller.submitting && !pendingAlreadyConfirmed,
+  );
+  const threadRows = controller.thread.items.map((message) => {
+    const key =
+      message.role === "user" && message.clientMessageId
+        ? `client:${message.clientMessageId}`
+        : `message:${message.id}`;
+    if (message.role === "user" && message.messageType !== "scope_change") {
+      return (
+        <UserMessageRow
+          key={key}
+          content={message.content}
+          contextMode={message.requestContextMode}
+        />
+      );
+    }
+    return (
+      <ThreadMessage
+        key={key}
+        message={message}
+        run={
+          message.role === "assistant"
+            ? runByAssistantMessage.get(message.id) ??
+              (message.runId !== null
+                ? controller.thread.runsById.get(message.runId) ?? null
+                : null)
+            : null
+        }
+        activeRun={controller.activeRun}
+        resumableRunId={controller.resumableRunId}
+        cancelling={controller.cancelling}
+        pollingError={controller.runPollingError}
+        cancelError={controller.cancelError}
+        onCancel={() => void controller.requestCancelRun()}
+        onRetryPolling={controller.retryRunPolling}
+        onContinue={(runId) => void controller.continueRun(runId)}
+        onRetry={(runId) => void controller.retryRun(runId)}
+        onOpenEntry={setEntryDetail}
+      />
+    );
+  });
+  if (controller.pending && showSendingMessage) {
+    threadRows.push(
+      <UserMessageRow
+        key={`client:${controller.pending.clientMessageId}`}
+        content={controller.pending.text}
+        contextMode={controller.pending.contextMode}
+        sending
+      />,
+    );
+  }
 
   return (
     <SafeAreaView style={styles.safe} edges={["top"]}>
@@ -329,7 +402,7 @@ export function ConversationScreen() {
               <Text style={styles.errorTitle}>消息读取失败</Text>
               <Text style={styles.stateCopy}>{controller.messagesError}</Text>
             </View>
-          ) : controller.thread.items.length === 0 ? (
+          ) : controller.thread.items.length === 0 && !showSendingMessage ? (
             <View style={styles.emptyState}>
               <View style={styles.agentMark}>
                 <AgentIcon name="message" size={24} color={theme.ai} />
@@ -372,45 +445,9 @@ export function ConversationScreen() {
             </View>
           ) : null}
 
-          {controller.thread.items.map((message) => (
-            <ThreadMessage
-              key={message.id}
-              message={message}
-              run={
-                message.role === "assistant"
-                  ? runByAssistantMessage.get(message.id) ??
-                    (message.runId !== null
-                      ? controller.thread.runsById.get(message.runId) ?? null
-                      : null)
-                  : null
-              }
-              activeRun={controller.activeRun}
-              resumableRunId={controller.resumableRunId}
-              cancelling={controller.cancelling}
-              pollingError={controller.runPollingError}
-              cancelError={controller.cancelError}
-              onCancel={() => void controller.requestCancelRun()}
-              onRetryPolling={controller.retryRunPolling}
-              onContinue={(runId) => void controller.continueRun(runId)}
-              onRetry={(runId) => void controller.retryRun(runId)}
-              onOpenEntry={setEntryDetail}
-            />
-          ))}
+          {threadRows}
 
-          {controller.pending && controller.submitting ? (
-            <View style={styles.pendingMessage} accessibilityRole="progressbar">
-              <Text style={styles.pendingContext}>
-                {controller.pending.contextMode === "continue"
-                  ? "继续当前主题"
-                  : controller.pending.contextMode === "new_topic"
-                    ? "新话题"
-                    : "正在发送"}
-              </Text>
-              <View style={[styles.userBubble, styles.pendingBubble]}>
-                <Text style={styles.userText}>{controller.pending.text}</Text>
-              </View>
-            </View>
-          ) : controller.pending && controller.conversationCreationUnknown ? (
+          {controller.pending && controller.conversationCreationUnknown ? (
             <View style={styles.pendingBox} accessibilityRole="alert">
               <Text style={styles.pendingTitle}>新对话创建结果无法确认</Text>
               <Text style={styles.stateCopy}>
@@ -474,7 +511,7 @@ export function ConversationScreen() {
           ) : null}
         </ScrollView>
 
-        <View style={{ paddingBottom: keyboardHeight }}>
+        <View testID="composer-keyboard-inset" style={{ paddingBottom: composerKeyboardInset }}>
           <Composer
             value={controller.input}
             onChangeText={controller.setInput}
@@ -609,18 +646,7 @@ function ThreadMessage({
     );
   }
   if (message.role === "user") {
-    return (
-      <View style={styles.userMessage}>
-        {message.requestContextMode && message.requestContextMode !== "auto" ? (
-          <Text style={styles.contextTag}>
-            {message.requestContextMode === "continue" ? "继续当前主题" : "新话题"}
-          </Text>
-        ) : null}
-        <View style={styles.userBubble}>
-          <Text style={styles.userText}>{message.content}</Text>
-        </View>
-      </View>
-    );
+    return <UserMessageRow content={message.content} contextMode={message.requestContextMode} />;
   }
   const runScope = run
     ? scopeLabel(run.scopeType, run.projectName)
@@ -661,6 +687,36 @@ function ThreadMessage({
     </View>
   );
 }
+
+const UserMessageRow = memo(function UserMessageRow({
+  content,
+  contextMode,
+  sending = false,
+}: {
+  content: string;
+  contextMode: KnowledgeMessage["requestContextMode"];
+  sending?: boolean;
+}) {
+  return (
+    <View
+      style={styles.userMessage}
+      accessibilityLabel={sending ? "消息正在发送" : undefined}
+      accessibilityState={{ busy: sending }}
+    >
+      {contextMode && contextMode !== "auto" ? (
+        <Text style={styles.contextTag}>
+          {contextMode === "continue" ? "继续当前主题" : "新话题"}
+        </Text>
+      ) : null}
+      <View style={styles.userBubble}>
+        <Text style={styles.userText}>{content}</Text>
+        <View style={styles.userStatusSlot} accessibilityElementsHidden>
+          {sending ? <ActivityIndicator size={12} color="#FFFFFF" /> : null}
+        </View>
+      </View>
+    </View>
+  );
+});
 
 const styles = StyleSheet.create({
   safe: { flex: 1, backgroundColor: theme.bg },
@@ -711,7 +767,7 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "center",
-    gap: 7,
+    gap: 5,
     marginBottom: 12,
   },
   loadOlderText: { color: theme.green, fontSize: 12, fontWeight: "600" },
@@ -750,18 +806,19 @@ const styles = StyleSheet.create({
   scopeLine: { flex: 1, height: 1, backgroundColor: theme.border },
   scopeEvent: { color: theme.muted, fontSize: 10 },
   userMessage: { alignItems: "flex-end", marginBottom: 14 },
-  pendingMessage: { alignItems: "flex-end", marginBottom: 14, opacity: 0.72 },
-  pendingContext: { marginBottom: 4, color: theme.muted, fontSize: 10, fontWeight: "600" },
-  pendingBubble: { backgroundColor: theme.green },
   contextTag: { marginBottom: 4, color: theme.green, fontSize: 10, fontWeight: "600" },
   userBubble: {
     maxWidth: "86%",
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 7,
     paddingHorizontal: 13,
     paddingVertical: 10,
     borderRadius: 10,
     backgroundColor: theme.green,
   },
-  userText: { color: "#FFFFFF", fontSize: 14, lineHeight: 22 },
+  userText: { flexShrink: 1, color: "#FFFFFF", fontSize: 14, lineHeight: 22 },
+  userStatusSlot: { width: 12, height: 12, alignItems: "center", justifyContent: "center" },
   assistantMessage: { marginBottom: 3 },
   agentLabel: { flexDirection: "row", alignItems: "center", gap: 6, marginBottom: 7 },
   agentDot: {
