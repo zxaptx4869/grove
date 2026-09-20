@@ -6,6 +6,7 @@ import type { KnowledgeScopeChangeRequest } from "@/src/knowledge-agent/types";
 
 const STORAGE_PREFIX = "grove_mobile_dialogue";
 const CHUNK_SIZE = 400;
+const MANIFEST_SUFFIX = "__manifest";
 
 export interface DialogueIdentity {
   userId: number;
@@ -39,6 +40,14 @@ function scopeKey(identity: DialogueIdentity): string {
   return `${STORAGE_PREFIX}_scope_${identityKey(identity)}`;
 }
 
+function manifestKey(key: string): string {
+  return `${key}${MANIFEST_SUFFIX}`;
+}
+
+function chunkKey(key: string, index: number): string {
+  return `${key}__chunk_${index}`;
+}
+
 const platformStorage = {
   get: (key: string) =>
     Platform.OS === "web"
@@ -64,7 +73,7 @@ function splitValue(value: string): string[] {
 }
 
 async function readManifest(key: string): Promise<ChunkManifest | null> {
-  const value = await platformStorage.get(`${key}:manifest`);
+  const value = await platformStorage.get(manifestKey(key));
   if (!value) return null;
   const parsed = JSON.parse(value) as Partial<ChunkManifest>;
   if (parsed.version !== 1 || !Number.isInteger(parsed.count) || (parsed.count ?? 0) < 1) {
@@ -78,27 +87,27 @@ async function removeChunked(key: string): Promise<void> {
   if (manifest) {
     await Promise.all(
       Array.from({ length: manifest.count }, (_, index) =>
-        platformStorage.remove(`${key}:chunk:${index}`),
+        platformStorage.remove(chunkKey(key, index)),
       ),
     );
   }
-  await platformStorage.remove(`${key}:manifest`);
+  await platformStorage.remove(manifestKey(key));
 }
 
 async function writeChunked(key: string, value: string): Promise<void> {
   const previous = await readManifest(key).catch(() => null);
   const chunks = splitValue(value);
   await Promise.all(
-    chunks.map((chunk, index) => platformStorage.set(`${key}:chunk:${index}`, chunk)),
+    chunks.map((chunk, index) => platformStorage.set(chunkKey(key, index), chunk)),
   );
   await platformStorage.set(
-    `${key}:manifest`,
+    manifestKey(key),
     JSON.stringify({ version: 1, count: chunks.length } satisfies ChunkManifest),
   );
   if (previous && previous.count > chunks.length) {
     await Promise.all(
       Array.from({ length: previous.count - chunks.length }, (_, offset) =>
-        platformStorage.remove(`${key}:chunk:${chunks.length + offset}`),
+        platformStorage.remove(chunkKey(key, chunks.length + offset)),
       ),
     );
   }
@@ -109,7 +118,7 @@ async function readChunked(key: string): Promise<string | null> {
   if (!manifest) return null;
   const chunks = await Promise.all(
     Array.from({ length: manifest.count }, (_, index) =>
-      platformStorage.get(`${key}:chunk:${index}`),
+      platformStorage.get(chunkKey(key, index)),
     ),
   );
   if (chunks.some((chunk) => chunk === null)) {

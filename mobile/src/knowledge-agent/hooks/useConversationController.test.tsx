@@ -15,6 +15,7 @@ import type {
 } from "@/src/knowledge-agent/types";
 
 let mockAppActive = true;
+const mockExitRecovery = jest.fn();
 interface MockSessionSeed {
   choice: number | "draft";
   scope: { scopeType: "workspace" | "project"; projectId: number | null; projectName?: string };
@@ -54,7 +55,8 @@ jest.mock("@/src/knowledge-agent/session/DialogueSessionProvider", () => {
           setState((previous) => ({ ...previous, ...patch })),
         retryBootstrap: jest.fn(),
         retryPersistence: jest.fn(),
-        exitRecovery: async () =>
+        exitRecovery: async () => {
+          mockExitRecovery();
           setState((previous) => ({
             ...mockSessionInitial,
             scope: previous.scope,
@@ -63,7 +65,11 @@ jest.mock("@/src/knowledge-agent/session/DialogueSessionProvider", () => {
             pending: null,
             pendingState: null,
             recoveryRun: null,
-          })),
+            bootStatus: "ready",
+            bootError: null,
+            persistenceError: null,
+          }));
+        },
         getReadingPosition: jest.fn(() => null),
         setReadingPosition: jest.fn(),
         clearReadingPosition: jest.fn(),
@@ -353,6 +359,26 @@ test("无待恢复工作时默认空白新对话，首次发送才创建 Convers
     9,
     expect.objectContaining({ message: "首次问题" }),
   );
+});
+
+test("本地恢复失败时从历史新建会话可退出错误态", async () => {
+  mockSessionInitial = {
+    ...mockSessionInitial,
+    choice: "draft",
+    bootStatus: "error",
+    bootError: "恢复记录读取失败",
+  };
+  const rendered = await setup();
+  expect(rendered.result.current.recoveryError).toBe("恢复记录读取失败");
+
+  await act(async () => {
+    rendered.result.current.startNewConversation();
+    await Promise.resolve();
+  });
+
+  await waitFor(() => expect(rendered.result.current.recoveryError).toBeNull());
+  expect(mockExitRecovery).toHaveBeenCalledTimes(1);
+  expect(rendered.result.current.isDraft).toBe(true);
 });
 
 test("创建 Conversation 结果未知时不自动重建或提交消息", async () => {

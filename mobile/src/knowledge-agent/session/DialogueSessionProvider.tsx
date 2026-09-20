@@ -227,16 +227,25 @@ export function DialogueSessionProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const exitRecovery = useCallback(async () => {
-    if (identity) await clearDialogueWork(identity);
+    let cleanupError: string | null = null;
+    if (identity) {
+      try {
+        await clearDialogueWork(identity);
+      } catch (error: unknown) {
+        cleanupError =
+          error instanceof Error ? error.message : "移动对话恢复记录清理失败";
+      }
+    }
     setRuntime((previous) => ({
       ...DEFAULT_RUNTIME,
       scope: previous.scope,
     }));
+    setLoadedIdentityKey(identityKey);
     setBootError(null);
-    persistenceErrorRef.current = null;
-    setPersistenceError(null);
+    persistenceErrorRef.current = cleanupError;
+    setPersistenceError(cleanupError);
     setBootStatus(identity ? "ready" : "idle");
-  }, [identity]);
+  }, [identity, identityKey]);
 
   const getReadingPosition = useCallback(
     (conversationKey: string) => readingPositionsRef.current.get(conversationKey) ?? null,

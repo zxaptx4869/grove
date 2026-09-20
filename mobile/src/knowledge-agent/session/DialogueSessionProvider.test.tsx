@@ -1,4 +1,5 @@
 import { act, cleanup, renderHook, waitFor } from "@testing-library/react-native";
+import * as SecureStore from "expo-secure-store";
 
 import {
   DialogueSessionProvider,
@@ -18,11 +19,22 @@ jest.mock("@/src/auth", () => ({
 }));
 
 jest.mock("expo-secure-store", () => ({
-  getItemAsync: jest.fn(async (key: string) => mockStorage.get(key) ?? null),
+  getItemAsync: jest.fn(async (key: string) => {
+    if (!/^[A-Za-z0-9._-]+$/.test(key)) {
+      throw new Error("Invalid key provided to SecureStore");
+    }
+    return mockStorage.get(key) ?? null;
+  }),
   setItemAsync: jest.fn(async (key: string, value: string) => {
+    if (!/^[A-Za-z0-9._-]+$/.test(key)) {
+      throw new Error("Invalid key provided to SecureStore");
+    }
     mockStorage.set(key, value);
   }),
   deleteItemAsync: jest.fn(async (key: string) => {
+    if (!/^[A-Za-z0-9._-]+$/.test(key)) {
+      throw new Error("Invalid key provided to SecureStore");
+    }
     mockStorage.delete(key);
   }),
 }));
@@ -54,6 +66,7 @@ test("无待恢复工作时冷启动保持空白新对话和最后有效范围",
   await waitFor(() =>
     expect([...mockStorage.keys()].some((key) => key.includes("_scope_1_10"))).toBe(true),
   );
+  expect([...mockStorage.keys()].every((key) => /^[A-Za-z0-9._-]+$/.test(key))).toBe(true);
   await first.unmount();
 
   const restored = await renderHook(() => useDialogueSession(), { wrapper });
@@ -85,7 +98,7 @@ test("销毁并重建后恢复输入、原会话和稳定提交标识", async ()
   });
   await waitFor(() =>
     expect(
-      [...mockStorage.keys()].filter((key) => key.includes("_work_1_10:chunk:")).length,
+      [...mockStorage.keys()].filter((key) => key.includes("_work_1_10__chunk_")).length,
     ).toBeGreaterThan(1),
   );
   await first.unmount();
@@ -137,7 +150,7 @@ test("退出当前身份时可清理范围与工作记录", async () => {
 });
 
 test("本地恢复记录损坏时不静默回退，修复后可重试", async () => {
-  const manifestKey = "grove_mobile_dialogue_work_1_10:manifest";
+  const manifestKey = "grove_mobile_dialogue_work_1_10__manifest";
   mockStorage.set(manifestKey, "{无效");
   const rendered = await renderHook(() => useDialogueSession(), { wrapper });
   await waitFor(() => expect(rendered.result.current.bootStatus).toBe("error"));
@@ -149,4 +162,30 @@ test("本地恢复记录损坏时不静默回退，修复后可重试", async ()
   });
   await waitFor(() => expect(rendered.result.current.bootStatus).toBe("ready"));
   expect(rendered.result.current.choice).toBe("draft");
+});
+
+test("退出恢复在安全存储清理失败时仍解除页面阻塞", async () => {
+  const manifestKey = "grove_mobile_dialogue_work_1_10__manifest";
+  mockStorage.set(manifestKey, "{无效");
+  const rendered = await renderHook(() => useDialogueSession(), { wrapper });
+  await waitFor(() => expect(rendered.result.current.bootStatus).toBe("error"));
+  jest.mocked(SecureStore.deleteItemAsync).mockRejectedValueOnce(new Error("存储暂不可用"));
+
+  await act(async () => {
+    await rendered.result.current.exitRecovery();
+  });
+
+  expect(rendered.result.current.bootStatus).toBe("ready");
+  expect(rendered.result.current.bootError).toBeNull();
+  expect(rendered.result.current.choice).toBe("draft");
+  expect(rendered.result.current.input).toBe("");
+
+  await act(async () => {
+    rendered.result.current.update({ input: "退出恢复后可继续输入" });
+  });
+  await waitFor(() =>
+    expect([...mockStorage.values()].some((value) => value.includes("退出恢复后可继续输入"))).toBe(
+      true,
+    ),
+  );
 });

@@ -394,13 +394,17 @@ export function useConversationController(
       return;
     }
     resetConversationLocalState();
-    session.update({
-      choice: "draft",
-      input: "",
-      pending: null,
-      pendingState: null,
-      recoveryRun: null,
-    });
+    if (session.bootStatus === "error") {
+      void session.exitRecovery();
+    } else {
+      session.update({
+        choice: "draft",
+        input: "",
+        pending: null,
+        pendingState: null,
+        recoveryRun: null,
+      });
+    }
     setModesState(DEFAULT_MODES);
   }, [pending, resetConversationLocalState, session]);
 
