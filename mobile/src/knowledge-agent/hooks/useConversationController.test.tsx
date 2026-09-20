@@ -3,6 +3,10 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 
 import { knowledgeAgentApi } from "@/src/knowledge-agent/api";
 import { useConversationController } from "@/src/knowledge-agent/hooks/useConversationController";
+import {
+  createPendingSubmission,
+  type PendingSubmission,
+} from "@/src/knowledge-agent/state/submission";
 import type {
   KnowledgeConversation,
   KnowledgeMessage,
@@ -11,10 +15,62 @@ import type {
 } from "@/src/knowledge-agent/types";
 
 let mockAppActive = true;
+interface MockSessionSeed {
+  choice: number | "draft";
+  scope: { scopeType: "workspace" | "project"; projectId: number | null; projectName?: string };
+  input: string;
+  pending: PendingSubmission | null;
+  pendingState: "in_flight" | "result_unknown" | "creation_unknown" | null;
+  recoveryRun: { conversationId: number; runId: number } | null;
+  bootStatus: "idle" | "loading" | "ready" | "error";
+  bootError: string | null;
+  persistenceError: string | null;
+}
+
+let mockSessionInitial: MockSessionSeed = {
+  choice: 1 as number | "draft",
+  scope: { scopeType: "workspace" as const, projectId: null },
+  input: "",
+  pending: null,
+  pendingState: null,
+  recoveryRun: null,
+  bootStatus: "ready" as const,
+  bootError: null,
+  persistenceError: null,
+};
 
 jest.mock("@/src/knowledge-agent/hooks/useAppState", () => ({
   useAppStateActive: () => mockAppActive,
 }));
+
+jest.mock("@/src/knowledge-agent/session/DialogueSessionProvider", () => {
+  const ReactModule = jest.requireActual<typeof import("react")>("react");
+  return {
+    useDialogueSession: () => {
+      const [state, setState] = ReactModule.useState(() => ({ ...mockSessionInitial }));
+      return {
+        ...state,
+        update: (patch: Partial<MockSessionSeed>) =>
+          setState((previous) => ({ ...previous, ...patch })),
+        retryBootstrap: jest.fn(),
+        retryPersistence: jest.fn(),
+        exitRecovery: async () =>
+          setState((previous) => ({
+            ...mockSessionInitial,
+            scope: previous.scope,
+            choice: "draft",
+            input: "",
+            pending: null,
+            pendingState: null,
+            recoveryRun: null,
+          })),
+        getReadingPosition: jest.fn(() => null),
+        setReadingPosition: jest.fn(),
+        clearReadingPosition: jest.fn(),
+      };
+    },
+  };
+});
 
 jest.mock("expo-crypto", () => ({
   randomUUID: jest.fn(() => "new-client-id"),
@@ -49,6 +105,17 @@ afterEach(async () => {
   clients.length = 0;
   jest.clearAllMocks();
   mockAppActive = true;
+  mockSessionInitial = {
+    choice: 1,
+    scope: { scopeType: "workspace", projectId: null },
+    input: "",
+    pending: null,
+    pendingState: null,
+    recoveryRun: null,
+    bootStatus: "ready",
+    bootError: null,
+    persistenceError: null,
+  };
 });
 
 function conversation(id: number): KnowledgeConversation {
@@ -152,10 +219,14 @@ async function setup(
   conversations: KnowledgeConversation[] = [conversation(1)],
   pages: Record<number, KnowledgeMessagePage> = { 1: page() },
   runLoader?: (runId: number) => Promise<KnowledgeRun>,
+  conversationLoader?: (conversationId: number) => Promise<KnowledgeConversation>,
 ) {
   api.listConversations.mockResolvedValue(conversations);
   api.getConversation.mockImplementation(
-    async (_token, id) => conversations.find((item) => item.id === id) ?? conversation(id),
+    async (_token, id) =>
+      conversationLoader
+        ? conversationLoader(id)
+        : conversations.find((item) => item.id === id) ?? conversation(id),
   );
   api.listMessages.mockImplementation(async (_token, id) => pages[id] ?? page());
   api.getRun.mockImplementation(async (_token, id) => {
@@ -258,6 +329,121 @@ test("提交结果未知重试复用同一幂等键", async () => {
   expect(api.submitMessage.mock.calls[0][2].clientMessageId).toBe(stableId);
   expect(api.submitMessage.mock.calls[1][2].clientMessageId).toBe(stableId);
   expect(rendered.result.current.submissionResultUnknown).toBe(false);
+});
+
+test("无待恢复工作时默认空白新对话，首次发送才创建 Conversation", async () => {
+  mockSessionInitial = { ...mockSessionInitial, choice: "draft" };
+  const rendered = await setup();
+  await waitFor(() => expect(rendered.result.current.initialLoading).toBe(false));
+  expect(rendered.result.current.isDraft).toBe(true);
+  expect(rendered.result.current.activeConversation).toBeNull();
+  expect(api.createConversation).not.toHaveBeenCalled();
+
+  api.createConversation.mockResolvedValue(conversation(9));
+  api.submitMessage.mockResolvedValue({
+    userMessage: message(9, "user", 90, 9, "首次问题"),
+    run: run(90, "waiting", 9),
+  });
+  await act(async () => {
+    expect(await rendered.result.current.submit("首次问题")).toBe(true);
+  });
+  expect(api.createConversation).toHaveBeenCalledTimes(1);
+  expect(api.submitMessage).toHaveBeenCalledWith(
+    "token",
+    9,
+    expect.objectContaining({ message: "首次问题" }),
+  );
+});
+
+test("创建 Conversation 结果未知时不自动重建或提交消息", async () => {
+  mockSessionInitial = { ...mockSessionInitial, choice: "draft" };
+  const rendered = await setup();
+  api.createConversation.mockRejectedValueOnce(new TypeError("Network request failed"));
+
+  await act(async () => {
+    expect(await rendered.result.current.submit("不能重建的问题")).toBe(false);
+  });
+  expect(rendered.result.current.conversationCreationUnknown).toBe(true);
+  expect(rendered.result.current.pending?.clientMessageId).toBe("new-client-id");
+  expect(await rendered.result.current.retrySubmit()).toBe(false);
+  expect(api.createConversation).toHaveBeenCalledTimes(1);
+  expect(api.submitMessage).not.toHaveBeenCalled();
+});
+
+test("恢复时先用 client_message_id 对账，已存在则不重复提交", async () => {
+  const pending = {
+    ...createPendingSubmission({ text: "已到达问题", contextMode: "auto" }),
+    clientMessageId: "stable-client-id",
+    conversationId: 1,
+  };
+  mockSessionInitial = {
+    ...mockSessionInitial,
+    choice: 1,
+    input: "已到达问题",
+    pending,
+    pendingState: "result_unknown",
+  };
+  const confirmed = {
+    ...message(3, "user", 12, 1, "已到达问题"),
+    clientMessageId: "stable-client-id",
+  };
+  const rendered = await setup([conversation(1)], {
+    1: page([confirmed], [run(12, "completed")]),
+  });
+
+  await waitFor(() => expect(rendered.result.current.pending).toBeNull());
+  expect(rendered.result.current.submissionResultUnknown).toBe(false);
+  expect(api.submitMessage).not.toHaveBeenCalled();
+});
+
+test("服务端恢复失败时保留明确错误并可重试", async () => {
+  mockSessionInitial = { ...mockSessionInitial, input: "待恢复输入" };
+  let shouldFail = true;
+  const rendered = await setup(
+    [conversation(1)],
+    { 1: page() },
+    undefined,
+    async (id) => {
+      if (shouldFail) throw new TypeError("Network request failed");
+      return conversation(id);
+    },
+  );
+  await waitFor(() => expect(rendered.result.current.recoveryError).not.toBeNull());
+
+  shouldFail = false;
+  await act(async () => {
+    rendered.result.current.retryRecovery();
+  });
+  await waitFor(() => expect(rendered.result.current.activeConversation?.id).toBe(1));
+  expect(rendered.result.current.recoveryError).toBeNull();
+});
+
+test("离开期间完成的活动 Run 恢复终态结果", async () => {
+  mockSessionInitial = {
+    ...mockSessionInitial,
+    recoveryRun: { conversationId: 1, runId: 10 },
+  };
+  const processing = run(10, "processing");
+  const completed = run(10, "completed", 1, {
+    dialogueBlocks: [{ kind: "text", text: "离开期间已完成" }],
+    updatedAt: "2026-09-20T10:05:00Z",
+  });
+  const rendered = await setup(
+    [conversation(1)],
+    {
+      1: page(
+        [message(1, "user", 10), message(2, "assistant", 10, 1, "")],
+        [processing],
+      ),
+    },
+    async () => completed,
+  );
+
+  await waitFor(() =>
+    expect(rendered.result.current.thread.runsById.get(10)?.status).toBe("completed"),
+  );
+  expect(rendered.result.current.activeRun).toBeNull();
+  expect(api.getRun).toHaveBeenCalledWith("token", 10);
 });
 
 test("正常提交进行中不能重复发送或恢复，且不进入结果未知", async () => {

@@ -2,6 +2,7 @@ import { Pressable, StyleSheet, Text, View } from "react-native";
 
 import { AgentIcon } from "@/src/knowledge-agent/components/AgentIcon";
 import type { EntryDetailTarget } from "@/src/knowledge-agent/components/EntryDetailSheet";
+import { RichText } from "@/src/knowledge-agent/components/RichText";
 import { AppButton, Badge, Card, CardBody } from "@/src/knowledge-agent/components/ui";
 import type {
   KnowledgeAnswerBlock,
@@ -67,10 +68,6 @@ function itemPath(item: Record<string, unknown>): string | null {
   return [project, path].filter(Boolean).join(" / ") || null;
 }
 
-function itemSummary(item: Record<string, unknown>): string | null {
-  return stringValue(item.summary) ?? stringValue(item.excerpt);
-}
-
 function relevanceLabel(value: string | null): string | null {
   if (value === "direct") return "直接相关";
   if (value === "indirect") return "间接相关";
@@ -110,7 +107,6 @@ function ListItem({
   const canExpand = entryId !== null;
   const title = itemTitle(item, index);
   const path = itemPath(item);
-  const summary = itemSummary(item);
   const relevance = relevanceLabel(stringValue(item.relevanceLevel));
   const relevanceReason = stringValue(item.relevanceReason);
   return (
@@ -142,11 +138,6 @@ function ListItem({
           {path ? (
             <Text style={styles.listPath} numberOfLines={1} ellipsizeMode="tail">
               {path}
-            </Text>
-          ) : null}
-          {summary ? (
-            <Text style={styles.listSummary} numberOfLines={1} ellipsizeMode="tail">
-              {summary}
             </Text>
           ) : null}
           {relevance || relevanceReason ? (
@@ -247,15 +238,17 @@ function AnswerBlock({
   onOpenEntry: (target: EntryDetailTarget) => void;
 }) {
   if (block.kind === "text") {
-    return block.text ? <Text style={styles.textBlock}>{block.text}</Text> : <UnknownBlock />;
+    return block.text ? <RichText>{block.text}</RichText> : <UnknownBlock />;
   }
   if (block.kind === "insufficient") {
     return (
       <View style={styles.insufficient} accessibilityRole="alert">
         <AgentIcon name="alert" size={16} color={theme.risk} />
-        <Text style={styles.insufficientText}>
-          {block.text || "当前材料不足，无法完成本轮回答。"}
-        </Text>
+        <View style={styles.insufficientMain}>
+          <RichText tone="muted">
+            {block.text || "当前材料不足，无法完成本轮回答。"}
+          </RichText>
+        </View>
       </View>
     );
   }
@@ -266,9 +259,7 @@ function AnswerBlock({
           <AgentIcon name="edit" size={15} color={theme.ai} />
           <Text style={styles.candidateTitle}>AI 修改建议 / 候选稿 · 未应用</Text>
         </View>
-        <Text style={styles.textBlock}>
-          {block.text || block.content || "候选内容为空。"}
-        </Text>
+        <RichText>{block.text || block.content || "候选内容为空。"}</RichText>
       </View>
     );
   }
@@ -291,7 +282,9 @@ function AnswerBlock({
             </Text>
           </View>
         </View>
-        <Text style={styles.entryContent}>{block.content || block.text || "正文为空。"}</Text>
+        <View style={styles.entryContent}>
+          <RichText>{block.content || block.text || "正文为空。"}</RichText>
+        </View>
       </View>
     );
   }
@@ -302,9 +295,9 @@ function AnswerBlock({
           <AgentIcon name="quote" size={15} color={theme.confirmed} />
           <Text style={styles.evidenceTitle}>本轮已核验依据</Text>
         </View>
-        <Text style={styles.evidenceText}>
+        <RichText tone="muted">
           {block.text || block.content || "服务端未返回可展示的依据文本。"}
-        </Text>
+        </RichText>
       </View>
     );
   }
@@ -366,7 +359,7 @@ export function AnswerCard({
               onOpenEntry={onOpenEntry}
             />
           ))}
-          {fallbackText ? <Text style={styles.textBlock}>{fallbackText}</Text> : null}
+          {fallbackText ? <RichText>{fallbackText}</RichText> : null}
           {!fallbackText && blocks.length === 0 ? (
             <UnknownBlock />
           ) : null}
@@ -399,7 +392,6 @@ const styles = StyleSheet.create({
   },
   scope: { marginTop: 3, color: theme.muted, fontSize: 11 },
   blocks: { marginTop: 12, gap: 10 },
-  textBlock: { color: theme.ink, fontSize: 14, lineHeight: 23 },
   blockBox: {
     overflow: "hidden",
     borderWidth: 1,
@@ -442,10 +434,9 @@ const styles = StyleSheet.create({
   listMain: { flex: 1, minWidth: 0 },
   listItemTitle: { color: theme.ink, fontSize: 13, lineHeight: 19, fontWeight: "600" },
   listPath: { marginTop: 2, color: theme.muted, fontSize: 11, lineHeight: 17 },
-  listSummary: { marginTop: 2, color: theme.muted, fontSize: 12, lineHeight: 18 },
   listRelevance: { marginTop: 3, color: theme.confirmed, fontSize: 11, lineHeight: 17 },
   listUnavailable: { marginTop: 3, color: theme.risk, fontSize: 10, lineHeight: 16 },
-  entryContent: { padding: 11, color: theme.ink, fontSize: 13, lineHeight: 22 },
+  entryContent: { padding: 11 },
   statHead: { flexDirection: "row", gap: 12, padding: 11 },
   statValue: { color: theme.confirmed, fontSize: 23, fontWeight: "700" },
   bucketRow: {
@@ -470,7 +461,7 @@ const styles = StyleSheet.create({
     borderRadius: 8,
     backgroundColor: theme.riskSoft,
   },
-  insufficientText: { flex: 1, color: theme.risk, fontSize: 12, lineHeight: 20 },
+  insufficientMain: { flex: 1 },
   candidate: {
     gap: 7,
     padding: 11,
@@ -490,7 +481,6 @@ const styles = StyleSheet.create({
     backgroundColor: theme.confirmedSoft,
   },
   evidenceTitle: { color: theme.confirmed, fontSize: 11, fontWeight: "700" },
-  evidenceText: { color: theme.ink, fontSize: 12, lineHeight: 20 },
   unknown: {
     padding: 10,
     borderWidth: 1,

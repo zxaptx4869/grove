@@ -126,9 +126,8 @@ test("知识列表保持紧凑层级并只把明确 Entry 交给详情", async (
   expect(api.getEntryCurrent).not.toHaveBeenCalled();
   expect(rendered.getByText("装修 / 施工 / 防水")).toBeTruthy();
   expect(
-    rendered.getByText("这是一个很长的正文摘要，只允许在列表中显示一行。").props
-      .numberOfLines,
-  ).toBe(1);
+    rendered.queryByText("这是一个很长的正文摘要，只允许在列表中显示一行。"),
+  ).toBeNull();
   expect(rendered.getByText("间接相关：用于补充防水施工的验收背景")).toBeTruthy();
   await act(async () => {
     fireEvent.press(rendered.getByLabelText("第 1 条，闭水试验，打开知识详情"));

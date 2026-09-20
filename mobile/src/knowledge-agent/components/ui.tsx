@@ -1,11 +1,12 @@
-import type { ReactNode } from "react";
+import { useCallback, useEffect, useState, type ReactNode } from "react";
 import {
+  Animated,
   Modal,
-  type ModalProps,
   Pressable,
   ScrollView,
   StyleSheet,
   Text,
+  useWindowDimensions,
   View,
   type StyleProp,
   type ViewStyle,
@@ -141,13 +142,61 @@ export function Sheet({
   onClose,
   children,
   animationType = "fade",
+  scrollable = true,
+  presentation = "fade",
+  reduceMotion = false,
 }: {
   visible: boolean;
   title: string;
   onClose: () => void;
   children: ReactNode;
-  animationType?: ModalProps["animationType"];
+  animationType?: "none" | "slide" | "fade";
+  scrollable?: boolean;
+  presentation?: "fade" | "bottom";
+  reduceMotion?: boolean;
 }) {
+  const renderContent = (closeHandler: () => void) => (
+    <View
+      style={[styles.sheet, presentation === "bottom" && styles.bottomSheet]}
+      accessibilityViewIsModal
+    >
+      <View style={styles.sheetHead}>
+        <Text style={styles.sheetTitle}>{title}</Text>
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel="关闭"
+          onPress={closeHandler}
+          style={styles.sheetClose}
+        >
+          <AgentIcon name="close" size={20} color={theme.muted} />
+        </Pressable>
+      </View>
+      <SafeAreaView edges={["bottom"]} style={styles.sheetSafeArea}>
+        {scrollable ? (
+          <ScrollView
+            style={styles.sheetScroll}
+            contentContainerStyle={styles.sheetBody}
+            keyboardShouldPersistTaps="handled"
+          >
+            {children}
+          </ScrollView>
+        ) : (
+          children
+        )}
+      </SafeAreaView>
+    </View>
+  );
+  if (presentation === "bottom") {
+    return (
+      <BottomSheetMotion
+        visible={visible}
+        onClose={onClose}
+        reduceMotion={reduceMotion}
+      >
+        {(requestClose) => renderContent(requestClose)}
+      </BottomSheetMotion>
+    );
+  }
   return (
     <Modal visible={visible} transparent animationType={animationType} onRequestClose={onClose}>
       <View style={styles.modalRoot}>
@@ -156,29 +205,90 @@ export function Sheet({
           style={styles.scrim}
           onPress={onClose}
         />
-        <View style={styles.sheet} accessibilityViewIsModal>
-          <View style={styles.sheetHandle} />
-          <View style={styles.sheetHead}>
-            <Text style={styles.sheetTitle}>{title}</Text>
-            <Pressable
-              accessibilityRole="button"
-              accessibilityLabel="关闭"
-              onPress={onClose}
-              style={styles.sheetClose}
-            >
-              <AgentIcon name="close" size={20} color={theme.muted} />
-            </Pressable>
-          </View>
-          <SafeAreaView edges={["bottom"]} style={styles.sheetSafeArea}>
-            <ScrollView
-              style={styles.sheetScroll}
-              contentContainerStyle={styles.sheetBody}
-              keyboardShouldPersistTaps="handled"
-            >
-              {children}
-            </ScrollView>
-          </SafeAreaView>
-        </View>
+        {renderContent(onClose)}
+      </View>
+    </Modal>
+  );
+}
+
+function BottomSheetMotion({
+  visible,
+  onClose,
+  reduceMotion,
+  children,
+}: {
+  visible: boolean;
+  onClose: () => void;
+  reduceMotion: boolean;
+  children: (requestClose: () => void) => ReactNode;
+}) {
+  const [scrimOpacity] = useState(() => new Animated.Value(0));
+  const [translateY] = useState(() => new Animated.Value(900));
+  const [closing, setClosing] = useState(false);
+  const { height: windowHeight } = useWindowDimensions();
+  const hiddenOffset = Math.max(windowHeight, 900);
+
+  useEffect(() => {
+    if (!visible) return;
+    queueMicrotask(() => setClosing(false));
+    if (reduceMotion) {
+      scrimOpacity.setValue(1);
+      translateY.setValue(0);
+      return;
+    }
+    scrimOpacity.setValue(0);
+    translateY.setValue(hiddenOffset);
+    Animated.parallel([
+      Animated.timing(scrimOpacity, {
+        toValue: 1,
+        duration: 160,
+        useNativeDriver: true,
+      }),
+      Animated.timing(translateY, {
+        toValue: 0,
+        duration: 220,
+        useNativeDriver: true,
+      }),
+    ]).start();
+  }, [hiddenOffset, reduceMotion, scrimOpacity, translateY, visible]);
+
+  const requestClose = useCallback(() => {
+    if (closing) return;
+    setClosing(true);
+    if (reduceMotion) {
+      onClose();
+      return;
+    }
+    Animated.parallel([
+      Animated.timing(scrimOpacity, {
+        toValue: 0,
+        duration: 150,
+        useNativeDriver: true,
+      }),
+      Animated.timing(translateY, {
+        toValue: hiddenOffset,
+        duration: 190,
+        useNativeDriver: true,
+      }),
+    ]).start(({ finished }) => {
+      if (finished) onClose();
+      else setClosing(false);
+    });
+  }, [closing, hiddenOffset, onClose, reduceMotion, scrimOpacity, translateY]);
+
+  return (
+    <Modal visible={visible} transparent animationType="none" onRequestClose={requestClose}>
+      <View style={styles.modalRoot}>
+        <Animated.View style={[styles.animatedScrim, { opacity: scrimOpacity }]}>
+          <Pressable
+            accessibilityLabel="关闭弹层"
+            style={styles.scrim}
+            onPress={requestClose}
+          />
+        </Animated.View>
+        <Animated.View style={[styles.bottomPanel, { transform: [{ translateY }] }]}>
+          {children(requestClose)}
+        </Animated.View>
       </View>
     </Modal>
   );
@@ -248,6 +358,14 @@ const styles = StyleSheet.create({
     left: 0,
     backgroundColor: theme.scrim,
   },
+  animatedScrim: {
+    position: "absolute",
+    top: 0,
+    right: 0,
+    bottom: 0,
+    left: 0,
+  },
+  bottomPanel: { maxHeight: "84%" },
   sheet: {
     maxHeight: "84%",
     overflow: "hidden",
@@ -256,15 +374,7 @@ const styles = StyleSheet.create({
     backgroundColor: theme.surface,
     ...popShadow,
   },
-  sheetHandle: {
-    width: 36,
-    height: 4,
-    marginTop: 8,
-    marginBottom: 2,
-    alignSelf: "center",
-    borderRadius: 2,
-    backgroundColor: "#CAD2CD",
-  },
+  bottomSheet: { maxHeight: "100%" },
   sheetHead: {
     minHeight: 52,
     flexDirection: "row",

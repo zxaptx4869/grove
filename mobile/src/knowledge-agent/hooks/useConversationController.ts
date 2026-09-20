@@ -8,6 +8,7 @@ import {
 } from "@/src/knowledge-agent/errors";
 import { useAppStateActive } from "@/src/knowledge-agent/hooks/useAppState";
 import { knowledgeAgentKeys } from "@/src/knowledge-agent/queryKeys";
+import { useDialogueSession } from "@/src/knowledge-agent/session/DialogueSessionProvider";
 import {
   composeThread,
   upsertRun,
@@ -31,19 +32,13 @@ import type {
   KnowledgeMessagePage,
   KnowledgeRun,
   KnowledgeScopeChangeRequest,
-  KnowledgeScopeType,
   RunStatus,
 } from "@/src/knowledge-agent/types";
 import { isRunActive } from "@/src/knowledge-agent/types";
 
-export interface DraftScope {
-  scopeType: KnowledgeScopeType;
-  projectId: number | null;
-  projectName?: string;
-}
-
 export interface ConversationController {
   initialLoading: boolean;
+  conversationsLoading: boolean;
   conversations: KnowledgeConversation[] | undefined;
   conversationsError: string | null;
   activeConversation: KnowledgeConversation | null;
@@ -65,9 +60,20 @@ export interface ConversationController {
   loadingOlder: boolean;
   olderError: string | null;
   pending: PendingSubmission | null;
+  input: string;
+  setInput: (value: string) => void;
   submitting: boolean;
   submissionResultUnknown: boolean;
+  conversationCreationUnknown: boolean;
   submitError: string | null;
+  recoveryError: string | null;
+  persistenceError: string | null;
+  retryRecovery: () => void;
+  retryPersistence: () => void;
+  exitRecovery: () => Promise<void>;
+  getReadingPosition: (conversationKey: string) => number | null;
+  setReadingPosition: (conversationKey: string, offsetY: number) => void;
+  clearReadingPosition: (conversationKey: string) => void;
   modes: ModeSelection;
   setContextMode: (mode: ContextMode) => void;
   setModes: (modes: ModeSelection) => void;
@@ -119,19 +125,13 @@ export function useConversationController(
 ): ConversationController {
   const queryClient = useQueryClient();
   const appActive = useAppStateActive();
-  const [explicitChoice, setExplicitChoice] = useState<number | "draft" | null>(null);
-  const [draftScope, setDraftScope] = useState<DraftScope>({
-    scopeType: "workspace",
-    projectId: null,
-  });
+  const session = useDialogueSession();
   const [olderPages, setOlderPages] = useState<KnowledgeMessagePage[]>([]);
   const [runOverrides, setRunOverrides] = useState<Map<number, KnowledgeRun>>(
     () => new Map(),
   );
   const [extraMessages, setExtraMessages] = useState<KnowledgeMessage[]>([]);
-  const [pending, setPending] = useState<PendingSubmission | null>(null);
   const [submitting, setSubmitting] = useState(false);
-  const [submissionResultUnknown, setSubmissionResultUnknown] = useState(false);
   const [submitError, setSubmitError] = useState<string | null>(null);
   const [modes, setModesState] = useState<ModeSelection>(DEFAULT_MODES);
   const modesRef = useRef(modes);
@@ -144,6 +144,9 @@ export function useConversationController(
   const conversationGenerationRef = useRef(0);
   const olderPageRequestRef = useRef<OlderPageRequest | null>(null);
   const submissionRequestRef = useRef(false);
+  const pending = session.pending;
+  const submissionResultUnknown = session.pendingState === "result_unknown";
+  const conversationCreationUnknown = session.pendingState === "creation_unknown";
 
   useEffect(() => {
     modesRef.current = modes;
@@ -156,13 +159,9 @@ export function useConversationController(
   });
   const conversations = conversationsQuery.data;
   const selectedConversationId =
-    explicitChoice === null
-      ? conversations && conversations.length > 0
-        ? conversations[0].id
-        : null
-      : explicitChoice === "draft"
-        ? null
-        : explicitChoice;
+    session.bootStatus === "ready" && session.choice !== "draft"
+      ? session.choice
+      : null;
 
   const activeConversationQuery = useQuery({
     queryKey: knowledgeAgentKeys.conversation(selectedConversationId as number),
@@ -174,13 +173,13 @@ export function useConversationController(
   const isDraft = selectedConversationId === null;
 
   const currentScope = useMemo<KnowledgeScopeChangeRequest>(() => {
-    if (isDraft || !activeConversation) return { ...draftScope };
+    if (isDraft || !activeConversation) return { ...session.scope };
     return {
       scopeType: activeConversation.scopeType,
       projectId: activeConversation.projectId,
       projectName: activeConversation.projectName ?? undefined,
     };
-  }, [activeConversation, draftScope, isDraft]);
+  }, [activeConversation, isDraft, session.scope]);
 
   const recentPageQuery = useQuery({
     queryKey: knowledgeAgentKeys.messages(selectedConversationId as number),
@@ -199,11 +198,32 @@ export function useConversationController(
     [extraMessages, olderPages, recentPageQuery.data, runOverrides],
   );
 
+  const recoveryRunQuery = useQuery({
+    queryKey: knowledgeAgentKeys.run(session.recoveryRun?.runId as number),
+    queryFn: () =>
+      knowledgeAgentApi.getRun(token as string, session.recoveryRun?.runId as number),
+    enabled: Boolean(
+      token &&
+        appActive &&
+        session.bootStatus === "ready" &&
+        session.recoveryRun &&
+        session.recoveryRun.conversationId === selectedConversationId,
+    ),
+  });
+
+  const recoveredThreadBase = useMemo(
+    () =>
+      recoveryRunQuery.data
+        ? upsertRun(threadBase, recoveryRunQuery.data)
+        : threadBase,
+    [recoveryRunQuery.data, threadBase],
+  );
+
   const baseActiveRun = useMemo(() => {
-    return [...threadBase.runsById.values()]
+    return [...recoveredThreadBase.runsById.values()]
       .filter((run) => isRunActive(run.status))
       .sort((left, right) => right.updatedAt.localeCompare(left.updatedAt))[0] ?? null;
-  }, [threadBase.runsById]);
+  }, [recoveredThreadBase.runsById]);
   const activeRunId = baseActiveRun?.id ?? null;
 
   const runQuery = useQuery({
@@ -217,8 +237,9 @@ export function useConversationController(
   });
 
   const thread = useMemo(
-    () => (runQuery.data ? upsertRun(threadBase, runQuery.data) : threadBase),
-    [runQuery.data, threadBase],
+    () =>
+      runQuery.data ? upsertRun(recoveredThreadBase, runQuery.data) : recoveredThreadBase,
+    [recoveredThreadBase, runQuery.data],
   );
 
   const activeRun = useMemo(() => {
@@ -256,6 +277,87 @@ export function useConversationController(
     }
   }, [queryClient, runQuery.data?.status, selectedConversationId]);
 
+  useEffect(() => {
+    if (
+      !pending ||
+      session.pendingState !== "result_unknown" ||
+      pending.conversationId === null ||
+      pending.conversationId !== selectedConversationId ||
+      recentPageQuery.isLoading ||
+      !recentPageQuery.data
+    ) {
+      return;
+    }
+    const confirmed = recentPageQuery.data.items.find(
+      (message) => message.clientMessageId === pending.clientMessageId,
+    );
+    if (!confirmed) return;
+    let cancelled = false;
+    queueMicrotask(() => {
+      if (cancelled) return;
+      session.update({
+        input: "",
+        pending: null,
+        pendingState: null,
+        recoveryRun:
+          confirmed.runId === null
+            ? null
+            : { conversationId: pending.conversationId as number, runId: confirmed.runId },
+      });
+      setSubmitError(null);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [
+    pending,
+    recentPageQuery.data,
+    recentPageQuery.isLoading,
+    selectedConversationId,
+    session,
+  ]);
+
+  useEffect(() => {
+    if (!activeConversation || sameScope(session.scope, activeConversation)) return;
+    session.update({
+      scope: {
+        scopeType: activeConversation.scopeType,
+        projectId: activeConversation.projectId,
+        projectName: activeConversation.projectName ?? undefined,
+      },
+    });
+  }, [activeConversation, session]);
+
+  useEffect(() => {
+    if (!activeRun || activeRun.conversationId !== selectedConversationId) return;
+    if (
+      session.recoveryRun?.conversationId === activeRun.conversationId &&
+      session.recoveryRun.runId === activeRun.id
+    ) {
+      return;
+    }
+    session.update({
+      recoveryRun: {
+        conversationId: activeRun.conversationId,
+        runId: activeRun.id,
+      },
+    });
+  }, [activeRun, selectedConversationId, session]);
+
+  useEffect(() => {
+    if (
+      !session.recoveryRun ||
+      recentPageQuery.isLoading ||
+      recentPageQuery.isError ||
+      !recentPageQuery.data
+    ) {
+      return;
+    }
+    const recovered = thread.runsById.get(session.recoveryRun.runId);
+    if (!recovered || isRunActive(recovered.status)) return;
+    session.update({ recoveryRun: null });
+  }, [recentPageQuery.data, recentPageQuery.isError, recentPageQuery.isLoading, session, thread.runsById]);
+
   const resetConversationLocalState = useCallback(() => {
     const nextGeneration = conversationGenerationRef.current + 1;
     conversationGenerationRef.current = nextGeneration;
@@ -277,9 +379,13 @@ export function useConversationController(
         return;
       }
       resetConversationLocalState();
-      setExplicitChoice(conversationId);
+      session.update({
+        choice: conversationId,
+        input: "",
+        recoveryRun: null,
+      });
     },
-    [pending, resetConversationLocalState],
+    [pending, resetConversationLocalState, session],
   );
 
   const startNewConversation = useCallback(() => {
@@ -288,10 +394,15 @@ export function useConversationController(
       return;
     }
     resetConversationLocalState();
-    setExplicitChoice("draft");
-    setDraftScope({ scopeType: "workspace", projectId: null });
+    session.update({
+      choice: "draft",
+      input: "",
+      pending: null,
+      pendingState: null,
+      recoveryRun: null,
+    });
     setModesState(DEFAULT_MODES);
-  }, [pending, resetConversationLocalState]);
+  }, [pending, resetConversationLocalState, session]);
 
   const loadOlderMessages = useCallback(async () => {
     if (
@@ -347,20 +458,23 @@ export function useConversationController(
       if (!token || submissionRequestRef.current) return false;
       submissionRequestRef.current = true;
       setSubmitting(true);
-      setSubmissionResultUnknown(false);
+      session.update({ pending: initial, pendingState: "in_flight" });
       setSubmitError(null);
       setCancelError(null);
       let current = initial;
       try {
         const targetConversationId = current.conversationId ?? selectedConversationId;
         if (targetConversationId === null) {
-          const created = await knowledgeAgentApi.createConversation(token, draftScope);
-          setExplicitChoice(created.id);
+          const created = await knowledgeAgentApi.createConversation(token, session.scope);
           current = attachConversation(current, created.id);
-          setPending(current);
+          session.update({
+            choice: created.id,
+            pending: current,
+            pendingState: "in_flight",
+          });
         } else if (current.conversationId === null) {
           current = attachConversation(current, targetConversationId);
-          setPending(current);
+          session.update({ pending: current, pendingState: "in_flight" });
         }
         const conversationId = current.conversationId as number;
         const result = await knowledgeAgentApi.submitMessage(token, conversationId, {
@@ -368,8 +482,13 @@ export function useConversationController(
           message: current.text,
           contextMode: current.contextMode,
         });
-        setPending(null);
-        setSubmissionResultUnknown(false);
+        session.update({
+          choice: conversationId,
+          input: "",
+          pending: null,
+          pendingState: null,
+          recoveryRun: { conversationId, runId: result.run.id },
+        });
         setModesState(DEFAULT_MODES);
         setExtraMessages((previous) => [...previous, result.userMessage]);
         setRunOverrides((previous) => new Map(previous).set(result.run.id, result.run));
@@ -384,8 +503,7 @@ export function useConversationController(
       } catch (error) {
         const classified = classifyKnowledgeAgentError(error);
         if (classified.kind === "conflict") {
-          setPending(null);
-          setSubmissionResultUnknown(false);
+          session.update({ pending: null, pendingState: null });
           setSubmitError("已有进行中的回答，请等待完成或取消后再提问");
           const conversationId = current.conversationId ?? selectedConversationId;
           if (conversationId !== null) {
@@ -396,11 +514,15 @@ export function useConversationController(
           return false;
         }
         if (classified.kind === "network") {
-          setPending(current);
-          setSubmissionResultUnknown(true);
+          session.update({
+            pending: current,
+            pendingState:
+              current.conversationId === null
+                ? "creation_unknown"
+                : "result_unknown",
+          });
         } else {
-          setPending(null);
-          setSubmissionResultUnknown(false);
+          session.update({ pending: null, pendingState: null });
         }
         setSubmitError(classified.message);
         return false;
@@ -409,7 +531,7 @@ export function useConversationController(
         setSubmitting(false);
       }
     },
-    [draftScope, queryClient, selectedConversationId, token],
+    [queryClient, selectedConversationId, session, token],
   );
 
   const submitWithContext = useCallback(
@@ -418,11 +540,15 @@ export function useConversationController(
       if (!trimmed || pending || submissionRequestRef.current || !token || activeRun) {
         return false;
       }
-      const submission = createPendingSubmission({ text: trimmed, contextMode });
-      setPending(submission);
+      const created = createPendingSubmission({ text: trimmed, contextMode });
+      const submission =
+        selectedConversationId === null
+          ? created
+          : attachConversation(created, selectedConversationId);
+      session.update({ pending: submission, pendingState: "in_flight" });
       return performSubmission(submission);
     },
-    [activeRun, pending, performSubmission, token],
+    [activeRun, pending, performSubmission, selectedConversationId, session, token],
   );
 
   const submit = useCallback(
@@ -460,6 +586,7 @@ export function useConversationController(
     if (
       !pending ||
       !submissionResultUnknown ||
+      pending.conversationId === null ||
       submissionRequestRef.current ||
       !canRetrySubmission(pending)
     ) {
@@ -509,6 +636,13 @@ export function useConversationController(
       void queryClient.invalidateQueries({ queryKey: knowledgeAgentKeys.conversations() });
       if (conversationGenerationRef.current !== request.generation) return;
       setScopeError(null);
+      session.update({
+        scope: {
+          scopeType: conversation.scopeType,
+          projectId: conversation.projectId,
+          projectName: conversation.projectName ?? undefined,
+        },
+      });
       resetConversationLocalState();
     },
     onError: (error, request) => {
@@ -526,11 +660,7 @@ export function useConversationController(
         return;
       }
       if (isDraft) {
-        setDraftScope({
-          scopeType: scope.scopeType,
-          projectId: scope.projectId ?? null,
-          projectName: scope.projectName ?? undefined,
-        });
+        session.update({ scope });
         return;
       }
       if (sameScope(currentScope, scope)) return;
@@ -543,7 +673,7 @@ export function useConversationController(
         })
         .catch(() => undefined);
     },
-    [activeRun, currentScope, isDraft, scopeMutation, selectedConversationId],
+    [activeRun, currentScope, isDraft, scopeMutation, selectedConversationId, session],
   );
 
   const cancelMutation = useMutation({
@@ -573,16 +703,61 @@ export function useConversationController(
       .catch(() => undefined);
   }, [activeRun, cancelMutation]);
 
+  const hasRemoteRecovery = Boolean(
+    session.choice !== "draft" &&
+      (session.pending || session.recoveryRun || session.input.trim()),
+  );
+  const recoveryError =
+    session.bootStatus === "error"
+      ? session.bootError ?? "移动对话恢复记录读取失败"
+      : hasRemoteRecovery && activeConversationQuery.isError
+        ? toUserErrorMessage(activeConversationQuery.error)
+        : hasRemoteRecovery && recentPageQuery.isError
+          ? toUserErrorMessage(recentPageQuery.error)
+          : session.recoveryRun && recoveryRunQuery.isError
+            ? toUserErrorMessage(recoveryRunQuery.error)
+            : null;
+
+  const retryRecovery = useCallback(() => {
+    if (session.bootStatus === "error") {
+      session.retryBootstrap();
+      return;
+    }
+    if (selectedConversationId !== null) {
+      void activeConversationQuery.refetch();
+      void recentPageQuery.refetch();
+    }
+    if (session.recoveryRun) void recoveryRunQuery.refetch();
+  }, [
+    activeConversationQuery,
+    recentPageQuery,
+    recoveryRunQuery,
+    selectedConversationId,
+    session,
+  ]);
+
+  const exitRecovery = useCallback(async () => {
+    resetConversationLocalState();
+    setSubmitError(null);
+    await session.exitRecovery();
+  }, [resetConversationLocalState, session]);
+
   return {
-    initialLoading: conversationsQuery.isLoading,
+    initialLoading:
+      session.bootStatus === "loading" ||
+      (hasRemoteRecovery &&
+        (activeConversationQuery.isLoading ||
+          recentPageQuery.isLoading ||
+          Boolean(session.recoveryRun && recoveryRunQuery.isLoading))),
     conversations,
+    conversationsLoading: conversationsQuery.isLoading,
     conversationsError: conversationsQuery.isError
       ? toUserErrorMessage(conversationsQuery.error)
       : null,
     activeConversation,
     activeConversationLoading: activeConversationQuery.isLoading,
     isDraft,
-    userInitiatedDraft: explicitChoice === "draft",
+    userInitiatedDraft: session.choice === "draft",
     currentScope,
     scopeLabel: scopeLabelOf(currentScope),
     scopeBusy:
@@ -602,9 +777,20 @@ export function useConversationController(
     loadingOlder,
     olderError,
     pending,
+    input: session.input,
+    setInput: (value) => session.update({ input: value }),
     submitting,
     submissionResultUnknown,
+    conversationCreationUnknown,
     submitError,
+    recoveryError,
+    persistenceError: session.persistenceError,
+    retryRecovery,
+    retryPersistence: session.retryPersistence,
+    exitRecovery,
+    getReadingPosition: session.getReadingPosition,
+    setReadingPosition: session.setReadingPosition,
+    clearReadingPosition: session.clearReadingPosition,
     modes,
     setContextMode: (mode) => setModesState((previous) => withContextMode(previous, mode)),
     setModes: setModesState,

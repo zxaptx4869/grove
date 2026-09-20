@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   ActivityIndicator,
   type NativeScrollEvent,
@@ -24,11 +24,13 @@ import {
 import { HistorySheet } from "@/src/knowledge-agent/components/HistorySheet";
 import { ModeSheet } from "@/src/knowledge-agent/components/ModeSheet";
 import { ProcessCard } from "@/src/knowledge-agent/components/ProcessCard";
+import { RichText } from "@/src/knowledge-agent/components/RichText";
 import { ScopeSheet } from "@/src/knowledge-agent/components/ScopeSheet";
 import { toUserErrorMessage } from "@/src/knowledge-agent/errors";
 import { useConversationController } from "@/src/knowledge-agent/hooks/useConversationController";
 import { useKeyboardHeight } from "@/src/knowledge-agent/hooks/useKeyboardHeight";
 import type {
+  KnowledgeConversation,
   KnowledgeMessage,
   KnowledgeRun,
   KnowledgeScopeChangeRequest,
@@ -53,16 +55,54 @@ export function ConversationScreen() {
   const positionedConversationRef = useRef<string | null>(null);
   const layoutConversationRef = useRef<string | null>(null);
   const followNextContentRef = useRef(false);
-  const [text, setText] = useState("");
-  const [historyOpen, setHistoryOpen] = useState(false);
   const [scopeOpen, setScopeOpen] = useState(false);
+  const [scopeRecoveryNotice, setScopeRecoveryNotice] = useState<string | null>(null);
   const [modeOpen, setModeOpen] = useState(false);
   const [entryDetail, setEntryDetail] = useState<EntryDetailTarget | null>(null);
   const projectsQuery = useQuery({
     queryKey: ["projects", "mobile-scope"],
     queryFn: () => getProjects(token as string),
-    enabled: Boolean(token && scopeOpen),
+    enabled: Boolean(
+      token &&
+        (scopeOpen ||
+          (controller.isDraft && controller.currentScope.scopeType === "project")),
+    ),
   });
+
+  useEffect(() => {
+    if (
+      !controller.isDraft ||
+      controller.currentScope.scopeType !== "project" ||
+      controller.currentScope.projectId === null ||
+      projectsQuery.isLoading ||
+      projectsQuery.isError ||
+      !projectsQuery.data
+    ) {
+      return;
+    }
+    const projectStillAvailable = projectsQuery.data.some(
+      (project) => project.id === controller.currentScope.projectId,
+    );
+    if (projectStillAvailable) return;
+    let cancelled = false;
+    queueMicrotask(() => {
+      if (cancelled) return;
+      setScopeRecoveryNotice("上次使用的项目已不可用，已切换为全部知识。");
+      void controller.changeScope({ scopeType: "workspace", projectId: null });
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [controller, projectsQuery.data, projectsQuery.isError, projectsQuery.isLoading]);
+
+  const validatingRestoredProject =
+    controller.isDraft &&
+    controller.currentScope.scopeType === "project" &&
+    projectsQuery.isLoading;
+  const restoredProjectValidationError =
+    controller.isDraft &&
+    controller.currentScope.scopeType === "project" &&
+    projectsQuery.isError;
 
   const runByAssistantMessage = useMemo(() => {
     const map = new Map<number, KnowledgeRun>();
@@ -90,28 +130,34 @@ export function ConversationScreen() {
     ) {
       return false;
     }
-    scrollRef.current?.scrollToEnd({ animated: false });
+    const savedOffset = controller.getReadingPosition(conversationKey);
+    if (savedOffset === null) {
+      scrollRef.current?.scrollToEnd({ animated: false });
+      stickToBottomRef.current = true;
+    } else {
+      scrollRef.current?.scrollTo({ y: savedOffset, animated: false });
+      stickToBottomRef.current = false;
+    }
     positionedConversationRef.current = conversationKey;
-    stickToBottomRef.current = true;
     followNextContentRef.current = false;
     return true;
-  }, [conversationKey, initialPositionReady, threadHasMessages]);
+  }, [controller, conversationKey, initialPositionReady, threadHasMessages]);
 
   useEffect(() => {
     scheduleInitialPosition();
   }, [scheduleInitialPosition]);
 
   const handleSend = async () => {
-    const value = text.trim();
+    const value = controller.input.trim();
     if (!value) return;
     stickToBottomRef.current = true;
     followNextContentRef.current = true;
     scrollRef.current?.scrollToEnd({ animated: true });
-    const sent = await controller.submit(value);
-    if (sent) setText("");
+    await controller.submit(value);
   };
 
   const handleScopeChange = async (scope: KnowledgeScopeChangeRequest) => {
+    setScopeRecoveryNotice(null);
     await controller.changeScope(scope);
     setScopeOpen(false);
   };
@@ -119,6 +165,7 @@ export function ConversationScreen() {
   const handleScroll = (event: NativeSyntheticEvent<NativeScrollEvent>) => {
     const { contentOffset, contentSize, layoutMeasurement } = event.nativeEvent;
     scrollYRef.current = contentOffset.y;
+    controller.setReadingPosition(conversationKey, contentOffset.y);
     contentHeightRef.current = contentSize.height;
     const distanceFromBottom = contentSize.height - contentOffset.y - layoutMeasurement.height;
     stickToBottomRef.current = distanceFromBottom < 80;
@@ -174,25 +221,38 @@ export function ConversationScreen() {
             onPress={() => setScopeOpen(true)}
             style={({ pressed }) => [styles.scopeButton, pressed && styles.pressed]}
           >
-            <AgentIcon
-              name={controller.currentScope.scopeType === "project" ? "folder" : "book"}
-              size={15}
-              color={theme.muted}
-            />
             <Text style={styles.scopeButtonText} numberOfLines={1}>
               {controller.scopeLabel}
             </Text>
             <AgentIcon name="down" size={14} color={theme.muted} />
           </Pressable>
-          <Pressable
-            accessibilityRole="button"
-            accessibilityLabel="打开对话历史"
-            onPress={() => setHistoryOpen(true)}
-            style={({ pressed }) => [styles.historyButton, pressed && styles.pressed]}
-          >
-            <AgentIcon name="history" size={20} color={theme.ink} />
-            <Text style={styles.historyText}>历史</Text>
-          </Pressable>
+          <HistoryControl
+            conversations={controller.conversations}
+            activeConversationId={
+              controller.isDraft ? null : controller.activeConversation?.id ?? null
+            }
+            loading={controller.conversationsLoading}
+            error={controller.conversationsError}
+            onRetry={controller.retryConversations}
+            onSelect={(id) => {
+              if (!controller.pending) {
+                controller.clearReadingPosition(String(id));
+                stickToBottomRef.current = true;
+                layoutConversationRef.current = null;
+                positionedConversationRef.current = null;
+              }
+              controller.switchToConversation(id);
+            }}
+            onNew={() => {
+              if (!controller.pending) {
+                controller.clearReadingPosition("draft");
+                stickToBottomRef.current = true;
+                layoutConversationRef.current = null;
+                positionedConversationRef.current = null;
+              }
+              controller.startNewConversation();
+            }}
+          />
         </View>
 
         <ScrollView
@@ -224,6 +284,30 @@ export function ConversationScreen() {
             <View style={styles.centerState}>
               <ActivityIndicator color={theme.green} />
               <Text style={styles.stateCopy}>正在恢复知识对话…</Text>
+            </View>
+          ) : controller.recoveryError ? (
+            <View style={styles.centerState} accessibilityRole="alert">
+              <Text style={styles.errorTitle}>未能恢复上次移动任务</Text>
+              <Text style={styles.stateCopy}>{controller.recoveryError}</Text>
+              <View style={styles.recoveryActions}>
+                <Pressable
+                  accessibilityRole="button"
+                  accessibilityLabel="重试恢复移动任务"
+                  onPress={controller.retryRecovery}
+                  style={styles.retryButton}
+                >
+                  <AgentIcon name="retry" size={16} color={theme.green} />
+                  <Text style={styles.retryText}>重试恢复</Text>
+                </Pressable>
+                <Pressable
+                  accessibilityRole="button"
+                  accessibilityLabel="退出恢复并进入新对话"
+                  onPress={() => void controller.exitRecovery()}
+                  style={styles.retryButton}
+                >
+                  <Text style={styles.retryText}>退出恢复</Text>
+                </Pressable>
+              </View>
             </View>
           ) : showInitialError ? (
             <View style={styles.centerState}>
@@ -260,6 +344,30 @@ export function ConversationScreen() {
             <View style={styles.inlineError}>
               <Text style={styles.errorTitle}>更早消息加载失败</Text>
               <Text style={styles.stateCopy}>{controller.olderError}</Text>
+            </View>
+          ) : null}
+
+          {scopeRecoveryNotice ? (
+            <View style={styles.inlineNotice} accessibilityRole="alert">
+              <Text style={styles.stateCopy}>{scopeRecoveryNotice}</Text>
+            </View>
+          ) : null}
+
+          {restoredProjectValidationError ? (
+            <View style={styles.inlineError} accessibilityRole="alert">
+              <Text style={styles.errorTitle}>上次的知识范围暂时无法确认</Text>
+              <Text style={styles.stateCopy}>
+                可重试确认，或打开顶部范围切换为全部知识。
+              </Text>
+              <Pressable
+                accessibilityRole="button"
+                accessibilityLabel="重试确认上次知识范围"
+                onPress={() => void projectsQuery.refetch()}
+                style={styles.retryButton}
+              >
+                <AgentIcon name="retry" size={16} color={theme.green} />
+                <Text style={styles.retryText}>重试确认</Text>
+              </Pressable>
             </View>
           ) : null}
 
@@ -301,6 +409,21 @@ export function ConversationScreen() {
                 <Text style={styles.userText}>{controller.pending.text}</Text>
               </View>
             </View>
+          ) : controller.pending && controller.conversationCreationUnknown ? (
+            <View style={styles.pendingBox} accessibilityRole="alert">
+              <Text style={styles.pendingTitle}>新对话创建结果无法确认</Text>
+              <Text style={styles.stateCopy}>
+                当前接口无法安全重试创建步骤。为避免重复会话，本次不会自动重发。
+              </Text>
+              <Pressable
+                accessibilityRole="button"
+                accessibilityLabel="放弃本次恢复并返回新对话"
+                onPress={() => void controller.exitRecovery()}
+                style={styles.retryButton}
+              >
+                <Text style={styles.retryText}>返回新对话</Text>
+              </Pressable>
+            </View>
           ) : controller.pending && controller.submissionResultUnknown ? (
             <View style={styles.pendingBox}>
               <Text style={styles.pendingTitle}>消息提交结果尚未确认</Text>
@@ -332,12 +455,28 @@ export function ConversationScreen() {
               <Text style={styles.stateCopy}>{controller.scopeError}</Text>
             </View>
           ) : null}
+
+          {controller.persistenceError ? (
+            <View style={styles.inlineError} accessibilityRole="alert">
+              <Text style={styles.errorTitle}>移动任务状态未保存</Text>
+              <Text style={styles.stateCopy}>{controller.persistenceError}</Text>
+              <Pressable
+                accessibilityRole="button"
+                accessibilityLabel="重试保存移动任务状态"
+                onPress={controller.retryPersistence}
+                style={styles.retryButton}
+              >
+                <AgentIcon name="retry" size={16} color={theme.green} />
+                <Text style={styles.retryText}>重试保存</Text>
+              </Pressable>
+            </View>
+          ) : null}
         </ScrollView>
 
         <View style={{ paddingBottom: keyboardHeight }}>
           <Composer
-            value={text}
-            onChangeText={setText}
+            value={controller.input}
+            onChangeText={controller.setInput}
             onSend={() => void handleSend()}
             modes={controller.modes}
             onOpenModes={() => setModeOpen(true)}
@@ -347,38 +486,16 @@ export function ConversationScreen() {
               controller.initialLoading ||
               controller.activeRun !== null ||
               controller.submitting ||
+              controller.recoveryError !== null ||
+              controller.conversationCreationUnknown ||
+              validatingRestoredProject ||
+              restoredProjectValidationError ||
               (controller.conversationsError !== null && !controller.userInitiatedDraft)
             }
           />
         </View>
       </View>
 
-      <HistorySheet
-        visible={historyOpen}
-        conversations={controller.conversations}
-        activeConversationId={controller.isDraft ? null : controller.activeConversation?.id ?? null}
-        loading={controller.initialLoading}
-        error={controller.conversationsError}
-        onSelect={(id) => {
-          if (!controller.pending) {
-            stickToBottomRef.current = true;
-            layoutConversationRef.current = null;
-            positionedConversationRef.current = null;
-          }
-          controller.switchToConversation(id);
-          setHistoryOpen(false);
-        }}
-        onNew={() => {
-          if (!controller.pending) {
-            stickToBottomRef.current = true;
-            layoutConversationRef.current = null;
-            positionedConversationRef.current = null;
-          }
-          controller.startNewConversation();
-          setHistoryOpen(false);
-        }}
-        onClose={() => setHistoryOpen(false)}
-      />
       <ScopeSheet
         visible={scopeOpen}
         current={controller.currentScope}
@@ -404,6 +521,55 @@ export function ConversationScreen() {
     </SafeAreaView>
   );
 }
+
+const HistoryControl = memo(function HistoryControl({
+  conversations,
+  activeConversationId,
+  loading,
+  error,
+  onRetry,
+  onSelect,
+  onNew,
+}: {
+  conversations: KnowledgeConversation[] | undefined;
+  activeConversationId: number | null;
+  loading: boolean;
+  error: string | null;
+  onRetry: () => void;
+  onSelect: (conversationId: number) => void;
+  onNew: () => void;
+}) {
+  const [open, setOpen] = useState(false);
+  return (
+    <>
+      <Pressable
+        accessibilityRole="button"
+        accessibilityLabel="打开对话历史"
+        onPress={() => setOpen(true)}
+        style={({ pressed }) => [styles.historyButton, pressed && styles.pressed]}
+      >
+        <AgentIcon name="history" size={21} color={theme.ink} />
+      </Pressable>
+      <HistorySheet
+        visible={open}
+        conversations={conversations}
+        activeConversationId={activeConversationId}
+        loading={loading}
+        error={error}
+        onRetry={onRetry}
+        onSelect={(id) => {
+          onSelect(id);
+          setOpen(false);
+        }}
+        onNew={() => {
+          onNew();
+          setOpen(false);
+        }}
+        onClose={() => setOpen(false)}
+      />
+    </>
+  );
+});
 
 function ThreadMessage({
   message,
@@ -469,7 +635,7 @@ function ThreadMessage({
       {!run ? (
         message.content.trim() ? (
           <View style={styles.legacyAnswer}>
-            <Text style={styles.legacyText}>{message.content}</Text>
+            <RichText>{message.content}</RichText>
           </View>
         ) : null
       ) : isRunActive(run.status) ? (
@@ -534,12 +700,9 @@ const styles = StyleSheet.create({
   historyButton: {
     width: 58,
     height: 44,
-    flexDirection: "row",
     alignItems: "center",
     justifyContent: "flex-end",
-    gap: 3,
   },
-  historyText: { color: theme.ink, fontSize: 11, fontWeight: "600" },
   thread: { flex: 1 },
   threadContent: { padding: 12, paddingBottom: 20 },
   loadOlder: {
@@ -565,6 +728,7 @@ const styles = StyleSheet.create({
     backgroundColor: theme.greenSoft,
   },
   retryText: { color: theme.green, fontSize: 12, fontWeight: "700" },
+  recoveryActions: { flexDirection: "row", flexWrap: "wrap", gap: 8 },
   emptyState: { alignItems: "center", paddingVertical: 48, paddingHorizontal: 28 },
   agentMark: {
     width: 48,
@@ -577,6 +741,7 @@ const styles = StyleSheet.create({
   emptyTitle: { marginTop: 14, color: theme.ink, fontSize: 16, fontWeight: "700" },
   emptyCopy: { marginTop: 7, color: theme.muted, fontSize: 12, lineHeight: 20, textAlign: "center" },
   inlineError: { gap: 7, marginBottom: 12, padding: 11, borderRadius: 8, backgroundColor: theme.errorSoft },
+  inlineNotice: { marginBottom: 12, padding: 11, borderRadius: 8, backgroundColor: theme.greenSoft },
   pendingBox: { gap: 8, marginBottom: 12, padding: 11, borderRadius: 8, backgroundColor: theme.riskSoft },
   pendingTitle: { color: theme.risk, fontSize: 12, fontWeight: "700" },
   pendingError: { color: theme.error, fontSize: 11, lineHeight: 18 },
@@ -616,6 +781,5 @@ const styles = StyleSheet.create({
     borderRadius: 10,
     backgroundColor: theme.surface,
   },
-  legacyText: { color: theme.ink, fontSize: 14, lineHeight: 23 },
   pressed: { opacity: 0.82 },
 });

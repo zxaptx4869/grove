@@ -72,11 +72,13 @@ test("底部详情首次打开只读取单个 Entry，关闭不触发消息或�
   await waitFor(() => expect(rendered.getByText("当前正文采用正常阅读字号。")).toBeTruthy());
   expect(api.getEntryCurrent).toHaveBeenCalledTimes(1);
   expect(api.getEntryCurrent).toHaveBeenCalledWith("token", 8);
+  expect(rendered.getByText("关联来源")).toBeTruthy();
+  expect(rendered.queryByText("当前知识内容")).toBeNull();
   expect(
-    rendered.getByText("这里显示这条知识当前关联的来源，不代表本轮回答已经核验这些来源。"),
-  ).toBeTruthy();
+    rendered.queryByText("这里显示这条知识当前关联的来源，不代表本轮回答已经核验这些来源。"),
+  ).toBeNull();
   fireEvent.press(rendered.getByLabelText("关闭"));
-  expect(onClose).toHaveBeenCalledTimes(1);
+  await waitFor(() => expect(onClose).toHaveBeenCalledTimes(1));
   expect(api.submitMessage).not.toHaveBeenCalled();
 });
 

@@ -149,6 +149,7 @@ function controller(
   };
   return {
     initialLoading: false,
+    conversationsLoading: false,
     conversations: [activeConversation],
     conversationsError: null,
     activeConversation,
@@ -175,9 +176,20 @@ function controller(
     loadingOlder: false,
     olderError: null,
     pending: null,
+    input: "",
+    setInput: jest.fn(),
     submitting: false,
     submissionResultUnknown: false,
+    conversationCreationUnknown: false,
     submitError: null,
+    recoveryError: null,
+    persistenceError: null,
+    retryRecovery: jest.fn(),
+    retryPersistence: jest.fn(),
+    exitRecovery: jest.fn(async () => undefined),
+    getReadingPosition: jest.fn(() => null),
+    setReadingPosition: jest.fn(),
+    clearReadingPosition: jest.fn(),
     modes: { contextMode: "auto" },
     setContextMode: jest.fn(),
     setModes: jest.fn(),
@@ -241,6 +253,49 @@ test("顶部品牌、范围、历史和历史中的新建对话入口均可达",
   await fireEvent.press(rendered.getByLabelText("打开对话历史"));
   await fireEvent.press(rendered.getByLabelText("新建对话"));
   expect(state.startNewConversation).toHaveBeenCalledTimes(1);
+});
+
+test("新对话的上次项目失效时提示并回退全部知识", async () => {
+  mockGetProjects.mockResolvedValueOnce([]);
+  const state = controller({
+    activeConversation: null,
+    isDraft: true,
+    userInitiatedDraft: true,
+    currentScope: { scopeType: "project", projectId: 99, projectName: "已失效项目" },
+    scopeLabel: "已失效项目",
+  });
+  mockUseConversationController.mockReturnValue(state);
+  const rendered = await renderScreen();
+
+  await fireEvent.press(
+    rendered.getByLabelText("修改当前知识范围，当前为已失效项目"),
+  );
+  await waitFor(() =>
+    expect(state.changeScope).toHaveBeenCalledWith({
+      scopeType: "workspace",
+      projectId: null,
+    }),
+  );
+  expect(rendered.getByText("上次使用的项目已不可用，已切换为全部知识。")).toBeTruthy();
+});
+
+test("上次项目范围复验失败时阻止提交并提供重试", async () => {
+  mockGetProjects.mockRejectedValueOnce(new TypeError("Network request failed"));
+  const state = controller({
+    activeConversation: null,
+    isDraft: true,
+    userInitiatedDraft: true,
+    currentScope: { scopeType: "project", projectId: 99, projectName: "待确认项目" },
+    scopeLabel: "待确认项目",
+    input: "待发送问题",
+  });
+  mockUseConversationController.mockReturnValue(state);
+  const rendered = await renderScreen();
+
+  await waitFor(() => expect(rendered.getByText("上次的知识范围暂时无法确认")).toBeTruthy());
+  expect(rendered.getByLabelText("发送").props.accessibilityState.disabled).toBe(true);
+  await fireEvent.press(rendered.getByLabelText("重试确认上次知识范围"));
+  await waitFor(() => expect(mockGetProjects).toHaveBeenCalledTimes(2));
 });
 
 test("正常发送只显示普通发送态，结果未知才显示恢复入口", async () => {
@@ -353,7 +408,7 @@ test("发送新问题会主动跟随到本次发送反馈", async () => {
   const scrollToEnd = jest
     .spyOn(ScrollView.prototype, "scrollToEnd")
     .mockImplementation(() => undefined);
-  const state = controller();
+  const state = controller({ input: "新的问题" });
   mockUseConversationController.mockReturnValue(state);
   const rendered = await renderScreen();
 
@@ -361,4 +416,46 @@ test("发送新问题会主动跟随到本次发送反馈", async () => {
   await fireEvent.press(rendered.getByLabelText("发送"));
   expect(state.submit).toHaveBeenCalledWith("新的问题");
   expect(scrollToEnd).toHaveBeenCalledWith({ animated: true });
+});
+
+test("同一会话页面重挂载恢复内存阅读位置，不强制跳到底部", async () => {
+  const positions = new Map<string, number>();
+  const state = controller({
+    thread: {
+      items: [userMessage(1)],
+      runsById: new Map(),
+      nextCursor: null,
+      hasMore: false,
+    },
+    getReadingPosition: jest.fn((key) => positions.get(key) ?? null),
+    setReadingPosition: jest.fn((key, value) => positions.set(key, value)),
+  });
+  mockUseConversationController.mockReturnValue(state);
+  const scrollTo = jest.spyOn(ScrollView.prototype, "scrollTo").mockImplementation(() => undefined);
+  const first = await renderScreen();
+  await fireEvent(
+    first.getByLabelText("知识 Agent 对话"),
+    "contentSizeChange",
+    320,
+    900,
+  );
+  await fireEvent.scroll(first.getByLabelText("知识 Agent 对话"), {
+    nativeEvent: {
+      contentOffset: { x: 0, y: 180 },
+      contentSize: { width: 320, height: 900 },
+      layoutMeasurement: { width: 320, height: 500 },
+    },
+  });
+  expect(state.setReadingPosition).toHaveBeenCalledWith("1", 180);
+  await first.unmount();
+  scrollTo.mockClear();
+
+  const restored = await renderScreen();
+  await fireEvent(
+    restored.getByLabelText("知识 Agent 对话"),
+    "contentSizeChange",
+    320,
+    900,
+  );
+  expect(scrollTo).toHaveBeenCalledWith({ y: 180, animated: false });
 });

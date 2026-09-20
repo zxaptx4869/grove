@@ -4,6 +4,7 @@ import { useQuery } from "@tanstack/react-query";
 import { useAuth } from "@/src/auth";
 import { knowledgeAgentApi } from "@/src/knowledge-agent/api";
 import { AgentIcon } from "@/src/knowledge-agent/components/AgentIcon";
+import { RichText } from "@/src/knowledge-agent/components/RichText";
 import { AppButton, Badge, Sheet } from "@/src/knowledge-agent/components/ui";
 import { classifyKnowledgeAgentError } from "@/src/knowledge-agent/errors";
 import { useReducedMotion } from "@/src/knowledge-agent/hooks/useReducedMotion";
@@ -49,7 +50,8 @@ export function EntryDetailSheet({
       visible={target !== null}
       title="知识详情"
       onClose={onClose}
-      animationType={reducedMotion ? "none" : "slide"}
+      presentation="bottom"
+      reduceMotion={reducedMotion}
     >
       {target ? (
         <View>
@@ -88,20 +90,20 @@ export function EntryDetailSheet({
             </View>
           ) : (
             <View>
-              <Text style={styles.sectionLabel}>当前知识内容</Text>
               <Text style={styles.updatedAt}>更新于 {formatTime(current.updatedAt)}</Text>
-              <Text style={styles.content}>{current.content || "当前正文为空。"}</Text>
+              <View style={styles.content}>
+                <RichText>{current.content || "当前正文为空。"}</RichText>
+              </View>
 
-              <Text style={styles.sectionLabel}>当前知识的来源信息</Text>
-              <Text style={styles.sourceBoundary}>
-                这里显示这条知识当前关联的来源，不代表本轮回答已经核验这些来源。
-              </Text>
+              <Text style={styles.sectionLabel}>关联来源</Text>
               {(current.evidences ?? []).length > 0 ? (
                 current.evidences?.map((evidence) => (
                   <View key={evidence.id} style={styles.sourceRow}>
                     <Text style={styles.sourceTitle}>{evidence.sourceTitle}</Text>
                     {evidence.quote ? (
-                      <Text style={styles.sourceQuote}>“{evidence.quote}”</Text>
+                      <View style={styles.sourceQuote}>
+                        <RichText tone="muted">{evidence.quote}</RichText>
+                      </View>
                     ) : null}
                   </View>
                 ))
@@ -144,15 +146,9 @@ const styles = StyleSheet.create({
     lineHeight: 18,
     fontWeight: "700",
   },
-  updatedAt: { marginTop: 3, color: theme.muted, fontSize: 12, lineHeight: 18 },
-  content: { marginTop: 10, color: theme.ink, fontSize: 16, lineHeight: 25 },
-  sourceBoundary: { marginTop: 6, color: theme.muted, fontSize: 12, lineHeight: 20 },
-  sourceRow: {
-    marginTop: 10,
-    paddingTop: 10,
-    borderTopWidth: 1,
-    borderTopColor: theme.border,
-  },
-  sourceTitle: { color: theme.ink, fontSize: 14, lineHeight: 21, fontWeight: "600" },
-  sourceQuote: { marginTop: 4, color: theme.muted, fontSize: 13, lineHeight: 21 },
+  updatedAt: { marginTop: 5, color: theme.muted, fontSize: 11, lineHeight: 17 },
+  content: { marginTop: 10 },
+  sourceRow: { marginTop: 10 },
+  sourceTitle: { color: theme.muted, fontSize: 12, lineHeight: 19, fontWeight: "500" },
+  sourceQuote: { marginTop: 3 },
 });
