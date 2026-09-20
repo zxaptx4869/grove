@@ -1,7 +1,4 @@
 {
-  "cli": {
-    "version": ">= 25.4.0"
-  },
   "build": {
     "production-apk": {
       "distribution": "internal",
