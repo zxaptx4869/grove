@@ -52,3 +52,4 @@
 - [x] 6.8 运行移动端 tests、typecheck、lint、全库 OpenSpec 严格校验和 `git diff --check`，静态确认后端/Web/Agent 零修改并记录性能证据与限制
 - [x] 6.9 生成 `docs/discussions/移动端交互精修与启动会话策略-交付与验收-2026-09-20.md`，由现有总交付记录引用；完成本地阶段提交后等待真机验收
 - [x] 6.10 修复真机 SecureStore 分片 key 非法导致的启动锁死；让退出恢复及错误态新建会话可靠解除阻塞，并以真机字符规则补充回归
+- [x] 6.11 修复真机 Markdown 长列表右侧裁切及 Entry 详情打开闪动，补充列表宽度收缩与 Sheet 稳定高度回归
