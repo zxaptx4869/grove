@@ -171,40 +171,36 @@
     .mini-button[disabled] { opacity: .5; }
 
     /* ---------- 采集入口 ---------- */
-    .entry-grid-a { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
     .entry-row-b { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; }
     .entry-tile {
-      min-height: 104px;
+      min-height: 92px;
       display: flex;
       flex-direction: column;
-      align-items: flex-start;
-      justify-content: space-between;
-      gap: 8px;
-      padding: 12px;
+      align-items: center;
+      justify-content: center;
+      gap: 7px;
+      padding: 10px 8px;
       border: 1px solid var(--g-border);
       border-radius: 10px;
       background: var(--g-surface);
-      text-align: left;
+      text-align: center;
       box-shadow: var(--shadow-card);
     }
     .entry-tile:hover { border-color: #c7d4cc; }
-    .entry-tile strong { display: block; font-size: 14px; line-height: 20px; }
-    .entry-desc { color: var(--g-muted); font-size: 10px; line-height: 15px; }
+    .entry-tile strong { display: block; font-size: 13px; line-height: 20px; }
     .entry-icon { width: 34px; height: 34px; display: grid; place-items: center; border-radius: 8px; background: var(--g-green-soft); color: var(--g-green); }
-    .entry-tile.compact { min-height: 92px; align-items: center; justify-content: center; gap: 7px; padding: 10px 8px; text-align: center; }
-    .entry-tile.compact strong { font-size: 13px; }
     .entry-note { margin-top: 8px; color: var(--g-muted); font-size: 10px; line-height: 16px; }
 
     /* ---------- 列表筛选 ---------- */
-    .filter-row { display: inline-flex; gap: 2px; margin-top: 18px; padding: 2px; border: 1px solid var(--g-border); border-radius: 8px; background: var(--g-soft); }
-    .seg { min-height: 36px; display: inline-flex; align-items: center; gap: 5px; padding: 0 12px; border: 0; border-radius: 6px; background: transparent; color: var(--g-muted); font-size: 12px; font-weight: 600; }
-    .seg .icon { width: 14px; height: 14px; }
-    .seg[aria-pressed="true"] { background: var(--g-surface); color: var(--g-green); box-shadow: var(--shadow-card); }
+    .filter-row { display: inline-flex; align-items: center; gap: 18px; margin: 0 0 2px; }
+    .seg { min-height: 28px; display: inline-flex; align-items: center; gap: 4px; padding: 0; border: 0; border-bottom: 2px solid transparent; border-radius: 0; background: transparent; color: var(--g-muted); font-size: 12.5px; font-weight: 600; }
+    .seg .icon { width: 13px; height: 13px; }
+    .seg[aria-pressed="true"] { color: var(--g-green); border-bottom-color: var(--g-green); }
     .seg .seg-count { color: var(--g-muted); font-size: 10px; font-weight: 600; }
     .seg[aria-pressed="true"] .seg-count { color: var(--g-green); }
 
     /* ---------- 来源列表 ---------- */
-    .list-card { border-top: 1px solid var(--g-border); }
+    .list-card { margin: 0; padding: 0; list-style: none; border-top: 1px solid var(--g-border); }
     .source-row { display: grid; gap: 8px; padding: 12px 2px; border-bottom: 1px solid var(--g-border); }
     .row-open { width: 100%; display: grid; grid-template-columns: 34px minmax(0, 1fr) auto; gap: 10px; align-items: start; padding: 0; border: 0; background: transparent; text-align: left; }
     .row-icon { width: 34px; height: 34px; display: grid; place-items: center; border-radius: 8px; background: var(--g-soft); color: var(--g-muted); }
@@ -216,7 +212,12 @@
     .row-error { display: flex; gap: 6px; align-items: flex-start; color: var(--g-error); font-size: 11px; line-height: 17px; overflow-wrap: anywhere; }
     .row-error .icon { width: 15px; height: 15px; flex: 0 0 auto; margin-top: 1px; }
     .row-tags { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
-    .row-actions { display: flex; flex-wrap: wrap; gap: 6px; }
+    .row-actions { display: flex; align-items: center; gap: 6px; }
+    .icon-button { width: 34px; height: 34px; display: grid; place-items: center; border: 1px solid var(--g-border); border-radius: 9px; background: var(--g-surface); color: var(--g-muted); box-shadow: var(--shadow-card); }
+    .icon-button .icon { width: 17px; height: 17px; }
+    .icon-button:hover { border-color: #c7d4cc; color: var(--g-ink); }
+    .icon-button.danger { border-color: #efcaca; background: var(--g-error-soft); color: var(--g-error); }
+    .icon-button[disabled] { opacity: .5; }
 
     /* ---------- 列表整体状态（空 / 加载失败） ---------- */
     .state-card { display: grid; justify-items: start; gap: 9px; margin-top: 4px; padding: 20px 16px; border: 1px solid var(--g-border); border-radius: 10px; background: var(--g-surface); box-shadow: var(--shadow-card); }
@@ -308,10 +309,6 @@
     .candidate-card h4 { margin-top: 9px; font-size: 13px; line-height: 20px; font-weight: 650; }
     .candidate-line { margin-top: 6px; color: var(--g-muted); font-size: 11.5px; line-height: 18px; overflow-wrap: anywhere; }
     .candidate-line b { color: var(--g-ink); font-weight: 650; }
-    .readonly-note { display: grid; gap: 6px; margin-top: 18px; padding: 13px; border: 1px dashed #c3cec8; border-radius: 10px; background: var(--g-bg); }
-    .readonly-note strong { display: flex; align-items: center; gap: 6px; font-size: 12.5px; }
-    .readonly-note strong .icon { width: 16px; height: 16px; color: var(--g-green); }
-    .readonly-note p { color: var(--g-muted); font-size: 11.5px; line-height: 18px; }
 
     /* ---------- 提交状态 ---------- */
     .status-card { display: grid; gap: 10px; padding: 18px 16px; border: 1px solid var(--g-border); border-radius: 12px; background: var(--g-surface); box-shadow: var(--shadow-card); }
@@ -427,8 +424,7 @@
     }
     @media (max-width: 370px) {
       .scroll-page, .overlay-scroll { padding-right: 13px; padding-left: 13px; }
-      .entry-tile { min-height: 98px; padding: 11px; }
-      .entry-tile.compact { min-height: 88px; }
+      .entry-tile { min-height: 88px; padding: 11px; }
       .thumb { width: 88px; height: 88px; }
       .row-open { grid-template-columns: 30px minmax(0, 1fr) auto; gap: 8px; }
       .row-icon { width: 30px; height: 30px; }
@@ -477,11 +473,6 @@
       <!-- 原型控制条：只属于探索原型，正式实现不会出现 -->
       <div class="proto-bar" role="region" aria-label="原型控制">
         <div class="proto-row">
-          <span class="proto-label">入口排布</span>
-          <button type="button" class="proto-chip" data-variant="A" aria-pressed="true">A · 四个动作平铺</button>
-          <button type="button" class="proto-chip" data-variant="B" aria-pressed="false">B · 三个动作下钻</button>
-        </div>
-        <div class="proto-row">
           <span class="proto-label">列表</span>
           <button type="button" class="proto-chip" data-list-state="normal" aria-pressed="true">正常</button>
           <button type="button" class="proto-chip" data-list-state="empty" aria-pressed="false">空</button>
@@ -512,8 +503,8 @@
                 <p>先把材料放进 Grove。处理结果、原始材料和 AI 候选都在「来源详情」里，候选确认仍在桌面工作台完成。</p>
               </div>
               <div id="entryArea"></div>
-              <div id="filterArea"></div>
               <div class="section-title"><h2>最近收集</h2><span id="listMeta"></span></div>
+              <div id="filterArea"></div>
               <div id="listArea"></div>
             </div>
           </div>
@@ -570,8 +561,8 @@
         <div class="sheet-head"><h2>从相册选择</h2><button type="button" class="sheet-close" data-close-sheet aria-label="关闭"><svg class="icon" aria-hidden="true"><use href="#i-close"/></svg></button></div>
         <div class="sheet-body">
           <div class="choice-grid">
-            <button type="button" class="choice" data-entry="album-single"><strong>选一张</strong><span>选 1 张图片，作为一条材料提交</span></button>
-            <button type="button" class="choice" data-entry="album-multi"><strong>选多张</strong><span>选 2–5 张，合并成一条材料一起整理</span></button>
+            <button type="button" class="choice" data-entry="album-separate"><strong>每张一条</strong><span>选 1–5 张图片，每张单独作为一条采集</span></button>
+            <button type="button" class="choice" data-entry="album-merged"><strong>多张合并一条</strong><span>选 2–5 张图片，合并成一条采集一起整理</span></button>
           </div>
         </div>
       </section>
@@ -657,11 +648,18 @@
       }
       const photo = (scene, label) => `<span class="photo" role="img" aria-label="示意图：${escapeHtml(label)}"><svg viewBox="0 0 160 120" aria-hidden="true">${SCENES[scene] || SCENES.note}</svg></span>`
 
-      const FORM_TITLES = { camera: '拍照采集', 'album-single': '图片采集', 'album-multi': '图片采集', text: '文字采集' }
+      const FORM_TITLES = { camera: '拍照采集', 'album-separate': '图片采集', 'album-merged': '图片采集', text: '文字采集' }
       const ENTRY_PRESETS = {
         camera: { attachments: [{ scene: 'wall', label: '系统相机拍摄的现场照片' }], toast: '系统相机已返回 1 张照片' },
-        'album-single': { attachments: [{ scene: 'water', label: '相册里选中的图片' }], toast: '相册已选择 1 张照片' },
-        'album-multi': {
+        'album-separate': {
+          attachments: [
+            { scene: 'wall', label: '墙面涂刷范围' },
+            { scene: 'pipe', label: '管根加强层' },
+            { scene: 'water', label: '闭水水位标记' },
+          ],
+          toast: '相册已选择 3 张照片，将分别生成 3 条采集',
+        },
+        'album-merged': {
           attachments: [
             { scene: 'wall', label: '墙面涂刷范围' },
             { scene: 'pipe', label: '管根加强层' },
@@ -710,7 +708,6 @@
          原型状态
          ============================================================ */
       const state = {
-        variant: 'A',
         listState: 'normal',
         filter: 'unassigned',
         page: 'home',
@@ -806,7 +803,6 @@
          渲染：原型控制条 / 顶栏
          ============================================================ */
       function renderProtoBar() {
-        $$('[data-variant]').forEach(chip => chip.setAttribute('aria-pressed', String(chip.dataset.variant === state.variant)))
         $$('[data-list-state]').forEach(chip => chip.setAttribute('aria-pressed', String(chip.dataset.listState === state.listState)))
       }
 
@@ -849,28 +845,16 @@
       }
 
       function entryAreaHtml() {
-        if (state.variant === 'A') {
-          const entries = [
-            { entry: 'camera', icon: 'camera', title: '拍一张', desc: '调用系统相机拍 1 张' },
-            { entry: 'album-single', icon: 'image', title: '相册选一张', desc: '选 1 张图片' },
-            { entry: 'album-multi', icon: 'images', title: '相册选多张', desc: '选 2–5 张，合并为一条材料' },
-            { entry: 'text', icon: 'type', title: '文本', desc: '输入或从剪贴板填入' },
-          ]
-          return `<div class="entry-grid-a">${entries.map(item => `<button type="button" class="entry-tile" data-entry="${item.entry}">
-            <span class="entry-icon">${icon(item.icon)}</span>
-            <span><strong>${item.title}</strong><span class="entry-desc">${item.desc}</span></span>
-          </button>`).join('')}</div>`
-        }
         const entries = [
           { entry: 'camera', icon: 'camera', title: '相机' },
           { entry: 'album-choose', icon: 'images', title: '相册' },
           { entry: 'text', icon: 'type', title: '文本' },
         ]
-        return `<div class="entry-row-b">${entries.map(item => `<button type="button" class="entry-tile compact" data-entry="${item.entry}">
+        return `<div class="entry-row-b">${entries.map(item => `<button type="button" class="entry-tile" data-entry="${item.entry}">
             <span class="entry-icon">${icon(item.icon)}</span>
             <strong>${item.title}</strong>
           </button>`).join('')}</div>
-          <p class="entry-note">相册进入后再选择「一张」或「多张」；选 2–5 张会合并成一条材料。</p>`
+          <p class="entry-note">相册进入后再选「每张一条」或「多张合并一条」：前者每张图片各成一条采集，后者合并成一条一起整理。</p>`
       }
 
       function filterAreaHtml() {
@@ -878,7 +862,7 @@
         const segment = (value, label) => `<button type="button" class="seg" data-filter="${value}" aria-pressed="${state.filter === value}">
           ${state.filter === value ? icon('check') : ''}<span>${label}</span>${showCount ? `<span class="seg-count">${countFor(value)}</span>` : ''}
         </button>`
-        return `<div class="filter-row" role="group" aria-label="来源筛选">${segment('unassigned', '未归属')}${segment('all', '全部')}</div>`
+        return `<div class="filter-row" role="group" aria-label="来源筛选">${segment('all', '全部')}${segment('unassigned', '未归属')}</div>`
       }
 
       function statusBadgeHtml(source) {
@@ -906,7 +890,7 @@
         const error = source.status === 'failed' && source.failReason
           ? `<p class="row-error">${icon('alert')}<span>${escapeHtml(source.failReason)}</span></p>` : ''
         const retry = source.status === 'failed'
-          ? `<button type="button" class="mini-button" data-retry="${source.id}">${icon('retry')}重试</button>` : ''
+          ? `<button type="button" class="icon-button" data-retry="${source.id}" aria-label="重试处理" title="重试处理">${icon('retry')}</button>` : ''
         const moving = source.moving ? `<span class="badge waiting"><span class="spinner"></span>正在重新路由</span>` : ''
         return `<li class="source-row" data-source="${source.id}">
           <button type="button" class="row-open" data-open-detail="${source.id}" aria-label="查看来源详情：${escapeHtml(source.title)}">
@@ -920,9 +904,9 @@
           <div class="row-tags">${projectTag}${subStatusHtml(source)}${moving}</div>
           ${note}${error}
           <div class="row-actions">
-            <button type="button" class="mini-button" data-move="${source.id}"${source.moving ? ' disabled' : ''}>${icon('move')}改归属</button>
+            <button type="button" class="icon-button" data-move="${source.id}"${source.moving ? ' disabled' : ''} aria-label="改归属" title="改归属">${icon('move')}</button>
             ${retry}
-            <button type="button" class="mini-button danger" data-delete="${source.id}">${icon('trash')}删除</button>
+            <button type="button" class="icon-button danger" data-delete="${source.id}" aria-label="删除来源" title="删除来源">${icon('trash')}</button>
           </div>
         </li>`
       }
@@ -932,7 +916,7 @@
           <span class="state-mark">${icon('sprout')}</span>
           <h3>还没有来源</h3>
           <p>用上面的入口采集第一条材料。处理完成后，原始材料、OCR 文本和 AI 候选都会出现在来源详情里。</p>
-          <button type="button" class="button primary" data-entry="album-single">${icon('image')}从相册选一张</button>
+          <button type="button" class="button primary" data-entry="album-choose">${icon('images')}从相册采集</button>
         </div>`
       }
 
@@ -985,14 +969,18 @@
             </div>
           </div>`
         }
-        if (form.kind === 'album-multi') {
+        if (form.kind !== 'text' && form.attachments.length > 1) {
           const count = form.attachments.length
-          const thumbs = form.attachments.map((item, index) => `<span class="thumb">${photo(item.scene, item.label)}<button type="button" class="thumb-remove" data-remove-attachment="${index}"${count === 1 ? ' disabled' : ''} aria-label="移除第 ${index + 1} 张图片">${icon('trash')}</button></span>`).join('')
-          const lead = count > 1 ? `这 ${count} 张将作为一条材料一起整理` : '这 1 张将作为一条材料提交'
+          const merged = form.kind === 'album-merged'
+          const thumbs = form.attachments.map((item, index) => `<span class="thumb">${photo(item.scene, item.label)}<button type="button" class="thumb-remove" data-remove-attachment="${index}" aria-label="移除第 ${index + 1} 张图片">${icon('trash')}</button></span>`).join('')
+          const lead = merged ? `这 ${count} 张将作为一条材料一起整理` : `这 ${count} 张将分别作为 ${count} 条材料提交`
+          const body = merged
+            ? '候选与正式知识都关联同一条来源；需要每张各成一条时，请改走「每张一条」入口。'
+            : '每张图片各成一条来源，可以分别改归属、删除或重试；需要合并成一条时，请改走「多张合并一条」入口。'
           return `<div class="form-section">
             <div class="form-label"><strong>原始材料</strong><span class="optional">共 ${count} 张</span></div>
             <div class="photo-strip">${thumbs}</div>
-            <div class="info-banner merged" style="margin-top:10px">${icon('info')}<div><strong>${lead}</strong><p>候选与正式知识都关联同一条来源；需要拆成多条时，请改走单张入口。</p></div></div>
+            <div class="info-banner merged" style="margin-top:10px">${icon('info')}<div><strong>${lead}</strong><p>${body}</p></div></div>
           </div>`
         }
         const item = form.attachments[0]
@@ -1141,11 +1129,7 @@
           <section class="detail-block">
             <h3>AI 候选<span>共 ${source.candidates.length} 条 · 未应用</span></h3>
             ${candidates}
-          </section>
-          <div class="readonly-note">
-            <strong>${icon('info')}这里只读</strong>
-            <p>移动端不提供确认、拒绝或写入操作。候选在你确认前不会成为正式知识；需要确认候选时，请到桌面工作台的确认台处理，或回对话里继续讨论。</p>
-          </div>`
+          </section>`
       }
 
       /* ============================================================
@@ -1451,7 +1435,7 @@
         form.scenario = id
         form.error = null
         if (id === '400-limit') {
-          form.kind = 'album-multi'
+          form.kind = 'album-merged'
           form.title = '图片采集'
           form.fromCamera = false
           form.attachments = [
@@ -1464,39 +1448,45 @@
           ]
         }
         if (id === '400-size') {
-          form.kind = 'album-single'
+          form.kind = 'album-separate'
           form.title = '图片采集'
           form.fromCamera = false
           form.attachments = [{ scene: 'water', label: '闭水水位原图.jpg · 12.4MB' }]
         }
         if (id === '400-format') {
-          form.kind = 'album-single'
+          form.kind = 'album-separate'
           form.title = '图片采集'
           form.fromCamera = false
           form.attachments = [{ scene: 'note', label: '验收记录.heic' }]
         }
         if (id === 'success' || id === 'upload-failed' || id === 'process-failed') {
           if (form.attachments.length === 0 && form.kind !== 'text') {
-            form.kind = 'album-single'
+            form.kind = 'album-separate'
             form.title = '图片采集'
-            form.attachments = clone(ENTRY_PRESETS['album-single'].attachments)
+            form.attachments = clone(ENTRY_PRESETS['album-separate'].attachments)
           }
         }
         renderForm()
         showToast(`已切换到「${SCENARIOS.find(item => item.id === id)?.label}」演示分支`)
       }
 
-      function newSourceFromForm(outcome) {
+      function newSourceFromForm(outcome, index = 0) {
         const form = state.form
         const isText = form.kind === 'text'
+        const separate = form.kind === 'album-separate' && form.attachments.length > 1
+        const picked = separate ? [form.attachments[index]] : form.attachments
         const firstLine = isText ? (form.text.split('\n').map(line => line.trim()).find(Boolean) || '未命名文字').slice(0, 120) : ''
-        const title = isText ? firstLine : form.attachments.length > 1 ? `${form.attachments.length} 张现场照片` : '现场照片'
+        const title = isText
+          ? firstLine
+          : separate
+            ? picked[0].label
+            : form.attachments.length > 1 ? `${form.attachments.length} 张现场照片` : '现场照片'
         const createdAt = '刚刚'
         const base = {
-          id: `new-${Date.now()}`,
+          id: `new-${Date.now()}-${index}`,
           kind: isText ? 'text' : 'image',
           title,
-          attachments: clone(form.attachments),
+          attachments: clone(picked),
           note: form.note.trim(),
           text: form.text,
           projectId: form.projectId,
@@ -1529,6 +1519,12 @@
         return base
       }
 
+      function newSourcesFromForm(outcome) {
+        const form = state.form
+        const count = form.kind === 'album-separate' ? Math.max(1, form.attachments.length) : 1
+        return Array.from({ length: count }, (_, index) => newSourceFromForm(outcome, index))
+      }
+
       async function submitForm() {
         const form = state.form
         if (!form || state.submitting || submitDisabled(form)) return
@@ -1556,17 +1552,17 @@
           return
         }
         if (scenario === 'process-failed') {
-          const source = newSourceFromForm('process-failed')
-          sources.unshift(source)
-          state.submitSourceId = source.id
+          const created = newSourcesFromForm('process-failed')
+          sources.unshift(...created)
+          state.submitSourceId = created[0].id
           state.submitting = false
           state.submitPhase = 'process-failed'
           state.listState = 'normal'
           render()
           return
         }
-        const source = newSourceFromForm('success')
-        sources.unshift(source)
+        const created = newSourcesFromForm('success')
+        sources.unshift(...created)
         state.submitting = false
         state.submitPhase = null
         closeOverlay('submit')
@@ -1575,7 +1571,9 @@
         setPage('home')
         render()
         $('#homeScroll').scrollTop = 0
-        showToast('已提交，材料已进入收集列表')
+        showToast(created.length > 1
+          ? `已提交，${created.length} 张图片分别生成了 ${created.length} 条采集`
+          : '已提交，材料已进入收集列表')
       }
 
       async function retrySubmit() {
@@ -1584,8 +1582,8 @@
         state.submitPhase = 'uploading'
         renderSubmitOverlay()
         await wait(1100)
-        const source = newSourceFromForm('success')
-        sources.unshift(source)
+        const created = newSourcesFromForm('success')
+        sources.unshift(...created)
         state.submitting = false
         state.submitPhase = null
         closeOverlay('submit')
@@ -1594,7 +1592,9 @@
         setPage('home')
         render()
         $('#homeScroll').scrollTop = 0
-        showToast('重试成功：沿用同一次采集，没有生成重复来源')
+        showToast(created.length > 1
+          ? `重试成功：沿用同一次采集，没有生成重复采集（共 ${created.length} 条）`
+          : '重试成功：沿用同一次采集，没有生成重复来源')
       }
 
       /* ============================================================
@@ -1742,7 +1742,6 @@
         const target = event.target.closest('button, [data-close-sheet]')
         if (!target) return
 
-        if (target.dataset.variant) { state.variant = target.dataset.variant; renderProtoBar(); renderHome(); return }
         if (target.dataset.listState) { state.listState = target.dataset.listState; renderHome(); return }
         if (target.dataset.permission) { openPermission(target.dataset.permission); return }
         if (target.hasAttribute('data-reset')) { resetPrototype(); return }
@@ -1982,7 +1981,6 @@
          重置与初始化
          ============================================================ */
       function resetPrototype() {
-        state.variant = 'A'
         state.listState = 'normal'
         state.filter = 'unassigned'
         state.form = null
