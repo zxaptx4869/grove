@@ -189,7 +189,6 @@
     .entry-tile:hover { border-color: #c7d4cc; }
     .entry-tile strong { display: block; font-size: 13px; line-height: 20px; }
     .entry-icon { width: 34px; height: 34px; display: grid; place-items: center; border-radius: 8px; background: var(--g-green-soft); color: var(--g-green); }
-    .entry-note { margin-top: 8px; color: var(--g-muted); font-size: 10px; line-height: 16px; }
 
     /* ---------- 列表筛选 ---------- */
     .filter-row { display: inline-flex; align-items: center; gap: 18px; margin: 0 0 2px; }
@@ -212,12 +211,7 @@
     .row-error { display: flex; gap: 6px; align-items: flex-start; color: var(--g-error); font-size: 11px; line-height: 17px; overflow-wrap: anywhere; }
     .row-error .icon { width: 15px; height: 15px; flex: 0 0 auto; margin-top: 1px; }
     .row-tags { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
-    .row-actions { display: flex; align-items: center; gap: 6px; }
-    .icon-button { width: 34px; height: 34px; display: grid; place-items: center; border: 1px solid var(--g-border); border-radius: 9px; background: var(--g-surface); color: var(--g-muted); box-shadow: var(--shadow-card); }
-    .icon-button .icon { width: 17px; height: 17px; }
-    .icon-button:hover { border-color: #c7d4cc; color: var(--g-ink); }
-    .icon-button.danger { border-color: #efcaca; background: var(--g-error-soft); color: var(--g-error); }
-    .icon-button[disabled] { opacity: .5; }
+    .row-actions { display: flex; align-items: center; gap: 6px; margin-top: 2px; }
 
     /* ---------- 列表整体状态（空 / 加载失败） ---------- */
     .state-card { display: grid; justify-items: start; gap: 9px; margin-top: 4px; padding: 20px 16px; border: 1px solid var(--g-border); border-radius: 10px; background: var(--g-surface); box-shadow: var(--shadow-card); }
@@ -288,6 +282,7 @@
     .overlay-header { flex: 0 0 auto; min-height: calc(56px + var(--safe-top)); display: grid; grid-template-columns: 44px minmax(0, 1fr) 44px; place-items: center; gap: 6px; padding: calc(8px + var(--safe-top)) 10px 8px; border-bottom: 1px solid var(--g-border); background: var(--g-surface); }
     .overlay-header h1 { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; text-align: center; font-size: 16px; }
     .overlay-scroll { flex: 1; min-height: 0; overflow-y: auto; padding: 16px 16px calc(24px + var(--safe-bottom)); overscroll-behavior: contain; }
+    .overlay-footer { flex: 0 0 auto; display: grid; grid-template-columns: 1fr 1fr; gap: 8px; padding: 9px 16px calc(9px + var(--safe-bottom)); border-top: 1px solid var(--g-border); background: var(--g-surface); }
     .detail-card { padding: 14px; border: 1px solid var(--g-border); border-radius: 10px; background: var(--g-surface); box-shadow: var(--shadow-card); }
     .detail-title { margin-top: 9px; font-size: 16.5px; line-height: 24px; font-weight: 700; }
     .detail-tags { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
@@ -500,7 +495,7 @@
             <div class="pull-wrap" id="pullWrap">
               <div class="page-heading">
                 <h1>收集</h1>
-                <p>先把材料放进 Grove。处理结果、原始材料和 AI 候选都在「来源详情」里，候选确认仍在桌面工作台完成。</p>
+                <p>先收进来，慢慢整理成自己的知识。</p>
               </div>
               <div id="entryArea"></div>
               <div class="section-title"><h2>最近收集</h2><span id="listMeta"></span></div>
@@ -586,6 +581,7 @@
           <span></span>
         </header>
         <div class="overlay-scroll" id="detailArea"></div>
+        <div class="overlay-footer" id="detailFooter"></div>
       </section>
 
       <section class="overlay" id="submitOverlay" role="dialog" aria-modal="true" aria-label="提交状态" tabindex="-1">
@@ -853,8 +849,7 @@
         return `<div class="entry-row-b">${entries.map(item => `<button type="button" class="entry-tile" data-entry="${item.entry}">
             <span class="entry-icon">${icon(item.icon)}</span>
             <strong>${item.title}</strong>
-          </button>`).join('')}</div>
-          <p class="entry-note">相册进入后再选「每张一条」或「多张合并一条」：前者每张图片各成一条采集，后者合并成一条一起整理。</p>`
+          </button>`).join('')}</div>`
       }
 
       function filterAreaHtml() {
@@ -890,7 +885,7 @@
         const error = source.status === 'failed' && source.failReason
           ? `<p class="row-error">${icon('alert')}<span>${escapeHtml(source.failReason)}</span></p>` : ''
         const retry = source.status === 'failed'
-          ? `<button type="button" class="icon-button" data-retry="${source.id}" aria-label="重试处理" title="重试处理">${icon('retry')}</button>` : ''
+          ? `<div class="row-actions"><button type="button" class="mini-button" data-retry="${source.id}">${icon('retry')}重试</button></div>` : ''
         const moving = source.moving ? `<span class="badge waiting"><span class="spinner"></span>正在重新路由</span>` : ''
         return `<li class="source-row" data-source="${source.id}">
           <button type="button" class="row-open" data-open-detail="${source.id}" aria-label="查看来源详情：${escapeHtml(source.title)}">
@@ -903,11 +898,7 @@
           </button>
           <div class="row-tags">${projectTag}${subStatusHtml(source)}${moving}</div>
           ${note}${error}
-          <div class="row-actions">
-            <button type="button" class="icon-button" data-move="${source.id}"${source.moving ? ' disabled' : ''} aria-label="改归属" title="改归属">${icon('move')}</button>
-            ${retry}
-            <button type="button" class="icon-button danger" data-delete="${source.id}" aria-label="删除来源" title="删除来源">${icon('trash')}</button>
-          </div>
+          ${retry}
         </li>`
       }
 
@@ -1130,6 +1121,9 @@
             <h3>AI 候选<span>共 ${source.candidates.length} 条 · 未应用</span></h3>
             ${candidates}
           </section>`
+        $('#detailFooter').innerHTML = `
+          <button type="button" class="button" data-move="${source.id}"${source.moving ? ' disabled' : ''}>${icon('move')}改归属</button>
+          <button type="button" class="button danger" data-delete="${source.id}">${icon('trash')}删除</button>`
       }
 
       /* ============================================================
