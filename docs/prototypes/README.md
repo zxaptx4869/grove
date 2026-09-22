@@ -26,6 +26,20 @@
 
 该文件是产品形态与关键交互的确定性模拟，不接真实后端，不代表原生 App 技术栈或正式能力已经确定。它不会替代低于 1024px 时 Grove Web 的电脑访问提示。
 
+## 原生移动端「收集」模块探索原型
+
+- 文件：[grove-mobile-capture-prototype.html](grove-mobile-capture-prototype.html)
+- 日期：2026-09-22
+- 定位：拆分 OpenSpec change 之前用于确认「收集」模块交互的探索性原型，功能依据为 `docs/discussions/移动端收集模块规划-2026-09-22.md`，不是已确认的交互基线。
+- 范围：只覆盖收集栏目（采集入口、采集表单、提交状态、来源列表、来源详情只读），底栏其余三栏仍是静态状态。
+- 与四栏原型的关系：复用 [grove-mobile-agent-prototype.html](grove-mobile-agent-prototype.html) 的视觉语言、原创图标、四栏骨架与安全区处理，独立成文件；不改动既有四栏原型，两者互不替换。收集栏目在正式实现中只有一份设计，本原型用于在收敛前做 A/B 对比。
+- 入口排布：同一文件内可切换两个变体。变体 A 为四个动作平铺（拍一张 / 相册选一张 / 相册选多张 / 文本）；变体 B 为三个动作（相机 / 相册 / 文本），进入相册后再选择一张或多张。顶部虚线区域是原型专用的变体与状态控制，正式实现不含该区域。
+- 视口：主视口 390 × 844，扩展视口 360 × 800 与 412 × 915。
+
+访问：`http://127.0.0.1:8899/docs/prototypes/grove-mobile-capture-prototype.html`
+
+候选在本原型中始终只读：详情页不提供确认、拒绝、写入或归档操作，只说明去路（到桌面工作台确认台处理）。本轮不做录音、网页链接、系统分享、连拍扫描、独立「全部来源」页、列表搜索与状态筛选，也不用百分比进度条表达处理中。走查证据见 `artifacts/mobile-capture-prototype/`。
+
 ## 当前版本
 
 - 文件：[grove-product-prototype.html](grove-product-prototype.html)

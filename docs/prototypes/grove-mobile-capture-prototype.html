@@ -1,0 +1,2017 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover" />
+  <title>知林 Grove · 原生移动端「收集」模块探索原型</title>
+  <style>
+    /* ============================================================
+       设计令牌：沿用已确认的对话式 Agent 移动端原型
+       docs/prototypes/grove-mobile-agent-prototype.html
+       ============================================================ */
+    :root {
+      color-scheme: light;
+      --g-bg: #f7f8f7;
+      --g-surface: #ffffff;
+      --g-soft: #f1f4f2;
+      --g-border: #dde3df;
+      --g-ink: #17201c;
+      --g-muted: #66716b;
+      --g-green: #236748;
+      --g-green-soft: #e8f3ed;
+      --g-ai: #7251a5;
+      --g-ai-soft: #f2edf8;
+      --g-confirmed: #187c72;
+      --g-confirmed-soft: #e7f5f2;
+      --g-risk: #9a6419;
+      --g-risk-soft: #fff5df;
+      --g-error: #b43c3c;
+      --g-error-soft: #fceded;
+      --shadow-card: 0 1px 2px rgb(20 40 30 / 4%), 0 2px 8px rgb(20 40 30 / 5%);
+      --shadow-pop: 0 18px 50px rgb(16 28 22 / 18%);
+      --safe-top: env(safe-area-inset-top, 0px);
+      --safe-bottom: env(safe-area-inset-bottom, 0px);
+      --keyboard-height: 270px;
+    }
+
+    * { box-sizing: border-box; }
+    html, body { margin: 0; min-height: 100%; }
+    body {
+      background: #e9eeeb;
+      color: var(--g-ink);
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "PingFang SC", "Microsoft YaHei", sans-serif;
+      font-size: 14px;
+      font-weight: 430;
+      line-height: 1.5;
+      -webkit-font-smoothing: antialiased;
+    }
+    button, input, textarea { font: inherit; color: inherit; }
+    button { cursor: pointer; }
+    button:focus-visible, input:focus-visible, textarea:focus-visible { outline: 2px solid var(--g-ai); outline-offset: 2px; }
+    h1, h2, h3, h4, p, dl, dd, dt { margin: 0; }
+    [hidden] { display: none !important; }
+    svg.icon { width: 20px; height: 20px; fill: none; stroke: currentColor; stroke-width: 1.9; stroke-linecap: round; stroke-linejoin: round; }
+    .sprite { position: absolute; width: 0; height: 0; overflow: hidden; }
+    .caption { font-size: 11px; line-height: 17px; }
+    .muted { color: var(--g-muted); }
+
+    /* ---------- 原型外框 ---------- */
+    .prototype-stage { min-height: 100dvh; display: grid; place-items: center; padding: 24px; }
+    .app {
+      position: relative;
+      width: min(100%, 390px);
+      height: min(844px, calc(100dvh - 48px));
+      min-height: 640px;
+      overflow: hidden;
+      display: flex;
+      flex-direction: column;
+      background: var(--g-bg);
+      border: 1px solid #cfd8d2;
+      border-radius: 28px;
+      box-shadow: 0 28px 80px rgb(28 49 38 / 18%);
+    }
+
+    /* ---------- 原型控制条（正式实现不会出现） ---------- */
+    .proto-bar {
+      position: relative;
+      z-index: 12;
+      flex: 0 0 auto;
+      display: grid;
+      gap: 5px;
+      padding: 7px 10px;
+      border-bottom: 1px dashed #b7c6bd;
+      background: #eef3f0;
+    }
+    .proto-row { display: flex; flex-wrap: wrap; align-items: center; gap: 5px 6px; }
+    .proto-label { flex: 0 0 auto; color: var(--g-muted); font-size: 10px; font-weight: 650; }
+    .proto-chip {
+      min-height: 24px;
+      padding: 0 7px;
+      border: 1px dashed #a9bcb2;
+      border-radius: 6px;
+      background: var(--g-surface);
+      color: var(--g-muted);
+      font-size: 10px;
+      font-weight: 600;
+    }
+    .proto-chip[aria-pressed="true"] { border-style: solid; border-color: var(--g-green); background: var(--g-green-soft); color: var(--g-green); }
+
+    /* ---------- 顶栏 ---------- */
+    .app-header {
+      position: relative;
+      z-index: 8;
+      flex: 0 0 auto;
+      min-height: calc(56px + var(--safe-top));
+      padding: calc(8px + var(--safe-top)) 12px 8px;
+      display: grid;
+      grid-template-columns: 44px minmax(0, 1fr) 44px;
+      align-items: center;
+      place-items: center;
+      gap: 8px;
+      border-bottom: 1px solid var(--g-border);
+      background: color-mix(in srgb, var(--g-surface) 94%, transparent);
+      backdrop-filter: blur(18px);
+    }
+    .header-slot { display: grid; place-items: center; width: 100%; }
+    .header-slot.start { justify-items: start; }
+    .header-slot.end { justify-items: end; }
+    .brand-mark { width: 34px; height: 34px; display: grid; place-items: center; border-radius: 8px; background: var(--g-green); color: #fff; font-size: 14px; font-weight: 750; }
+    .header-title { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; text-align: center; font-size: 16px; font-weight: 700; }
+    .header-icon { width: 44px; height: 44px; display: grid; place-items: center; padding: 0; border: 0; border-radius: 9px; background: transparent; color: var(--g-muted); }
+    .header-icon:hover { background: var(--g-soft); color: var(--g-ink); }
+    .header-icon.spinning .icon { animation: spin .9s linear infinite; }
+
+    /* ---------- 屏幕与滚动区 ---------- */
+    .screens { position: relative; flex: 1; min-height: 0; }
+    .screen { position: absolute; inset: 0; display: none; min-height: 0; }
+    .screen.active { display: flex; flex-direction: column; }
+    .scroll-page { position: relative; flex: 1; min-height: 0; overflow-y: auto; padding: 16px 16px calc(96px + var(--safe-bottom)); overscroll-behavior: contain; }
+    .screen[data-screen="form"] .scroll-page { padding-bottom: calc(178px + var(--safe-bottom)); }
+
+    /* ---------- 基础排版 ---------- */
+    .page-heading { margin-bottom: 14px; }
+    .page-heading h1 { font-size: 22px; line-height: 30px; font-weight: 720; }
+    .page-heading p { margin-top: 4px; color: var(--g-muted); font-size: 12px; line-height: 19px; }
+    .section-title { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin: 20px 0 8px; }
+    .section-title h2 { font-size: 15px; font-weight: 700; }
+    .section-title span { color: var(--g-muted); font-size: 10px; text-align: right; }
+    .section-title .tone-alert { color: var(--g-error); }
+
+    /* ---------- 状态徽标与标签 ---------- */
+    .badge { min-height: 22px; display: inline-flex; align-items: center; gap: 4px; padding: 2px 7px; border-radius: 5px; font-size: 10px; font-weight: 650; white-space: nowrap; }
+    .badge .icon { width: 13px; height: 13px; stroke-width: 2.1; }
+    .badge.waiting { color: var(--g-muted); background: var(--g-soft); border: 1px solid var(--g-border); }
+    .badge.processing { color: var(--g-green); background: var(--g-green-soft); }
+    .badge.done { color: var(--g-confirmed); background: var(--g-confirmed-soft); }
+    .badge.failed { color: var(--g-error); background: var(--g-error-soft); }
+    .badge.candidate { color: var(--g-ai); background: var(--g-ai-soft); }
+    .badge.neutral { color: var(--g-muted); background: var(--g-soft); }
+    .tag { min-height: 22px; display: inline-flex; align-items: center; gap: 4px; padding: 1px 6px; border-radius: 5px; font-size: 10px; font-weight: 650; }
+    .tag .icon { width: 13px; height: 13px; stroke-width: 2; }
+    .tag-unassigned { border: 1px dashed #c3cec8; background: var(--g-bg); color: var(--g-muted); }
+    .tag-project { color: var(--g-green); background: var(--g-green-soft); }
+    .tag-candidate { color: var(--g-ai); background: var(--g-ai-soft); }
+    .tag-confirmed { color: var(--g-confirmed); background: var(--g-confirmed-soft); }
+    .spinner { width: 12px; height: 12px; flex: 0 0 auto; border: 1.8px solid currentColor; border-top-color: transparent; border-radius: 50%; animation: spin .8s linear infinite; }
+    .spinner.lg { width: 22px; height: 22px; border-width: 2.4px; }
+    @keyframes spin { to { transform: rotate(360deg); } }
+
+    /* ---------- 按钮 ---------- */
+    .button { min-height: 44px; display: inline-flex; align-items: center; justify-content: center; gap: 7px; padding: 0 13px; border: 1px solid var(--g-border); border-radius: 8px; background: var(--g-surface); font-size: 13px; font-weight: 650; }
+    .button:hover { filter: brightness(.985); }
+    .button.primary { border-color: var(--g-green); background: var(--g-green); color: #fff; }
+    .button.danger { border-color: #efcaca; background: var(--g-error-soft); color: var(--g-error); }
+    .button.ghost { border-color: transparent; background: transparent; color: var(--g-muted); }
+    .button.block { width: 100%; }
+    .button .icon { width: 17px; height: 17px; }
+    button:disabled { cursor: not-allowed; opacity: .48; }
+    .mini-button { min-height: 40px; display: inline-flex; align-items: center; gap: 5px; padding: 0 10px; border: 1px solid var(--g-border); border-radius: 7px; background: var(--g-surface); color: var(--g-ink); font-size: 11.5px; font-weight: 650; }
+    .mini-button .icon { width: 15px; height: 15px; }
+    .mini-button.danger { border-color: #efcaca; background: var(--g-error-soft); color: var(--g-error); }
+    .mini-button[disabled] { opacity: .5; }
+
+    /* ---------- 采集入口 ---------- */
+    .entry-grid-a { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+    .entry-row-b { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; }
+    .entry-tile {
+      min-height: 104px;
+      display: flex;
+      flex-direction: column;
+      align-items: flex-start;
+      justify-content: space-between;
+      gap: 8px;
+      padding: 12px;
+      border: 1px solid var(--g-border);
+      border-radius: 10px;
+      background: var(--g-surface);
+      text-align: left;
+      box-shadow: var(--shadow-card);
+    }
+    .entry-tile:hover { border-color: #c7d4cc; }
+    .entry-tile strong { display: block; font-size: 14px; line-height: 20px; }
+    .entry-desc { color: var(--g-muted); font-size: 10px; line-height: 15px; }
+    .entry-icon { width: 34px; height: 34px; display: grid; place-items: center; border-radius: 8px; background: var(--g-green-soft); color: var(--g-green); }
+    .entry-tile.compact { min-height: 92px; align-items: center; justify-content: center; gap: 7px; padding: 10px 8px; text-align: center; }
+    .entry-tile.compact strong { font-size: 13px; }
+    .entry-note { margin-top: 8px; color: var(--g-muted); font-size: 10px; line-height: 16px; }
+
+    /* ---------- 列表筛选 ---------- */
+    .filter-row { display: inline-flex; gap: 2px; margin-top: 18px; padding: 2px; border: 1px solid var(--g-border); border-radius: 8px; background: var(--g-soft); }
+    .seg { min-height: 36px; display: inline-flex; align-items: center; gap: 5px; padding: 0 12px; border: 0; border-radius: 6px; background: transparent; color: var(--g-muted); font-size: 12px; font-weight: 600; }
+    .seg .icon { width: 14px; height: 14px; }
+    .seg[aria-pressed="true"] { background: var(--g-surface); color: var(--g-green); box-shadow: var(--shadow-card); }
+    .seg .seg-count { color: var(--g-muted); font-size: 10px; font-weight: 600; }
+    .seg[aria-pressed="true"] .seg-count { color: var(--g-green); }
+
+    /* ---------- 来源列表 ---------- */
+    .list-card { border-top: 1px solid var(--g-border); }
+    .source-row { display: grid; gap: 8px; padding: 12px 2px; border-bottom: 1px solid var(--g-border); }
+    .row-open { width: 100%; display: grid; grid-template-columns: 34px minmax(0, 1fr) auto; gap: 10px; align-items: start; padding: 0; border: 0; background: transparent; text-align: left; }
+    .row-icon { width: 34px; height: 34px; display: grid; place-items: center; border-radius: 8px; background: var(--g-soft); color: var(--g-muted); }
+    .row-icon .icon { width: 18px; height: 18px; }
+    .row-main { min-width: 0; }
+    .row-main strong { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; font-size: 13.5px; line-height: 19px; }
+    .row-meta { display: block; margin-top: 3px; color: var(--g-muted); font-size: 10px; line-height: 15px; }
+    .row-note { color: var(--g-muted); font-size: 11px; line-height: 17px; overflow-wrap: anywhere; }
+    .row-error { display: flex; gap: 6px; align-items: flex-start; color: var(--g-error); font-size: 11px; line-height: 17px; overflow-wrap: anywhere; }
+    .row-error .icon { width: 15px; height: 15px; flex: 0 0 auto; margin-top: 1px; }
+    .row-tags { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+    .row-actions { display: flex; flex-wrap: wrap; gap: 6px; }
+
+    /* ---------- 列表整体状态（空 / 加载失败） ---------- */
+    .state-card { display: grid; justify-items: start; gap: 9px; margin-top: 4px; padding: 20px 16px; border: 1px solid var(--g-border); border-radius: 10px; background: var(--g-surface); box-shadow: var(--shadow-card); }
+    .state-mark { width: 40px; height: 40px; display: grid; place-items: center; border-radius: 10px; background: var(--g-green-soft); color: var(--g-green); }
+    .state-card h3 { font-size: 15px; line-height: 22px; }
+    .state-card p { color: var(--g-muted); font-size: 12px; line-height: 19px; overflow-wrap: anywhere; }
+    .state-card.is-error .state-mark { background: var(--g-error-soft); color: var(--g-error); }
+
+    /* ---------- 下拉刷新 ---------- */
+    .pull-indicator { position: absolute; top: 0; right: 0; left: 0; height: 56px; display: flex; align-items: center; justify-content: center; gap: 6px; color: var(--g-muted); font-size: 11px; }
+    .pull-wrap { position: relative; z-index: 1; background: var(--g-bg); transition: transform .18s ease; }
+    .pull-wrap.dragging { transition: none; user-select: none; }
+
+    /* ---------- 采集表单 ---------- */
+    .form-section { margin-bottom: 16px; }
+    .form-label { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 7px; }
+    .form-label strong { font-size: 12.5px; font-weight: 700; }
+    .form-label .optional { color: var(--g-muted); font-size: 10px; font-weight: 500; }
+    .form-field { width: 100%; display: block; padding: 10px 11px; border: 1px solid var(--g-border); border-radius: 9px; background: var(--g-surface); font-size: 13px; line-height: 20px; }
+    textarea.form-field { min-height: 132px; resize: vertical; }
+    textarea.form-note { min-height: 76px; }
+    .form-field::placeholder { color: var(--g-muted); }
+    .field-row { display: grid; grid-template-columns: minmax(0, 1fr) 20px; gap: 8px; align-items: center; min-height: 50px; text-align: left; }
+    .field-value { display: flex; align-items: center; gap: 7px; min-width: 0; font-size: 13px; font-weight: 650; }
+    .field-value .icon { width: 17px; height: 17px; color: var(--g-muted); }
+    .field-value .icon.is-project { color: var(--g-green); }
+    .field-value span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .field-row > .icon { width: 18px; height: 18px; justify-self: end; color: var(--g-muted); }
+    .inline-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-top: 9px; }
+    .info-banner { display: flex; gap: 8px; align-items: flex-start; padding: 10px 11px; border: 1px solid var(--g-border); border-radius: 9px; background: var(--g-surface); }
+    .info-banner .icon { width: 16px; height: 16px; flex: 0 0 auto; margin-top: 2px; color: var(--g-muted); }
+    .info-banner strong { display: block; font-size: 12.5px; line-height: 19px; }
+    .info-banner p { margin-top: 3px; color: var(--g-muted); font-size: 11px; line-height: 17px; }
+    .info-banner.merged { border-color: #bad5c5; background: var(--g-green-soft); }
+    .info-banner.merged .icon { color: var(--g-green); }
+    .form-error { display: grid; gap: 4px; margin-bottom: 14px; padding: 11px; border: 1px solid #efcaca; border-left: 3px solid var(--g-error); border-radius: 9px; background: var(--g-error-soft); }
+    .form-error strong { display: flex; align-items: center; gap: 6px; color: var(--g-error); font-size: 12.5px; }
+    .form-error strong .icon { width: 16px; height: 16px; }
+    .form-error p { color: #7d2c2c; font-size: 12px; line-height: 19px; overflow-wrap: anywhere; }
+    .form-error .proto-source { color: #8a4a4a; font-size: 10.5px; line-height: 16px; }
+    .form-footer { position: absolute; right: 0; bottom: calc(66px + var(--safe-bottom)); left: 0; z-index: 7; display: grid; gap: 7px; padding: 10px 16px 8px; background: linear-gradient(to bottom, transparent, var(--g-bg) 24%, var(--g-bg)); }
+    .form-footer-hint { color: var(--g-muted); font-size: 10.5px; line-height: 16px; text-align: center; }
+    .proto-panel { display: grid; gap: 6px; margin-bottom: 14px; padding: 9px 10px; border: 1px dashed #b7c6bd; border-radius: 9px; background: #eef3f0; }
+    .proto-chips { display: flex; flex-wrap: wrap; gap: 5px; }
+
+    /* ---------- 原始材料示意图 ---------- */
+    .photo { position: absolute; inset: 0; background: linear-gradient(160deg, #e6ede9, #cfdcd5); }
+    .photo svg { width: 100%; height: 100%; fill: none; stroke: #5d7568; stroke-width: 1.7; stroke-linecap: round; stroke-linejoin: round; }
+    .photo::after { content: "示意图"; position: absolute; right: 5px; bottom: 4px; padding: 0 4px; border-radius: 3px; background: rgb(255 255 255 / 82%); color: #55635c; font-size: 9px; line-height: 14px; }
+    .photo-lg { position: relative; width: 100%; aspect-ratio: 4 / 3; overflow: hidden; border: 1px solid var(--g-border); border-radius: 10px; }
+    .photo-strip { display: flex; gap: 8px; overflow-x: auto; padding-bottom: 4px; scrollbar-width: none; }
+    .photo-strip::-webkit-scrollbar { display: none; }
+    .thumb { position: relative; flex: 0 0 auto; width: 98px; height: 98px; overflow: hidden; border: 1px solid var(--g-border); border-radius: 9px; }
+    .thumb-remove { position: absolute; top: 4px; right: 4px; width: 28px; height: 28px; display: grid; place-items: center; padding: 0; border: 0; border-radius: 7px; background: rgb(255 255 255 / 90%); color: var(--g-error); box-shadow: 0 1px 4px rgb(16 28 22 / 20%); }
+    .thumb-remove .icon { width: 15px; height: 15px; stroke-width: 2.3; }
+    .photo-remove { position: absolute; top: 8px; right: 8px; min-height: 34px; display: inline-flex; align-items: center; gap: 5px; padding: 0 9px; border: 0; border-radius: 8px; background: rgb(255 255 255 / 92%); color: var(--g-error); font-size: 11.5px; font-weight: 650; box-shadow: 0 1px 5px rgb(16 28 22 / 22%); }
+    .photo-remove .icon { width: 14px; height: 14px; }
+
+    /* ---------- 权限被拒 ---------- */
+    .permission-card { display: grid; justify-items: start; gap: 10px; padding: 20px 16px; border: 1px solid var(--g-border); border-radius: 10px; background: var(--g-surface); box-shadow: var(--shadow-card); }
+    .permission-card h2 { font-size: 16px; line-height: 23px; }
+    .permission-card p { color: var(--g-muted); font-size: 12.5px; line-height: 20px; }
+    .permission-card ul { display: grid; gap: 6px; margin: 2px 0 0; padding-left: 18px; color: var(--g-muted); font-size: 12px; line-height: 19px; }
+
+    /* ---------- 来源详情 ---------- */
+    .overlay { position: absolute; inset: 0; z-index: 20; display: none; flex-direction: column; background: var(--g-bg); }
+    .overlay.open { display: flex; }
+    .overlay-header { flex: 0 0 auto; min-height: calc(56px + var(--safe-top)); display: grid; grid-template-columns: 44px minmax(0, 1fr) 44px; place-items: center; gap: 6px; padding: calc(8px + var(--safe-top)) 10px 8px; border-bottom: 1px solid var(--g-border); background: var(--g-surface); }
+    .overlay-header h1 { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; text-align: center; font-size: 16px; }
+    .overlay-scroll { flex: 1; min-height: 0; overflow-y: auto; padding: 16px 16px calc(24px + var(--safe-bottom)); overscroll-behavior: contain; }
+    .detail-card { padding: 14px; border: 1px solid var(--g-border); border-radius: 10px; background: var(--g-surface); box-shadow: var(--shadow-card); }
+    .detail-title { margin-top: 9px; font-size: 16.5px; line-height: 24px; font-weight: 700; }
+    .detail-tags { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+    .detail-meta { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 7px 12px; margin-top: 13px; padding-top: 12px; border-top: 1px solid var(--g-border); font-size: 11.5px; line-height: 18px; }
+    .detail-meta dt { color: var(--g-muted); white-space: nowrap; }
+    .detail-meta dd { color: var(--g-ink); overflow-wrap: anywhere; }
+    .detail-block { margin-top: 18px; }
+    .detail-block > h3 { display: flex; align-items: center; justify-content: space-between; gap: 8px; font-size: 13.5px; line-height: 20px; }
+    .detail-block > h3 span { color: var(--g-muted); font-size: 10px; font-weight: 500; }
+    .detail-hint { margin-top: 7px; color: var(--g-muted); font-size: 11.5px; line-height: 18px; overflow-wrap: anywhere; }
+    .photo-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(94px, 1fr)); gap: 8px; margin-top: 9px; }
+    .photo-button { position: relative; aspect-ratio: 1 / 1; overflow: hidden; padding: 0; border: 1px solid var(--g-border); border-radius: 9px; }
+    .photo-button .zoom-hint { position: absolute; left: 5px; top: 4px; display: inline-flex; align-items: center; gap: 3px; padding: 0 5px; border-radius: 4px; background: rgb(23 32 28 / 72%); color: #fff; font-size: 9px; line-height: 16px; }
+    .photo-button .zoom-hint .icon { width: 11px; height: 11px; stroke-width: 2.2; }
+    .text-quote { margin-top: 9px; padding: 12px; border-left: 3px solid var(--g-border); border-radius: 0 8px 8px 0; background: var(--g-bg); font-size: 12.5px; line-height: 20px; white-space: pre-wrap; overflow-wrap: anywhere; }
+    .ocr-block { margin-top: 9px; padding: 12px; border: 1px solid var(--g-border); border-radius: 9px; background: var(--g-surface); font-size: 12.5px; line-height: 20px; white-space: pre-wrap; overflow-wrap: anywhere; }
+    .candidate-card { margin-top: 10px; padding: 12px; border: 1px solid #e2d6f0; border-left: 3px solid var(--g-ai); border-radius: 9px; background: var(--g-surface); }
+    .candidate-tags { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+    .candidate-card h4 { margin-top: 9px; font-size: 13px; line-height: 20px; font-weight: 650; }
+    .candidate-line { margin-top: 6px; color: var(--g-muted); font-size: 11.5px; line-height: 18px; overflow-wrap: anywhere; }
+    .candidate-line b { color: var(--g-ink); font-weight: 650; }
+    .readonly-note { display: grid; gap: 6px; margin-top: 18px; padding: 13px; border: 1px dashed #c3cec8; border-radius: 10px; background: var(--g-bg); }
+    .readonly-note strong { display: flex; align-items: center; gap: 6px; font-size: 12.5px; }
+    .readonly-note strong .icon { width: 16px; height: 16px; color: var(--g-green); }
+    .readonly-note p { color: var(--g-muted); font-size: 11.5px; line-height: 18px; }
+
+    /* ---------- 提交状态 ---------- */
+    .status-card { display: grid; gap: 10px; padding: 18px 16px; border: 1px solid var(--g-border); border-radius: 12px; background: var(--g-surface); box-shadow: var(--shadow-card); }
+    .status-mark { width: 44px; height: 44px; display: grid; place-items: center; border-radius: 10px; background: var(--g-green-soft); color: var(--g-green); }
+    .status-mark.warn { background: var(--g-risk-soft); color: var(--g-risk); }
+    .status-mark.error { background: var(--g-error-soft); color: var(--g-error); }
+    .status-card h2 { font-size: 16px; line-height: 23px; }
+    .status-card > p { color: var(--g-muted); font-size: 12.5px; line-height: 20px; }
+    .status-facts { display: grid; gap: 6px; padding-top: 12px; border-top: 1px solid var(--g-border); color: var(--g-muted); font-size: 11.5px; line-height: 18px; }
+    .status-actions { display: grid; gap: 8px; margin-top: 2px; }
+
+    /* ---------- 查看原图 ---------- */
+    .overlay-dark { background: #101713; }
+    .overlay-dark .overlay-header { border-bottom-color: rgb(255 255 255 / 14%); background: transparent; }
+    .overlay-dark .overlay-header h1 { color: #fff; }
+    .overlay-dark .header-icon { color: #e3e9e5; }
+    .lightbox-frame { position: relative; width: 100%; aspect-ratio: 4 / 3; overflow: hidden; border: 1px solid rgb(255 255 255 / 18%); border-radius: 12px; }
+    .lightbox-frame .photo::after { background: rgb(0 0 0 / 55%); color: #fff; }
+    .lightbox-caption { margin-top: 10px; color: #c8d2cc; font-size: 11.5px; line-height: 18px; text-align: center; }
+    .lightbox-pager { display: grid; grid-template-columns: 1fr auto 1fr; align-items: center; gap: 8px; margin-top: 14px; padding: 4px; border: 1px solid rgb(255 255 255 / 16%); border-radius: 9px; background: rgb(255 255 255 / 6%); }
+    .lightbox-pager button { min-height: 40px; padding: 0 10px; border: 0; border-radius: 7px; background: transparent; color: #e3e9e5; font-size: 12px; font-weight: 650; }
+    .lightbox-pager button:first-child { justify-self: start; }
+    .lightbox-pager button:last-child { justify-self: end; }
+    .lightbox-pager span { color: #aab5af; font-size: 11px; font-weight: 650; }
+
+    /* ---------- 底部 Sheet ---------- */
+    .scrim { position: absolute; inset: 0; z-index: 29; display: none; background: rgb(15 24 19 / 36%); }
+    .scrim.open { display: block; }
+    .sheet { position: absolute; right: 0; bottom: 0; left: 0; z-index: 30; display: none; max-height: 86%; overflow: hidden; border-radius: 18px 18px 0 0; background: var(--g-surface); box-shadow: var(--shadow-pop); }
+    .sheet.open { display: block; animation: rise .2s ease-out; }
+    @keyframes rise { from { transform: translateY(30px); opacity: 0; } }
+    .sheet-handle { width: 36px; height: 4px; margin: 8px auto 2px; border-radius: 2px; background: #cad2cd; }
+    .sheet-head { min-height: 52px; display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 4px 14px 0; }
+    .sheet-head h2 { font-size: 17px; }
+    .sheet-close { width: 40px; height: 40px; display: grid; place-items: center; padding: 0; border: 0; border-radius: 8px; background: var(--g-soft); color: var(--g-muted); }
+    .sheet-body { max-height: calc(84dvh - 64px); overflow-y: auto; padding: 8px 16px calc(18px + var(--safe-bottom)); }
+    .choice-grid { display: grid; gap: 8px; }
+    .choice { min-height: 56px; padding: 11px 12px; border: 1px solid var(--g-border); border-radius: 9px; background: var(--g-surface); text-align: left; }
+    .choice:hover { border-color: #c7d4cc; }
+    .choice strong { display: block; font-size: 13.5px; }
+    .choice span { display: block; margin-top: 3px; color: var(--g-muted); font-size: 11px; line-height: 17px; }
+    .option-row { width: 100%; min-height: 56px; display: grid; grid-template-columns: 30px minmax(0, 1fr) 22px; gap: 8px; align-items: center; padding: 8px 0; border: 0; border-bottom: 1px solid var(--g-border); background: transparent; text-align: left; }
+    .option-row:last-of-type { border-bottom: 0; }
+    .option-row strong { display: block; font-size: 13px; }
+    .option-row span { display: block; margin-top: 2px; color: var(--g-muted); font-size: 10.5px; }
+    .option-row .icon.muted { color: var(--g-muted); }
+    .option-row[aria-checked="true"] strong { color: var(--g-green); }
+    .option-check { visibility: hidden; color: var(--g-green); }
+    .option-row[aria-checked="true"] .option-check { visibility: visible; }
+    .option-row[aria-disabled="true"] { opacity: .5; }
+    .notice { display: grid; gap: 5px; margin-bottom: 12px; padding: 11px; border: 1px solid #e8d5b0; border-left: 3px solid var(--g-risk); border-radius: 9px; background: var(--g-risk-soft); }
+    .notice strong { display: flex; align-items: center; gap: 6px; color: var(--g-risk); font-size: 12.5px; }
+    .notice strong .icon { width: 16px; height: 16px; }
+    .notice p { color: #76501c; font-size: 11.5px; line-height: 18px; overflow-wrap: anywhere; }
+    .notice.is-error { border-color: #efcaca; border-left-color: var(--g-error); background: var(--g-error-soft); }
+    .notice.is-error strong { color: var(--g-error); }
+    .notice.is-error p { color: #7d2c2c; }
+    .sheet-actions { display: grid; grid-template-columns: 1fr 1.3fr; gap: 8px; margin-top: 14px; }
+    .sheet-actions.single { grid-template-columns: 1fr; }
+    .confirm-box { padding: 12px; border: 1px solid var(--g-border); border-radius: 9px; background: var(--g-bg); }
+    .confirm-box strong { display: block; font-size: 13.5px; line-height: 20px; }
+    .confirm-box p { margin-top: 5px; color: var(--g-muted); font-size: 11.5px; line-height: 18px; overflow-wrap: anywhere; }
+
+    /* ---------- 模拟键盘 ---------- */
+    .demo-keyboard {
+      position: absolute; right: 0; bottom: 0; left: 0; z-index: 9;
+      height: calc(var(--keyboard-height) + var(--safe-bottom)); display: none; padding: 5px 5px calc(7px + var(--safe-bottom));
+      background: #d9dfdc; border-top: 1px solid #cbd2ce; color: #25322c; user-select: none;
+    }
+    .keyboard-open .demo-keyboard { display: block; animation: keyboard-rise .18s ease-out; }
+    @keyframes keyboard-rise { from { transform: translateY(24px); } }
+    .keyboard-open .bottom-nav { transform: translateY(110%); }
+    .keyboard-open .form-footer { bottom: calc(var(--keyboard-height) + var(--safe-bottom)); z-index: 10; }
+    .keyboard-open .screen[data-screen="form"] .scroll-page { padding-bottom: calc(var(--keyboard-height) + 130px); }
+    .keyboard-toolbar { height: 31px; display: grid; grid-template-columns: 44px 1fr 44px; align-items: center; padding: 0 2px 4px; color: #66716b; }
+    .keyboard-toolbar span { text-align: center; font-size: 11px; font-weight: 650; }
+    .keyboard-tool { width: 40px; height: 28px; display: grid; place-items: center; justify-self: end; padding: 0; border: 0; border-radius: 7px; background: transparent; color: #5b6861; }
+    .keyboard-tool .icon { width: 18px; height: 18px; stroke-width: 1.7; }
+    .keyboard-row { height: 43px; display: flex; justify-content: center; gap: 5px; margin-bottom: 7px; }
+    .keyboard-row.middle { padding-inline: 14px; }
+    .key { min-width: 0; flex: 1; display: grid; place-items: center; padding: 0; border: 0; border-radius: 8px; background: #fff; box-shadow: 0 1px 0 #aeb8b2, 0 1px 3px rgb(28 42 35 / 8%); font-size: 17px; font-weight: 520; }
+    .key .icon { width: 19px; height: 19px; }
+    .key.utility { max-width: 45px; background: #b9c3be; font-size: 13px; }
+    .key.space { flex: 4.2; font-size: 13px; }
+    .key.action { flex: 1.45; background: var(--g-green); color: #fff; font-size: 13px; font-weight: 680; }
+    .key.wide { flex: 1.35; font-size: 12px; font-weight: 650; }
+
+    /* ---------- 底部四栏 ---------- */
+    .bottom-nav {
+      position: absolute; right: 0; bottom: 0; left: 0; z-index: 8;
+      min-height: calc(66px + var(--safe-bottom)); display: grid; grid-template-columns: repeat(4, 1fr);
+      padding: 4px 7px var(--safe-bottom);
+      border-top: 1px solid var(--g-border); background: color-mix(in srgb, var(--g-surface) 95%, transparent);
+      backdrop-filter: blur(18px); transition: transform .18s ease;
+    }
+    .nav-item { position: relative; min-height: 56px; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 3px; padding: 0; border: 0; border-radius: 9px; background: transparent; color: var(--g-muted); font-size: 11.5px; }
+    .nav-item.active { color: var(--g-green); font-weight: 700; }
+    .nav-glyph { width: 38px; height: 29px; display: grid; place-items: center; }
+    .nav-glyph .icon { width: 24px; height: 24px; stroke-width: 1.8; }
+    .nav-badge { position: absolute; top: 3px; left: calc(50% + 8px); min-width: 16px; height: 16px; display: grid; place-items: center; padding: 0 4px; border: 2px solid var(--g-surface); border-radius: 8px; background: var(--g-ai); color: #fff; font-size: 8px; }
+
+    /* ---------- Toast ---------- */
+    .toast { position: absolute; right: 14px; bottom: calc(78px + var(--safe-bottom)); left: 14px; z-index: 50; padding: 11px 12px; border-radius: 9px; background: #26342d; color: #fff; box-shadow: var(--shadow-pop); opacity: 0; transform: translateY(8px); pointer-events: none; transition: .18s ease; font-size: 12px; line-height: 18px; text-align: center; }
+    .toast.show { opacity: 1; transform: translateY(0); }
+    /* 表单页与键盘态下，提示条让开固定的提交区 */
+    .app[data-page="form"]:not(.keyboard-open) .toast { bottom: calc(170px + var(--safe-bottom)); }
+    .keyboard-open .toast { bottom: calc(var(--keyboard-height) + 96px + var(--safe-bottom)); }
+
+    /* ---------- 视口适配 ---------- */
+    @media (max-width: 430px) {
+      .prototype-stage { padding: 0; display: block; }
+      .app { width: 100%; height: 100dvh; min-height: 100dvh; border: 0; border-radius: 0; box-shadow: none; }
+    }
+    @media (max-width: 370px) {
+      .scroll-page, .overlay-scroll { padding-right: 13px; padding-left: 13px; }
+      .entry-tile { min-height: 98px; padding: 11px; }
+      .entry-tile.compact { min-height: 88px; }
+      .thumb { width: 88px; height: 88px; }
+      .row-open { grid-template-columns: 30px minmax(0, 1fr) auto; gap: 8px; }
+      .row-icon { width: 30px; height: 30px; }
+    }
+    @media (prefers-reduced-motion: reduce) {
+      *, *::before, *::after { scroll-behavior: auto !important; animation-duration: .01ms !important; transition-duration: .01ms !important; }
+    }
+  </style>
+</head>
+<body>
+  <svg class="sprite" aria-hidden="true" focusable="false">
+    <symbol id="i-arrow-left" viewBox="0 0 24 24"><path d="m14.5 6-6 6 6 6"/></symbol>
+    <symbol id="i-chevron" viewBox="0 0 24 24"><path d="m9 18 6-6-6-6"/></symbol>
+    <symbol id="i-down" viewBox="0 0 24 24"><path d="m6 9 6 6 6-6"/></symbol>
+    <symbol id="i-nav-chat" viewBox="0 0 24 24"><path d="M5 6h10a3.5 3.5 0 0 1 3.5 3.5v3.2a3.5 3.5 0 0 1-3.5 3.5H10l-4.5 2.9v-3.6a3.5 3.5 0 0 1-.5-1.8z"/><path d="M9 11h5"/></symbol>
+    <symbol id="i-nav-collect" viewBox="0 0 24 24"><path d="M5 12h4l1.5 2h3l1.5-2h4v6.5H5z"/><path d="m8.5 8.5 3.5 3 3.5-3"/></symbol>
+    <symbol id="i-nav-pending" viewBox="0 0 24 24"><path d="M6 6.5h13M8.5 12H19M6 17.5h10"/><path d="m4.3 11.8 1.1 1.1 2-2.3"/></symbol>
+    <symbol id="i-nav-knowledge" viewBox="0 0 24 24"><path d="M4.5 6c3-1.3 5.5-1 7.5 1v12c-2-2-4.5-2.3-7.5-1zM19.5 6c-3-1.3-5.5-1-7.5 1v12c2-2 4.5-2.3 7.5-1z"/></symbol>
+    <symbol id="i-camera" viewBox="0 0 24 24"><path d="M14.5 4 16 7h4a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V9a2 2 0 0 1 2-2h4l1.5-3z"/><circle cx="12" cy="14" r="3"/></symbol>
+    <symbol id="i-image" viewBox="0 0 24 24"><rect x="3" y="4.5" width="18" height="15" rx="2"/><circle cx="8.5" cy="10" r="1.6"/><path d="m4.5 17 4.5-4.2 3.5 3.2 3-2.7 4 3.7"/></symbol>
+    <symbol id="i-images" viewBox="0 0 24 24"><rect x="8.5" y="3.5" width="12.5" height="12.5" rx="2"/><path d="M16 20.5H5.5a2 2 0 0 1-2-2V7"/><path d="m9.5 13.5 3-3 2.5 2.5 2-2 2.5 3"/></symbol>
+    <symbol id="i-type" viewBox="0 0 24 24"><path d="M4 7V4h16v3M9 20h6M12 4v16"/></symbol>
+    <symbol id="i-clipboard" viewBox="0 0 24 24"><rect x="8" y="3" width="8" height="4" rx="1.2"/><path d="M8 5H6a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7a2 2 0 0 0-2-2h-2"/><path d="M9 12.5h6M9 16h4"/></symbol>
+    <symbol id="i-trash" viewBox="0 0 24 24"><path d="M4 7h16"/><path d="M9.5 7V5.3A1.3 1.3 0 0 1 10.8 4h2.4a1.3 1.3 0 0 1 1.3 1.3V7"/><path d="m6.6 7 .9 12a1.8 1.8 0 0 0 1.8 1.7h5.4a1.8 1.8 0 0 0 1.8-1.7l.9-12"/><path d="M10.5 11v6M13.5 11v6"/></symbol>
+    <symbol id="i-folder" viewBox="0 0 24 24"><path d="M3 5h6l2 2h10v12H3z"/></symbol>
+    <symbol id="i-move" viewBox="0 0 24 24"><path d="M3.5 6.5h5l1.7 1.8h10.3v10.2H3.5z"/><path d="M13 12h5M16.3 10.1 18.2 12l-1.9 1.9"/></symbol>
+    <symbol id="i-lock" viewBox="0 0 24 24"><rect x="4.5" y="10.5" width="15" height="10" rx="2"/><path d="M8 10.5V8a4 4 0 0 1 8 0v2.5"/></symbol>
+    <symbol id="i-settings" viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M12 3v2.4M12 18.6V21M4.8 7.4l2.1 1.2M17.1 15.4l2.1 1.2M4.8 16.6l2.1-1.2M17.1 8.6l2.1-1.2"/></symbol>
+    <symbol id="i-alert" viewBox="0 0 24 24"><path d="M10.3 3.2 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.2a2 2 0 0 0-3.4 0z"/><path d="M12 9v4M12 17h.01"/></symbol>
+    <symbol id="i-info" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 11v5M12 7.8h.01"/></symbol>
+    <symbol id="i-check" viewBox="0 0 24 24"><path d="m5 12 4 4L19 6"/></symbol>
+    <symbol id="i-circle-check" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="m8 12 3 3 5-6"/></symbol>
+    <symbol id="i-close" viewBox="0 0 24 24"><path d="M18 6 6 18M6 6l12 12"/></symbol>
+    <symbol id="i-retry" viewBox="0 0 24 24"><path d="M21 12a9 9 0 1 1-2.6-6.4L21 8"/><path d="M21 3v5h-5"/></symbol>
+    <symbol id="i-refresh" viewBox="0 0 24 24"><path d="M20.5 11.5a8.5 8.5 0 0 0-14.6-5.9L3.5 8"/><path d="M3.5 4v4h4"/><path d="M3.5 12.5a8.5 8.5 0 0 0 14.6 5.9l2.4-2.4"/><path d="M20.5 20v-4h-4"/></symbol>
+    <symbol id="i-cloud-off" viewBox="0 0 24 24"><path d="M3 3l18 18"/><path d="M8.7 6.3A5 5 0 0 1 19 9.6a3.5 3.5 0 0 1 1.6 6"/><path d="M17.4 19H7a4 4 0 0 1-.9-7.9"/></symbol>
+    <symbol id="i-sprout" viewBox="0 0 24 24"><path d="M12 21v-7.5"/><path d="M12 13.5C12 10.4 9.6 8 6.5 8h-1c0 3.1 2.4 5.5 5.5 5.5z"/><path d="M12 13.5c0-3.4 2.6-6.2 6-6.2h.7c0 3.4-2.6 6.2-6 6.2z"/></symbol>
+    <symbol id="i-zoom" viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="m20.5 20.5-4.2-4.2"/><path d="M11 8.6v4.8M8.6 11h4.8"/></symbol>
+    <symbol id="i-clock" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 7.5V12l3 2"/></symbol>
+    <symbol id="i-keyboard-down" viewBox="0 0 24 24"><rect x="3.5" y="5" width="17" height="11" rx="2"/><path d="M8 19h8M7 9h.01M10.5 9h.01M14 9h.01M17.5 9h.01M7 12h10.5"/></symbol>
+    <symbol id="i-backspace" viewBox="0 0 24 24"><path d="m3.5 12 4-5h12v10h-12z"/><path d="m12 10 4 4M16 10l-4 4"/></symbol>
+  </svg>
+
+  <div class="prototype-stage">
+    <div class="app" id="app" data-page="home">
+      <!-- 原型控制条：只属于探索原型，正式实现不会出现 -->
+      <div class="proto-bar" role="region" aria-label="原型控制">
+        <div class="proto-row">
+          <span class="proto-label">入口排布</span>
+          <button type="button" class="proto-chip" data-variant="A" aria-pressed="true">A · 四个动作平铺</button>
+          <button type="button" class="proto-chip" data-variant="B" aria-pressed="false">B · 三个动作下钻</button>
+        </div>
+        <div class="proto-row">
+          <span class="proto-label">列表</span>
+          <button type="button" class="proto-chip" data-list-state="normal" aria-pressed="true">正常</button>
+          <button type="button" class="proto-chip" data-list-state="empty" aria-pressed="false">空</button>
+          <button type="button" class="proto-chip" data-list-state="failed" aria-pressed="false">加载失败</button>
+          <span class="proto-label">权限被拒</span>
+          <button type="button" class="proto-chip" data-permission="album">相册</button>
+          <button type="button" class="proto-chip" data-permission="camera">相机</button>
+          <button type="button" class="proto-chip" data-reset>重置</button>
+        </div>
+      </div>
+
+      <header class="app-header">
+        <span class="header-slot start" id="headerLeading"></span>
+        <h1 class="header-title" id="headerTitle">收集</h1>
+        <span class="header-slot end" id="headerTrailing"></span>
+      </header>
+
+      <main class="screens">
+        <section class="screen active" data-screen="home" aria-label="收集">
+          <div class="scroll-page" id="homeScroll">
+            <div class="pull-indicator" aria-hidden="true">
+              <span class="spinner" id="pullSpinner" hidden></span>
+              <span id="pullLabel">下拉刷新</span>
+            </div>
+            <div class="pull-wrap" id="pullWrap">
+              <div class="page-heading">
+                <h1>收集</h1>
+                <p>先把材料放进 Grove。处理结果、原始材料和 AI 候选都在「来源详情」里，候选确认仍在桌面工作台完成。</p>
+              </div>
+              <div id="entryArea"></div>
+              <div id="filterArea"></div>
+              <div class="section-title"><h2>最近收集</h2><span id="listMeta"></span></div>
+              <div id="listArea"></div>
+            </div>
+          </div>
+        </section>
+
+        <section class="screen" data-screen="form" aria-label="采集表单">
+          <div class="scroll-page" id="formScroll"><div id="formArea"></div></div>
+          <div class="form-footer">
+            <p class="form-footer-hint" id="formHint"></p>
+            <button type="button" class="button primary block" id="submitButton" data-submit>提交</button>
+          </div>
+        </section>
+
+        <section class="screen" data-screen="permission" aria-label="权限被拒说明">
+          <div class="scroll-page" id="permissionScroll"><div id="permissionArea"></div></div>
+        </section>
+      </main>
+
+      <nav class="bottom-nav" aria-label="主要导航">
+        <button type="button" class="nav-item" data-other-tab="对话"><span class="nav-glyph"><svg class="icon" aria-hidden="true"><use href="#i-nav-chat"/></svg></span><span>对话</span></button>
+        <button type="button" class="nav-item active" data-other-tab="收集" aria-current="page"><span class="nav-glyph"><svg class="icon" aria-hidden="true"><use href="#i-nav-collect"/></svg></span><span>收集</span></button>
+        <button type="button" class="nav-item" data-other-tab="待处理"><span class="nav-badge">2</span><span class="nav-glyph"><svg class="icon" aria-hidden="true"><use href="#i-nav-pending"/></svg></span><span>待处理</span></button>
+        <button type="button" class="nav-item" data-other-tab="知识"><span class="nav-glyph"><svg class="icon" aria-hidden="true"><use href="#i-nav-knowledge"/></svg></span><span>知识</span></button>
+      </nav>
+
+      <div class="demo-keyboard" id="demoKeyboard" role="region" aria-label="移动端键盘示意">
+        <div class="keyboard-toolbar">
+          <span></span>
+          <span id="keyboardTarget">文字输入</span>
+          <button type="button" tabindex="-1" class="keyboard-tool" data-keyboard-dismiss aria-label="收起键盘"><svg class="icon" aria-hidden="true"><use href="#i-keyboard-down"/></svg></button>
+        </div>
+        <div class="keyboard-row">
+          <button type="button" tabindex="-1" class="key" data-key="q">Q</button><button type="button" tabindex="-1" class="key" data-key="w">W</button><button type="button" tabindex="-1" class="key" data-key="e">E</button><button type="button" tabindex="-1" class="key" data-key="r">R</button><button type="button" tabindex="-1" class="key" data-key="t">T</button><button type="button" tabindex="-1" class="key" data-key="y">Y</button><button type="button" tabindex="-1" class="key" data-key="u">U</button><button type="button" tabindex="-1" class="key" data-key="i">I</button><button type="button" tabindex="-1" class="key" data-key="o">O</button><button type="button" tabindex="-1" class="key" data-key="p">P</button>
+        </div>
+        <div class="keyboard-row middle">
+          <button type="button" tabindex="-1" class="key" data-key="a">A</button><button type="button" tabindex="-1" class="key" data-key="s">S</button><button type="button" tabindex="-1" class="key" data-key="d">D</button><button type="button" tabindex="-1" class="key" data-key="f">F</button><button type="button" tabindex="-1" class="key" data-key="g">G</button><button type="button" tabindex="-1" class="key" data-key="h">H</button><button type="button" tabindex="-1" class="key" data-key="j">J</button><button type="button" tabindex="-1" class="key" data-key="k">K</button><button type="button" tabindex="-1" class="key" data-key="l">L</button>
+        </div>
+        <div class="keyboard-row">
+          <button type="button" tabindex="-1" class="key utility" data-keyboard-shift>⇧</button><button type="button" tabindex="-1" class="key" data-key="z">Z</button><button type="button" tabindex="-1" class="key" data-key="x">X</button><button type="button" tabindex="-1" class="key" data-key="c">C</button><button type="button" tabindex="-1" class="key" data-key="v">V</button><button type="button" tabindex="-1" class="key" data-key="b">B</button><button type="button" tabindex="-1" class="key" data-key="n">N</button><button type="button" tabindex="-1" class="key" data-key="m">M</button><button type="button" tabindex="-1" class="key utility" data-keyboard-backspace aria-label="退格"><svg class="icon" aria-hidden="true"><use href="#i-backspace"/></svg></button>
+        </div>
+        <div class="keyboard-row" style="margin-bottom:0">
+          <button type="button" tabindex="-1" class="key wide" data-keyboard-dismiss>收起</button>
+          <button type="button" tabindex="-1" class="key" data-key="，">，</button>
+          <button type="button" tabindex="-1" class="key space" data-key=" ">空格</button>
+          <button type="button" tabindex="-1" class="key" data-key="。">。</button>
+          <button type="button" tabindex="-1" class="key action" data-keyboard-dismiss>完成</button>
+        </div>
+      </div>
+
+      <div class="scrim" id="scrim" data-close-sheet></div>
+
+      <section class="sheet" id="albumSheet" role="dialog" aria-modal="true" aria-label="从相册选择">
+        <div class="sheet-handle"></div>
+        <div class="sheet-head"><h2>从相册选择</h2><button type="button" class="sheet-close" data-close-sheet aria-label="关闭"><svg class="icon" aria-hidden="true"><use href="#i-close"/></svg></button></div>
+        <div class="sheet-body">
+          <div class="choice-grid">
+            <button type="button" class="choice" data-entry="album-single"><strong>选一张</strong><span>选 1 张图片，作为一条材料提交</span></button>
+            <button type="button" class="choice" data-entry="album-multi"><strong>选多张</strong><span>选 2–5 张，合并成一条材料一起整理</span></button>
+          </div>
+        </div>
+      </section>
+
+      <section class="sheet" id="projectSheet" role="dialog" aria-modal="true" aria-label="选择所属项目">
+        <div class="sheet-handle"></div>
+        <div class="sheet-head"><h2 id="projectSheetTitle">所属项目</h2><button type="button" class="sheet-close" data-close-sheet aria-label="关闭"><svg class="icon" aria-hidden="true"><use href="#i-close"/></svg></button></div>
+        <div class="sheet-body" id="projectSheetBody"></div>
+      </section>
+
+      <section class="sheet" id="deleteSheet" role="dialog" aria-modal="true" aria-label="删除来源">
+        <div class="sheet-handle"></div>
+        <div class="sheet-head"><h2>删除来源</h2><button type="button" class="sheet-close" data-close-sheet aria-label="关闭"><svg class="icon" aria-hidden="true"><use href="#i-close"/></svg></button></div>
+        <div class="sheet-body" id="deleteSheetBody"></div>
+      </section>
+
+      <section class="overlay" id="detailOverlay" role="dialog" aria-modal="true" aria-label="来源详情" tabindex="-1">
+        <header class="overlay-header">
+          <button type="button" class="header-icon" data-close-overlay="detail" aria-label="返回收集列表"><svg class="icon" style="width:22px;height:22px" aria-hidden="true"><use href="#i-arrow-left"/></svg></button>
+          <h1>来源详情</h1>
+          <span></span>
+        </header>
+        <div class="overlay-scroll" id="detailArea"></div>
+      </section>
+
+      <section class="overlay" id="submitOverlay" role="dialog" aria-modal="true" aria-label="提交状态" tabindex="-1">
+        <header class="overlay-header">
+          <span></span>
+          <h1 id="submitTitle">提交材料</h1>
+          <span></span>
+        </header>
+        <div class="overlay-scroll" id="submitArea"></div>
+      </section>
+
+      <section class="overlay overlay-dark" id="lightboxOverlay" role="dialog" aria-modal="true" aria-label="查看原始图片" tabindex="-1">
+        <header class="overlay-header">
+          <button type="button" class="header-icon" data-close-overlay="lightbox" aria-label="关闭原图"><svg class="icon" style="width:22px;height:22px" aria-hidden="true"><use href="#i-close"/></svg></button>
+          <h1 id="lightboxTitle">查看原图</h1>
+          <span></span>
+        </header>
+        <div class="overlay-scroll" id="lightboxArea"></div>
+      </section>
+
+      <div class="toast" id="toast" role="status" aria-live="polite"></div>
+    </div>
+  </div>
+  <script>
+    (function () {
+      'use strict'
+
+      /* ============================================================
+         基础工具
+         ============================================================ */
+      const $ = (selector, root = document) => root.querySelector(selector)
+      const $$ = (selector, root = document) => Array.from(root.querySelectorAll(selector))
+      const icon = (name, style = '') => `<svg class="icon"${style ? ` style="${style}"` : ''} aria-hidden="true"><use href="#i-${name}"/></svg>`
+      const iconClass = (name, className) => `<svg class="icon ${className}" aria-hidden="true"><use href="#i-${name}"/></svg>`
+      const wait = (ms) => new Promise(resolve => setTimeout(resolve, ms))
+      const escapeHtml = (value) => String(value ?? '').replace(/[&<>"']/g, ch => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[ch]))
+      const clone = (value) => JSON.parse(JSON.stringify(value))
+
+      const app = $('#app')
+      const toastEl = $('#toast')
+      const scrim = $('#scrim')
+      const PULL_THRESHOLD = 56
+
+      /* ============================================================
+         项目与示意图（原型不加载真实照片，统一用项目内线稿示意）
+         ============================================================ */
+      const PROJECTS = [
+        { id: 'p1', name: '新房装修', caption: '项目 · 38 条正式知识' },
+        { id: 'p2', name: '出租房翻新', caption: '项目 · 6 条正式知识' },
+        { id: 'p3', name: '个人健康', caption: '项目 · 12 条正式知识' },
+        { id: 'p4', name: '新疆旅行', caption: '项目 · 21 条正式知识' },
+      ]
+      const projectName = (id) => PROJECTS.find(item => item.id === id)?.name || ''
+
+      const SCENES = {
+        wall: '<rect x="22" y="14" width="116" height="92" rx="4"/><path d="M22 80h116"/><path d="M40 80V44h34v36" stroke-dasharray="5 4"/><path d="M62 96h30"/>',
+        water: '<rect x="22" y="14" width="116" height="92" rx="4"/><path d="M22 74h116"/><path d="M22 56c8-6 16 6 24 0s16 6 24 0 16 6 24 0 16 6 24 0 12 4 20 1"/><path d="M126 30v44M122 34h8M122 44h8M122 54h8M122 64h8"/>',
+        pipe: '<rect x="22" y="14" width="116" height="92" rx="4"/><path d="M22 88h116"/><circle cx="80" cy="56" r="9"/><circle cx="80" cy="56" r="18" stroke-dasharray="5 4"/><path d="M50 96h60"/>',
+        note: '<rect x="34" y="16" width="92" height="88" rx="4"/><path d="M48 38h64M48 54h64M48 70h44M48 86h28"/>',
+      }
+      const photo = (scene, label) => `<span class="photo" role="img" aria-label="示意图：${escapeHtml(label)}"><svg viewBox="0 0 160 120" aria-hidden="true">${SCENES[scene] || SCENES.note}</svg></span>`
+
+      const FORM_TITLES = { camera: '拍照采集', 'album-single': '图片采集', 'album-multi': '图片采集', text: '文字采集' }
+      const ENTRY_PRESETS = {
+        camera: { attachments: [{ scene: 'wall', label: '系统相机拍摄的现场照片' }], toast: '系统相机已返回 1 张照片' },
+        'album-single': { attachments: [{ scene: 'water', label: '相册里选中的图片' }], toast: '相册已选择 1 张照片' },
+        'album-multi': {
+          attachments: [
+            { scene: 'wall', label: '墙面涂刷范围' },
+            { scene: 'pipe', label: '管根加强层' },
+            { scene: 'water', label: '闭水水位标记' },
+            { scene: 'note', label: '现场记录' },
+          ],
+          toast: '相册已选择 4 张照片（系统选择器上限 5 张）',
+        },
+        text: { attachments: [], toast: '' },
+      }
+      const FORMAT_MESSAGES = {
+        '400-limit': '一次最多上传 5 张图片',
+        '400-size': '单张图片不能超过 10MB',
+        '400-format': '仅支持 png、jpg、webp 图片',
+      }
+      const SCENARIOS = [
+        { id: 'success', label: '正常提交' },
+        { id: 'upload-failed', label: '上传失败' },
+        { id: 'process-failed', label: '处理启动失败' },
+        { id: '400-limit', label: '400 · 超 5 张' },
+        { id: '400-size', label: '400 · 单张超 10MB' },
+        { id: '400-format', label: '400 · 格式不支持' },
+      ]
+      const PERMISSIONS = {
+        album: {
+          title: '相册权限',
+          heading: '无法访问相册',
+          icon: 'image',
+          purpose: 'Grove 需要读取你主动选择的图片，作为这条来源的原始材料，再交给处理流程生成候选。',
+          bullets: ['只读取你选中的图片', '不会遍历或上传相册里的其它内容', '图片只保存在你当前的 Workspace'],
+          note: '系统不会再重复弹出授权提示。需要采集图片时，请到系统设置里为 Grove 打开相册权限。',
+          returnLabel: '返回收集',
+        },
+        camera: {
+          title: '相机权限',
+          heading: '无法使用相机',
+          icon: 'camera',
+          purpose: 'Grove 需要调用系统相机完成拍摄，照片会直接作为这条来源的原始材料。',
+          bullets: ['只在拍摄时调用相机', '不保存取景过程，也不做连续拍摄', '照片只保存在你当前的 Workspace'],
+          note: '系统不会再重复弹出授权提示。需要拍照采集时，请到系统设置里为 Grove 打开相机权限。',
+          returnLabel: '返回收集',
+        },
+      }
+
+      /* ============================================================
+         原型状态
+         ============================================================ */
+      const state = {
+        variant: 'A',
+        listState: 'normal',
+        filter: 'unassigned',
+        page: 'home',
+        previousPage: 'home',
+        form: null,
+        permission: null,
+        detailId: null,
+        lightbox: null,
+        projectSheet: null,
+        deleteTargetId: null,
+        submitPhase: null,
+        submitSourceId: null,
+        submitting: false,
+        refreshing: false,
+        activeField: null,
+      }
+      let sources = buildSources()
+      let sheetTrigger = null
+      const overlayStack = []
+      let toastTimer = null
+      let keyboardTimer = null
+
+      function buildSources() {
+        return [
+          {
+            id: 's1', kind: 'image', title: '防水验收现场照片',
+            attachments: [
+              { scene: 'wall', label: '卫生间墙面涂刷范围' },
+              { scene: 'pipe', label: '管根加强层' },
+              { scene: 'water', label: '闭水水位标记' },
+              { scene: 'note', label: '现场验收记录' },
+            ],
+            note: '监理陪同下拍摄，包含墙面涂刷范围、管根加强层与闭水水位',
+            text: '', projectId: null, status: 'processing', pending: 0, evidence: 0,
+            createdAt: '今天 10:12', failReason: null, retryCount: 0, locked: false,
+            ocr: '', candidates: [], pollSteps: null, moving: false,
+          },
+          {
+            id: 's2', kind: 'text', title: '门槛石二次施工提醒', attachments: [],
+            note: '', text: '监理提醒：门槛石内侧防水要在门套安装前完成，补刷后保持 24 小时不沾水。',
+            projectId: null, status: 'waiting', pending: 0, evidence: 0,
+            createdAt: '今天 09:40', failReason: null, retryCount: 0, locked: false,
+            ocr: '', candidates: [], pollSteps: null, moving: false,
+          },
+          {
+            id: 's3', kind: 'image', title: '地漏周边补刷后照片',
+            attachments: [{ scene: 'pipe', label: '地漏周边补刷范围' }],
+            note: '补刷完成，等干燥后进入下一道工序', text: '',
+            projectId: 'p1', status: 'done', pending: 3, evidence: 0,
+            createdAt: '昨天 18:05', failReason: null, retryCount: 0, locked: false,
+            ocr: '地漏周边 300mm 范围内完成补刷；补刷时间 9 月 21 日 16:20。',
+            candidates: [
+              { content: '地漏周边补刷范围不小于 300mm', path: '新房装修 / 施工 / 防水', reason: '来源 OCR 明确写了 300mm 补刷范围' },
+              { content: '补刷完成并干燥后再进入下一道工序', path: '新房装修 / 施工 / 工序衔接', reason: '来源只记录了补刷时间，没有后续工序的开始时间' },
+              { content: '门槛石内侧与地漏周边属于易渗漏位置，需要逐项检查', path: '新房装修 / 验收 / 易渗漏位置', reason: '同一批采集的其他照片也覆盖了这些位置' },
+            ],
+            pollSteps: null, moving: false,
+          },
+          {
+            id: 's4', kind: 'image', title: '闭水试验水位记录',
+            attachments: [
+              { scene: 'water', label: '闭水开始时的水位' },
+              { scene: 'water', label: '24 小时复查水位' },
+              { scene: 'note', label: '复查记录' },
+            ],
+            note: '闭水开始与 24 小时复查各拍一次', text: '',
+            projectId: 'p1', status: 'done', pending: 1, evidence: 2,
+            createdAt: '昨天 11:30', failReason: null, retryCount: 0, locked: false,
+            ocr: '本次闭水自 9 月 20 日 10:00 开始，水位标记见图。\n9 月 21 日 10:00 复查：水位无明显下降，楼下顶面未见渗漏。',
+            candidates: [
+              { content: '闭水试验至少观察 24 小时并复查楼下顶面', path: '新房装修 / 施工 / 防水', reason: '来源记录了 24 小时前后的水位和楼下检查结果' },
+            ],
+            pollSteps: null, moving: false,
+          },
+          {
+            id: 's5', kind: 'text', title: '插座预留位置备忘', attachments: [],
+            note: '', text: '厨房台面插座中心距台面 300mm，冰箱和洗碗机各留一个独立回路。',
+            projectId: 'p2', status: 'done', pending: 0, evidence: 3,
+            createdAt: '9 月 20 日 15:20', failReason: null, retryCount: 0, locked: true,
+            ocr: '', candidates: [], pollSteps: null, moving: false,
+          },
+          {
+            id: 's6', kind: 'text', title: '验收群里提到的防水品牌', attachments: [],
+            note: '', text: '群里说柔性防水更耐用，但没说是哪个型号。',
+            projectId: null, status: 'failed', pending: 0, evidence: 0,
+            createdAt: '9 月 20 日 09:05', failReason: '模型返回内容不符合候选结构，已尝试 2 次',
+            retryCount: 2, locked: false, ocr: '', candidates: [], pollSteps: null, moving: false,
+          },
+        ]
+      }
+
+      /* ============================================================
+         渲染：原型控制条 / 顶栏
+         ============================================================ */
+      function renderProtoBar() {
+        $$('[data-variant]').forEach(chip => chip.setAttribute('aria-pressed', String(chip.dataset.variant === state.variant)))
+        $$('[data-list-state]').forEach(chip => chip.setAttribute('aria-pressed', String(chip.dataset.listState === state.listState)))
+      }
+
+      function renderHeader() {
+        const leading = $('#headerLeading')
+        const trailing = $('#headerTrailing')
+        if (state.page === 'home') {
+          $('#headerTitle').textContent = '收集'
+          leading.innerHTML = '<span class="brand-mark" aria-hidden="true">G</span>'
+          trailing.innerHTML = `<button type="button" class="header-icon" id="headerRefresh" data-refresh aria-label="刷新来源列表" title="刷新来源列表">${icon('refresh', 'width:21px;height:21px')}</button>`
+          return
+        }
+        if (state.page === 'form') {
+          $('#headerTitle').textContent = state.form ? state.form.title : '采集'
+          leading.innerHTML = `<button type="button" class="header-icon" data-back-home aria-label="返回收集列表">${icon('arrow-left', 'width:22px;height:22px')}</button>`
+          trailing.innerHTML = '<span></span>'
+          return
+        }
+        $('#headerTitle').textContent = PERMISSIONS[state.permission]?.title || '权限'
+        leading.innerHTML = `<button type="button" class="header-icon" data-permission-back aria-label="返回上一页">${icon('arrow-left', 'width:22px;height:22px')}</button>`
+        trailing.innerHTML = '<span></span>'
+      }
+
+      function setPage(page) {
+        state.page = page
+        app.dataset.page = page
+        $$('.screen').forEach(screen => screen.classList.toggle('active', screen.dataset.screen === page))
+        if (page !== 'form') closeKeyboard()
+        renderHeader()
+      }
+
+      /* ============================================================
+         渲染：收集首页（入口 + 筛选 + 列表）
+         ============================================================ */
+      function countFor(filter) {
+        return sources.filter(source => filter === 'all' || !source.projectId).length
+      }
+      function activeCount() {
+        return sources.filter(source => source.status === 'waiting' || source.status === 'processing').length
+      }
+
+      function entryAreaHtml() {
+        if (state.variant === 'A') {
+          const entries = [
+            { entry: 'camera', icon: 'camera', title: '拍一张', desc: '调用系统相机拍 1 张' },
+            { entry: 'album-single', icon: 'image', title: '相册选一张', desc: '选 1 张图片' },
+            { entry: 'album-multi', icon: 'images', title: '相册选多张', desc: '选 2–5 张，合并为一条材料' },
+            { entry: 'text', icon: 'type', title: '文本', desc: '输入或从剪贴板填入' },
+          ]
+          return `<div class="entry-grid-a">${entries.map(item => `<button type="button" class="entry-tile" data-entry="${item.entry}">
+            <span class="entry-icon">${icon(item.icon)}</span>
+            <span><strong>${item.title}</strong><span class="entry-desc">${item.desc}</span></span>
+          </button>`).join('')}</div>`
+        }
+        const entries = [
+          { entry: 'camera', icon: 'camera', title: '相机' },
+          { entry: 'album-choose', icon: 'images', title: '相册' },
+          { entry: 'text', icon: 'type', title: '文本' },
+        ]
+        return `<div class="entry-row-b">${entries.map(item => `<button type="button" class="entry-tile compact" data-entry="${item.entry}">
+            <span class="entry-icon">${icon(item.icon)}</span>
+            <strong>${item.title}</strong>
+          </button>`).join('')}</div>
+          <p class="entry-note">相册进入后再选择「一张」或「多张」；选 2–5 张会合并成一条材料。</p>`
+      }
+
+      function filterAreaHtml() {
+        const showCount = state.listState === 'normal'
+        const segment = (value, label) => `<button type="button" class="seg" data-filter="${value}" aria-pressed="${state.filter === value}">
+          ${state.filter === value ? icon('check') : ''}<span>${label}</span>${showCount ? `<span class="seg-count">${countFor(value)}</span>` : ''}
+        </button>`
+        return `<div class="filter-row" role="group" aria-label="来源筛选">${segment('unassigned', '未归属')}${segment('all', '全部')}</div>`
+      }
+
+      function statusBadgeHtml(source) {
+        if (source.status === 'processing') return `<span class="badge processing"><span class="spinner"></span>处理中</span>`
+        if (source.status === 'waiting') return `<span class="badge waiting">${icon('clock')}等待处理</span>`
+        if (source.status === 'failed') return `<span class="badge failed">${icon('alert')}处理失败</span>`
+        return `<span class="badge done">${icon('circle-check')}提取完成</span>`
+      }
+
+      function subStatusHtml(source) {
+        if (source.status !== 'done') return ''
+        if (source.pending > 0 && source.evidence === 0) return `<span class="tag tag-candidate">${icon('info')}待确认 ${source.pending} 条</span>`
+        if (source.pending > 0 && source.evidence > 0) return `<span class="tag tag-candidate">${icon('info')}部分确认 · ${source.evidence} 条正式知识</span>`
+        if (source.evidence > 0) return `<span class="tag tag-confirmed">${icon('circle-check')}${source.evidence} 条正式知识</span>`
+        return `<span class="tag tag-unassigned">还没有候选</span>`
+      }
+
+      function sourceRowHtml(source) {
+        const isText = source.kind === 'text'
+        const attachmentText = isText ? '文字' : `${source.attachments.length} 张图片`
+        const projectTag = source.projectId
+          ? `<span class="tag tag-project">${icon('folder')}${escapeHtml(projectName(source.projectId))}</span>`
+          : `<span class="tag tag-unassigned">${icon('info')}未归属</span>`
+        const note = source.note ? `<p class="row-note">${escapeHtml(source.note)}</p>` : ''
+        const error = source.status === 'failed' && source.failReason
+          ? `<p class="row-error">${icon('alert')}<span>${escapeHtml(source.failReason)}</span></p>` : ''
+        const retry = source.status === 'failed'
+          ? `<button type="button" class="mini-button" data-retry="${source.id}">${icon('retry')}重试</button>` : ''
+        const moving = source.moving ? `<span class="badge waiting"><span class="spinner"></span>正在重新路由</span>` : ''
+        return `<li class="source-row" data-source="${source.id}">
+          <button type="button" class="row-open" data-open-detail="${source.id}" aria-label="查看来源详情：${escapeHtml(source.title)}">
+            <span class="row-icon">${icon(isText ? 'type' : 'image')}</span>
+            <span class="row-main">
+              <strong>${escapeHtml(source.title)}</strong>
+              <span class="row-meta">${attachmentText} · ${escapeHtml(source.createdAt)}</span>
+            </span>
+            ${statusBadgeHtml(source)}
+          </button>
+          <div class="row-tags">${projectTag}${subStatusHtml(source)}${moving}</div>
+          ${note}${error}
+          <div class="row-actions">
+            <button type="button" class="mini-button" data-move="${source.id}"${source.moving ? ' disabled' : ''}>${icon('move')}改归属</button>
+            ${retry}
+            <button type="button" class="mini-button danger" data-delete="${source.id}">${icon('trash')}删除</button>
+          </div>
+        </li>`
+      }
+
+      function emptyStateHtml() {
+        return `<div class="state-card">
+          <span class="state-mark">${icon('sprout')}</span>
+          <h3>还没有来源</h3>
+          <p>用上面的入口采集第一条材料。处理完成后，原始材料、OCR 文本和 AI 候选都会出现在来源详情里。</p>
+          <button type="button" class="button primary" data-entry="album-single">${icon('image')}从相册选一张</button>
+        </div>`
+      }
+
+      function failedStateHtml() {
+        return `<div class="state-card is-error">
+          <span class="state-mark">${icon('cloud-off')}</span>
+          <h3>来源列表加载失败</h3>
+          <p>网络连接不稳定，列表没有取到最新数据。已经提交的材料不会丢失，网络恢复后重新加载即可。</p>
+          <button type="button" class="button" data-retry-load>${icon('retry')}重新加载</button>
+        </div>`
+      }
+
+      function listAreaHtml() {
+        if (state.listState === 'empty') return emptyStateHtml()
+        if (state.listState === 'failed') return failedStateHtml()
+        const rows = sources.filter(source => state.filter === 'all' || !source.projectId)
+        if (!rows.length) return emptyStateHtml()
+        return `<ul class="list-card">${rows.map(sourceRowHtml).join('')}</ul>`
+      }
+
+      function renderListMeta() {
+        const meta = $('#listMeta')
+        meta.classList.remove('tone-alert')
+        if (state.refreshing) { meta.textContent = '刷新中…'; return }
+        if (state.listState === 'failed') { meta.textContent = '加载失败'; meta.classList.add('tone-alert'); return }
+        if (state.listState === 'empty') { meta.textContent = '0 条'; return }
+        const active = activeCount()
+        meta.textContent = active ? `${active} 条等待或处理中` : '下拉刷新'
+      }
+
+      function renderHome() {
+        $('#entryArea').innerHTML = entryAreaHtml()
+        $('#filterArea').innerHTML = filterAreaHtml()
+        $('#listArea').innerHTML = listAreaHtml()
+        renderListMeta()
+        $('#pullLabel').textContent = '下拉刷新'
+        $('#pullSpinner').hidden = true
+      }
+
+      /* ============================================================
+         渲染：采集表单
+         ============================================================ */
+      function materialSectionHtml(form) {
+        if (form.kind === 'text') {
+          return `<div class="form-section">
+            <div class="form-label"><strong>要收集的文字</strong><span class="optional" id="textCount">${form.text.length} 字</span></div>
+            <textarea class="form-field" data-field="text" rows="7" inputmode="none" autocomplete="off" autocapitalize="none" spellcheck="false" placeholder="粘贴或输入要收集的文字">${escapeHtml(form.text)}</textarea>
+            <div class="inline-actions">
+              <button type="button" class="mini-button" data-clipboard>${icon('clipboard')}从剪贴板填入</button>
+            </div>
+          </div>`
+        }
+        if (form.kind === 'album-multi') {
+          const count = form.attachments.length
+          const thumbs = form.attachments.map((item, index) => `<span class="thumb">${photo(item.scene, item.label)}<button type="button" class="thumb-remove" data-remove-attachment="${index}"${count === 1 ? ' disabled' : ''} aria-label="移除第 ${index + 1} 张图片">${icon('trash')}</button></span>`).join('')
+          const lead = count > 1 ? `这 ${count} 张将作为一条材料一起整理` : '这 1 张将作为一条材料提交'
+          return `<div class="form-section">
+            <div class="form-label"><strong>原始材料</strong><span class="optional">共 ${count} 张</span></div>
+            <div class="photo-strip">${thumbs}</div>
+            <div class="info-banner merged" style="margin-top:10px">${icon('info')}<div><strong>${lead}</strong><p>候选与正式知识都关联同一条来源；需要拆成多条时，请改走单张入口。</p></div></div>
+          </div>`
+        }
+        const item = form.attachments[0]
+        if (!item) return ''
+        const cameraTag = form.fromCamera ? `<span class="tag tag-project">${icon('camera')}来自系统相机</span>` : ''
+        return `<div class="form-section">
+          <div class="form-label"><strong>原始材料</strong><span class="optional">共 1 张</span></div>
+          <div class="photo-lg">${photo(item.scene, item.label)}<button type="button" class="photo-remove" data-remove-attachment="0" disabled>${icon('trash')}移除这张</button></div>
+          <div class="inline-actions">${cameraTag}<span class="caption muted">${escapeHtml(item.label)}</span></div>
+          ${form.fromCamera ? '<p class="caption muted" style="margin-top:6px">系统相机一次拍摄一张；需要连续拍摄请返回后再次进入。</p>' : ''}
+        </div>`
+      }
+
+      function protoPanelHtml() {
+        return `<div class="proto-panel" role="group" aria-label="原型演示：模拟提交结果">
+          <span class="proto-label">原型演示 · 模拟提交结果（正式实现不含此区域）</span>
+          <div class="proto-chips">${SCENARIOS.map(item => `<button type="button" class="proto-chip" data-scenario="${item.id}" aria-pressed="${state.form.scenario === item.id}">${item.label}</button>`).join('')}</div>
+          <p class="caption muted">选择分支后点「提交」，即可走通该结果。</p>
+        </div>`
+      }
+
+      function errorCardHtml(message) {
+        return `<div class="form-error" role="alert">
+          <strong>${icon('alert')}提交未成功</strong>
+          <p>${escapeHtml(message)}</p>
+          <p class="proto-source">以上是服务端返回的原文，未做改写；材料没有保存到 Grove，调整后可以重新提交。</p>
+        </div>`
+      }
+
+      function formBodyHtml(form) {
+        return [
+          materialSectionHtml(form),
+          `<div class="form-section">
+            <div class="form-label"><strong>补充说明</strong><span class="optional">可选</span></div>
+            <textarea class="form-field form-note" data-field="note" rows="3" inputmode="none" autocomplete="off" autocapitalize="none" spellcheck="false" placeholder="这条材料还需要记点什么？">${escapeHtml(form.note)}</textarea>
+          </div>`,
+          `<div class="form-section">
+            <div class="form-label"><strong>所属项目</strong><span class="optional">默认不归属</span></div>
+            <button type="button" class="form-field field-row" data-open-project="form">
+              <span class="field-value">${form.projectId ? iconClass('folder', 'is-project') + `<span>${escapeHtml(projectName(form.projectId))}</span>` : icon('info') + '<span>未归属</span>'}</span>
+              ${icon('chevron')}
+            </button>
+          </div>`,
+          form.error ? errorCardHtml(form.error) : '',
+          protoPanelHtml(),
+        ].join('')
+      }
+
+      function submitDisabled(form) {
+        if (form.kind === 'text') return !form.text.trim()
+        return form.attachments.length === 0
+      }
+
+      function formHint(form) {
+        if (form.kind === 'text' && !form.text.trim()) return '先填入文字，再提交'
+        if (form.kind !== 'text' && !form.attachments.length) return '至少保留 1 张图片'
+        if (form.scenario !== 'success') {
+          const label = SCENARIOS.find(item => item.id === form.scenario)?.label || ''
+          return `原型演示：本次提交按「${label}」处理`
+        }
+        return '提交后可在「收集」列表里查看处理状态'
+      }
+
+      function renderForm() {
+        const form = state.form
+        if (!form) return
+        $('#formArea').innerHTML = formBodyHtml(form)
+        $('#formHint').textContent = formHint(form)
+        $('#submitButton').disabled = submitDisabled(form)
+      }
+
+      /* ============================================================
+         渲染：权限被拒
+         ============================================================ */
+      function renderPermission() {
+        if (state.page !== 'permission' || !state.permission) return
+        const config = PERMISSIONS[state.permission]
+        $('#permissionArea').innerHTML = `
+          <div class="permission-card">
+            <span class="state-mark">${icon(config.icon)}</span>
+            <h2>${config.heading}</h2>
+            <p>${config.purpose}</p>
+            <ul>${config.bullets.map(text => `<li>${text}</li>`).join('')}</ul>
+          </div>
+          <div class="notice" style="margin-top:14px">
+            <strong>${icon('lock')}需要你在系统设置里开启</strong>
+            <p>${config.note}</p>
+          </div>
+          <div style="display:grid;gap:8px;margin-top:14px">
+            <button type="button" class="button primary block" data-open-settings>去设置</button>
+            <button type="button" class="button ghost block" data-permission-back>${config.returnLabel}</button>
+          </div>`
+      }
+
+      /* ============================================================
+         渲染：来源详情（候选只读）
+         ============================================================ */
+      function candidateEmptyText(source) {
+        if (source.status === 'failed') return '处理失败，还没有候选。可以在列表里重试处理。'
+        if (source.status === 'waiting' || source.status === 'processing') return '材料还在处理中，候选会在这里出现。'
+        if (source.evidence > 0) return `该来源的候选都已经在桌面工作台处理完成；现在有 ${source.evidence} 条正式知识引用它。`
+        return '这条来源还没有候选。'
+      }
+
+      function renderDetail() {
+        const source = sources.find(item => item.id === state.detailId)
+        if (!source) return
+        const isText = source.kind === 'text'
+        const material = isText
+          ? `<div class="text-quote">${escapeHtml(source.text)}</div>`
+          : `<div class="photo-grid">${source.attachments.map((item, index) => `<button type="button" class="photo-button" data-zoom="${index}" aria-label="放大查看第 ${index + 1} 张：${escapeHtml(item.label)}">${photo(item.scene, item.label)}<span class="zoom-hint">${icon('zoom')}放大</span></button>`).join('')}</div>`
+        const ocr = source.ocr
+          ? `<div class="ocr-block">${escapeHtml(source.ocr)}</div><p class="detail-hint">机器识别结果，可能与原图存在差异；正式知识以人工确认为准。</p>`
+          : `<p class="detail-hint">${isText ? '文字来源不需要 OCR 识别。' : source.status === 'failed' ? '本次处理没有产生 OCR 文本。' : '视频材料还在处理中，还没有 OCR 文本。'}</p>`
+        const candidates = source.candidates.length
+          ? source.candidates.map(item => `<article class="candidate-card">
+              <div class="candidate-tags"><span class="badge candidate">${icon('info')}AI 候选</span><span class="badge neutral">未应用</span></div>
+              <h4>${escapeHtml(item.content)}</h4>
+              <p class="candidate-line"><b>目录建议：</b>${escapeHtml(item.path)}</p>
+              <p class="candidate-line"><b>理由：</b>${escapeHtml(item.reason)}</p>
+            </article>`).join('')
+          : `<p class="detail-hint">${candidateEmptyText(source)}</p>`
+        const projectValue = source.projectId
+          ? `${escapeHtml(projectName(source.projectId))}${source.locked ? '<br />已被正式知识引用，不能改归属或删除' : ''}`
+          : '未归属'
+        $('#detailArea').innerHTML = `
+          <div class="detail-card">
+            <div class="detail-tags">${statusBadgeHtml(source)}${subStatusHtml(source)}</div>
+            <h2 class="detail-title">${escapeHtml(source.title)}</h2>
+            <dl class="detail-meta">
+              <dt>类型</dt><dd>${isText ? '文字' : `图片 · ${source.attachments.length} 张`}</dd>
+              <dt>创建时间</dt><dd>${escapeHtml(source.createdAt)}</dd>
+              <dt>项目归属</dt><dd>${projectValue}</dd>
+              <dt>补充说明</dt><dd>${source.note ? escapeHtml(source.note) : '未填写'}</dd>
+            </dl>
+          </div>
+          ${source.status === 'failed' && source.failReason ? `<div class="notice is-error" style="margin-top:14px"><strong>${icon('alert')}处理失败</strong><p>${escapeHtml(source.failReason)}</p><p>可以在列表里对这条来源重试处理。</p></div>` : ''}
+          <section class="detail-block">
+            <h3>原始材料<span>${isText ? '文字正文' : `${source.attachments.length} 张图片`}</span></h3>
+            ${material}
+          </section>
+          <section class="detail-block">
+            <h3>OCR 文本<span>只读</span></h3>
+            ${ocr}
+          </section>
+          <section class="detail-block">
+            <h3>AI 候选<span>共 ${source.candidates.length} 条 · 未应用</span></h3>
+            ${candidates}
+          </section>
+          <div class="readonly-note">
+            <strong>${icon('info')}这里只读</strong>
+            <p>移动端不提供确认、拒绝或写入操作。候选在你确认前不会成为正式知识；需要确认候选时，请到桌面工作台的确认台处理，或回对话里继续讨论。</p>
+          </div>`
+      }
+
+      /* ============================================================
+         渲染：放大查看
+         ============================================================ */
+      function renderLightbox() {
+        if (!state.lightbox) return
+        const source = sources.find(item => item.id === state.lightbox.sourceId)
+        if (!source) return
+        const index = state.lightbox.index
+        const item = source.attachments[index]
+        const total = source.attachments.length
+        $('#lightboxTitle').textContent = `第 ${index + 1} / ${total} 张`
+        $('#lightboxArea').innerHTML = `
+          <div class="lightbox-frame">${photo(item.scene, item.label)}</div>
+          <p class="lightbox-caption">${escapeHtml(item.label)}<br />原型用线稿示意图代替真实照片，放大只演示交互。</p>
+          ${total > 1 ? `<div class="lightbox-pager">
+            <button type="button" data-lightbox-step="-1">上一张</button>
+            <span>第 ${index + 1} / ${total} 张</span>
+            <button type="button" data-lightbox-step="1">下一张</button>
+          </div>` : ''}`
+      }
+
+      /* ============================================================
+         渲染：提交状态
+         ============================================================ */
+      function renderSubmitOverlay() {
+        if (!state.submitPhase) return
+        const area = $('#submitArea')
+        const form = state.form
+        const count = form ? form.attachments.length : 0
+        const materialText = form && form.kind === 'text' ? '文字' : `${count} 张图片`
+        const projectText = form && form.projectId ? projectName(form.projectId) : '未归属'
+        if (state.submitPhase === 'uploading') {
+          $('#submitTitle').textContent = '提交材料'
+          area.innerHTML = `<div class="status-card">
+            <span class="status-mark"><span class="spinner lg"></span></span>
+            <h2>${form && form.kind === 'text' ? '正在提交文字来源…' : `正在上传 ${count} 张图片…`}</h2>
+            <p>请保持 Grove 在前台。上传结束前不要重复提交，重复提交不会生成第二条来源。</p>
+            <div class="status-facts">
+              <span>材料：${materialText}</span>
+              <span>所属项目：${projectText}</span>
+            </div>
+          </div>`
+          return
+        }
+        if (state.submitPhase === 'upload-failed') {
+          $('#submitTitle').textContent = '提交未成功'
+          area.innerHTML = `<div class="status-card">
+            <span class="status-mark error">${icon('cloud-off')}</span>
+            <h2>提交未成功</h2>
+            <p>网络连接中断，材料没有保存到 Grove。已经填好的内容还在表单里。</p>
+            <div class="status-facts"><span>重试会继续使用同一次采集，不会生成重复来源。</span></div>
+            <div class="status-actions">
+              <button type="button" class="button primary block" data-submit-retry>重试提交</button>
+              <button type="button" class="button ghost block" data-back-to-form>返回表单</button>
+            </div>
+          </div>`
+          return
+        }
+        const source = sources.find(item => item.id === state.submitSourceId)
+        $('#submitTitle').textContent = '处理启动失败'
+        area.innerHTML = `<div class="status-card">
+          <span class="status-mark warn">${icon('alert')}</span>
+          <h2>来源已保存，但处理启动失败</h2>
+          <p>材料已经进入「收集」列表，但还没有开始处理。</p>
+          <div class="status-facts">
+            <span>列表状态：处理失败（处理未启动）</span>
+            <span>可以随时重试处理，不需要重新采集一次。</span>
+          </div>
+          <div class="status-actions">
+            <button type="button" class="button primary block" data-retry="${source ? source.id : ''}">重试处理</button>
+            ${source ? `<button type="button" class="button block" data-open-detail="${source.id}">查看来源</button>` : ''}
+            <button type="button" class="button ghost block" data-back-home>返回收集</button>
+          </div>
+        </div>`
+      }
+
+      /* ============================================================
+         渲染：改归属 / 删除 Sheet
+         ============================================================ */
+      function moveBlockedReason(source) {
+        if (source.locked) {
+          return { title: '不能修改归属', detail: '该来源已被正式知识引用，如需移动请先处理关联 Entry', hint: '请先在桌面工作台处理关联的正式知识，再回到这里改归属。' }
+        }
+        if (source.status === 'processing') {
+          return { title: '不能修改归属', detail: '来源正在处理中，不能修改归属', hint: '等处理结束后再修改归属。' }
+        }
+        return null
+      }
+
+      function deleteBlockedReason(source) {
+        if (source.locked) {
+          return { title: '不能删除', detail: '该来源已被正式知识引用，不能删除；请先处理关联 Entry', hint: '请先在桌面工作台处理关联的正式知识。' }
+        }
+        if (source.status === 'processing') {
+          return { title: '不能删除', detail: '来源正在处理中，不能删除', hint: '等处理结束后再删除。' }
+        }
+        return null
+      }
+
+      function renderProjectSheet() {
+        const config = state.projectSheet
+        if (!config) return
+        const source = config.sourceId ? sources.find(item => item.id === config.sourceId) : null
+        const currentId = config.mode === 'form' ? (state.form ? state.form.projectId : null) : source.projectId
+        const blocked = source ? moveBlockedReason(source) : null
+        $('#projectSheetTitle').textContent = config.mode === 'form' ? '所属项目' : '修改归属'
+        const notice = blocked
+          ? `<div class="notice"><strong>${icon('lock')}${blocked.title}</strong><p>${escapeHtml(blocked.detail)}</p><p>${blocked.hint}</p></div>` : ''
+        const intro = source ? `<p class="caption muted" style="margin-bottom:6px">${escapeHtml(source.title)}</p>` : ''
+        const options = [{ id: null, name: '未归属', caption: '暂不归属任何项目' }, ...PROJECTS].map(item => {
+          const checked = item.id === currentId
+          return `<button type="button" class="option-row" role="radio" aria-checked="${checked}" data-pick-project="${item.id ?? ''}"${blocked ? ' aria-disabled="true"' : ''}>
+            <span class="row-icon">${icon(item.id ? 'folder' : 'info')}</span>
+            <span><strong>${escapeHtml(item.name)}</strong><span>${item.caption}</span></span>
+            <svg class="icon option-check" aria-hidden="true"><use href="#i-check"/></svg>
+          </button>`
+        }).join('')
+        const sheetBody = $('#projectSheetBody')
+        sheetBody.dataset.mode = config.mode
+        sheetBody.dataset.sheetSource = config.sourceId || ''
+        sheetBody.innerHTML = `${notice}${intro}<div role="radiogroup" aria-label="选择所属项目">${options}</div>
+          <div class="sheet-actions single"><button type="button" class="button" data-close-sheet>${blocked ? '知道了' : '取消'}</button></div>`
+      }
+
+      function renderDeleteSheet() {
+        const source = sources.find(item => item.id === state.deleteTargetId)
+        if (!source) return
+        const blocked = deleteBlockedReason(source)
+        if (blocked) {
+          $('#deleteSheetBody').innerHTML = `<div class="notice is-error"><strong>${icon('lock')}${blocked.title}</strong><p>${escapeHtml(blocked.detail)}</p><p>${blocked.hint}</p></div>
+            <div class="sheet-actions single"><button type="button" class="button" data-close-sheet>知道了</button></div>`
+          return
+        }
+        const detail = source.pending > 0
+          ? `<p>「${escapeHtml(source.title)}」有 ${source.pending} 条待确认候选，删除将一并移除这些候选。确认删除？</p>`
+          : `<p>删除后这条来源的原始材料与已经生成的候选都会移除，无法恢复。</p>`
+        $('#deleteSheetBody').innerHTML = `<div class="confirm-box"><strong>删除「${escapeHtml(source.title)}」？</strong>${detail}</div>
+          <div class="sheet-actions">
+            <button type="button" class="button" data-close-sheet>取消</button>
+            <button type="button" class="button danger" data-confirm-delete="${source.id}">确认删除</button>
+          </div>`
+      }
+
+      /* ============================================================
+         总渲染
+         ============================================================ */
+      function render() {
+        renderProtoBar()
+        renderHeader()
+        renderHome()
+        if (state.form) renderForm()
+        renderPermission()
+        if (state.detailId) renderDetail()
+        if (state.lightbox) renderLightbox()
+        if (state.projectSheet) renderProjectSheet()
+        if (state.deleteTargetId) renderDeleteSheet()
+        renderSubmitOverlay()
+      }
+
+      /* ============================================================
+         层管理：Sheet / Overlay / 键盘
+         ============================================================ */
+      const focusableSelector = 'button:not([disabled]):not([tabindex="-1"]), input:not([disabled]), textarea:not([disabled]), [href], [tabindex]:not([tabindex="-1"])'
+
+      function topOverlay() {
+        return overlayStack.length ? overlayStack[overlayStack.length - 1].el : null
+      }
+
+      function syncLayerIsolation() {
+        const sheet = $$('.sheet.open').pop()
+        const overlay = topOverlay()
+        $$('.app > .proto-bar, .app > .app-header, .app > .screens, .app > .bottom-nav, .app > .demo-keyboard').forEach(element => {
+          element.inert = Boolean(sheet || overlay)
+        })
+        $$('.overlay').forEach(element => { element.inert = Boolean(sheet || (overlay && element !== overlay)) })
+        $$('.sheet').forEach(element => { element.inert = Boolean(sheet && element !== sheet) })
+      }
+
+      function restoreFocus(trigger) {
+        if (trigger && trigger.isConnected && !trigger.closest('[inert]')) trigger.focus({ preventScroll: true })
+      }
+
+      function closeSheets({ restore = true } = {}) {
+        $$('.sheet.open').forEach(sheet => sheet.classList.remove('open'))
+        scrim.classList.remove('open')
+        state.projectSheet = null
+        state.deleteTargetId = null
+        syncLayerIsolation()
+        if (restore) restoreFocus(sheetTrigger)
+        sheetTrigger = null
+      }
+
+      function openSheet(name) {
+        const trigger = document.activeElement
+        closeSheets({ restore: false })
+        closeKeyboard()
+        const sheet = document.getElementById(`${name}Sheet`)
+        if (!sheet) return
+        sheetTrigger = trigger
+        scrim.classList.add('open')
+        sheet.classList.add('open')
+        syncLayerIsolation()
+        sheet.querySelector('button')?.focus({ preventScroll: true })
+      }
+
+      function openOverlay(name) {
+        const overlay = document.getElementById(`${name}Overlay`)
+        if (!overlay || overlayStack.some(item => item.name === name)) return
+        const trigger = document.activeElement
+        closeKeyboard()
+        overlay.classList.add('open')
+        overlayStack.push({ name, el: overlay, trigger })
+        syncLayerIsolation()
+        overlay.querySelector(focusableSelector)?.focus({ preventScroll: true })
+      }
+
+      function closeOverlay(name) {
+        const index = name ? overlayStack.findIndex(item => item.name === name) : overlayStack.length - 1
+        if (index < 0) return
+        const [entry] = overlayStack.splice(index, 1)
+        entry.el.classList.remove('open')
+        if (entry.name === 'detail') state.detailId = null
+        if (entry.name === 'lightbox') state.lightbox = null
+        if (entry.name === 'submit') { state.submitPhase = null; state.submitSourceId = null; state.submitting = false }
+        syncLayerIsolation()
+        restoreFocus(entry.trigger)
+      }
+
+      function closeAllOverlays() {
+        while (overlayStack.length) closeOverlay()
+      }
+
+      function openKeyboard(field) {
+        state.activeField = field
+        $('#keyboardTarget').textContent = field.dataset.field === 'note' ? '补充说明' : '要收集的文字'
+        clearTimeout(keyboardTimer)
+        keyboardTimer = setTimeout(() => {
+          if (document.activeElement === field) app.classList.add('keyboard-open')
+        }, 80)
+      }
+
+      function closeKeyboard() {
+        clearTimeout(keyboardTimer)
+        app.classList.remove('keyboard-open')
+        state.activeField = null
+      }
+
+      function showToast(message) {
+        toastEl.textContent = message
+        toastEl.classList.add('show')
+        clearTimeout(toastTimer)
+        toastTimer = setTimeout(() => toastEl.classList.remove('show'), 2400)
+      }
+
+      /* ============================================================
+         采集：打开表单与入口
+         ============================================================ */
+      function openForm(kind) {
+        const preset = ENTRY_PRESETS[kind] || { attachments: [], toast: '' }
+        state.form = {
+          kind,
+          title: FORM_TITLES[kind] || '采集',
+          fromCamera: kind === 'camera',
+          attachments: clone(preset.attachments),
+          note: '',
+          text: '',
+          projectId: null,
+          scenario: 'success',
+          error: null,
+        }
+        closeAllOverlays()
+        setPage('form')
+        renderForm()
+        $('#formScroll').scrollTop = 0
+        if (preset.toast) showToast(preset.toast)
+      }
+
+      function backHome() {
+        state.form = null
+        state.permission = null
+        closeKeyboard()
+        setPage('home')
+        render()
+      }
+
+      function openPermission(kind) {
+        state.previousPage = state.page === 'permission' ? state.previousPage : state.page
+        state.permission = kind
+        closeAllOverlays()
+        setPage('permission')
+        renderPermission()
+        $('#permissionScroll').scrollTop = 0
+      }
+
+      /* ============================================================
+         提交
+         ============================================================ */
+      function applyScenario(id) {
+        const form = state.form
+        if (!form) return
+        form.scenario = id
+        form.error = null
+        if (id === '400-limit') {
+          form.kind = 'album-multi'
+          form.title = '图片采集'
+          form.fromCamera = false
+          form.attachments = [
+            { scene: 'wall', label: '墙面涂刷范围' },
+            { scene: 'pipe', label: '管根加强层' },
+            { scene: 'water', label: '闭水水位标记' },
+            { scene: 'note', label: '现场记录' },
+            { scene: 'wall', label: '门槛石内侧' },
+            { scene: 'pipe', label: '地漏周边' },
+          ]
+        }
+        if (id === '400-size') {
+          form.kind = 'album-single'
+          form.title = '图片采集'
+          form.fromCamera = false
+          form.attachments = [{ scene: 'water', label: '闭水水位原图.jpg · 12.4MB' }]
+        }
+        if (id === '400-format') {
+          form.kind = 'album-single'
+          form.title = '图片采集'
+          form.fromCamera = false
+          form.attachments = [{ scene: 'note', label: '验收记录.heic' }]
+        }
+        if (id === 'success' || id === 'upload-failed' || id === 'process-failed') {
+          if (form.attachments.length === 0 && form.kind !== 'text') {
+            form.kind = 'album-single'
+            form.title = '图片采集'
+            form.attachments = clone(ENTRY_PRESETS['album-single'].attachments)
+          }
+        }
+        renderForm()
+        showToast(`已切换到「${SCENARIOS.find(item => item.id === id)?.label}」演示分支`)
+      }
+
+      function newSourceFromForm(outcome) {
+        const form = state.form
+        const isText = form.kind === 'text'
+        const firstLine = isText ? (form.text.split('\n').map(line => line.trim()).find(Boolean) || '未命名文字').slice(0, 120) : ''
+        const title = isText ? firstLine : form.attachments.length > 1 ? `${form.attachments.length} 张现场照片` : '现场照片'
+        const createdAt = '刚刚'
+        const base = {
+          id: `new-${Date.now()}`,
+          kind: isText ? 'text' : 'image',
+          title,
+          attachments: clone(form.attachments),
+          note: form.note.trim(),
+          text: form.text,
+          projectId: form.projectId,
+          status: outcome === 'process-failed' ? 'failed' : 'waiting',
+          pending: 0,
+          evidence: 0,
+          createdAt,
+          failReason: outcome === 'process-failed' ? '处理未启动，可重试' : null,
+          retryCount: 0,
+          locked: false,
+          ocr: '',
+          candidates: [],
+          moving: false,
+          pollSteps: outcome === 'process-failed' ? null : [
+            { patch: { status: 'processing' }, note: `「${title}」开始处理` },
+            {
+              patch: {
+                status: 'done',
+                pending: 2,
+                ocr: '识别到 2 处与施工顺序相关的文字说明。',
+                candidates: [
+                  { content: '管根加强层应在大面涂刷前完成', path: '新房装修 / 施工 / 防水', reason: '来源图片显示了加强层与大面涂刷的先后顺序' },
+                  { content: '补刷完成后需要留出干燥时间', path: '新房装修 / 施工 / 工序衔接', reason: '来源记录提到补刷，但缺少干燥时间' },
+                ],
+              },
+              note: `「${title}」处理完成，新增 2 条待确认候选`,
+            },
+          ],
+        }
+        return base
+      }
+
+      async function submitForm() {
+        const form = state.form
+        if (!form || state.submitting || submitDisabled(form)) return
+        state.submitting = true
+        form.error = null
+        state.submitPhase = 'uploading'
+        openOverlay('submit')
+        renderSubmitOverlay()
+        await wait(1200)
+        const scenario = form.scenario
+        if (scenario === 'upload-failed') {
+          state.submitting = false
+          state.submitPhase = 'upload-failed'
+          renderSubmitOverlay()
+          return
+        }
+        if (FORMAT_MESSAGES[scenario]) {
+          state.submitting = false
+          state.submitPhase = null
+          closeOverlay('submit')
+          form.error = FORMAT_MESSAGES[scenario]
+          renderForm()
+          $('#formScroll').scrollTop = $('#formScroll').scrollHeight
+          showToast('服务端拒绝了这次提交，材料没有保存')
+          return
+        }
+        if (scenario === 'process-failed') {
+          const source = newSourceFromForm('process-failed')
+          sources.unshift(source)
+          state.submitSourceId = source.id
+          state.submitting = false
+          state.submitPhase = 'process-failed'
+          state.listState = 'normal'
+          render()
+          return
+        }
+        const source = newSourceFromForm('success')
+        sources.unshift(source)
+        state.submitting = false
+        state.submitPhase = null
+        closeOverlay('submit')
+        state.listState = 'normal'
+        state.form = null
+        setPage('home')
+        render()
+        $('#homeScroll').scrollTop = 0
+        showToast('已提交，材料已进入收集列表')
+      }
+
+      async function retrySubmit() {
+        if (state.submitting) return
+        state.submitting = true
+        state.submitPhase = 'uploading'
+        renderSubmitOverlay()
+        await wait(1100)
+        const source = newSourceFromForm('success')
+        sources.unshift(source)
+        state.submitting = false
+        state.submitPhase = null
+        closeOverlay('submit')
+        state.listState = 'normal'
+        state.form = null
+        setPage('home')
+        render()
+        $('#homeScroll').scrollTop = 0
+        showToast('重试成功：沿用同一次采集，没有生成重复来源')
+      }
+
+      /* ============================================================
+         列表操作：改归属 / 重试 / 删除
+         ============================================================ */
+      async function moveSource(id, projectId) {
+        const source = sources.find(item => item.id === id)
+        if (!source) return
+        closeSheets()
+        source.moving = true
+        render()
+        await wait(1200)
+        source.moving = false
+        source.projectId = projectId
+        if (!projectId) {
+          render()
+          showToast('已改为未归属')
+          return
+        }
+        render()
+        showToast(state.filter === 'unassigned'
+          ? `归属已更新为「${projectName(projectId)}」，已从「未归属」筛选中移出`
+          : `归属已更新为「${projectName(projectId)}」`)
+      }
+
+      async function retrySource(id) {
+        const source = sources.find(item => item.id === id)
+        if (!source) return
+        source.status = 'processing'
+        source.failReason = null
+        render()
+        showToast(`已重新开始处理「${source.title}」`)
+        await wait(2000)
+        source.status = 'done'
+        source.pending = 2
+        source.evidence = 0
+        source.ocr = '识别到 2 处与施工顺序相关的文字说明。'
+        source.candidates = [
+          { content: '管根加强层应在大面涂刷前完成', path: '新房装修 / 施工 / 防水', reason: '来源图片显示了加强层与大面涂刷的先后顺序' },
+          { content: '补刷完成后需要留出干燥时间', path: '新房装修 / 施工 / 工序衔接', reason: '来源记录提到补刷，但缺少干燥时间' },
+        ]
+        render()
+        showToast(`「${source.title}」处理完成，新增 2 条待确认候选`)
+      }
+
+      function confirmDelete(id) {
+        const index = sources.findIndex(item => item.id === id)
+        if (index < 0) return
+        const [removed] = sources.splice(index, 1)
+        closeSheets()
+        closeOverlay('detail')
+        render()
+        showToast(`已删除「${removed.title}」`)
+      }
+
+      /* ============================================================
+         前台刷新（下拉刷新 / 顶栏刷新）
+         ============================================================ */
+      function pollTick() {
+        const notes = []
+        sources.forEach(source => {
+          if (!source.pollSteps || !source.pollSteps.length) return
+          const step = source.pollSteps.shift()
+          Object.assign(source, step.patch)
+          notes.push(step.note)
+        })
+        return notes
+      }
+
+      async function refreshList({ fromPull = false } = {}) {
+        if (state.refreshing || state.page !== 'home') return
+        if (state.listState === 'failed') {
+          state.listState = 'normal'
+          render()
+          showToast('已重新加载来源列表')
+          return
+        }
+        state.refreshing = true
+        const wrap = $('#pullWrap')
+        if (fromPull) {
+          wrap.classList.add('dragging')
+          wrap.style.transform = 'translateY(48px)'
+        }
+        $('#pullSpinner').hidden = false
+        $('#pullLabel').textContent = '刷新中…'
+        renderListMeta()
+        $('#headerRefresh')?.classList.add('spinning')
+        await wait(900)
+        const notes = pollTick()
+        state.refreshing = false
+        wrap.classList.remove('dragging')
+        wrap.style.transform = ''
+        $('#pullSpinner').hidden = true
+        $('#pullLabel').textContent = '下拉刷新'
+        $('#headerRefresh')?.classList.remove('spinning')
+        render()
+        if (notes.length) showToast(notes.join('；'))
+        else showToast(activeCount() ? `已刷新，${activeCount()} 条仍在处理中` : '已刷新，没有新的来源')
+      }
+
+      function setPull(distance) {
+        const wrap = $('#pullWrap')
+        wrap.style.transform = distance ? `translateY(${distance}px)` : ''
+        $('#pullLabel').textContent = distance >= PULL_THRESHOLD ? '松开刷新' : '下拉刷新'
+      }
+
+      let pullStartY = null
+      let pullDistance = 0
+      let pulling = false
+
+      function startPull(clientY) {
+        const homeScroll = $('#homeScroll')
+        if (state.page !== 'home' || state.refreshing || homeScroll.scrollTop > 0) return
+        pullStartY = clientY
+        pullDistance = 0
+        pulling = true
+        $('#pullWrap').classList.add('dragging')
+      }
+
+      function movePull(clientY) {
+        if (!pulling) return
+        const delta = clientY - pullStartY
+        if (delta <= 0) { setPull(0); return }
+        pullDistance = Math.min(96, delta * 0.55)
+        setPull(pullDistance)
+      }
+
+      async function endPull() {
+        if (!pulling) return
+        pulling = false
+        $('#pullWrap').classList.remove('dragging')
+        if (pullDistance >= PULL_THRESHOLD) {
+          await refreshList({ fromPull: true })
+        } else {
+          setPull(0)
+        }
+        pullDistance = 0
+        pullStartY = null
+      }
+
+      /* ============================================================
+         事件：点击
+         ============================================================ */
+      app.addEventListener('click', async (event) => {
+        const target = event.target.closest('button, [data-close-sheet]')
+        if (!target) return
+
+        if (target.dataset.variant) { state.variant = target.dataset.variant; renderProtoBar(); renderHome(); return }
+        if (target.dataset.listState) { state.listState = target.dataset.listState; renderHome(); return }
+        if (target.dataset.permission) { openPermission(target.dataset.permission); return }
+        if (target.hasAttribute('data-reset')) { resetPrototype(); return }
+        if (target.dataset.scenario) { applyScenario(target.dataset.scenario); return }
+        if (target.dataset.otherTab) {
+          if (target.dataset.otherTab !== '收集') showToast('本原型只覆盖「收集」模块，其余三栏保持静态')
+          return
+        }
+
+        if (target.dataset.entry) {
+          const entry = target.dataset.entry
+          closeSheets({ restore: false })
+          if (entry === 'album-choose') { openSheet('album'); return }
+          openForm(entry)
+          return
+        }
+
+        if (target.dataset.refresh !== undefined) { refreshList(); return }
+        if (target.hasAttribute('data-retry-load')) { state.listState = 'normal'; render(); showToast('已重新加载来源列表'); return }
+        if (target.dataset.filter) { state.filter = target.dataset.filter; renderHome(); return }
+        if (target.dataset.openDetail) {
+          if (state.submitPhase) closeOverlay('submit')
+          openDetail(target.dataset.openDetail)
+          return
+        }
+        if (target.dataset.move) { openMoveSheet(target.dataset.move); return }
+        if (target.dataset.delete) { state.deleteTargetId = target.dataset.delete; renderDeleteSheet(); openSheet('delete'); return }
+        if (target.dataset.confirmDelete) { confirmDelete(target.dataset.confirmDelete); return }
+        if (target.dataset.retry) {
+          closeAllOverlays()
+          retrySource(target.dataset.retry)
+          return
+        }
+
+        if (target.dataset.openProject) { state.projectSheet = { mode: 'form', sourceId: null }; renderProjectSheet(); openSheet('project'); return }
+        if (target.dataset.pickProject !== undefined) {
+          if (target.getAttribute('aria-disabled') === 'true') return
+          const sheetBody = $('#projectSheetBody')
+          const projectId = target.dataset.pickProject || null
+          if (sheetBody.dataset.mode === 'form') {
+            if (state.form) state.form.projectId = projectId
+            closeSheets()
+            renderForm()
+            showToast(projectId ? `所属项目已设为「${projectName(projectId)}」` : '已设为未归属')
+            return
+          }
+          if (sheetBody.dataset.sheetSource) await moveSource(sheetBody.dataset.sheetSource, projectId)
+          return
+        }
+        if (target.hasAttribute('data-clipboard')) {
+          const sample = '监理提醒：门槛石内侧防水要在门套安装前完成；补刷后保持 24 小时不沾水，再进入下一道工序。'
+          const field = $('[data-field="text"]')
+          if (field && state.form) {
+            state.form.text = sample
+            field.value = sample
+            $('#textCount').textContent = `${sample.length} 字`
+            $('#submitButton').disabled = submitDisabled(state.form)
+            $('#formHint').textContent = formHint(state.form)
+          }
+          showToast('已从剪贴板填入示例文字')
+          return
+        }
+        if (target.dataset.removeAttachment !== undefined) {
+          const form = state.form
+          if (!form) return
+          const index = Number(target.dataset.removeAttachment)
+          if (form.attachments.length <= 1) return
+          form.attachments.splice(index, 1)
+          renderForm()
+          showToast('已移除 1 张，剩余 ' + form.attachments.length + ' 张')
+          return
+        }
+        if (target.hasAttribute('data-submit')) { submitForm(); return }
+        if (target.hasAttribute('data-submit-retry')) { retrySubmit(); return }
+        if (target.hasAttribute('data-back-to-form')) { closeOverlay('submit'); state.submitting = false; renderForm(); return }
+        if (target.hasAttribute('data-back-home')) { closeSheets({ restore: false }); closeAllOverlays(); backHome(); return }
+        if (target.hasAttribute('data-permission-back')) {
+          const backTo = state.previousPage === 'permission' ? 'home' : state.previousPage
+          state.permission = null
+          setPage(backTo)
+          if (backTo === 'form' && state.form) renderForm()
+          render()
+          return
+        }
+        if (target.hasAttribute('data-open-settings')) {
+          showToast('原型不跳转系统设置；正式实现会直接打开 Grove 的系统设置页')
+          return
+        }
+
+        if (target.dataset.zoom !== undefined) {
+          const index = Number(target.dataset.zoom)
+          state.lightbox = { sourceId: state.detailId, index }
+          renderLightbox()
+          openOverlay('lightbox')
+          return
+        }
+        if (target.dataset.lightboxStep) {
+          const source = sources.find(item => item.id === state.lightbox.sourceId)
+          if (!source) return
+          const total = source.attachments.length
+          const step = Number(target.dataset.lightboxStep)
+          state.lightbox.index = (state.lightbox.index + step + total) % total
+          renderLightbox()
+          return
+        }
+        if (target.dataset.closeOverlay) { closeOverlay(target.dataset.closeOverlay); return }
+        if (target.hasAttribute('data-close-sheet')) { closeSheets(); return }
+
+        if (target.dataset.key !== undefined) { insertKey(target.dataset.key); return }
+        if (target.hasAttribute('data-keyboard-backspace')) { backspaceKey(); return }
+        if (target.hasAttribute('data-keyboard-shift')) { showToast('原型键盘只做小写输入示意'); return }
+        if (target.hasAttribute('data-keyboard-dismiss')) { state.activeField?.blur(); closeKeyboard(); return }
+      })
+
+      function openDetail(id) {
+        state.detailId = id
+        renderDetail()
+        openOverlay('detail')
+      }
+
+      function openMoveSheet(id) {
+        state.projectSheet = { mode: 'move', sourceId: id }
+        renderProjectSheet()
+        openSheet('project')
+      }
+
+      /* ============================================================
+         事件：输入与模拟键盘
+         ============================================================ */
+      function insertKey(text) {
+        const field = state.activeField
+        if (!field) return
+        const start = field.selectionStart ?? field.value.length
+        const end = field.selectionEnd ?? start
+        field.setRangeText(text, start, end, 'end')
+        field.dispatchEvent(new Event('input', { bubbles: true }))
+      }
+
+      function backspaceKey() {
+        const field = state.activeField
+        if (!field) return
+        const start = field.selectionStart ?? 0
+        const end = field.selectionEnd ?? 0
+        if (start !== end) field.setRangeText('', start, end, 'end')
+        else if (start > 0) field.setRangeText('', start - 1, start, 'end')
+        field.dispatchEvent(new Event('input', { bubbles: true }))
+      }
+
+      function scrollFieldIntoView(field) {
+        const scroller = field.closest('.scroll-page')
+        if (!scroller) return
+        const top = field.getBoundingClientRect().top - scroller.getBoundingClientRect().top + scroller.scrollTop
+        scroller.scrollTo({ top: Math.max(0, top - 28), behavior: 'smooth' })
+      }
+
+      app.addEventListener('focusin', (event) => {
+        const field = event.target.closest('[data-field]')
+        if (!field) return
+        openKeyboard(field)
+        setTimeout(() => { if (document.activeElement === field) scrollFieldIntoView(field) }, 220)
+      })
+
+      app.addEventListener('focusout', (event) => {
+        const field = event.target.closest('[data-field]')
+        if (!field) return
+        clearTimeout(keyboardTimer)
+        setTimeout(() => {
+          if (!document.activeElement || !document.activeElement.closest('[data-field]')) closeKeyboard()
+        }, 120)
+      })
+
+      app.addEventListener('input', (event) => {
+        const field = event.target.closest('[data-field]')
+        if (!field || !state.form) return
+        const key = field.dataset.field
+        state.form[key] = field.value
+        if (key === 'text') {
+          const counter = $('#textCount')
+          if (counter) counter.textContent = `${field.value.length} 字`
+          const submit = $('#submitButton')
+          if (submit) submit.disabled = submitDisabled(state.form)
+          const hint = $('#formHint')
+          if (hint) hint.textContent = formHint(state.form)
+        }
+      })
+
+      $('#demoKeyboard').addEventListener('pointerdown', (event) => event.preventDefault())
+      document.addEventListener('pointerdown', (event) => {
+        if (event.target.closest('.demo-keyboard') || event.target.closest('[data-field]')) return
+        if (state.activeField) { state.activeField.blur(); closeKeyboard() }
+      })
+
+      /* ============================================================
+         事件：下拉刷新
+         ============================================================ */
+      const homeScroll = $('#homeScroll')
+      homeScroll.addEventListener('touchstart', (event) => startPull(event.touches[0].clientY), { passive: true })
+      homeScroll.addEventListener('touchmove', (event) => {
+        if (!pulling) return
+        if (event.cancelable && event.touches[0].clientY - pullStartY > 0) event.preventDefault()
+        movePull(event.touches[0].clientY)
+      }, { passive: false })
+      homeScroll.addEventListener('touchend', endPull, { passive: true })
+      homeScroll.addEventListener('touchcancel', endPull, { passive: true })
+      homeScroll.addEventListener('mousedown', (event) => {
+        if (event.button !== 0 || event.target.closest('button')) return
+        startPull(event.clientY)
+      })
+      window.addEventListener('mousemove', (event) => {
+        if (!pulling) return
+        event.preventDefault()
+        movePull(event.clientY)
+      })
+      window.addEventListener('mouseup', endPull)
+
+      /* ============================================================
+         事件：Escape 与焦点循环
+         ============================================================ */
+      document.addEventListener('keydown', (event) => {
+        if (event.key === 'Escape') {
+          if ($$('.sheet.open').length) { closeSheets(); return }
+          if (overlayStack.length) { closeOverlay(); return }
+          return
+        }
+        if (event.key !== 'Tab') return
+        const layer = $$('.sheet.open').pop() || topOverlay()
+        if (!layer) return
+        const focusable = $$(focusableSelector, layer).filter(element => !element.closest('[inert]'))
+        if (!focusable.length) { event.preventDefault(); layer.focus({ preventScroll: true }); return }
+        const first = focusable[0]
+        const last = focusable[focusable.length - 1]
+        if (event.shiftKey && document.activeElement === first) { event.preventDefault(); last.focus({ preventScroll: true }) }
+        else if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first.focus({ preventScroll: true }) }
+      })
+
+      /* ============================================================
+         重置与初始化
+         ============================================================ */
+      function resetPrototype() {
+        state.variant = 'A'
+        state.listState = 'normal'
+        state.filter = 'unassigned'
+        state.form = null
+        state.permission = null
+        state.detailId = null
+        state.lightbox = null
+        state.projectSheet = null
+        state.deleteTargetId = null
+        state.submitPhase = null
+        state.submitSourceId = null
+        state.submitting = false
+        state.refreshing = false
+        sources = buildSources()
+        closeSheets({ restore: false })
+        closeAllOverlays()
+        closeKeyboard()
+        setPage('home')
+        render()
+        $('#homeScroll').scrollTop = 0
+        showToast('原型状态已重置')
+      }
+
+      function init() {
+        setPage('home')
+        render()
+      }
+
+      init()
+    })()
+  </script>
+</body>
+</html>
