@@ -30,7 +30,7 @@
 
 - 文件：[grove-mobile-capture-prototype.html](grove-mobile-capture-prototype.html)
 - 日期：2026-09-22
-- 定位：拆分 OpenSpec change 之前用于确认「收集」模块交互的探索性原型，功能依据为 `docs/discussions/移动端收集模块规划-2026-09-22.md`，不是已确认的交互基线。
+- 定位：拆分 OpenSpec change 之前用于确认「收集」模块交互的探索性原型，功能依据为 `docs/discussions/移动端/收集模块/移动端收集模块规划-2026-09-22.md`，不是已确认的交互基线。
 - 范围：只覆盖收集栏目（采集入口、采集表单、提交状态、来源列表、来源详情只读），底栏其余三栏仍是静态状态。
 - 与四栏原型的关系：复用 [grove-mobile-agent-prototype.html](grove-mobile-agent-prototype.html) 的视觉语言、原创图标、四栏骨架与安全区处理，独立成文件；不改动既有四栏原型，两者互不替换。
 - 入口排布：2026-09-22 已从 A/B 两版对比收敛为方案 B——三个动作横排（相机 / 相册 / 文本），进入相册后再选「每张一条」或「多张合并一条」。两者都可以一次选择多张图片，区别是每张图片各成一条采集，还是合并成一条一起整理。
