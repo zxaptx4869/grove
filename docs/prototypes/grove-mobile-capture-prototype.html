@@ -643,6 +643,13 @@
       }
       const photo = (scene, label) => `<span class="photo" role="img" aria-label="示意图：${escapeHtml(label)}"><svg viewBox="0 0 160 120" aria-hidden="true">${SCENES[scene] || SCENES.note}</svg></span>`
 
+      // 模拟相机每次拍摄返回的画面（重拍按序轮换，便于走查看出变化）
+      const CAMERA_SHOTS = [
+        { scene: 'wall', label: '系统相机拍摄的现场照片' },
+        { scene: 'pipe', label: '重拍：管根加强层' },
+        { scene: 'water', label: '重拍：闭水水位' },
+        { scene: 'note', label: '重拍：现场记录' },
+      ]
       const FORM_TITLES = { camera: '拍照采集', 'album-separate': '图片采集', 'album-merged': '图片采集', text: '文字采集' }
       const ENTRY_PRESETS = {
         camera: { attachments: [{ scene: 'wall', label: '系统相机拍摄的现场照片' }], toast: '系统相机已返回 1 张照片' },
@@ -964,8 +971,8 @@
           const thumbs = form.attachments.map((item, index) => `<span class="thumb">${photo(item.scene, item.label)}<button type="button" class="thumb-remove" data-remove-attachment="${index}" aria-label="移除第 ${index + 1} 张图片">${icon('trash')}</button></span>`).join('')
           const lead = merged ? `这 ${count} 张将作为一条材料一起整理` : `这 ${count} 张将分别作为 ${count} 条材料提交`
           const body = merged
-            ? '候选与正式知识都关联同一条来源；需要每张各成一条时，请改走「每张一条」入口。'
-            : '每张图片各成一条来源，可以分别改归属、删除或重试；需要合并成一条时，请改走「多张合并一条」入口。'
+            ? '这一批会一起整理成知识，不用逐张处理。'
+            : '每张单独成为一条采集，之后可以分别处理。'
           return `<div class="form-section">
             <div class="form-label"><strong>原始材料</strong><span class="optional">共 ${count} 张</span></div>
             <div class="photo-strip">${thumbs}</div>
@@ -975,9 +982,12 @@
         const item = form.attachments[0]
         if (!item) return ''
         const cameraTag = form.fromCamera ? `<span class="tag tag-project">${icon('camera')}来自系统相机</span>` : ''
+        const singleAction = form.fromCamera
+          ? `<button type="button" class="photo-remove" data-retake="0">${icon('refresh')}重拍</button>`
+          : `<button type="button" class="photo-remove" data-remove-attachment="0" disabled>${icon('trash')}移除这张</button>`
         return `<div class="form-section">
           <div class="form-label"><strong>原始材料</strong><span class="optional">共 1 张</span></div>
-          <div class="photo-lg">${photo(item.scene, item.label)}<button type="button" class="photo-remove" data-remove-attachment="0" disabled>${icon('trash')}移除这张</button></div>
+          <div class="photo-lg">${photo(item.scene, item.label)}${singleAction}</div>
           <div class="inline-actions">${cameraTag}<span class="caption muted">${escapeHtml(item.label)}</span></div>
           ${form.fromCamera ? '<p class="caption muted" style="margin-top:6px">系统相机一次拍摄一张；需要连续拍摄请返回后再次进入。</p>' : ''}
         </div>`
@@ -1157,10 +1167,15 @@
         const projectText = form && form.projectId ? projectName(form.projectId) : '未归属'
         if (state.submitPhase === 'uploading') {
           $('#submitTitle').textContent = '提交材料'
+          const uploadTitle = !form || form.kind === 'text'
+            ? '正在提交文字来源…'
+            : form.kind === 'album-separate' && count > 1
+              ? `正在上传 ${count} 张图片，将分别生成 ${count} 条采集…`
+              : `正在上传 ${count} 张图片…`
           area.innerHTML = `<div class="status-card">
             <span class="status-mark"><span class="spinner lg"></span></span>
-            <h2>${form && form.kind === 'text' ? '正在提交文字来源…' : `正在上传 ${count} 张图片…`}</h2>
-            <p>请保持 Grove 在前台。上传结束前不要重复提交，重复提交不会生成第二条来源。</p>
+            <h2>${uploadTitle}</h2>
+            <p>请保持 Grove 在前台。上传结束前不要重复提交，这一批材料不会重复生成。</p>
             <div class="status-facts">
               <span>材料：${materialText}</span>
               <span>所属项目：${projectText}</span>
@@ -1205,10 +1220,10 @@
          ============================================================ */
       function moveBlockedReason(source) {
         if (source.locked) {
-          return { title: '不能修改归属', detail: '该来源已被正式知识引用，如需移动请先处理关联 Entry', hint: '请先在桌面工作台处理关联的正式知识，再回到这里改归属。' }
+          return { title: '不能修改归属', detail: '该来源已被正式知识引用，如需移动，请先到桌面工作台处理关联的正式知识。' }
         }
         if (source.status === 'processing') {
-          return { title: '不能修改归属', detail: '来源正在处理中，不能修改归属', hint: '等处理结束后再修改归属。' }
+          return { title: '不能修改归属', detail: '来源正在处理中，等处理结束后再修改归属。' }
         }
         return null
       }
@@ -1231,21 +1246,26 @@
         const blocked = source ? moveBlockedReason(source) : null
         $('#projectSheetTitle').textContent = config.mode === 'form' ? '所属项目' : '修改归属'
         const notice = blocked
-          ? `<div class="notice"><strong>${icon('lock')}${blocked.title}</strong><p>${escapeHtml(blocked.detail)}</p><p>${blocked.hint}</p></div>` : ''
+          ? `<div class="notice"><strong>${icon('lock')}${blocked.title}</strong><p>${escapeHtml(blocked.detail)}</p></div>` : ''
+        const sheetBody = $('#projectSheetBody')
+        sheetBody.dataset.mode = config.mode
+        sheetBody.dataset.sheetSource = config.sourceId || ''
+        if (blocked) {
+          sheetBody.innerHTML = `${notice}
+            <div class="sheet-actions single"><button type="button" class="button" data-close-sheet>知道了</button></div>`
+          return
+        }
         const intro = source ? `<p class="caption muted" style="margin-bottom:6px">${escapeHtml(source.title)}</p>` : ''
         const options = [{ id: null, name: '未归属', caption: '暂不归属任何项目' }, ...PROJECTS].map(item => {
           const checked = item.id === currentId
-          return `<button type="button" class="option-row" role="radio" aria-checked="${checked}" data-pick-project="${item.id ?? ''}"${blocked ? ' aria-disabled="true"' : ''}>
+          return `<button type="button" class="option-row" role="radio" aria-checked="${checked}" data-pick-project="${item.id ?? ''}">
             <span class="row-icon">${icon(item.id ? 'folder' : 'info')}</span>
             <span><strong>${escapeHtml(item.name)}</strong><span>${item.caption}</span></span>
             <svg class="icon option-check" aria-hidden="true"><use href="#i-check"/></svg>
           </button>`
         }).join('')
-        const sheetBody = $('#projectSheetBody')
-        sheetBody.dataset.mode = config.mode
-        sheetBody.dataset.sheetSource = config.sourceId || ''
-        sheetBody.innerHTML = `${notice}${intro}<div role="radiogroup" aria-label="选择所属项目">${options}</div>
-          <div class="sheet-actions single"><button type="button" class="button" data-close-sheet>${blocked ? '知道了' : '取消'}</button></div>`
+        sheetBody.innerHTML = `${intro}<div role="radiogroup" aria-label="选择所属项目">${options}</div>
+          <div class="sheet-actions single"><button type="button" class="button" data-close-sheet>取消</button></div>`
       }
 
       function renderDeleteSheet() {
@@ -1647,13 +1667,32 @@
          ============================================================ */
       function pollTick() {
         const notes = []
+        let doneCount = 0
+        let candidatesAdded = 0
         sources.forEach(source => {
           if (!source.pollSteps || !source.pollSteps.length) return
           const step = source.pollSteps.shift()
           Object.assign(source, step.patch)
           notes.push(step.note)
+          if (step.patch && step.patch.status === 'done') {
+            doneCount += 1
+            candidatesAdded += step.patch.candidates ? step.patch.candidates.length : 0
+          }
         })
-        return notes
+        return { notes, doneCount, candidatesAdded }
+      }
+
+      // 多条来源一起推进时，把逐条文案汇总成一句，避免 toast 越拼越长
+      function summariseTick(tick) {
+        const total = tick.notes.length
+        if (total === 1) return tick.notes[0]
+        if (tick.doneCount === total) {
+          return tick.candidatesAdded
+            ? `${total} 条采集处理完成，新增 ${tick.candidatesAdded} 条待确认候选`
+            : `${total} 条采集处理完成`
+        }
+        if (tick.doneCount === 0) return `${total} 条采集开始处理`
+        return `${total} 条采集有新进展（${tick.doneCount} 条处理完成）`
       }
 
       async function refreshList({ fromPull = false } = {}) {
@@ -1675,7 +1714,7 @@
         renderListMeta()
         $('#headerRefresh')?.classList.add('spinning')
         await wait(900)
-        const notes = pollTick()
+        const tick = pollTick()
         state.refreshing = false
         wrap.classList.remove('dragging')
         wrap.style.transform = ''
@@ -1683,7 +1722,7 @@
         $('#pullLabel').textContent = '下拉刷新'
         $('#headerRefresh')?.classList.remove('spinning')
         render()
-        if (notes.length) showToast(notes.join('；'))
+        if (tick.notes.length) showToast(summariseTick(tick))
         else showToast(activeCount() ? `已刷新，${activeCount()} 条仍在处理中` : '已刷新，没有新的来源')
       }
 
@@ -1794,6 +1833,15 @@
             $('#formHint').textContent = formHint(state.form)
           }
           showToast('已从剪贴板填入示例文字')
+          return
+        }
+        if (target.dataset.retake !== undefined) {
+          const form = state.form
+          if (!form || !form.fromCamera) return
+          form.cameraShot = (form.cameraShot || 0) + 1
+          form.attachments = [clone(CAMERA_SHOTS[form.cameraShot % CAMERA_SHOTS.length])]
+          renderForm()
+          showToast('已重拍，换了一张新的照片')
           return
         }
         if (target.dataset.removeAttachment !== undefined) {
