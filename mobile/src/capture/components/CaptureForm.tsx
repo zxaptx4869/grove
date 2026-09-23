@@ -93,7 +93,7 @@ export function CaptureForm({
                     onPress={() => onRemoveImage(index)}
                     style={styles.thumbAction}
                   >
-                    <CaptureIcon name="trash" size={12} color="#FFFFFF" />
+                    <CaptureIcon name="trash" size={15} color={theme.error} />
                   </Pressable>
                 )}
               </View>
@@ -210,18 +210,18 @@ const styles = StyleSheet.create({
   textArea: { minHeight: 132, textAlignVertical: "top" },
   noteArea: { minHeight: 76, textAlignVertical: "top" },
   strip: { flexDirection: "row", flexWrap: "wrap", gap: 8 },
-  thumb: { width: 64, height: 64, borderRadius: 8, overflow: "hidden" },
+  thumb: { width: 98, height: 98, borderRadius: 9, overflow: "hidden" },
   thumbImage: { width: "100%", height: "100%", backgroundColor: theme.soft },
   thumbAction: {
     position: "absolute",
-    top: 2,
-    right: 2,
-    width: 20,
-    height: 20,
+    top: 4,
+    right: 4,
+    width: 28,
+    height: 28,
     alignItems: "center",
     justifyContent: "center",
-    borderRadius: 10,
-    backgroundColor: "rgba(15,24,19,.6)",
+    borderRadius: 7,
+    backgroundColor: "rgba(255,255,255,.9)",
   },
   inlineActions: { flexDirection: "row", alignItems: "center", gap: 8, marginTop: 8 },
   miniButton: {
@@ -229,7 +229,7 @@ const styles = StyleSheet.create({
     alignItems: "center",
     gap: 6,
     alignSelf: "flex-start",
-    minHeight: 32,
+    minHeight: 40,
     paddingHorizontal: 10,
     borderWidth: 1,
     borderColor: theme.border,

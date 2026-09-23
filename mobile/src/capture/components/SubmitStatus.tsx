@@ -168,7 +168,7 @@ const styles = StyleSheet.create({
   rowError: { marginTop: 3, fontSize: 11, lineHeight: 17, color: theme.error },
   rowWarn: { marginTop: 3, fontSize: 11, lineHeight: 17, color: theme.risk },
   retry: {
-    minHeight: 32,
+    minHeight: 40,
     paddingHorizontal: 12,
     justifyContent: "center",
     borderWidth: 1,
