@@ -29,6 +29,13 @@
 
 ## 4. 状态机与模块划分
 
+采集栏目是「三个互斥页面 + 一个全屏覆盖层」的状态机，对齐原型的 `setPage()` 与 `#submitOverlay`：`page: "entry" | "form" | "permission"`，覆盖层由 `submitOpen` 单独控制。
+
+- `entry`：标题、副句与三入口横排，不渲染表单与结果区。原型入口页的「最近收集」列表属后续来源列表 change，本 change 不实现。
+- `form`：独立滚动页，顶栏左侧返回箭头（丢弃草稿回入口页）、居中类型标题（相机 / 相册 / 文本）；底部固定提交条位于底部导航之上，iOS 键盘弹出时按键盘高度上移（Android 走窗口 resize，配合 `tabBarHideOnKeyboard` 不遮挡）。
+- `permission`：权限被拒时替换整页（不再是入口页上的浮层），顶栏可返回入口页。
+- `submit` 覆盖层：全屏 `Modal`（`statusBarTranslucent`）盖住页面内容与底部导航，标题「提交材料」/ 失败时「提交未成功」，无底部按钮；关闭或「回到收集」清空草稿、提交会话与批次键后回入口页。进行中不提供关闭出口，返回键不关闭，避免重复进入采集页。
+
 `mobile/src/capture/`：
 
 - `image.ts`：`prepareImage(asset)`（朝向判断 + 压缩 + jpg 转码，返回 `{ uri, name, type, width, height }`）。
@@ -36,13 +43,13 @@
 - `batch.ts`：纯函数 `buildCaptureKey`、`createCaptureSubmitUnits`（按提交形态与张数派生提交单元）、`createCaptureResults`、`summarizeCapture`、`summaryText`、`progressText`；不含 React 与网络，便于单测。
 - `submit.ts`：`submitCaptureUnits(units, deps)` 串行执行器，`deps` 注入 `upload` / `triggerProcessing` / `onUpdate`；失败只标记该条，不中断循环。
 - `upload.ts`：真实网络实现与 `CaptureSubmitError`（带 `status`）；失败时 `console.warn` 打印 url / 文件 uri / 幂等键 / 真实原因，避免「网络连接中断」掩盖真实错误（开发模式下并在文案后附「诊断：…」）。
-- `components/`：`CaptureScreen`（栏目主体）、`CaptureForm`、`EntryRow`、`AlbumChoiceSheet`、`ProjectSheet`、`PermissionNotice`、`SubmitStatus`。
+- `components/`：`CaptureScreen`（页面状态机主体）、`CaptureHeader`、`CaptureForm`、`EntryRow`、`AlbumChoiceSheet`、`ProjectSheet`、`PermissionPage`、`SubmitOverlay`。
 
-条目状态：`pending → uploading → saved | failed`，另记 `processError` 表示「已保存但处理未启动」。汇总口径：`saved` 计入已提交，`failed` 计入未成功；全部成功 / 部分失败 / 全部失败由这两个计数派生，结果区在采集栏目内自包含展示，不依赖列表。
+条目状态：`pending → uploading → saved | failed`，另记 `processError` 表示「已保存但处理未启动」。汇总口径：`saved` 计入已提交，`failed` 计入未成功；全部成功 / 部分失败 / 全部失败由这两个计数派生，在提交覆盖层内自包含展示，不依赖列表。
 
 ## 5. 权限与「去设置」
 
-- 入口被点击时先 `get*PermissionsAsync`，未授权再 `request*PermissionsAsync`；返回非 `granted` 就渲染 `PermissionNotice`（用途说明 + 「系统不会再重复弹出授权」+「去设置」按钮，跳 `Linking.openSettings()`）。
+- 入口被点击时先 `get*PermissionsAsync`，未授权再 `request*PermissionsAsync`；返回非 `granted` 就切到独立权限页 `PermissionPage`（用途说明 + 「系统不会再重复弹出授权」+「去设置」按钮，跳 `Linking.openSettings()`），页内返回回入口页。
 - 权限被拒后不再次自动申请，避免反复弹窗；用户从设置返回后重新点击入口会重新检查权限状态。
 
 ## 6. 测试策略
