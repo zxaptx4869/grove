@@ -9,7 +9,15 @@
     "plugins": [
       "expo-router",
       "expo-secure-store",
-      "expo-status-bar"
+      "expo-status-bar",
+      [
+        "expo-image-picker",
+        {
+          "photosPermission": "知林 Grove 需要访问相册，把你选中的照片作为采集材料上传。",
+          "cameraPermission": "知林 Grove 需要使用相机，把拍下的照片作为采集材料上传。",
+          "microphonePermission": false
+        }
+      ]
     ],
     "experiments": {
       "typedRoutes": true

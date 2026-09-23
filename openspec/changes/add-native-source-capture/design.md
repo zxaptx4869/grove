@@ -7,6 +7,7 @@
 - `resize` 只传 `width` 会按比例换算高度，因此必须按朝向决定传哪一边：`width >= height` 时传 `width: 2048`，否则传 `height: 2048`，保证「长边 2048」而不是把竖图放大到 8192。
 - 长边不超过 2048 时不调用 `resize`，只做 jpg 转码（HEIC 也必须转码，否则会被后端 400 拒绝）。
 - 系统选择器偶尔给出 0 宽高（无法判断长边）：此时跳过 `resize`，只做 jpg 转码与 quality 0.8 压缩，宁可少缩一次也不按错误方向放大。
+- `app.json` 为 `expo-image-picker` 注册插件并给出中文权限文案（`photosPermission` / `cameraPermission`），同时把 `microphonePermission` 设为 `false`：采集只拍照片、不录音，避免构建时写入用不到的麦克风权限与系统提示。
 - 上传文件名用 `grove-<时间戳>-<序号>.jpg`、MIME 固定 `image/jpeg`：原始文件名（相册/相机的 IMG_xxxx、HEIC 后缀）不适合作为来源标题，也不适合作为 multipart 文件名。
 
 ## 2. 上传通道与超时
