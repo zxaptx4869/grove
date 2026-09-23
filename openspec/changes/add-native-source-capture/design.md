@@ -2,10 +2,11 @@
 
 ## 1. 依赖与图片处理 API 形态
 
-- 依赖用 `npx expo install expo-image-picker expo-image-manipulator` 安装，得到与 SDK 57 匹配的 `~57.0.19`，不手写版本号。
+- 依赖用 `npx expo install expo-image-picker expo-image-manipulator` 安装，得到与 SDK 57 匹配的 `~57.0.19`，不手写版本号。文本入口的「从剪贴板填入」另需 `expo-clipboard`（`~57.0.2`，同样用 `npx expo install`），因为 React Native 核心已不再提供剪贴板读取，而规划与原型都要求该入口；这是本 change 相对提示词依赖清单的唯一追加。
 - 图片处理选用 `expo-image-manipulator` 的**新版 context API**：`ImageManipulator.manipulate(uri).resize(...).renderAsync()` 得到 `ImageRef`，再 `saveAsync({ compress: 0.8, format: SaveFormat.JPEG })` 得到结果文件。旧版 `manipulateAsync` 在本版本已标记 `@deprecated` 并被官方指向新 API，新代码不引入废弃入口；`useImageManipulator` 是 Hook 形态，采集是一次性异步动作，不需要组件内复用，故不用。
 - `resize` 只传 `width` 会按比例换算高度，因此必须按朝向决定传哪一边：`width >= height` 时传 `width: 2048`，否则传 `height: 2048`，保证「长边 2048」而不是把竖图放大到 8192。
 - 长边不超过 2048 时不调用 `resize`，只做 jpg 转码（HEIC 也必须转码，否则会被后端 400 拒绝）。
+- 系统选择器偶尔给出 0 宽高（无法判断长边）：此时跳过 `resize`，只做 jpg 转码与 quality 0.8 压缩，宁可少缩一次也不按错误方向放大。
 - 上传文件名用 `grove-<时间戳>-<序号>.jpg`、MIME 固定 `image/jpeg`：原始文件名（相册/相机的 IMG_xxxx、HEIC 后缀）不适合作为来源标题，也不适合作为 multipart 文件名。
 
 ## 2. 上传通道与超时
@@ -30,8 +31,8 @@
 
 - `image.ts`：`prepareImage(asset)`（朝向判断 + 压缩 + jpg 转码，返回 `{ uri, name, type, width, height }`）。
 - `picker.ts`：权限检查/申请（`requestCameraPermissionsAsync` / `requestMediaLibraryPermissionsAsync`）、`launchCameraAsync`、`launchImageLibraryAsync({ allowsMultipleSelection: true, selectionLimit: 5 })`、`openAppSettings()`（`Linking.openSettings()`）。
-- `batch.ts`：纯函数 `buildCaptureKey`、`createBatchItems`（按提交形态与张数派生条目）、`summarizeCapture`、`summaryText`、`progressText`；不含 React 与网络，便于单测。
-- `submit.ts`：`submitCaptureItems(items, deps)` 串行执行器，`deps` 注入 `uploadFile` / `triggerProcessing` / `onItemUpdate`，返回更新后的条目；失败只标记该条，不中断循环。
+- `batch.ts`：纯函数 `buildCaptureKey`、`createCaptureSubmitUnits`（按提交形态与张数派生提交单元）、`createCaptureResults`、`summarizeCapture`、`summaryText`、`progressText`；不含 React 与网络，便于单测。
+- `submit.ts`：`submitCaptureUnits(units, deps)` 串行执行器，`deps` 注入 `upload` / `triggerProcessing` / `onUpdate`；失败只标记该条，不中断循环。
 - `upload.ts`：真实网络实现与 `CaptureSubmitError`（带 `status`）。
 - `components/`：`CaptureScreen`（栏目主体）、`CaptureForm`、`EntryRow`、`AlbumChoiceSheet`、`ProjectSheet`、`PermissionNotice`、`SubmitStatus`。
 
@@ -52,5 +53,5 @@
 
 ## 7. 与后端合同的其它约定
 
-- 每条来源创建成功后立即 `POST /api/sources/{id}/process`。该端点对处理中或已完成来源返回 409 且不改状态，对等待处理来源保持等待处理，因此重复触发不会破坏状态或产生重复执行；移动端只需把失败呈现为「来源已保存，但处理启动失败」，不额外判断状态。
+- 每条来源创建成功后立即 `POST /api/sources/{id}/process`。该端点对处理中或已完成来源返回 409 且不改状态，对等待处理来源保持等待处理，因此重复触发不会破坏状态或产生重复执行。移动端把 **409 视为正常**（来源已在处理或已完成，幂等重试命中旧来源时会出现），不提示处理启动失败；只有其它失败才呈现为「来源已保存，但处理启动失败」并允许重试处理。
 - 后端 400 文案（最多 5 张 / 单张 10MB / 仅 png/jpg/webp）原样展示，客户端不预判、不改写；张数上限由系统选择器与表单共同约束。
