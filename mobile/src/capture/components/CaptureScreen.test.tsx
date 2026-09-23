@@ -23,6 +23,7 @@ jest.mock("@/src/api", () => ({
 }));
 
 jest.mock("expo-crypto", () => ({ randomUUID: () => "batch-uuid" }));
+jest.mock("expo-clipboard", () => ({ getStringAsync: jest.fn(async () => "剪贴板里的文字") }));
 
 jest.mock("expo-file-system", () => ({
   // 运行时的 File 是原生类，不是 Blob 实例，只实现 Blob 接口（含 bytes()）
@@ -37,7 +38,6 @@ jest.mock("expo-file-system", () => ({
     }
   },
 }));
-jest.mock("expo-clipboard", () => ({ getStringAsync: jest.fn(async () => "剪贴板里的文字") }));
 
 jest.mock("expo-image-picker", () => ({
   getCameraPermissionsAsync: jest.fn(),
@@ -82,6 +82,18 @@ function asset(uri: string) {
   return { uri, width: 4000, height: 3000, fileName: null, fileSize: 10 } as unknown as ImagePicker.ImagePickerAsset;
 }
 
+/** 从入口页进入相册「每张一条」采集页并选中 3 张图。 */
+async function openAlbumSeparate(screen: Awaited<ReturnType<typeof renderScreen>>) {
+  picker.getMediaLibraryPermissionsAsync.mockResolvedValue({ granted: true } as never);
+  picker.launchImageLibraryAsync.mockResolvedValue({
+    canceled: false,
+    assets: [asset("file://1.heic"), asset("file://2.heic"), asset("file://3.heic")],
+  } as never);
+  await fireEvent.press(screen.getByLabelText("相册采集"));
+  await fireEvent.press(await screen.findByLabelText(/每张一条/));
+  await waitFor(() => expect(screen.getByText(/这 3 张将分别作为 3 条材料提交/)).toBeTruthy());
+}
+
 let restoreFormData: () => void;
 
 beforeEach(() => {
@@ -97,7 +109,75 @@ afterEach(() => {
   globalThis.fetch = originalFetch;
 });
 
-test("相机权限被拒时给出用途说明与「去设置」", async () => {
+test("入口页只有三入口，不渲染表单与提交条", async () => {
+  const screen = await renderScreen();
+
+  expect(screen.getByLabelText("相机采集")).toBeTruthy();
+  expect(screen.getByLabelText("相册采集")).toBeTruthy();
+  expect(screen.getByLabelText("文本采集")).toBeTruthy();
+  expect(screen.queryByLabelText("补充说明")).toBeNull();
+  expect(screen.queryByLabelText("提交采集")).toBeNull();
+  expect(screen.queryByLabelText("提交状态")).toBeNull();
+});
+
+test("进入采集页后入口行消失，返回会丢弃草稿", async () => {
+  const screen = await renderScreen();
+
+  await fireEvent.press(screen.getByLabelText("文本采集"));
+  expect(screen.getByText("文字采集")).toBeTruthy();
+  expect(screen.queryByLabelText("相机采集")).toBeNull();
+
+  await fireEvent.press(await screen.findByLabelText("从剪贴板填入"));
+  await waitFor(() => expect(screen.getByDisplayValue("剪贴板里的文字")).toBeTruthy());
+
+  await fireEvent.press(screen.getByLabelText("返回收集列表"));
+  expect(screen.getByLabelText("相机采集")).toBeTruthy();
+  expect(screen.queryByLabelText("补充说明")).toBeNull();
+
+  // 重新进入是一次全新的空草稿：文字已清空，提交条按原型处于禁用态
+  await fireEvent.press(screen.getByLabelText("文本采集"));
+  expect(screen.queryByDisplayValue("剪贴板里的文字")).toBeNull();
+  expect(screen.getByText("先填入文字，再提交")).toBeTruthy();
+  expect(screen.getByLabelText("提交采集")).toBeDisabled();
+});
+
+test("提交后出现全屏提交覆盖层，关闭后回到入口页并清空表单", async () => {
+  globalThis.fetch = jest.fn(async () => ({
+    ok: true,
+    status: 201,
+    json: async () => ({ id: 21 }),
+  })) as unknown as typeof fetch;
+  const screen = await renderScreen();
+
+  await fireEvent.press(screen.getByLabelText("文本采集"));
+  await fireEvent.press(await screen.findByLabelText("从剪贴板填入"));
+  await waitFor(() => expect(screen.getByDisplayValue("剪贴板里的文字")).toBeTruthy());
+  await fireEvent.press(screen.getByLabelText("提交采集"));
+
+  await waitFor(() => expect(screen.getByLabelText("提交状态")).toBeTruthy());
+  expect(screen.getByText("提交材料")).toBeTruthy();
+  expect(screen.getByText("已提交 1 条")).toBeTruthy();
+
+  await fireEvent.press(screen.getByLabelText("回到收集"));
+  expect(screen.getByLabelText("相机采集")).toBeTruthy();
+  expect(screen.queryByLabelText("提交状态")).toBeNull();
+  expect(screen.queryByLabelText("补充说明")).toBeNull();
+  expect(screen.queryByText("已提交 1 条")).toBeNull();
+});
+
+test("提交进行中显示逐张进度，且不提供关闭入口", async () => {
+  globalThis.fetch = jest.fn(() => new Promise(() => {})) as unknown as typeof fetch;
+  const screen = await renderScreen();
+
+  await openAlbumSeparate(screen);
+  await fireEvent.press(screen.getByLabelText("提交采集"));
+
+  await waitFor(() => expect(screen.getByText("正在上传 3 张中的第 1 张…")).toBeTruthy());
+  expect(screen.getByLabelText("提交状态")).toBeTruthy();
+  expect(screen.queryByLabelText("回到收集")).toBeNull();
+});
+
+test("相机权限被拒时进入独立权限页，可去设置", async () => {
   picker.getCameraPermissionsAsync.mockResolvedValue({ granted: false } as never);
   picker.requestCameraPermissionsAsync.mockResolvedValue({ granted: false } as never);
   const openSettings = jest.spyOn(Linking, "openSettings").mockResolvedValue(undefined as never);
@@ -105,12 +185,17 @@ test("相机权限被拒时给出用途说明与「去设置」", async () => {
 
   await fireEvent.press(screen.getByLabelText("相机采集"));
 
-  await waitFor(() => expect(screen.getByText("无法使用相机")).toBeTruthy());
+  expect(screen.getByText("相机权限")).toBeTruthy();
+  expect(screen.getByText("无法使用相机")).toBeTruthy();
   expect(screen.getByText(/系统不会再重复弹出授权提示/)).toBeTruthy();
+  expect(screen.queryByLabelText("相机采集")).toBeNull();
   expect(picker.launchCameraAsync).not.toHaveBeenCalled();
 
   await fireEvent.press(screen.getByLabelText("去设置"));
   expect(openSettings).toHaveBeenCalledTimes(1);
+
+  await fireEvent.press(screen.getByLabelText("返回收集"));
+  expect(screen.getByLabelText("相机采集")).toBeTruthy();
 });
 
 test("相册权限被拒时给出说明且不打开选择器", async () => {
@@ -120,7 +205,7 @@ test("相册权限被拒时给出说明且不打开选择器", async () => {
 
   await fireEvent.press(screen.getByLabelText("相册采集"));
 
-  await waitFor(() => expect(screen.getByText("无法访问相册")).toBeTruthy());
+  expect(screen.getByText("无法访问相册")).toBeTruthy();
   expect(picker.launchImageLibraryAsync).not.toHaveBeenCalled();
 });
 
@@ -143,12 +228,7 @@ test("文本采集从剪贴板填入并携带幂等键提交", async () => {
   expect(mockRequest).toHaveBeenCalledWith("/api/sources/21/process", { method: "POST" }, "token");
 });
 
-test("相册每张一条部分失败时汇总并只提示失败项", async () => {
-  picker.getMediaLibraryPermissionsAsync.mockResolvedValue({ granted: true } as never);
-  picker.launchImageLibraryAsync.mockResolvedValue({
-    canceled: false,
-    assets: [asset("file://1.heic"), asset("file://2.heic"), asset("file://3.heic")],
-  } as never);
+test("相册每张一条部分失败时在覆盖层汇总并只提示失败项", async () => {
   const keys: string[] = [];
   globalThis.fetch = jest.fn(async (_url: string, init: RequestInit) => {
     const posted = init.body as FormData;
@@ -160,12 +240,11 @@ test("相册每张一条部分失败时汇总并只提示失败项", async () =>
   }) as unknown as typeof fetch;
   const screen = await renderScreen();
 
-  await fireEvent.press(screen.getByLabelText("相册采集"));
-  await fireEvent.press(await screen.findByLabelText(/每张一条/));
-  await waitFor(() => expect(screen.getByText(/这 3 张将分别作为 3 条材料提交/)).toBeTruthy());
+  await openAlbumSeparate(screen);
   await fireEvent.press(screen.getByLabelText("提交采集"));
 
   await waitFor(() => expect(screen.getByText("已提交 2 条，1 条未成功")).toBeTruthy());
+  expect(screen.getByText("提交未成功")).toBeTruthy();
   expect(keys).toEqual(["batch-uuid:1", "batch-uuid:2", "batch-uuid:3"]);
   expect(screen.getByText("仅支持 png、jpg、webp 图片")).toBeTruthy();
   expect(screen.getByLabelText("重试这一条")).toBeTruthy();

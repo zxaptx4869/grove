@@ -13,7 +13,9 @@ export type CaptureIconName =
   | "info"
   | "alert"
   | "check"
-  | "clipboard";
+  | "clipboard"
+  | "back"
+  | "lock";
 
 const PATHS: Record<CaptureIconName, string[]> = {
   camera: [
@@ -41,6 +43,8 @@ const PATHS: Record<CaptureIconName, string[]> = {
     "M8 5.5H6.5v15h11v-15H16",
     "M9.5 12h5M9.5 15.5h3",
   ],
+  back: ["m14.5 6-6 6 6 6"],
+  lock: ["M4.5 10.5h15v10h-15z", "M8 10.5V8a4 4 0 0 1 8 0v2.5"],
 };
 
 export function CaptureIcon({

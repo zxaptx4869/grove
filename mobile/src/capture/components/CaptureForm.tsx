@@ -6,7 +6,6 @@ import type { CaptureKind } from "@/src/capture/batch";
 import { CaptureIcon } from "@/src/capture/components/CaptureIcon";
 import type { PickedImage } from "@/src/capture/image";
 import { AgentIcon } from "@/src/knowledge-agent/components/AgentIcon";
-import { AppButton } from "@/src/knowledge-agent/components/ui";
 import { theme } from "@/src/theme";
 
 export type CaptureDraft = {
@@ -21,29 +20,23 @@ export type CaptureDraft = {
 export function CaptureForm({
   draft,
   projectName,
-  editable,
   error,
-  showSubmit,
   onChangeText,
   onChangeNote,
   onRemoveImage,
   onRetake,
   onOpenProject,
   onFillFromClipboard,
-  onSubmit,
 }: {
   draft: CaptureDraft;
   projectName: string;
-  editable: boolean;
   error: string;
-  showSubmit: boolean;
   onChangeText: (value: string) => void;
   onChangeNote: (value: string) => void;
   onRemoveImage: (index: number) => void;
   onRetake: () => void;
   onOpenProject: () => void;
   onFillFromClipboard: () => void;
-  onSubmit: () => void;
 }) {
   const isText = draft.kind === "text";
   return (
@@ -56,7 +49,6 @@ export function CaptureForm({
           </View>
           <TextInput
             accessibilityLabel="要收集的文字"
-            editable={editable}
             multiline
             value={draft.text}
             onChangeText={onChangeText}
@@ -67,7 +59,6 @@ export function CaptureForm({
           <Pressable
             accessibilityRole="button"
             accessibilityLabel="从剪贴板填入"
-            disabled={!editable}
             onPress={onFillFromClipboard}
             style={({ pressed }) => [styles.miniButton, pressed && styles.pressed]}
           >
@@ -89,7 +80,6 @@ export function CaptureForm({
                   <Pressable
                     accessibilityRole="button"
                     accessibilityLabel={`移除第 ${index + 1} 张图片`}
-                    disabled={!editable}
                     onPress={() => onRemoveImage(index)}
                     style={styles.thumbAction}
                   >
@@ -104,7 +94,6 @@ export function CaptureForm({
               <Pressable
                 accessibilityRole="button"
                 accessibilityLabel="重拍"
-                disabled={!editable}
                 onPress={onRetake}
                 style={({ pressed }) => [styles.miniButton, pressed && styles.pressed]}
               >
@@ -143,7 +132,6 @@ export function CaptureForm({
         </View>
         <TextInput
           accessibilityLabel="补充说明"
-          editable={editable}
           multiline
           value={draft.note}
           onChangeText={onChangeNote}
@@ -158,7 +146,6 @@ export function CaptureForm({
         <Pressable
           accessibilityRole="button"
           accessibilityLabel={`所属项目：${projectName}`}
-          disabled={!editable}
           onPress={onOpenProject}
           style={({ pressed }) => [styles.projectRow, pressed && styles.pressed]}
         >
@@ -179,19 +166,12 @@ export function CaptureForm({
           <Text style={styles.errorSource}>材料没有保存到 Grove，已填写的内容仍在表单里。</Text>
         </View>
       ) : null}
-
-      {showSubmit ? (
-        <View style={styles.footer}>
-          <AppButton label="提交采集" variant="primary" block onPress={onSubmit} />
-          <Text style={styles.footerHint}>弱网重试不会重复生成来源；处理在提交后自动启动。</Text>
-        </View>
-      ) : null}
     </View>
   );
 }
 
 const styles = StyleSheet.create({
-  form: { marginTop: 18, gap: 16 },
+  form: { gap: 16 },
   section: { gap: 7 },
   labelRow: { flexDirection: "row", alignItems: "center", justifyContent: "space-between" },
   label: { fontSize: 12.5, fontWeight: "700", color: theme.ink },
@@ -277,7 +257,5 @@ const styles = StyleSheet.create({
   errorTitle: { fontSize: 12.5, fontWeight: "700", color: theme.error },
   errorBody: { fontSize: 12, lineHeight: 19, color: "#7D2C2C" },
   errorSource: { fontSize: 10.5, lineHeight: 16, color: "#8A4A4A" },
-  footer: { gap: 7 },
-  footerHint: { fontSize: 10.5, lineHeight: 16, textAlign: "center", color: theme.muted },
   pressed: { opacity: 0.85 },
 });
