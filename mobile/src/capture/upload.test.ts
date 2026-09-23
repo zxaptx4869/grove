@@ -1,7 +1,22 @@
 import type { CaptureSubmitUnit } from "@/src/capture/batch";
+import { installExpoFetchFormData } from "@/src/capture/testing/expo-fetch-formdata";
 import { CaptureSubmitError, triggerSourceProcessing, uploadSource } from "@/src/capture/upload";
 
 const mockRequest = jest.fn(async (..._args: unknown[]) => ({ id: 1 }));
+
+jest.mock("expo-file-system", () => ({
+  // 运行时的 File 是原生类，不是 Blob 实例，只实现 Blob 接口（含 bytes()）
+  File: class MockFile {
+    uri: string;
+    type = "image/jpeg";
+    constructor(uri: string) {
+      this.uri = uri;
+    }
+    async bytes() {
+      return new Uint8Array();
+    }
+  },
+}));
 
 jest.mock("@/src/api", () => ({
   apiBaseUrl: "http://api.test",
@@ -17,8 +32,15 @@ const UNIT: CaptureSubmitUnit = {
 
 const originalFetch = globalThis.fetch;
 
+let restoreFormData: () => void;
+
+beforeEach(() => {
+  restoreFormData = installExpoFetchFormData();
+});
+
 afterEach(() => {
   globalThis.fetch = originalFetch;
+  restoreFormData();
   mockRequest.mockReset();
   mockRequest.mockResolvedValue({ id: 1 });
 });
@@ -48,7 +70,11 @@ test("multipart 携带文件与幂等键，且不手动设置 Content-Type", asy
   expect(form.get("title")).toBe("图片 2026-09-23 15:20");
   expect(form.get("note")).toBe("现场记录");
   expect(form.get("project_id")).toBe("12");
-  expect(form.getAll("files")).toHaveLength(1);
+  const parts = form.getAll("files") as unknown as { uri: string; bytes?: unknown }[];
+  expect(parts).toHaveLength(1);
+  expect(parts[0]?.uri).toBe("file://a.jpg");
+  // 必须是带 bytes() 的部件：RN 的 { uri, name, type } 会被 Expo fetch 拒绝
+  expect(typeof parts[0]?.bytes).toBe("function");
   expect(form.get("text")).toBeNull();
 });
 

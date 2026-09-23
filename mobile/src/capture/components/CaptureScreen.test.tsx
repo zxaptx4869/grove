@@ -6,6 +6,7 @@ import { Linking } from "react-native";
 import { SafeAreaProvider } from "react-native-safe-area-context";
 
 import { CaptureScreen } from "@/src/capture/components/CaptureScreen";
+import { installExpoFetchFormData } from "@/src/capture/testing/expo-fetch-formdata";
 
 const mockGetProjects = jest.fn(async () => []);
 const mockRequest = jest.fn(async (..._args: unknown[]) => ({ id: 1 }));
@@ -22,6 +23,20 @@ jest.mock("@/src/api", () => ({
 }));
 
 jest.mock("expo-crypto", () => ({ randomUUID: () => "batch-uuid" }));
+
+jest.mock("expo-file-system", () => ({
+  // 运行时的 File 是原生类，不是 Blob 实例，只实现 Blob 接口（含 bytes()）
+  File: class MockFile {
+    uri: string;
+    type = "image/jpeg";
+    constructor(uri: string) {
+      this.uri = uri;
+    }
+    async bytes() {
+      return new Uint8Array();
+    }
+  },
+}));
 jest.mock("expo-clipboard", () => ({ getStringAsync: jest.fn(async () => "剪贴板里的文字") }));
 
 jest.mock("expo-image-picker", () => ({
@@ -67,7 +82,10 @@ function asset(uri: string) {
   return { uri, width: 4000, height: 3000, fileName: null, fileSize: 10 } as unknown as ImagePicker.ImagePickerAsset;
 }
 
+let restoreFormData: () => void;
+
 beforeEach(() => {
+  restoreFormData = installExpoFetchFormData();
   jest.clearAllMocks();
   mockGetProjects.mockResolvedValue([]);
   mockRequest.mockResolvedValue({ id: 1 });
@@ -75,6 +93,7 @@ beforeEach(() => {
 
 afterEach(() => {
   cleanup();
+  restoreFormData();
   globalThis.fetch = originalFetch;
 });
 

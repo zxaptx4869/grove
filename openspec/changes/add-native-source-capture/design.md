@@ -13,7 +13,8 @@
 ## 2. 上传通道与超时
 
 - 新增 `mobile/src/capture/upload.ts`，不复用 `mobile/src/api.ts` 的 `request()`（写死 `Content-Type: application/json` 且 12 秒超时，无法传 FormData）。
-- 请求形态：`POST ${EXPO_PUBLIC_API_BASE_URL}/api/sources`，`FormData` 追加 `files`（React Native 的 `{ uri, name, type }` 对象）、`capture_key`，有值时再追加 `text` / `title` / `project_id` / `note`；`Authorization: Bearer <token>` 照常。**不设置 `Content-Type`**，交给平台生成 multipart boundary。
+- 请求形态：`POST ${EXPO_PUBLIC_API_BASE_URL}/api/sources`，`FormData` 追加 `files`、`capture_key`，有值时再追加 `text` / `title` / `project_id` / `note`；`Authorization: Bearer <token>` 照常。**不设置 `Content-Type`**，boundary 由 fetch 自己生成（`expo/fetch` 的 `RequestUtils` 会写入 `multipart/form-data; boundary=...`）。
+- **文件部件形态（相对提示词的有意偏离）**：SDK 57 起 Expo 用 `expo/fetch` 接管全局 `fetch`，它自己把 FormData 序列化成字节，只接受 string / `Blob` / 带 `bytes()` 的对象；提示词给的 RN 经典 `{ uri, name, type }` 部件会在发送前抛 `Error: Unsupported FormDataPart implementation`（真机 2026-09-23 验收复现，后端零日志）。因此文件改用 `expo-file-system` 的 `new File(uri)` 承载（原生类，实现 Blob 接口含 `bytes()`，文件名与 MIME 由它提供），字段名与后端合同不变。
 - 超时取 **90 秒**（`UPLOAD_TIMEOUT_MS = 90_000`）：客户端压缩后单张通常 0.3–1.5MB，1Mbps 上行约需 2–12 秒；即使压缩失效退到后端 10MB 上限，1Mbps 上行约需 80 秒，90 秒覆盖该最坏情况，同时远小于「用户以为卡死」的感知窗口。通用 JSON 请求的 12 秒对上传明显不足，故不复用。
 - 超时用 `AbortController` 实现；失败**不自动重试**：幂等键虽然让自动重试安全，但自动重发会让用户看不到失败、也无法控制流量，弱网下反复挂起反而更糟。失败后由用户点「重试」，沿用该条的 `capture_key`。
 - `200` 与 `201` 都表示成功（`201` 新建、`200` 命中已存在来源），响应体都是同一个 Source；解析时按 `response.ok` 判定，不区分状态码。
@@ -34,7 +35,7 @@
 - `picker.ts`：权限检查/申请（`requestCameraPermissionsAsync` / `requestMediaLibraryPermissionsAsync`）、`launchCameraAsync`、`launchImageLibraryAsync({ allowsMultipleSelection: true, selectionLimit: 5 })`、`openAppSettings()`（`Linking.openSettings()`）。
 - `batch.ts`：纯函数 `buildCaptureKey`、`createCaptureSubmitUnits`（按提交形态与张数派生提交单元）、`createCaptureResults`、`summarizeCapture`、`summaryText`、`progressText`；不含 React 与网络，便于单测。
 - `submit.ts`：`submitCaptureUnits(units, deps)` 串行执行器，`deps` 注入 `upload` / `triggerProcessing` / `onUpdate`；失败只标记该条，不中断循环。
-- `upload.ts`：真实网络实现与 `CaptureSubmitError`（带 `status`）。
+- `upload.ts`：真实网络实现与 `CaptureSubmitError`（带 `status`）；失败时 `console.warn` 打印 url / 文件 uri / 幂等键 / 真实原因，避免「网络连接中断」掩盖真实错误（开发模式下并在文案后附「诊断：…」）。
 - `components/`：`CaptureScreen`（栏目主体）、`CaptureForm`、`EntryRow`、`AlbumChoiceSheet`、`ProjectSheet`、`PermissionNotice`、`SubmitStatus`。
 
 条目状态：`pending → uploading → saved | failed`，另记 `processError` 表示「已保存但处理未启动」。汇总口径：`saved` 计入已提交，`failed` 计入未成功；全部成功 / 部分失败 / 全部失败由这两个计数派生，结果区在采集栏目内自包含展示，不依赖列表。
@@ -48,7 +49,7 @@
 
 - 纯逻辑（`batch.ts`）直接单测：键派生（重试复用、新一轮换键）、部分失败汇总与文案、进度文案。
 - `submit.ts` 用注入的假上传器单测：串行顺序、部分失败继续、只重试失败项。
-- `upload.ts` 用 `global.fetch` mock 单测：multipart 字段（含 `capture_key`、不设置 `Content-Type`）、超时中止、`detail` 原文透传、200/201 都算成功。
+- `upload.ts` 用 `global.fetch` mock 单测：multipart 字段（含 `capture_key`、不设置 `Content-Type`）、超时中止、`detail` 原文透传、200/201 都算成功。FormData 用 `src/capture/testing/expo-fetch-formdata.ts` 替身，按 Expo 的契约只接受 string 与带 `bytes()` 的部件，因此「退回 `{ uri, name, type }`」会被测试直接拦下（jest 里 Node 自带的 undici FormData 与运行时契约不同，不能用真身）。
 - `picker.ts` / `image.ts` / 组件测试用 `jest.mock` 替换 `expo-image-picker`、`expo-image-manipulator`、`expo-linking`，不依赖真机或模拟器；权限被拒场景断言提示文案与「去设置」动作。
 - 模拟器与真机走查由用户执行，AI 不安装、不启动、不操作设备。
 

@@ -66,11 +66,15 @@
 
 ### Requirement: 上传通道与超时
 
-系统 MUST 使用独立的 multipart 上传通道提交采集，MUST NOT 复用固定 JSON 头与 12 秒超时的通用请求函数。上传请求 MUST 通过 FormData 传 `files`（`{ uri, name, type }` 形式）、`capture_key`，并在有值时传 `text`、`title`、`project_id`、`note`；MUST NOT 手动设置 `Content-Type`。单次上传超时 MUST 明显长于通用请求超时（取 90 秒）且失败时给出可重试的提示，MUST NOT 静默重试。
+系统 MUST 使用独立的 multipart 上传通道提交采集，MUST NOT 复用固定 JSON 头与 12 秒超时的通用请求函数。上传请求 MUST 通过 FormData 传 `files`（本地文件以 Expo fetch 支持的 `Blob`／带 `bytes()` 的对象形式承载，MUST NOT 使用 RN 经典的 `{ uri, name, type }` 部件，该形态会被 Expo fetch 拒绝）、`capture_key`，并在有值时传 `text`、`title`、`project_id`、`note`；MUST NOT 手动设置 `Content-Type`，boundary MUST 交由 fetch 生成。单次上传超时 MUST 明显长于通用请求超时（取 90 秒）且失败时给出可重试的提示，MUST NOT 静默重试。
 
 #### Scenario: 请求形态
 - **WHEN** 用户提交一次图片采集
 - **THEN** 请求为 `POST /api/sources` 的 multipart，包含图片文件与 `capture_key` 字段，且未手动设置 `Content-Type`
+
+#### Scenario: 文件部件形态可用
+- **WHEN** 移动端把本地图片加入 FormData
+- **THEN** 文件以 `Blob`／带 `bytes()` 的对象承载，请求不会因部件形态被拒
 
 #### Scenario: 上传超时
 - **WHEN** 单次上传超过 90 秒仍未返回
