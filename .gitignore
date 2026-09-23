@@ -17,3 +17,4 @@ backend/.ruff_cache/
 .pytest_cache/
 frontend/.eslintcache
 docs/discussions/
+artifacts/
