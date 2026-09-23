@@ -387,3 +387,4 @@ def test_create_source_title_override_and_default(client: TestClient) -> None:
     assert overridden.json()["title"] == "厨房插座"
     assert blank.json()["title"] == "IMG_0002.png"
     assert defaulted.json()["title"] == "默认标题行"
+

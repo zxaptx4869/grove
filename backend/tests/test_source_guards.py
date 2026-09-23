@@ -11,6 +11,7 @@ from app.main import create_app
 from app.models import ProcessingTask, Source
 from app.models.processing import PROCESSING
 from app.processing import worker
+from app.services.attachment_storage import AttachmentStorage
 
 
 @pytest.fixture
@@ -248,3 +249,43 @@ async def test_delete_unprocessed_source_allowed(client: httpx.AsyncClient) -> N
     response = await client.delete(f"/api/sources/{source['id']}")
 
     assert response.status_code == 200
+
+
+PNG_BYTES = b"\x89PNG\r\n\x1a\nfake-png-bytes"
+
+
+@pytest.mark.asyncio
+async def test_capture_key_concurrent_conflict_falls_back_and_cleans_files(
+    client: httpx.AsyncClient, monkeypatch
+) -> None:
+    """并发同键：预检查未命中时由唯一索引兜底，回查并清理本次已落盘文件。"""
+    from app.api import sources as sources_api
+
+    await _register(client)
+    first = await client.post("/api/sources", data={"text": "先落地", "capture_key": "race:1"})
+    assert first.status_code == 201
+    storage = AttachmentStorage.from_settings()
+    before = len(list(storage.root.glob("*"))) if storage.root.exists() else 0
+
+    original = sources_api._find_source_by_capture_key
+    calls = {"count": 0}
+
+    async def _miss_first_check(db, workspace_id, capture_key):
+        """首次预检查返回未命中，模拟对手请求同时提交。"""
+        calls["count"] += 1
+        if calls["count"] == 1:
+            return None
+        return await original(db, workspace_id, capture_key)
+
+    monkeypatch.setattr(sources_api, "_find_source_by_capture_key", _miss_first_check)
+
+    response = await client.post(
+        "/api/sources",
+        files=[("files", ("a.png", PNG_BYTES, "image/png"))],
+        data={"capture_key": "race:1"},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["id"] == first.json()["id"]
+    assert calls["count"] == 2
+    assert len(list(storage.root.glob("*"))) == before

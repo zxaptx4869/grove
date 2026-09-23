@@ -351,6 +351,8 @@ async def create_source(
     capture_key: Annotated[str | None, Form()] = None,
 ) -> SourceOut:
     """采集图片或文字创建 Source；携带 capture_key 时在 Workspace 内幂等。"""
+    # 提前取出 Workspace id：冲突回滚会过期 ORM 属性，兜底分支不能再读 workspace.id
+    workspace_id = workspace.id
     files = files or []
     text = (text or "").strip() or None
     note = (note or "").strip() or None
@@ -371,7 +373,7 @@ async def create_source(
 
     if capture_key is not None:
         # 幂等命中必须先于落盘：命中时直接返回已存在来源，不写任何新文件
-        existing = await _find_source_by_capture_key(db, workspace.id, capture_key)
+        existing = await _find_source_by_capture_key(db, workspace_id, capture_key)
         if existing is not None:
             response.status_code = status.HTTP_200_OK
             return await _load_source_out(db, existing.id)
@@ -418,7 +420,7 @@ async def create_source(
         attachment_kwargs.append({"kind": "text", "position": len(files), "text_content": text})
 
     source = Source(
-        workspace_id=workspace.id,
+        workspace_id=workspace_id,
         project_id=project_id,
         capture_key=capture_key,
         title=title or default_title,
@@ -434,7 +436,7 @@ async def create_source(
         # 并发同键：唯一索引兜底，回滚后回查已存在记录，并清理本次已落盘的文件
         await db.rollback()
         existing = (
-            await _find_source_by_capture_key(db, workspace.id, capture_key)
+            await _find_source_by_capture_key(db, workspace_id, capture_key)
             if capture_key is not None
             else None
         )
