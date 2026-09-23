@@ -69,3 +69,58 @@ describe('SourceCapture 缩略图', () => {
     vi.unstubAllGlobals()
   })
 })
+
+describe('SourceCapture 采集幂等键', () => {
+  afterEach(() => {
+    vi.restoreAllMocks()
+    vi.unstubAllGlobals()
+  })
+
+  function stubCaptureApi(keys: string[]) {
+    let failFirst = true
+    vi.stubGlobal(
+      'fetch',
+      vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
+        const url = new URL(String(input), 'http://localhost')
+        if (url.pathname === '/api/sources' && init?.method === 'POST') {
+          keys.push(String((init.body as FormData).get('capture_key')))
+          if (failFirst) {
+            failFirst = false
+            return Promise.resolve({
+              ok: false,
+              status: 500,
+              json: async () => ({ detail: '网络错误' }),
+            })
+          }
+        }
+        return Promise.resolve({ ok: true, status: 200, json: async () => ({ id: 1 }) })
+      }),
+    )
+  }
+
+  it('失败重试复用同一个键，成功后的新采集使用新键', async () => {
+    URL.createObjectURL = vi.fn(() => 'blob:mock')
+    URL.revokeObjectURL = vi.fn()
+    const keys: string[] = []
+    stubCaptureApi(keys)
+    const { container } = renderCapture()
+    const input = container.querySelector('input[type="file"]') as HTMLInputElement
+
+    await userEvent.upload(input, [makeFile('a.png')])
+    await userEvent.click(screen.getByRole('button', { name: '采集并处理' }))
+    await waitFor(() => expect(screen.getByText('网络错误')).toBeInTheDocument())
+
+    await userEvent.click(screen.getByRole('button', { name: '采集并处理' }))
+    await waitFor(() => expect(keys).toHaveLength(2))
+
+    expect(keys[0]).toBeTruthy()
+    expect(keys[1]).toBe(keys[0])
+
+    // 成功后重新选择图片属于新的一次采集，必须换新键
+    await userEvent.upload(input, [makeFile('b.png')])
+    await userEvent.click(screen.getByRole('button', { name: '采集并处理' }))
+    await waitFor(() => expect(keys).toHaveLength(3))
+
+    expect(keys[2]).not.toBe(keys[1])
+  })
+})

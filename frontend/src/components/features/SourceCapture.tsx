@@ -75,6 +75,13 @@ export function SourceCapture({ projects, fixedProjectId, onCreated }: SourceCap
   const [pending, setPending] = useState(false)
   const [error, setError] = useState('')
   const fileInputRef = useRef<HTMLInputElement>(null)
+  // 采集幂等键：同一次采集动作的连续重试复用同一个键，成功后清空
+  const captureKeyRef = useRef<string | null>(null)
+
+  // 草稿输入变化代表一次全新采集，丢弃旧键，避免新内容被当成上一次的重试
+  useEffect(() => {
+    captureKeyRef.current = null
+  }, [files, text, note, projectId])
 
   useEffect(() => {
     function onWindowPaste(event: ClipboardEvent) {
@@ -99,6 +106,7 @@ export function SourceCapture({ projects, fixedProjectId, onCreated }: SourceCap
     setText('')
     setNote('')
     setError('')
+    captureKeyRef.current = null
   }
 
   function onPickFiles(event: ChangeEvent<HTMLInputElement>) {
@@ -122,6 +130,9 @@ export function SourceCapture({ projects, fixedProjectId, onCreated }: SourceCap
     if (text.trim()) form.append('text', text)
     if (projectId) form.append('project_id', projectId)
     if (note.trim()) form.append('note', note.trim())
+    // 弱网重试沿用同一键，服务端同键命中时返回已存在来源而不重复创建
+    captureKeyRef.current ??= crypto.randomUUID()
+    form.append('capture_key', captureKeyRef.current)
 
     setPending(true)
     setError('')
