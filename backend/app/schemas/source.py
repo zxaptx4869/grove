@@ -30,6 +30,8 @@ class SourceOut(BaseModel):
     created_at: datetime
     updated_at: datetime
     attachments: list[AttachmentOut] = []
+    failure_reason: str | None = None
+    retry_count: int = 0
     project_locked: bool = False
     evidence_entry_count: int = 0
     pending_candidate_count: int = 0

@@ -3,7 +3,7 @@
 from datetime import datetime
 from typing import TYPE_CHECKING
 
-from sqlalchemy import BigInteger, DateTime, ForeignKey, Integer, String, Text, func
+from sqlalchemy import BigInteger, DateTime, ForeignKey, Index, Integer, String, Text, func
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db.session import Base
@@ -22,6 +22,10 @@ class Source(Base):
     """原始材料：属于 Workspace，可未归属或归属一个 Project。"""
 
     __tablename__ = "sources"
+    # 采集幂等键在 Workspace 内唯一；空值不参与唯一性（SQLite 与 MySQL 都把 NULL 视为互不相等）。
+    __table_args__ = (
+        Index("uq_sources_workspace_capture_key", "workspace_id", "capture_key", unique=True),
+    )
 
     id: Mapped[int] = mapped_column(
         BigInteger().with_variant(Integer, "sqlite"), primary_key=True, autoincrement=True
@@ -34,6 +38,7 @@ class Source(Base):
         # 数据库层用 SET NULL 兜底，避免误删证据。
         BigInteger, ForeignKey("projects.id", ondelete="SET NULL"), index=True, nullable=True
     )
+    capture_key: Mapped[str | None] = mapped_column(String(128), nullable=True)
     title: Mapped[str] = mapped_column(String(255), nullable=False)
     note: Mapped[str | None] = mapped_column(Text, nullable=True)
     status: Mapped[str] = mapped_column(String(16), default="waiting", nullable=False)

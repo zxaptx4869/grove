@@ -4,9 +4,20 @@ import logging
 from pathlib import Path
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile, status
+from fastapi import (
+    APIRouter,
+    Depends,
+    File,
+    Form,
+    HTTPException,
+    Query,
+    Response,
+    UploadFile,
+    status,
+)
 from fastapi.responses import FileResponse
 from sqlalchemy import delete, func, select, update
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import selectinload
 
 from app.api.deps import DbSession, get_current_user, get_current_workspace
@@ -43,6 +54,7 @@ IMAGE_EXTENSIONS = {
 ALLOWED_SUFFIXES = {".png", ".jpg", ".jpeg", ".webp"}
 MAX_IMAGE_BYTES = 10 * 1024 * 1024
 MAX_IMAGES = 5
+MAX_CAPTURE_KEY_LENGTH = 128
 
 
 def _source_out(
@@ -52,6 +64,8 @@ def _source_out(
     evidence_entry_count: int = 0,
     pending_candidate_count: int = 0,
     candidate_count: int = 0,
+    failure_reason: str | None = None,
+    retry_count: int = 0,
 ) -> SourceOut:
     """把 ORM 对象组装为响应模型。"""
     return SourceOut(
@@ -68,6 +82,8 @@ def _source_out(
         evidence_entry_count=evidence_entry_count,
         pending_candidate_count=pending_candidate_count,
         candidate_count=candidate_count,
+        failure_reason=failure_reason,
+        retry_count=retry_count,
         attachments=[
             AttachmentOut(
                 id=item.id,
@@ -97,6 +113,22 @@ async def _get_owned_source(db: DbSession, workspace_id: int, source_id: int) ->
     return source
 
 
+async def _find_source_by_capture_key(
+    db: DbSession,
+    workspace_id: int,
+    capture_key: str,
+) -> Source | None:
+    """按 Workspace + 采集键查找已存在的 Source（幂等命中）。"""
+    return (
+        await db.execute(
+            select(Source).where(
+                Source.workspace_id == workspace_id,
+                Source.capture_key == capture_key,
+            )
+        )
+    ).scalar_one_or_none()
+
+
 async def _validate_project(db: DbSession, workspace_id: int, project_id: int) -> Project:
     """校验项目属于当前 Workspace，否则 404。"""
     project = await db.get(Project, project_id)
@@ -113,6 +145,7 @@ async def _load_source_out(db: DbSession, source_id: int) -> SourceOut:
         )
     ).scalar_one()
     locked, counts, pending, total = await _source_state_counts(db, [source.id])
+    failures, retries = await _source_failure_info(db, [source.id])
     return _source_out(
         source,
         list(source.attachments),
@@ -120,6 +153,8 @@ async def _load_source_out(db: DbSession, source_id: int) -> SourceOut:
         counts.get(source.id, 0),
         pending.get(source.id, 0),
         total.get(source.id, 0),
+        failure_reason=failures.get(source.id),
+        retry_count=retries.get(source.id, 0),
     )
 
 
@@ -176,6 +211,34 @@ async def _source_state_counts(
     return locked, counts, pending_counts, candidate_counts
 
 
+async def _source_failure_info(
+    db: DbSession,
+    source_ids: list[int],
+) -> tuple[dict[int, str | None], dict[int, int]]:
+    """批量读取处理任务的失败文案与重试次数，避免列表 N+1。
+
+    口径：仅当任务失败且记录了错误时给出文案，其它状态为 None，避免把历史错误
+    当成当前问题展示；无任务时重试次数为 0。
+    """
+    failures: dict[int, str | None] = {}
+    retries: dict[int, int] = {}
+    if source_ids:
+        rows = (
+            await db.execute(
+                select(
+                    ProcessingTask.source_id,
+                    ProcessingTask.status,
+                    ProcessingTask.error,
+                    ProcessingTask.retry_count,
+                ).where(ProcessingTask.source_id.in_(source_ids))
+            )
+        ).all()
+        for source_id, task_status, error, retry_count in rows:
+            failures[source_id] = error if task_status == FAILED and error else None
+            retries[source_id] = retry_count or 0
+    return failures, retries
+
+
 @router.get("", response_model=list[SourceOut])
 async def list_sources(
     db: DbSession,
@@ -200,9 +263,9 @@ async def list_sources(
     if limit is not None:
         ordered = ordered.limit(limit)
     sources = (await db.execute(ordered)).scalars().unique().all()
-    locked, counts, pending, candidate_total = await _source_state_counts(
-        db, [source.id for source in sources]
-    )
+    source_ids = [source.id for source in sources]
+    locked, counts, pending, candidate_total = await _source_state_counts(db, source_ids)
+    failures, retries = await _source_failure_info(db, source_ids)
     return [
         _source_out(
             source,
@@ -211,6 +274,8 @@ async def list_sources(
             counts.get(source.id, 0),
             pending.get(source.id, 0),
             candidate_total.get(source.id, 0),
+            failure_reason=failures.get(source.id),
+            retry_count=retries.get(source.id, 0),
         )
         for source in sources
     ]
@@ -250,9 +315,9 @@ async def query_sources(
         .offset(offset)
     )
     sources = result.scalars().unique().all()
-    locked, counts, pending, candidate_total = await _source_state_counts(
-        db, [source.id for source in sources]
-    )
+    source_ids = [source.id for source in sources]
+    locked, counts, pending, candidate_total = await _source_state_counts(db, source_ids)
+    failures, retries = await _source_failure_info(db, source_ids)
     return SourcePageOut(
         items=[
             _source_out(
@@ -262,6 +327,8 @@ async def query_sources(
                 counts.get(source.id, 0),
                 pending.get(source.id, 0),
                 candidate_total.get(source.id, 0),
+                failure_reason=failures.get(source.id),
+                retry_count=retries.get(source.id, 0),
             )
             for source in sources
         ],
@@ -275,15 +342,25 @@ async def query_sources(
 async def create_source(
     db: DbSession,
     workspace: CurrentWorkspace,
+    response: Response,
     files: Annotated[list[UploadFile] | None, File()] = None,
     text: Annotated[str | None, Form()] = None,
     project_id: Annotated[int | None, Form()] = None,
     note: Annotated[str | None, Form()] = None,
+    title: Annotated[str | None, Form()] = None,
+    capture_key: Annotated[str | None, Form()] = None,
 ) -> SourceOut:
-    """采集图片或文字创建 Source。"""
+    """采集图片或文字创建 Source；携带 capture_key 时在 Workspace 内幂等。"""
     files = files or []
     text = (text or "").strip() or None
     note = (note or "").strip() or None
+    title = (title or "").strip()[:255] or None
+    capture_key = (capture_key or "").strip() or None
+    if capture_key is not None and len(capture_key) > MAX_CAPTURE_KEY_LENGTH:
+        raise HTTPException(
+            status_code=400,
+            detail=f"采集键不能超过 {MAX_CAPTURE_KEY_LENGTH} 个字符",
+        )
 
     if not files and not text:
         raise HTTPException(status_code=400, detail="请提供图片或文字")
@@ -292,13 +369,24 @@ async def create_source(
     if project_id is not None:
         await _validate_project(db, workspace.id, project_id)
 
+    if capture_key is not None:
+        # 幂等命中必须先于落盘：命中时直接返回已存在来源，不写任何新文件
+        existing = await _find_source_by_capture_key(db, workspace.id, capture_key)
+        if existing is not None:
+            response.status_code = status.HTTP_200_OK
+            return await _load_source_out(db, existing.id)
+
     storage = AttachmentStorage.from_settings()
     attachment_kwargs: list[dict] = []
     saved_paths: list[str] = []
-    title = "未命名文字"
+    # 标题默认值：图片取第一个文件名，文字取正文首行；客户端传入时优先
+    default_title = (
+        Path(files[0].filename or "图片").name[:255] or "未命名图片"
+        if files
+        else (_text_title(text or "")[:255] or "未命名文字")
+    )
 
     if files:
-        title = Path(files[0].filename or "图片").name[:255] or "未命名图片"
         for position, file in enumerate(files):
             data = await file.read()
             if len(data) > MAX_IMAGE_BYTES:
@@ -328,20 +416,34 @@ async def create_source(
             )
     if text:
         attachment_kwargs.append({"kind": "text", "position": len(files), "text_content": text})
-    if not files:
-        title = _text_title(text)[:255] or "未命名文字"
 
     source = Source(
         workspace_id=workspace.id,
         project_id=project_id,
-        title=title,
+        capture_key=capture_key,
+        title=title or default_title,
         note=note,
     )
     db.add(source)
-    await db.flush()
-    for kwargs in attachment_kwargs:
-        db.add(Attachment(source_id=source.id, **kwargs))
-    await db.commit()
+    try:
+        await db.flush()
+        for kwargs in attachment_kwargs:
+            db.add(Attachment(source_id=source.id, **kwargs))
+        await db.commit()
+    except IntegrityError:
+        # 并发同键：唯一索引兜底，回滚后回查已存在记录，并清理本次已落盘的文件
+        await db.rollback()
+        existing = (
+            await _find_source_by_capture_key(db, workspace.id, capture_key)
+            if capture_key is not None
+            else None
+        )
+        if existing is None:
+            raise
+        for path in saved_paths:
+            storage.delete(path)
+        response.status_code = status.HTTP_200_OK
+        return await _load_source_out(db, existing.id)
 
     return await _load_source_out(db, source.id)
 

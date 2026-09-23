@@ -5,6 +5,7 @@ import uuid
 from fastapi.testclient import TestClient
 
 from app.main import create_app
+from app.services.attachment_storage import AttachmentStorage
 
 PNG_BYTES = b"\x89PNG\r\n\x1a\nfake-png-bytes"
 
@@ -275,3 +276,114 @@ def test_create_source_with_images_and_text(client: TestClient) -> None:
     assert body["attachments"][1]["position"] == 1
     assert body["attachments"][1]["text_content"] == "这是截图对应的说明文字"
     assert body["title"] == "a.png"
+
+
+def test_capture_key_repeat_returns_existing_source(client: TestClient) -> None:
+    """同键重复提交只产生一条 Source，第二次返回 200 与已存在记录。"""
+    _register(client)
+
+    first = client.post("/api/sources", data={"text": "弱网重试", "capture_key": "batch-1:1"})
+    second = client.post("/api/sources", data={"text": "弱网重试", "capture_key": "batch-1:1"})
+
+    assert first.status_code == 201
+    assert second.status_code == 200
+    assert second.json()["id"] == first.json()["id"]
+    assert len(client.get("/api/sources").json()) == 1
+
+
+def test_capture_key_new_key_creates_second_source(client: TestClient) -> None:
+    """不同键即使内容相同也新建来源。"""
+    _register(client)
+
+    first = client.post("/api/sources", data={"text": "同一段文字", "capture_key": "batch-1:1"})
+    second = client.post("/api/sources", data={"text": "同一段文字", "capture_key": "batch-2:1"})
+
+    assert first.status_code == 201
+    assert second.status_code == 201
+    assert second.json()["id"] != first.json()["id"]
+    assert len(client.get("/api/sources").json()) == 2
+
+
+def test_capture_key_hit_skips_file_write(client: TestClient) -> None:
+    """同键图片重试命中时不重复落盘，附件不新增。"""
+    _register(client)
+    storage = AttachmentStorage.from_settings()
+    before = len(list(storage.root.glob("*"))) if storage.root.exists() else 0
+
+    first = client.post(
+        "/api/sources",
+        files=[("files", ("a.png", PNG_BYTES, "image/png"))],
+        data={"capture_key": "batch-1:1"},
+    )
+    second = client.post(
+        "/api/sources",
+        files=[("files", ("a.png", PNG_BYTES, "image/png"))],
+        data={"capture_key": "batch-1:1"},
+    )
+
+    assert first.status_code == 201
+    assert second.status_code == 200
+    assert second.json()["id"] == first.json()["id"]
+    assert len(second.json()["attachments"]) == 1
+    assert second.json()["attachments"][0]["id"] == first.json()["attachments"][0]["id"]
+    assert len(list(storage.root.glob("*"))) == before + 1
+
+
+def test_capture_key_without_key_keeps_current_behavior(client: TestClient) -> None:
+    """不带键时行为不变：两次相同提交仍各建一条。"""
+    _register(client)
+
+    first = client.post("/api/sources", data={"text": "重复内容"})
+    second = client.post("/api/sources", data={"text": "重复内容"})
+
+    assert first.status_code == 201
+    assert second.status_code == 201
+    assert len(client.get("/api/sources").json()) == 2
+
+
+def test_capture_key_too_long_rejected(client: TestClient) -> None:
+    """超过 128 个字符的采集键返回 400，不创建来源。"""
+    _register(client)
+
+    response = client.post("/api/sources", data={"text": "超长键", "capture_key": "k" * 129})
+
+    assert response.status_code == 400
+    assert client.get("/api/sources").json() == []
+
+
+def test_capture_key_isolated_between_workspaces() -> None:
+    """同一采集键在不同 Workspace 内互不命中。"""
+    client_a = _new_client()
+    client_b = _new_client()
+
+    with client_a, client_b:
+        _register(client_a)
+        _register(client_b)
+        first = client_a.post("/api/sources", data={"text": "A", "capture_key": "shared:1"})
+        second = client_b.post("/api/sources", data={"text": "B", "capture_key": "shared:1"})
+
+        assert first.status_code == 201
+        assert second.status_code == 201
+        assert second.json()["id"] != first.json()["id"]
+
+
+def test_create_source_title_override_and_default(client: TestClient) -> None:
+    """传入标题时生效，仅空白或未传时沿用默认规则。"""
+    _register(client)
+
+    overridden = client.post(
+        "/api/sources",
+        files=[("files", ("IMG_0001.png", PNG_BYTES, "image/png"))],
+        data={"title": "  厨房插座  "},
+    )
+    blank = client.post(
+        "/api/sources",
+        files=[("files", ("IMG_0002.png", PNG_BYTES, "image/png"))],
+        data={"title": "   "},
+    )
+    defaulted = client.post("/api/sources", data={"text": "默认标题行\n第二行"})
+
+    assert overridden.status_code == 201
+    assert overridden.json()["title"] == "厨房插座"
+    assert blank.json()["title"] == "IMG_0002.png"
+    assert defaulted.json()["title"] == "默认标题行"

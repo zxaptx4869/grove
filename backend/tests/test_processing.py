@@ -155,3 +155,94 @@ async def test_unavailable_provider_raises() -> None:
     source = Source(id=1, workspace_id=1, title="x", status=WAITING)
     with pytest.raises(NotImplementedError, match="尚未接入"):
         await UnavailableProcessingProvider().process(None, source)
+
+
+async def _set_task_failure(source_id: int, error: str, retry_count: int) -> None:
+    """把来源的任务标记为失败并写入错误与重试次数。"""
+    async with async_session_factory() as db:
+        task = (
+            await db.execute(
+                select(ProcessingTask).where(ProcessingTask.source_id == source_id)
+            )
+        ).scalar_one()
+        task.status = FAILED
+        task.step = "extract"
+        task.error = error
+        task.retry_count = retry_count
+        await db.commit()
+
+
+@pytest.mark.asyncio
+async def test_source_out_exposes_failure_when_failed(client: httpx.AsyncClient) -> None:
+    """任务失败时列表、历史查询与详情给出一致的失败文案与重试次数。"""
+    await _register(client)
+    source = await _create_text_source(client, "会失败的来源")
+    await client.post(f"/api/sources/{source['id']}/process")
+    await _set_task_failure(source["id"], "模型调用超时", 2)
+
+    detail = (await client.get(f"/api/sources/{source['id']}")).json()
+    listed = next(
+        item for item in (await client.get("/api/sources")).json() if item["id"] == source["id"]
+    )
+    queried = next(
+        item
+        for item in (await client.get("/api/sources/query")).json()["items"]
+        if item["id"] == source["id"]
+    )
+
+    for item in (detail, listed, queried):
+        assert item["failure_reason"] == "模型调用超时"
+        assert item["retry_count"] == 2
+
+
+@pytest.mark.asyncio
+async def test_source_out_failure_cleared_after_retrigger(client: httpx.AsyncClient) -> None:
+    """无任务、等待处理与重试后不得展示历史错误。"""
+    await _register(client)
+    no_task = await _create_text_source(client, "没有任务")
+    waiting = await _create_text_source(client, "等待处理")
+    await client.post(f"/api/sources/{waiting['id']}/process")
+    retried = await _create_text_source(client, "重试后恢复等待")
+    await client.post(f"/api/sources/{retried['id']}/process")
+    await _set_task_failure(retried["id"], "上一次失败", 1)
+    await client.post(f"/api/sources/{retried['id']}/process")
+
+    items = {item["id"]: item for item in (await client.get("/api/sources")).json()}
+
+    assert items[no_task["id"]]["failure_reason"] is None
+    assert items[no_task["id"]]["retry_count"] == 0
+    assert items[waiting["id"]]["failure_reason"] is None
+    assert items[retried["id"]]["failure_reason"] is None
+    # 重试把错误清空并让重试次数加一，字段给出任务当前值而不是历史错误
+    assert items[retried["id"]]["retry_count"] == 2
+
+
+@pytest.mark.asyncio
+async def test_source_list_task_info_query_count_bounded(client: httpx.AsyncClient) -> None:
+    """列表批量读取任务失败信息，查询次数不随来源条数增长。"""
+    import sqlalchemy as sa
+
+    from app.db.session import engine
+
+    await _register(client)
+    for index in range(5):
+        source = await _create_text_source(client, f"来源 {index}")
+        await client.post(f"/api/sources/{source['id']}/process")
+        await _set_task_failure(source["id"], f"错误 {index}", index)
+
+    counts: list[int] = []
+
+    def _count_task_query(conn, cursor, statement, parameters, context, executemany):
+        if "processing_tasks" in str(statement):
+            counts.append(1)
+
+    sa.event.listen(engine.sync_engine, "before_cursor_execute", _count_task_query)
+    try:
+        listed = (await client.get("/api/sources")).json()
+    finally:
+        sa.event.remove(engine.sync_engine, "before_cursor_execute", _count_task_query)
+
+    assert len(listed) == 5
+    assert all(item["failure_reason"] for item in listed)
+    # 批量读取：5 条来源只发起一次 processing_tasks 查询
+    assert len(counts) == 1
