@@ -12,6 +12,7 @@
 - 状态码实现：路由装饰器仍声明 `status_code=201`，命中路径通过注入 `Response` 参数改写为 200；响应体始终是同一个 `SourceOut`，客户端按 `response.ok` 判断成功即可（Web `createSource` 已如此）。
 - 并发同键：唯一索引兜底。`commit` 捕获 `IntegrityError` 后回滚、回查已存在记录并返回 200；本次调用已经通过 `storage.save()` 写入的文件路径全部 `storage.delete()` 清理，沿用文件校验失败分支现有的清理写法。回查仍取不到记录时按冲突报错（不应发生），避免静默吞并。
 - 命中返回时必须复用 `_load_source_out`，保证失败信息等字段与其它路径一致。
+- 兜底分支只使用提前缓存的局部变量（`workspace_id`）与 `capture_key`：`rollback()` 会过期 ORM 属性，回查时再读 `workspace.id` 会触发懒加载并抛 `MissingGreenlet`（由并发兜底用例捕获）。
 
 ## 3. 标题覆盖
 
