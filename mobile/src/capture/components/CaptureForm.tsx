@@ -176,7 +176,7 @@ export function CaptureForm({
         <View style={styles.errorCard} accessibilityRole="alert">
           <Text style={styles.errorTitle}>提交未成功</Text>
           <Text style={styles.errorBody}>{error}</Text>
-          <Text style={styles.errorSource}>以上是服务端返回的原文，未做改写；材料没有保存到 Grove。</Text>
+          <Text style={styles.errorSource}>材料没有保存到 Grove，已填写的内容仍在表单里。</Text>
         </View>
       ) : null}
 

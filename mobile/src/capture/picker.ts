@@ -44,7 +44,10 @@ export async function capturePhoto(): Promise<PickedAsset | null> {
   return asset ? { uri: asset.uri, width: asset.width, height: asset.height } : null;
 }
 
-/** 系统相册多选，最多 5 张，由系统选择器限制数量；取消返回空数组。 */
+/**
+ * 系统相册多选，最多 5 张：数量上限交给系统选择器（`selectionLimit`），
+ * 不在客户端静默截断；若系统仍返回超量资源，交给提交环节报出「一次最多上传 5 张图片」。
+ */
 export async function pickImages(limit = MAX_SELECTION): Promise<PickedAsset[]> {
   const result = await ImagePicker.launchImageLibraryAsync({
     mediaTypes: ["images"],
@@ -53,7 +56,9 @@ export async function pickImages(limit = MAX_SELECTION): Promise<PickedAsset[]> 
     quality: 1,
   });
   if (result.canceled) return [];
-  return result.assets
-    .slice(0, limit)
-    .map((asset) => ({ uri: asset.uri, width: asset.width, height: asset.height }));
+  return result.assets.map((asset) => ({
+    uri: asset.uri,
+    width: asset.width,
+    height: asset.height,
+  }));
 }

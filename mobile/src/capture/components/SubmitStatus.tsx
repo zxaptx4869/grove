@@ -75,6 +75,11 @@ export function SubmitStatus({
           ? "请保持 Grove 在前台。上传结束前不要重复提交，这一批材料不会重复生成。"
           : "可以到桌面工作台的收集箱核对处理进展。"}
       </Text>
+      {!session.running && summary.failed > 0 ? (
+        <Text style={styles.rowError}>
+          未成功的材料没有保存到 Grove：可按提示调整后逐条重试，已提交的条目不受影响。
+        </Text>
+      ) : null}
 
       {session.results.length > 1 || summary.failed > 0 ? (
         <View style={styles.list}>
