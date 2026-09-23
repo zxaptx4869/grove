@@ -3,15 +3,16 @@ export type Me = { user: { id: number; username: string }; workspace: { id: numb
 export type Project = { id: number; name: string; description: string | null; status: string };
 export type MobileAuth = { user: { id: number; username: string }; token: string };
 
-const baseUrl = process.env.EXPO_PUBLIC_API_BASE_URL?.replace(/\/$/, "");
-export const apiConfigured = Boolean(baseUrl);
+// 采集上传通道需要同一个地址，导出供 src/capture/upload.ts 复用
+export const apiBaseUrl = process.env.EXPO_PUBLIC_API_BASE_URL?.replace(/\/$/, "");
+export const apiConfigured = Boolean(apiBaseUrl);
 
 export async function request<T>(path: string, options: RequestInit = {}, token?: string): Promise<T> {
-  if (!baseUrl) throw new Error("未配置 EXPO_PUBLIC_API_BASE_URL，请在 .env 中填写后端地址。");
+  if (!apiBaseUrl) throw new Error("未配置 EXPO_PUBLIC_API_BASE_URL，请在 .env 中填写后端地址。");
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), 12_000);
   try {
-    const response = await fetch(`${baseUrl}${path}`, { ...options, signal: controller.signal, headers: { "Content-Type": "application/json", ...(token ? { Authorization: `Bearer ${token}` } : {}), ...options.headers } });
+    const response = await fetch(`${apiBaseUrl}${path}`, { ...options, signal: controller.signal, headers: { "Content-Type": "application/json", ...(token ? { Authorization: `Bearer ${token}` } : {}), ...options.headers } });
     if (!response.ok) { const error: ApiError = new Error((await response.json().catch(() => null))?.detail ?? "请求失败"); error.status = response.status; throw error; }
     return response.json() as Promise<T>;
   } finally { clearTimeout(timer); }
