@@ -70,7 +70,16 @@ export async function uploadSource(input: UploadSourceInput): Promise<UploadedSo
   }
 }
 
-/** 采集后逐条触发处理；端点自身幂等，重复触发不会破坏状态。 */
+/**
+ * 采集后逐条触发处理。
+ * 409 表示该来源正在处理或已处理完成，状态本身没有问题（幂等重试命中旧来源时会出现），
+ * 因此不算失败、不提示「处理启动失败」。
+ */
 export async function triggerSourceProcessing(token: string, sourceId: number): Promise<void> {
-  await request<{ id: number }>(`/api/sources/${sourceId}/process`, { method: "POST" }, token);
+  try {
+    await request<{ id: number }>(`/api/sources/${sourceId}/process`, { method: "POST" }, token);
+  } catch (error) {
+    if ((error as { status?: number } | null)?.status === 409) return;
+    throw error;
+  }
 }
