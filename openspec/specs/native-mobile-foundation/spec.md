@@ -22,7 +22,8 @@ TBD - created by archiving change add-native-mobile-foundation. Update Purpose a
 - **THEN** 底部导航隐藏，输入区保持在可见可操作区域，长内容仍可垂直滚动
 
 ### Requirement: 真实 Workspace 范围与项目数据
-移动对话首页 MUST 读取 `/api/me` 的真实 Workspace 与 `/api/projects` 的真实项目列表，并通过统一 `/api/knowledge-agent` 协议使用真实 Conversation、Message、Run 与 Evidence。用户可见知识范围 MUST 只有 Workspace 的“全部知识”和具体项目，不得暴露目录节点范围；收集、待处理和知识栏目在各自能力接入前 MUST 继续显示真实未接入状态，不得模拟业务记录。
+
+移动对话首页 MUST 读取 `/api/me` 的真实 Workspace 与 `/api/projects` 的真实项目列表，并通过统一 `/api/knowledge-agent` 协议使用真实 Conversation、Message、Run 与 Evidence。用户可见知识范围 MUST 只有 Workspace 的“全部知识”和具体项目，不得暴露目录节点范围；收集栏目 MUST 按 `native-source-capture` 提供真实采集入口，待处理与知识栏目在各自能力接入前 MUST 继续显示真实未接入状态，不得模拟业务记录。
 
 #### Scenario: 项目加载后切换草稿范围
 - **WHEN** 认证用户在新对话打开范围选择并选中一个项目或“全部知识”
@@ -37,8 +38,12 @@ TBD - created by archiving change add-native-mobile-foundation. Update Purpose a
 - **THEN** App 调用统一知识 Agent Conversation/Run API，不调用旧 Reader API、不使用模拟回答
 
 #### Scenario: 未接入业务栏目不伪造数据
-- **WHEN** 用户进入收集、待处理或知识栏目
+- **WHEN** 用户进入待处理或知识栏目
 - **THEN** 系统显示该能力尚未接入的真实状态与下一步说明，而不是静态业务记录
+
+#### Scenario: 收集栏目提供真实采集入口
+- **WHEN** 用户进入收集栏目
+- **THEN** 系统显示相机、相册与文本三个真实采集入口，不再显示未接入占位
 
 ### Requirement: 移动端地址与运行说明
 移动工程 MUST 通过 `EXPO_PUBLIC_API_BASE_URL` 获取 API 地址，禁止硬编码 localhost，并提供环境变量示例和开发说明，覆盖模拟器、局域网真机与后续 HTTPS 地址配置。
@@ -46,3 +51,4 @@ TBD - created by archiving change add-native-mobile-foundation. Update Purpose a
 #### Scenario: 缺少 API 地址时有明确反馈
 - **WHEN** 未配置有效的 `EXPO_PUBLIC_API_BASE_URL`
 - **THEN** 应用显示可理解的配置错误，且不尝试向硬编码 localhost 发起请求
+
