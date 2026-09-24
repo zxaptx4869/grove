@@ -5,6 +5,7 @@ import { SafeAreaView, useSafeAreaInsets } from "react-native-safe-area-context"
 
 import { CaptureIcon } from "@/src/capture/components/CaptureIcon";
 import {
+  prepareProgressText,
   progressText,
   summarizeCapture,
   summaryText,
@@ -24,10 +25,13 @@ export type CaptureSession = {
   units: CaptureSubmitUnit[];
   results: CaptureResult[];
   running: boolean;
+  /** 提交前的图片压缩进度；null 表示当前不在压缩阶段 */
+  preparing: { total: number; current: number } | null;
 };
 
 const STATUS_LABEL: Record<CaptureResult["status"], string> = {
   pending: "等待提交",
+  preparing: "正在压缩图片",
   uploading: "上传中",
   saved: "已提交",
   failed: "未成功",
@@ -61,9 +65,11 @@ export function SubmitOverlay({
   const finished = summary.saved + summary.failed;
   const unitByKey = new Map(session.units.map((unit) => [unit.key, unit]));
   const failed = summary.failed > 0;
-  const headline = session.running
-    ? progressText(session.kind, { total: session.units.length, current: finished + 1 })
-    : summaryText(summary);
+  const headline = session.preparing
+    ? prepareProgressText(session.preparing)
+    : session.running
+      ? progressText(session.kind, { total: session.units.length, current: finished + 1 })
+      : summaryText(summary);
   const title = failed && !session.running ? "提交未成功" : "提交材料";
   const materialText = session.kind === "text" ? "文字" : `${session.units.length} 张图片`;
   // 逐条列表在有多个提交单元、存在失败或存在「处理未启动」时都要出现
@@ -106,7 +112,9 @@ export function SubmitOverlay({
               <Text style={styles.headline}>{headline}</Text>
             </View>
             <Text style={styles.hint}>
-              {session.running
+              {session.preparing
+                ? "正在把原图压缩成 jpg，压缩完会自动开始上传，请保持 Grove 在前台。"
+                : session.running
                 ? "请保持 Grove 在前台。上传结束前不要重复提交，这一批材料不会重复生成。"
                 : failed
                   ? "未成功的材料没有保存到 Grove：可按提示调整后逐条重试，已提交的条目不受影响。"
@@ -171,7 +179,7 @@ export function SubmitOverlay({
         </ScrollView>
         {!session.running ? (
           <View style={[styles.footer, { paddingBottom: 9 + insets.bottom }]}>
-            <AppButton label="回到收集" variant="ghost" block onPress={onClose} />
+            <AppButton label="回到收集" block onPress={onClose} />
           </View>
         ) : null}
       </SafeAreaView>
