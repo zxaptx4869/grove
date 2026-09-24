@@ -25,10 +25,15 @@
 
 ## Impact
 
-`mobile/` 新增采集模块（入口、表单、上传通道、图片预处理、权限与结果态）与对应单测，`app/(tabs)/collect.tsx` 由占位替换为采集屏；`mobile/package.json` 新增两个 Expo 依赖。后端与 Web 不改动，不新增端点；来源列表、来源详情、改归属、删除与轮询留给后续 change `add-native-source-library`。
+`mobile/` 新增采集模块（入口、表单、上传通道、图片预处理、权限与结果态）与对应单测，`app/(tabs)/collect.tsx` 由占位替换为采集屏；`mobile/package.json` 新增 `expo-image-picker`、`expo-image-manipulator`、`expo-clipboard` 三个依赖。Web 不改动，不新增端点。
+
+后端随本 change 修一处真机验收发现的既有实现缺陷（不改规格）：处理触发与处理 Worker 的写事务跨越模型调用，导致 SQLite 写锁超时，真机表现为第二次采集「上传失败（HTTP 500）」。修复为触发处理幂等兜底、写库与模型调用分段提交，并给 SQLite 连接启用 WAL 与 15 秒写锁等待；`backend/app/db/session.py` 的改动只在 SQLite 分支生效，生产 MySQL 8 不受影响，回归见 `backend/tests/test_sqlite_concurrency.py`，依据与取舍见 `design.md`。
+
+来源列表、来源详情、改归属、删除与轮询留给后续 change `add-native-source-library`。
 
 ## Non-Goals
 
 - 来源列表、筛选、下拉刷新、状态徽标、`done` 副状态与轮询。
 - 来源详情、改归属、删除。
 - 录音、网页链接采集、系统分享入口、连拍连续扫描、AI 建议徽标、独立「全部来源」页。
+- 改变相册访问方式：不申请完整相册读取权限、不自建图库选择界面；Android 14+ 系统选择器交回结果时的系统浮层作为平台已知边界接受（见 `design.md`）。
