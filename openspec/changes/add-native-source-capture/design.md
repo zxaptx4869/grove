@@ -10,7 +10,6 @@
 - `app.json` 为 `expo-image-picker` 注册插件并给出中文权限文案（`photosPermission` / `cameraPermission`），同时把 `microphonePermission` 设为 `false`：采集只拍照片、不录音，避免构建时写入用不到的麦克风权限与系统提示。
 - 上传文件名用 `grove-<时间戳>-<序号>.jpg`、MIME 固定 `image/jpeg`：原始文件名（相册/相机的 IMG_xxxx、HEIC 后缀）不适合作为来源标题，也不适合作为 multipart 文件名。
 - **压缩时机（真机验收后调整）**：选择器一返回就直接进采集页，缩略图先用原图 uri（`draftImages()` 只把资源包成草稿图片、`prepared: false`）；压缩推迟到用户点提交之后，在提交覆盖层内先跑「正在压缩 N 张中的第 M 张」再进入上传。原先在入口页压缩，真机会先闪一层「正在压缩图片…」再跳采集页，交互断裂，因此把整个加载过程收进提交页；表单因此不再有「正在压缩图片」这一中间态，单张压缩失败改为在覆盖层按条标记“图片处理失败，请重新选择”。
-- **相册访问方式（真机验收后调整，Android）**：改用相册 App 的旧式选择器（`expo-image-picker` 的 `legacy: true`，即 `ACTION_GET_CONTENT` + `EXTRA_ALLOW_MULTIPLE`），不再走系统照片选择器。原因是系统照片选择器（隐私「安全访问」模式）在准备所选图片时会弹自己的白色卡片 + 蓝色进度条，退场时闪在采集页底部，用户要求与其它 App 的相册入口一致。**代价**：旧式选择器不认 `selectionLimit`，且 `expo-image-picker` 会在结果里按 `selectionLimit` 静默截断，因此 Android 改为下发不限张数（`selectionLimit: 0`）+ 客户端校验：超过 5 张时留在入口页给出明确提示（`openImagesDraft`），MUST NOT 静默丢图；iOS 仍由选择器以 5 为上限。需真机复验旧式选择器的多选上限、返回 URI 能否被 `expo-image-manipulator` 与上传通道正常处理。
 
 ## 2. 上传通道与超时
 
@@ -69,5 +68,5 @@
 ## 7. 与后端合同的其它约定
 
 - 每条来源创建成功后立即 `POST /api/sources/{id}/process`。该端点对处理中或已完成来源返回 409 且不改状态，对等待处理来源保持等待处理，因此重复触发不会破坏状态或产生重复执行。移动端把 **409 视为正常**（来源已在处理或已完成，幂等重试命中旧来源时会出现），不提示处理启动失败；其它失败按「来源已保存，但处理启动失败」处理：结果页对应条目给出「重试处理」提示与入口，来源本身仍算已提交。
-- 后端 400 文案（最多 5 张 / 单张 10MB / 仅 png/jpg/webp）原样展示，客户端不预判、不改写；张数上限在 iOS 由选择器（`selectionLimit`）约束，在 Android 由客户端在校验点约束（旧式选择器不认上限），两层都不静默丢图。
+- 后端 400 文案（最多 5 张 / 单张 10MB / 仅 png/jpg/webp）原样展示，客户端不预判、不改写；张数上限由系统选择器与表单共同约束。
 - **后端并发缺陷（真机验收发现，随本 change 修复，不改规格）**：真机「第二次采集」出现「上传失败（HTTP 500）」，服务端是 `sqlite3.OperationalError: database is locked`。根因有两条：① `POST /api/sources/{id}/process` 先查后插，并发触发撞 `processing_tasks.source_id` 唯一索引且未捕获 `IntegrityError`；② 处理 Worker 的写事务跨越模型调用——`save_success_extraction` 先 flush 再调路由 Agent 与关系 Agent，两次模型调用全程持写锁（`get_settings_row` 的惰性建行还会让准备阶段就开写事务），SQLite 回滚日志模式下读锁也挡写，默认 5 秒写锁等待一到，采集请求的提交就失败。修复分别是「触发处理幂等兜底（已有任务直接返回）」与「写库与模型调用分段提交（`_end_write_transaction`：每次进入模型调用前先落库），并给 SQLite 连接统一启用 WAL + `busy_timeout` 15 秒（读不挡写、写-写等待更宽裕）」。回归固定见 `backend/tests/test_sqlite_concurrency.py`（他人持长事务时采集仍 201、模型调用期间他人可立即写入）。依据是既有规格 `openspec/specs/processing-task`：处理 MUST NOT 阻塞采集请求、对已有任务重复触发 MUST NOT 破坏状态，因此属于修实现缺陷，规格不动。
