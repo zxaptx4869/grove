@@ -3,21 +3,12 @@ import {
   createCaptureResults,
   createCaptureSubmitUnits,
   formatImageTitle,
-  isBusinessRejection,
   progressText,
-  rejectionText,
-  successToastText,
   summarizeCapture,
   summaryText,
   type CaptureResult,
-  type CaptureSummary,
   type UploadFile,
 } from "@/src/capture/batch";
-
-/** 汇总口径的构造器：只写关心的字段，其余取零。 */
-function makeSummary(patch: Partial<CaptureSummary>): CaptureSummary {
-  return { total: 3, saved: 0, failed: 0, pending: 0, processError: 0, ...patch };
-}
 
 const FILES: UploadFile[] = [
   { uri: "file://1.jpg", name: "1.jpg", type: "image/jpeg" },
@@ -120,54 +111,17 @@ test("汇总口径区分全部成功与部分失败", () => {
     now: NOW,
   });
   const results: CaptureResult[] = createCaptureResults(units);
-  expect(summarizeCapture(results)).toEqual({
-    total: 3,
-    saved: 0,
-    failed: 0,
-    pending: 3,
-    processError: 0,
-  });
+  expect(summarizeCapture(results)).toEqual({ total: 3, saved: 0, failed: 0, pending: 3 });
 
   results[0] = { ...results[0], status: "saved" };
   results[1] = { ...results[1], status: "saved" };
   results[2] = { ...results[2], status: "failed", error: "一次最多上传 5 张图片" };
 
   const summary = summarizeCapture(results);
-  expect(summary).toEqual({ total: 3, saved: 2, failed: 1, pending: 0, processError: 0 });
+  expect(summary).toEqual({ total: 3, saved: 2, failed: 1, pending: 0 });
   expect(summaryText(summary)).toBe("已提交 2 条，1 条未成功");
-  expect(summaryText(makeSummary({ saved: 3 }))).toBe("已提交 3 条");
-  expect(summaryText(makeSummary({ failed: 3 }))).toBe("已提交 0 条，3 条未成功");
-});
-
-test("全部成功后的轻提示在处理未启动时带上数量", () => {
-  expect(successToastText(makeSummary({ saved: 3 }))).toBe("已提交 3 条，正在后台处理");
-  expect(successToastText(makeSummary({ saved: 3, processError: 1 }))).toBe(
-    "已提交 3 条，其中 1 条处理未启动",
-  );
-});
-
-test("只有「全是 4xx 且无成功条目」才算服务端业务拒绝", () => {
-  const rejected: CaptureResult[] = [
-    { key: "b:1", status: "failed", error: "仅支持 png、jpg、webp 图片", httpStatus: 400 },
-    { key: "b:2", status: "failed", error: "仅支持 png、jpg、webp 图片", httpStatus: 400 },
-  ];
-  expect(isBusinessRejection(rejected)).toBe(true);
-  // 原文去重后按行拼接，不改写文案
-  expect(rejectionText(rejected)).toBe("仅支持 png、jpg、webp 图片");
-
-  // 网络类失败没有状态码：留在覆盖层逐条重试
-  expect(isBusinessRejection([{ key: "b:1", status: "failed", error: "网络连接中断" }])).toBe(false);
-  // 服务端 5xx 也不是业务拒绝
-  expect(
-    isBusinessRejection([{ key: "b:1", status: "failed", error: "服务暂时不可用", httpStatus: 503 }]),
-  ).toBe(false);
-  // 有成功条目时按部分失败留在覆盖层，不抹掉已提交的成果
-  expect(
-    isBusinessRejection([
-      { key: "b:1", status: "saved" },
-      { key: "b:2", status: "failed", error: "仅支持 png、jpg、webp 图片", httpStatus: 400 },
-    ]),
-  ).toBe(false);
+  expect(summaryText({ total: 3, saved: 3, failed: 0, pending: 0 })).toBe("已提交 3 条");
+  expect(summaryText({ total: 3, saved: 0, failed: 3, pending: 0 })).toBe("已提交 0 条，3 条未成功");
 });
 
 test("进度文案不含百分比", () => {

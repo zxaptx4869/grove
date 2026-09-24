@@ -156,25 +156,31 @@ test("进入采集页后入口行消失，返回会丢弃草稿", async () => {
   expect(screen.getByLabelText("提交采集")).toBeDisabled();
 });
 
-test("全部成功时覆盖层自动关闭，回入口页并轻提示，草稿已清空", async () => {
+test("全部成功时停留在结果页，由底部按钮回到收集", async () => {
   stubUpload();
   const screen = await renderScreen();
 
   await openTextWithClipboard(screen);
   await fireEvent.press(screen.getByLabelText("提交采集"));
 
-  // 成功不进结果态：覆盖层自动关闭、回入口页、轻提示说明后台处理中
-  await waitFor(() => expect(screen.getByText("已提交 1 条，正在后台处理")).toBeTruthy());
-  expect(screen.queryByLabelText("提交状态")).toBeNull();
-  expect(screen.getByLabelText("相机采集")).toBeTruthy();
-  expect(screen.queryByLabelText("补充说明")).toBeNull();
+  // 不自动关闭、不自动跳转：覆盖层停在成功汇总，底部固定区域给出返回入口
+  await waitFor(() => expect(screen.getByText("已提交 1 条")).toBeTruthy());
+  expect(screen.getByLabelText("提交状态")).toBeTruthy();
+  expect(screen.getByText(/桌面工作台/)).toBeTruthy();
+  expect(screen.getByLabelText("回到收集")).toBeTruthy();
+  expect(screen.queryByLabelText("相机采集")).toBeNull();
 
-  // 不需要点任何按钮即可开始下一次采集，且是新的空草稿
+  await fireEvent.press(screen.getByLabelText("回到收集"));
+  expect(screen.getByLabelText("相机采集")).toBeTruthy();
+  expect(screen.queryByLabelText("提交状态")).toBeNull();
+
+  // 草稿、会话与批次键都清空：重新进入是空草稿
   await fireEvent.press(screen.getByLabelText("文本采集"));
   expect(screen.queryByDisplayValue("剪贴板里的文字")).toBeNull();
+  expect(screen.getByText("先填入文字，再提交")).toBeTruthy();
 });
 
-test("处理未启动时仍走成功路径，轻提示带上数量", async () => {
+test("处理未启动时仍算已提交，并在卡片内给出提示", async () => {
   stubUpload();
   mockRequest.mockRejectedValue(new Error("处理服务不可用"));
   const screen = await renderScreen();
@@ -182,14 +188,13 @@ test("处理未启动时仍走成功路径，轻提示带上数量", async () =>
   await openTextWithClipboard(screen);
   await fireEvent.press(screen.getByLabelText("提交采集"));
 
-  await waitFor(() =>
-    expect(screen.getByText("已提交 1 条，其中 1 条处理未启动")).toBeTruthy(),
-  );
-  expect(screen.queryByLabelText("提交状态")).toBeNull();
-  expect(screen.getByLabelText("相机采集")).toBeTruthy();
+  await waitFor(() => expect(screen.getByText("已提交 1 条")).toBeTruthy());
+  expect(screen.getByLabelText("提交状态")).toBeTruthy();
+  expect(screen.getByText(/来源已保存，但处理启动失败（处理服务不可用）/)).toBeTruthy();
+  expect(screen.getByLabelText("回到收集")).toBeTruthy();
 });
 
-test("存在失败时覆盖层停留，逐条重试沿用同键且全部成功后自动关闭", async () => {
+test("存在失败时覆盖层停留，逐条重试沿用同键且重试后仍停在结果页", async () => {
   const keys: string[] = [];
   globalThis.fetch = jest.fn(async (_url: string, init: RequestInit) => {
     const posted = init.body as FormData;
@@ -209,15 +214,15 @@ test("存在失败时覆盖层停留，逐条重试沿用同键且全部成功�
   expect(keys).toEqual(["batch-uuid:1", "batch-uuid:2", "batch-uuid:3"]);
   expect(screen.getByText("仅支持 png、jpg、webp 图片")).toBeTruthy();
 
-  // 只重试失败项并沿用同一个键；重试成功后回到成功路径，覆盖层自动关闭
+  // 只重试失败项并沿用同一个键；重试成功后仍停在结果页，汇总变成全部成功
   await fireEvent.press(screen.getByLabelText("重试这一条"));
-  await waitFor(() => expect(screen.getByText("已提交 3 条，正在后台处理")).toBeTruthy());
+  await waitFor(() => expect(screen.getByText("已提交 3 条")).toBeTruthy());
   expect(keys).toEqual(["batch-uuid:1", "batch-uuid:2", "batch-uuid:3", "batch-uuid:3"]);
-  expect(screen.queryByLabelText("提交状态")).toBeNull();
-  expect(screen.getByLabelText("相机采集")).toBeTruthy();
+  expect(screen.getByLabelText("提交状态")).toBeTruthy();
+  expect(screen.getByLabelText("回到收集")).toBeTruthy();
 });
 
-test("全部失败时覆盖层停留，回到收集后回入口页并清空", async () => {
+test("全部失败时停在结果页，回到收集后回入口页并清空", async () => {
   globalThis.fetch = jest.fn(async () => ({
     ok: false,
     status: 503,
@@ -229,6 +234,7 @@ test("全部失败时覆盖层停留，回到收集后回入口页并清空", as
   await fireEvent.press(screen.getByLabelText("提交采集"));
 
   await waitFor(() => expect(screen.getByText("已提交 0 条，1 条未成功")).toBeTruthy());
+  expect(screen.getByLabelText("提交状态")).toBeTruthy();
   await fireEvent.press(screen.getByLabelText("回到收集"));
 
   expect(screen.getByLabelText("相机采集")).toBeTruthy();
@@ -237,7 +243,7 @@ test("全部失败时覆盖层停留，回到收集后回入口页并清空", as
   expect(screen.queryByDisplayValue("剪贴板里的文字")).toBeNull();
 });
 
-test("服务端明确拒绝且无成功条目时回采集页，草稿保留并显示原文", async () => {
+test("服务端 400 仍在覆盖层逐条显示原文，不回采集页", async () => {
   globalThis.fetch = jest.fn(async () => ({
     ok: false,
     status: 400,
@@ -248,14 +254,14 @@ test("服务端明确拒绝且无成功条目时回采集页，草稿保留并�
   await openTextWithClipboard(screen);
   await fireEvent.press(screen.getByLabelText("提交采集"));
 
-  await waitFor(() => expect(screen.getByText("仅支持 png、jpg、webp 图片")).toBeTruthy());
-  expect(screen.queryByLabelText("提交状态")).toBeNull();
-  expect(screen.getByText("文字采集")).toBeTruthy();
-  expect(screen.getByDisplayValue("剪贴板里的文字")).toBeTruthy();
-  expect(screen.getByText(/材料没有保存到 Grove/)).toBeTruthy();
+  await waitFor(() => expect(screen.getByText("已提交 0 条，1 条未成功")).toBeTruthy());
+  expect(screen.getByLabelText("提交状态")).toBeTruthy();
+  expect(screen.getByText("仅支持 png、jpg、webp 图片")).toBeTruthy();
+  // 表单页仍在覆盖层之下，但没有出现「材料没有保存」的表单内错误卡
+  expect(screen.queryByText("材料没有保存到 Grove，已填写的内容仍在表单里。")).toBeNull();
 });
 
-test("提交进行中显示逐张进度，且不提供关闭入口", async () => {
+test("提交进行中底部没有回到收集，返回键也不关闭覆盖层", async () => {
   globalThis.fetch = jest.fn(() => new Promise(() => {})) as unknown as typeof fetch;
   const screen = await renderScreen();
 
@@ -265,6 +271,10 @@ test("提交进行中显示逐张进度，且不提供关闭入口", async () =>
   await waitFor(() => expect(screen.getByText("正在上传 3 张中的第 1 张…")).toBeTruthy());
   expect(screen.getByLabelText("提交状态")).toBeTruthy();
   expect(screen.queryByLabelText("回到收集")).toBeNull();
+
+  // 返回键（Modal onRequestClose）不关闭覆盖层
+  await fireEvent(screen.getByLabelText("提交状态"), "requestClose");
+  expect(screen.getByLabelText("提交状态")).toBeTruthy();
 });
 
 test("相机权限被拒时进入独立权限页，可去设置", async () => {
@@ -310,7 +320,7 @@ test("文本采集从剪贴板填入并携带幂等键提交", async () => {
   await openTextWithClipboard(screen);
   await fireEvent.press(screen.getByLabelText("提交采集"));
 
-  await waitFor(() => expect(screen.getByText("已提交 1 条，正在后台处理")).toBeTruthy());
+  await waitFor(() => expect(screen.getByText("已提交 1 条")).toBeTruthy());
   expect(form!.get("text")).toBe("剪贴板里的文字");
   expect(form!.get("capture_key")).toBe("batch-uuid:1");
   expect(mockRequest).toHaveBeenCalledWith("/api/sources/21/process", { method: "POST" }, "token");

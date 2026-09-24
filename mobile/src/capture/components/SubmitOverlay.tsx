@@ -1,7 +1,7 @@
-/** 提交状态覆盖层：全屏盖住页面与底部导航，只在提交进行中与存在未成功条目时停留。 */
+/** 提交状态覆盖层：全屏盖住页面与底部导航；结束后停在结果页，由底部固定区域返回（对齐原型 #submitOverlay 与 .overlay-footer）。 */
 
 import { Modal, Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
-import { SafeAreaView } from "react-native-safe-area-context";
+import { SafeAreaView, useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { CaptureIcon } from "@/src/capture/components/CaptureIcon";
 import {
@@ -56,17 +56,21 @@ export function SubmitOverlay({
   onRetryProcessing: (key: string, sourceId: number) => void;
   onClose: () => void;
 }) {
+  const insets = useSafeAreaInsets();
   const summary = summarizeCapture(session.results);
-  // 成功不进结果态：全部成功后由上层直接关闭覆盖层并轻提示
-  if (!session.running && summary.failed === 0) return null;
   const finished = summary.saved + summary.failed;
   const unitByKey = new Map(session.units.map((unit) => [unit.key, unit]));
   const failed = summary.failed > 0;
   const headline = session.running
     ? progressText(session.kind, { total: session.units.length, current: finished + 1 })
     : summaryText(summary);
-  const title = failed ? "提交未成功" : "提交材料";
+  const title = failed && !session.running ? "提交未成功" : "提交材料";
   const materialText = session.kind === "text" ? "文字" : `${session.units.length} 张图片`;
+  // 逐条列表在有多个提交单元、存在失败或存在「处理未启动」时都要出现
+  const showList =
+    session.results.length > 1 ||
+    summary.failed > 0 ||
+    session.results.some((item) => item.processError);
 
   return (
     <Modal
@@ -78,7 +82,7 @@ export function SubmitOverlay({
         if (!session.running) onClose();
       }}
     >
-      <SafeAreaView style={styles.page} edges={["top", "bottom"]} accessibilityLabel="提交状态">
+      <SafeAreaView style={styles.page} edges={["top"]} accessibilityLabel="提交状态">
         <View style={styles.header}>
           <View style={styles.headerSlot} />
           <Text style={styles.headerTitle} numberOfLines={1}>
@@ -86,14 +90,17 @@ export function SubmitOverlay({
           </Text>
           <View style={styles.headerSlot} />
         </View>
-        <ScrollView contentContainerStyle={styles.content} keyboardShouldPersistTaps="handled">
+        <ScrollView
+          contentContainerStyle={[styles.content, { paddingBottom: 24 + insets.bottom }]}
+          keyboardShouldPersistTaps="handled"
+        >
           <View style={styles.card} accessibilityRole="summary" accessibilityLabel={headline}>
             <View style={styles.head}>
               <View style={[styles.mark, failed && styles.markError]}>
                 <CaptureIcon
-                  name={session.running ? "refresh" : "alert"}
+                  name={session.running ? "refresh" : failed ? "alert" : "check"}
                   size={20}
-                  color={session.running ? theme.green : theme.error}
+                  color={session.running ? theme.green : failed ? theme.error : theme.confirmed}
                 />
               </View>
               <Text style={styles.headline}>{headline}</Text>
@@ -101,14 +108,16 @@ export function SubmitOverlay({
             <Text style={styles.hint}>
               {session.running
                 ? "请保持 Grove 在前台。上传结束前不要重复提交，这一批材料不会重复生成。"
-                : "未成功的材料没有保存到 Grove：可按提示调整后逐条重试，已提交的条目不受影响。"}
+                : failed
+                  ? "未成功的材料没有保存到 Grove：可按提示调整后逐条重试，已提交的条目不受影响。"
+                  : "可以到桌面工作台的收集箱核对处理进展。"}
             </Text>
             <View style={styles.facts}>
               <Text style={styles.fact}>材料：{materialText}</Text>
               <Text style={styles.fact}>所属项目：{projectName}</Text>
             </View>
 
-            {session.results.length > 1 || summary.failed > 0 ? (
+            {showList ? (
               <View style={styles.list}>
                 {session.results.map((result) => {
                   const unit = unitByKey.get(result.key);
@@ -155,14 +164,16 @@ export function SubmitOverlay({
               </View>
             ) : null}
 
-            {summary.failed > 1 ? (
+            {!session.running && summary.failed > 1 ? (
               <AppButton label={`重试未成功的 ${summary.failed} 条`} block onPress={onRetryFailed} />
-            ) : null}
-            {!session.running ? (
-              <AppButton label="回到收集" variant="ghost" block onPress={onClose} />
             ) : null}
           </View>
         </ScrollView>
+        {!session.running ? (
+          <View style={[styles.footer, { paddingBottom: 9 + insets.bottom }]}>
+            <AppButton label="回到收集" variant="ghost" block onPress={onClose} />
+          </View>
+        ) : null}
       </SafeAreaView>
     </Modal>
   );
@@ -182,7 +193,14 @@ const styles = StyleSheet.create({
   },
   headerSlot: { width: 44 },
   headerTitle: { flex: 1, fontSize: 16, fontWeight: "700", textAlign: "center", color: theme.ink },
-  content: { padding: 16, paddingBottom: 32 },
+  content: { padding: 16 },
+  footer: {
+    paddingTop: 9,
+    paddingHorizontal: 16,
+    borderTopWidth: 1,
+    borderTopColor: theme.border,
+    backgroundColor: theme.surface,
+  },
   card: {
     gap: 8,
     padding: 14,

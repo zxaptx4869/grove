@@ -10,10 +10,6 @@ import { useAuth } from "@/src/auth";
 import {
   createCaptureResults,
   createCaptureSubmitUnits,
-  isBusinessRejection,
-  rejectionText,
-  successToastText,
-  summarizeCapture,
   type CaptureKind,
   type CaptureResult,
   type CaptureSubmitUnit,
@@ -22,7 +18,6 @@ import { readClipboardText } from "@/src/capture/clipboard";
 import { AlbumChoiceSheet } from "@/src/capture/components/AlbumChoiceSheet";
 import { CaptureForm, type CaptureDraft } from "@/src/capture/components/CaptureForm";
 import { CaptureHeader } from "@/src/capture/components/CaptureHeader";
-import { CaptureToast } from "@/src/capture/components/CaptureToast";
 import { EntryRow } from "@/src/capture/components/EntryRow";
 import { PermissionPage, permissionTitle } from "@/src/capture/components/PermissionPage";
 import { ProjectSheet } from "@/src/capture/components/ProjectSheet";
@@ -88,7 +83,6 @@ export function CaptureScreen() {
   const [projectOpen, setProjectOpen] = useState(false);
   const [preparing, setPreparing] = useState(false);
   const [draftError, setDraftError] = useState("");
-  const [toast, setToast] = useState<string | null>(null);
 
   const projectsQuery = useQuery({
     queryKey: ["projects", "mobile-capture"],
@@ -99,24 +93,19 @@ export function CaptureScreen() {
   const running = Boolean(session?.running);
 
   const runUnits = useCallback(
-    async (units: CaptureSubmitUnit[], meta: SessionMeta, snapshot: CaptureResult[]) => {
+    async (units: CaptureSubmitUnit[], meta: SessionMeta) => {
       if (!token) return;
-      // 本地维护这一批的最终结果，用于结束后按成败分流（会话状态在实际点击时可能已过期）
-      const merged = new Map(snapshot.map((item) => [item.key, item]));
-      const update = (key: string, patch: Partial<CaptureResult>) => {
-        const previous = merged.get(key);
-        if (previous) merged.set(key, { ...previous, ...patch });
-        setSession((current) =>
-          current
+      const update = (key: string, patch: Partial<CaptureResult>) =>
+        setSession((previous) =>
+          previous
             ? {
-                ...current,
-                results: current.results.map((item) =>
+                ...previous,
+                results: previous.results.map((item) =>
                   item.key === key ? { ...item, ...patch } : item,
                 ),
               }
-            : current,
+            : previous,
         );
-      };
       await submitCaptureUnits(units, {
         upload: async (unit) => {
           const source = await uploadSource({
@@ -130,32 +119,11 @@ export function CaptureScreen() {
         triggerProcessing: (sourceId) => triggerSourceProcessing(token, sourceId),
         onUpdate: update,
       });
-      const summary = summarizeCapture([...merged.values()]);
-      if (summary.failed === 0) {
-        // 全部成功（含「已保存但处理未启动」）：不进结果态，直接回入口页并轻提示
-        setSubmitOpen(false);
-        setSession(null);
-        setDraft(null);
-        setDraftError("");
-        setNotice(null);
-        setPage("entry");
-        setToast(successToastText(summary));
-        return;
-      }
-      if (isBusinessRejection([...merged.values()])) {
-        // 服务端明确拒绝且没有一条成功：回采集页，草稿保留，表单内原样显示服务端文案
-        setSubmitOpen(false);
-        setSession(null);
-        setDraftError(rejectionText([...merged.values()]));
-        setPage("form");
-        return;
-      }
+      // 提交结束一律停留在结果页，由用户点底部的「回到收集」返回
       setSession((previous) => (previous ? { ...previous, running: false } : previous));
     },
     [token],
   );
-
-  const hideToast = useCallback(() => setToast(null), []);
 
   /** 回到入口页并丢弃草稿；提交进行中不可离开覆盖层。 */
   function backToEntry() {
@@ -281,10 +249,9 @@ export function CaptureScreen() {
       projectId: draft.projectId,
     };
     const results = createCaptureResults(units);
-    setToast(null);
     setSession({ batchId, ...meta, units, results, running: true });
     setSubmitOpen(true);
-    await runUnits(units, meta, results);
+    await runUnits(units, meta);
   }
 
   async function onRetryUnits(keys: string[]) {
@@ -292,11 +259,11 @@ export function CaptureScreen() {
     const units = session.units.filter((unit) => keys.includes(unit.key));
     if (units.length === 0) return;
     setSession({ ...session, running: true });
-    await runUnits(
-      units,
-      { kind: session.kind, note: session.note, projectId: session.projectId },
-      session.results,
-    );
+    await runUnits(units, {
+      kind: session.kind,
+      note: session.note,
+      projectId: session.projectId,
+    });
   }
 
   async function onRetryProcessing(key: string, sourceId: number) {
@@ -449,9 +416,6 @@ export function CaptureScreen() {
         }}
         onClose={() => setProjectOpen(false)}
       />
-      {toast && !submitOpen ? (
-        <CaptureToast message={toast} bottom={12 + keyboardPad} onHide={hideToast} />
-      ) : null}
       {session ? (
         <SubmitOverlay
           visible={submitOpen}
