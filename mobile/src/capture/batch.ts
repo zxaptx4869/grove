@@ -20,6 +20,8 @@ export type CaptureResult = {
   status: CaptureResultStatus;
   sourceId?: number;
   error?: string;
+  /** 上传失败时的 HTTP 状态码，用于区分服务端业务拒绝与网络类失败 */
+  httpStatus?: number;
   /** 已保存但处理未启动的提示，来源本身仍然有效 */
   processError?: string;
 };
@@ -29,6 +31,8 @@ export type CaptureSummary = {
   saved: number;
   failed: number;
   pending: number;
+  /** 已保存但处理未启动的条目数 */
+  processError: number;
 };
 
 export const MAX_CAPTURE_KEY_LENGTH = 128;
@@ -106,6 +110,7 @@ export function summarizeCapture(results: CaptureResult[]): CaptureSummary {
     saved,
     failed,
     pending: results.length - saved - failed,
+    processError: results.filter((item) => item.processError).length,
   };
 }
 
@@ -113,6 +118,32 @@ export function summarizeCapture(results: CaptureResult[]): CaptureSummary {
 export function summaryText(summary: CaptureSummary): string {
   if (summary.failed === 0) return `已提交 ${summary.saved} 条`;
   return `已提交 ${summary.saved} 条，${summary.failed} 条未成功`;
+}
+
+/** 提交全部成功后回入口页的轻提示；有处理未启动的条目时带上数量。 */
+export function successToastText(summary: CaptureSummary): string {
+  if (summary.processError > 0) {
+    return `已提交 ${summary.saved} 条，其中 ${summary.processError} 条处理未启动`;
+  }
+  return `已提交 ${summary.saved} 条，正在后台处理`;
+}
+
+/** 本次是否「全是服务端业务拒绝（4xx）且没有一条成功」：这类失败回采集页改后重提。 */
+export function isBusinessRejection(results: CaptureResult[]): boolean {
+  const failed = results.filter((item) => item.status === "failed");
+  return (
+    failed.length > 0 &&
+    failed.length === results.length &&
+    failed.every((item) => (item.httpStatus ?? 0) >= 400 && (item.httpStatus ?? 0) < 500)
+  );
+}
+
+/** 回到采集页时展示的服务端原文：去重后按行拼接，不改写文案。 */
+export function rejectionText(results: CaptureResult[]): string {
+  const messages = results
+    .map((item) => item.error)
+    .filter((message): message is string => Boolean(message));
+  return [...new Set(messages)].join("\n");
 }
 
 /** 进度文案：不做百分比。 */

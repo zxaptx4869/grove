@@ -107,6 +107,24 @@ test("只重试失败项时沿用同一个幂等键", async () => {
   expect(results.map((item) => item.status)).toEqual(["saved", "saved", "saved"]);
 });
 
+test("上传失败时记录 HTTP 状态码，区分业务拒绝与网络失败", async () => {
+  const { deps, results } = harness({
+    upload: async (unit) => {
+      if (unit.key === "batch-a:1") {
+        throw Object.assign(new Error("仅支持 png、jpg、webp 图片"), { status: 400 });
+      }
+      if (unit.key === "batch-a:2") throw new Error("网络连接中断");
+      return 3;
+    },
+  });
+
+  await submitCaptureUnits(units(), deps);
+
+  expect(results.map((item) => item.status)).toEqual(["failed", "failed", "saved"]);
+  expect(results[0].httpStatus).toBe(400);
+  expect(results[1].httpStatus).toBeUndefined();
+});
+
 test("未知错误回落到可读文案", () => {
   expect(toCaptureMessage(new Error("服务端原文"))).toBe("服务端原文");
   expect(toCaptureMessage(undefined)).toBe("提交未成功，请稍后重试。");

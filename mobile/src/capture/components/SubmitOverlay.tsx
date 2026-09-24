@@ -1,4 +1,4 @@
-/** 提交状态覆盖层：全屏盖住页面与底部导航，四态自包含，关闭即回入口页。 */
+/** 提交状态覆盖层：全屏盖住页面与底部导航，只在提交进行中与存在未成功条目时停留。 */
 
 import { Modal, Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
@@ -57,9 +57,11 @@ export function SubmitOverlay({
   onClose: () => void;
 }) {
   const summary = summarizeCapture(session.results);
+  // 成功不进结果态：全部成功后由上层直接关闭覆盖层并轻提示
+  if (!session.running && summary.failed === 0) return null;
   const finished = summary.saved + summary.failed;
   const unitByKey = new Map(session.units.map((unit) => [unit.key, unit]));
-  const failed = summary.failed > 0 && !session.running;
+  const failed = summary.failed > 0;
   const headline = session.running
     ? progressText(session.kind, { total: session.units.length, current: finished + 1 })
     : summaryText(summary);
@@ -89,9 +91,9 @@ export function SubmitOverlay({
             <View style={styles.head}>
               <View style={[styles.mark, failed && styles.markError]}>
                 <CaptureIcon
-                  name={session.running ? "refresh" : failed ? "alert" : "check"}
+                  name={session.running ? "refresh" : "alert"}
                   size={20}
-                  color={session.running ? theme.green : failed ? theme.error : theme.confirmed}
+                  color={session.running ? theme.green : theme.error}
                 />
               </View>
               <Text style={styles.headline}>{headline}</Text>
@@ -99,9 +101,7 @@ export function SubmitOverlay({
             <Text style={styles.hint}>
               {session.running
                 ? "请保持 Grove 在前台。上传结束前不要重复提交，这一批材料不会重复生成。"
-                : failed
-                  ? "未成功的材料没有保存到 Grove：可按提示调整后逐条重试，已提交的条目不受影响。"
-                  : "可以到桌面工作台的收集箱核对处理进展。"}
+                : "未成功的材料没有保存到 Grove：可按提示调整后逐条重试，已提交的条目不受影响。"}
             </Text>
             <View style={styles.facts}>
               <Text style={styles.fact}>材料：{materialText}</Text>
@@ -155,7 +155,7 @@ export function SubmitOverlay({
               </View>
             ) : null}
 
-            {!session.running && summary.failed > 1 ? (
+            {summary.failed > 1 ? (
               <AppButton label={`重试未成功的 ${summary.failed} 条`} block onPress={onRetryFailed} />
             ) : null}
             {!session.running ? (

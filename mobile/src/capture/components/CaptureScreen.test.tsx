@@ -109,6 +109,21 @@ afterEach(() => {
   globalThis.fetch = originalFetch;
 });
 
+function stubUpload(id = 21) {
+  globalThis.fetch = jest.fn(async () => ({
+    ok: true,
+    status: 201,
+    json: async () => ({ id }),
+  })) as unknown as typeof fetch;
+}
+
+/** 从入口页进入文字采集页并填入剪贴板文字。 */
+async function openTextWithClipboard(screen: Awaited<ReturnType<typeof renderScreen>>) {
+  await fireEvent.press(screen.getByLabelText("文本采集"));
+  await fireEvent.press(await screen.findByLabelText("从剪贴板填入"));
+  await waitFor(() => expect(screen.getByDisplayValue("剪贴板里的文字")).toBeTruthy());
+}
+
 test("入口页只有三入口，不渲染表单与提交条", async () => {
   const screen = await renderScreen();
 
@@ -141,28 +156,103 @@ test("进入采集页后入口行消失，返回会丢弃草稿", async () => {
   expect(screen.getByLabelText("提交采集")).toBeDisabled();
 });
 
-test("提交后出现全屏提交覆盖层，关闭后回到入口页并清空表单", async () => {
+test("全部成功时覆盖层自动关闭，回入口页并轻提示，草稿已清空", async () => {
+  stubUpload();
+  const screen = await renderScreen();
+
+  await openTextWithClipboard(screen);
+  await fireEvent.press(screen.getByLabelText("提交采集"));
+
+  // 成功不进结果态：覆盖层自动关闭、回入口页、轻提示说明后台处理中
+  await waitFor(() => expect(screen.getByText("已提交 1 条，正在后台处理")).toBeTruthy());
+  expect(screen.queryByLabelText("提交状态")).toBeNull();
+  expect(screen.getByLabelText("相机采集")).toBeTruthy();
+  expect(screen.queryByLabelText("补充说明")).toBeNull();
+
+  // 不需要点任何按钮即可开始下一次采集，且是新的空草稿
+  await fireEvent.press(screen.getByLabelText("文本采集"));
+  expect(screen.queryByDisplayValue("剪贴板里的文字")).toBeNull();
+});
+
+test("处理未启动时仍走成功路径，轻提示带上数量", async () => {
+  stubUpload();
+  mockRequest.mockRejectedValue(new Error("处理服务不可用"));
+  const screen = await renderScreen();
+
+  await openTextWithClipboard(screen);
+  await fireEvent.press(screen.getByLabelText("提交采集"));
+
+  await waitFor(() =>
+    expect(screen.getByText("已提交 1 条，其中 1 条处理未启动")).toBeTruthy(),
+  );
+  expect(screen.queryByLabelText("提交状态")).toBeNull();
+  expect(screen.getByLabelText("相机采集")).toBeTruthy();
+});
+
+test("存在失败时覆盖层停留，逐条重试沿用同键且全部成功后自动关闭", async () => {
+  const keys: string[] = [];
+  globalThis.fetch = jest.fn(async (_url: string, init: RequestInit) => {
+    const posted = init.body as FormData;
+    keys.push(String(posted.get("capture_key")));
+    if (keys.length === 3) {
+      return { ok: false, status: 400, json: async () => ({ detail: "仅支持 png、jpg、webp 图片" }) };
+    }
+    return { ok: true, status: 201, json: async () => ({ id: keys.length }) };
+  }) as unknown as typeof fetch;
+  const screen = await renderScreen();
+
+  await openAlbumSeparate(screen);
+  await fireEvent.press(screen.getByLabelText("提交采集"));
+
+  await waitFor(() => expect(screen.getByText("已提交 2 条，1 条未成功")).toBeTruthy());
+  expect(screen.getByText("提交未成功")).toBeTruthy();
+  expect(keys).toEqual(["batch-uuid:1", "batch-uuid:2", "batch-uuid:3"]);
+  expect(screen.getByText("仅支持 png、jpg、webp 图片")).toBeTruthy();
+
+  // 只重试失败项并沿用同一个键；重试成功后回到成功路径，覆盖层自动关闭
+  await fireEvent.press(screen.getByLabelText("重试这一条"));
+  await waitFor(() => expect(screen.getByText("已提交 3 条，正在后台处理")).toBeTruthy());
+  expect(keys).toEqual(["batch-uuid:1", "batch-uuid:2", "batch-uuid:3", "batch-uuid:3"]);
+  expect(screen.queryByLabelText("提交状态")).toBeNull();
+  expect(screen.getByLabelText("相机采集")).toBeTruthy();
+});
+
+test("全部失败时覆盖层停留，回到收集后回入口页并清空", async () => {
   globalThis.fetch = jest.fn(async () => ({
-    ok: true,
-    status: 201,
-    json: async () => ({ id: 21 }),
+    ok: false,
+    status: 503,
+    json: async () => ({ detail: "服务暂时不可用" }),
   })) as unknown as typeof fetch;
   const screen = await renderScreen();
 
-  await fireEvent.press(screen.getByLabelText("文本采集"));
-  await fireEvent.press(await screen.findByLabelText("从剪贴板填入"));
-  await waitFor(() => expect(screen.getByDisplayValue("剪贴板里的文字")).toBeTruthy());
+  await openTextWithClipboard(screen);
   await fireEvent.press(screen.getByLabelText("提交采集"));
 
-  await waitFor(() => expect(screen.getByLabelText("提交状态")).toBeTruthy());
-  expect(screen.getByText("提交材料")).toBeTruthy();
-  expect(screen.getByText("已提交 1 条")).toBeTruthy();
-
+  await waitFor(() => expect(screen.getByText("已提交 0 条，1 条未成功")).toBeTruthy());
   await fireEvent.press(screen.getByLabelText("回到收集"));
+
   expect(screen.getByLabelText("相机采集")).toBeTruthy();
   expect(screen.queryByLabelText("提交状态")).toBeNull();
-  expect(screen.queryByLabelText("补充说明")).toBeNull();
-  expect(screen.queryByText("已提交 1 条")).toBeNull();
+  await fireEvent.press(screen.getByLabelText("文本采集"));
+  expect(screen.queryByDisplayValue("剪贴板里的文字")).toBeNull();
+});
+
+test("服务端明确拒绝且无成功条目时回采集页，草稿保留并显示原文", async () => {
+  globalThis.fetch = jest.fn(async () => ({
+    ok: false,
+    status: 400,
+    json: async () => ({ detail: "仅支持 png、jpg、webp 图片" }),
+  })) as unknown as typeof fetch;
+  const screen = await renderScreen();
+
+  await openTextWithClipboard(screen);
+  await fireEvent.press(screen.getByLabelText("提交采集"));
+
+  await waitFor(() => expect(screen.getByText("仅支持 png、jpg、webp 图片")).toBeTruthy());
+  expect(screen.queryByLabelText("提交状态")).toBeNull();
+  expect(screen.getByText("文字采集")).toBeTruthy();
+  expect(screen.getByDisplayValue("剪贴板里的文字")).toBeTruthy();
+  expect(screen.getByText(/材料没有保存到 Grove/)).toBeTruthy();
 });
 
 test("提交进行中显示逐张进度，且不提供关闭入口", async () => {
@@ -217,35 +307,11 @@ test("文本采集从剪贴板填入并携带幂等键提交", async () => {
   }) as unknown as typeof fetch;
   const screen = await renderScreen();
 
-  await fireEvent.press(screen.getByLabelText("文本采集"));
-  await fireEvent.press(await screen.findByLabelText("从剪贴板填入"));
-  await waitFor(() => expect(screen.getByDisplayValue("剪贴板里的文字")).toBeTruthy());
+  await openTextWithClipboard(screen);
   await fireEvent.press(screen.getByLabelText("提交采集"));
 
-  await waitFor(() => expect(screen.getByText("已提交 1 条")).toBeTruthy());
+  await waitFor(() => expect(screen.getByText("已提交 1 条，正在后台处理")).toBeTruthy());
   expect(form!.get("text")).toBe("剪贴板里的文字");
   expect(form!.get("capture_key")).toBe("batch-uuid:1");
   expect(mockRequest).toHaveBeenCalledWith("/api/sources/21/process", { method: "POST" }, "token");
-});
-
-test("相册每张一条部分失败时在覆盖层汇总并只提示失败项", async () => {
-  const keys: string[] = [];
-  globalThis.fetch = jest.fn(async (_url: string, init: RequestInit) => {
-    const posted = init.body as FormData;
-    keys.push(String(posted.get("capture_key")));
-    if (keys.length === 3) {
-      return { ok: false, status: 400, json: async () => ({ detail: "仅支持 png、jpg、webp 图片" }) };
-    }
-    return { ok: true, status: 201, json: async () => ({ id: keys.length }) };
-  }) as unknown as typeof fetch;
-  const screen = await renderScreen();
-
-  await openAlbumSeparate(screen);
-  await fireEvent.press(screen.getByLabelText("提交采集"));
-
-  await waitFor(() => expect(screen.getByText("已提交 2 条，1 条未成功")).toBeTruthy());
-  expect(screen.getByText("提交未成功")).toBeTruthy();
-  expect(keys).toEqual(["batch-uuid:1", "batch-uuid:2", "batch-uuid:3"]);
-  expect(screen.getByText("仅支持 png、jpg、webp 图片")).toBeTruthy();
-  expect(screen.getByLabelText("重试这一条")).toBeTruthy();
 });

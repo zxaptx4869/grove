@@ -17,18 +17,33 @@ export function toCaptureMessage(error: unknown): string {
   return "提交未成功，请稍后重试。";
 }
 
+/** 上传失败时带上 HTTP 状态码，供上层区分服务端业务拒绝与网络类失败。 */
+function httpStatusOf(error: unknown): number | undefined {
+  const status = (error as { status?: unknown } | null)?.status;
+  return typeof status === "number" ? status : undefined;
+}
+
 /** 依次执行提交单元：单元失败只标记该条，不中断其余条目。 */
 export async function submitCaptureUnits(
   units: CaptureSubmitUnit[],
   deps: CaptureSubmitDeps,
 ): Promise<void> {
   for (const unit of units) {
-    deps.onUpdate(unit.key, { status: "uploading", error: undefined, processError: undefined });
+    deps.onUpdate(unit.key, {
+      status: "uploading",
+      error: undefined,
+      httpStatus: undefined,
+      processError: undefined,
+    });
     let sourceId: number;
     try {
       sourceId = await deps.upload(unit);
     } catch (error) {
-      deps.onUpdate(unit.key, { status: "failed", error: toCaptureMessage(error) });
+      deps.onUpdate(unit.key, {
+        status: "failed",
+        error: toCaptureMessage(error),
+        httpStatus: httpStatusOf(error),
+      });
       continue;
     }
     let processError: string | undefined;
