@@ -2,7 +2,11 @@
 
 export type CaptureKind = "camera" | "album-separate" | "album-merged" | "text";
 
-export type UploadFile = { uri: string; name: string; type: string };
+/**
+ * 待上传的图片文件。`uri` 在压缩前指向系统选择器给出的原图（表单缩略图直接用它），
+ * 压缩后替换为本地 jpg 副本；`prepared` 为 false/缺省表示提交时需要先压缩。
+ */
+export type UploadFile = { uri: string; name: string; type: string; prepared?: boolean };
 
 export type CaptureSubmitUnit = {
   /** 幂等键，形如 `{batchId}:{序号}`，序号从 1 开始 */
@@ -13,7 +17,7 @@ export type CaptureSubmitUnit = {
   text?: string;
 };
 
-export type CaptureResultStatus = "pending" | "uploading" | "saved" | "failed";
+export type CaptureResultStatus = "pending" | "preparing" | "uploading" | "saved" | "failed";
 
 export type CaptureResult = {
   key: string;
@@ -113,6 +117,12 @@ export function summarizeCapture(results: CaptureResult[]): CaptureSummary {
 export function summaryText(summary: CaptureSummary): string {
   if (summary.failed === 0) return `已提交 ${summary.saved} 条`;
   return `已提交 ${summary.saved} 条，${summary.failed} 条未成功`;
+}
+
+/** 压缩进度文案：与上传一致，不做百分比。 */
+export function prepareProgressText(options: { total: number; current: number }): string {
+  if (options.total > 1) return `正在压缩 ${options.total} 张中的第 ${options.current} 张…`;
+  return "正在压缩图片…";
 }
 
 /** 进度文案：不做百分比。 */

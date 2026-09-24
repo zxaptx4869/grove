@@ -13,10 +13,8 @@ const ENTRIES: { key: "camera" | "album" | "text"; label: string; icon: CaptureI
 
 export function EntryRow({
   onSelect,
-  disabled = false,
 }: {
   onSelect: (entry: "camera" | "album" | "text") => void;
-  disabled?: boolean;
 }) {
   return (
     <View style={styles.row}>
@@ -25,10 +23,8 @@ export function EntryRow({
           key={entry.key}
           accessibilityRole="button"
           accessibilityLabel={`${entry.label}采集`}
-          accessibilityState={{ disabled }}
-          disabled={disabled}
           onPress={() => onSelect(entry.key)}
-          style={({ pressed }) => [styles.tile, pressed && !disabled && styles.pressed]}
+          style={({ pressed }) => [styles.tile, pressed && styles.pressed]}
         >
           <View style={styles.icon}>
             <CaptureIcon name={entry.icon} size={19} color={theme.green} />

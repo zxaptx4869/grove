@@ -1,8 +1,8 @@
 /** 收集栏目：入口页 / 采集页 / 权限页互斥，提交以全屏覆盖层呈现（对齐原型 setPage 与 #submitOverlay）。 */
 
 import { useQuery } from "@tanstack/react-query";
-import { useCallback, useState } from "react";
-import { ActivityIndicator, Platform, ScrollView, StyleSheet, Text, View } from "react-native";
+import { useCallback, useRef, useState } from "react";
+import { Platform, ScrollView, StyleSheet, Text, View } from "react-native";
 import { SafeAreaView, useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { getProjects } from "@/src/api";
@@ -13,6 +13,7 @@ import {
   type CaptureKind,
   type CaptureResult,
   type CaptureSubmitUnit,
+  type UploadFile,
 } from "@/src/capture/batch";
 import { readClipboardText } from "@/src/capture/clipboard";
 import { AlbumChoiceSheet } from "@/src/capture/components/AlbumChoiceSheet";
@@ -23,7 +24,7 @@ import { PermissionPage, permissionTitle } from "@/src/capture/components/Permis
 import { ProjectSheet } from "@/src/capture/components/ProjectSheet";
 import { SubmitOverlay, type CaptureSession } from "@/src/capture/components/SubmitOverlay";
 import { newBatchId } from "@/src/capture/ids";
-import { prepareImages, type PickedAsset, type PickedImage } from "@/src/capture/image";
+import { draftImages, prepareImage, type PickedAsset, type PickedImage } from "@/src/capture/image";
 import {
   capturePhoto,
   ensurePermission,
@@ -50,6 +51,9 @@ const FORM_TITLE: Record<CaptureKind, string> = {
 
 const READY_HINT = "提交后可在「收集」列表里查看处理状态";
 
+/** 本地压缩失败：没有服务端文案，用固定说明代替原生错误串。 */
+const IMAGE_PREPARE_ERROR = "图片处理失败，请重新选择。";
+
 type SessionMeta = { kind: CaptureKind; note: string; projectId: number | null };
 
 function emptyDraft(kind: CaptureKind, images: PickedImage[]): CaptureDraft {
@@ -68,6 +72,72 @@ function footerHint(draft: CaptureDraft): string {
   return READY_HINT;
 }
 
+/** 单张图片的压缩进度回调：total 为本批次待压缩张数，current 从 1 开始。 */
+type PrepareHooks = {
+  onPrepareStart: (total: number) => void;
+  onPrepareStep: (current: number, total: number) => void;
+  onUpdate: (key: string, patch: Partial<CaptureResult>) => void;
+};
+
+function countUnprepared(units: CaptureSubmitUnit[]): number {
+  return units.reduce(
+    (sum, unit) => sum + unit.files.filter((file) => !file.prepared).length,
+    0,
+  );
+}
+
+/**
+ * 上传前的本地压缩：把选择器给的原图逐张转成 jpg。
+ * 单张失败只标记该条，其余条目继续；返回压缩后的单元与可直接上传的子集。
+ */
+async function compressUnits(
+  units: CaptureSubmitUnit[],
+  hooks: PrepareHooks,
+): Promise<{ units: CaptureSubmitUnit[]; ready: CaptureSubmitUnit[] }> {
+  const total = countUnprepared(units);
+  if (total === 0) return { units, ready: units };
+  hooks.onPrepareStart(total);
+  const now = Date.now();
+  let done = 0;
+  const compressed: CaptureSubmitUnit[] = [];
+  const ready: CaptureSubmitUnit[] = [];
+  for (const unit of units) {
+    if (!unit.files.some((file) => !file.prepared)) {
+      compressed.push(unit);
+      ready.push(unit);
+      continue;
+    }
+    hooks.onUpdate(unit.key, { status: "preparing", error: undefined, processError: undefined });
+    const files: UploadFile[] = [];
+    let failure: unknown = null;
+    for (const file of unit.files) {
+      if (file.prepared) {
+        files.push(file);
+        continue;
+      }
+      try {
+        files.push(await prepareImage(file, { index: done + 1, now }));
+      } catch (error) {
+        failure = error;
+      }
+      done += 1;
+      if (!failure && done < total) hooks.onPrepareStep(done + 1, total);
+      if (failure) break;
+    }
+    if (failure) {
+      // 本地压缩失败没有服务端文案，用固定说明代替原生错误串
+      console.warn("[capture] 图片压缩失败", { key: unit.key, error: failure });
+      hooks.onUpdate(unit.key, { status: "failed", error: IMAGE_PREPARE_ERROR });
+      compressed.push(unit);
+      continue;
+    }
+    const next: CaptureSubmitUnit = { ...unit, files };
+    compressed.push(next);
+    ready.push(next);
+  }
+  return { units: compressed, ready };
+}
+
 export function CaptureScreen() {
   const { token } = useAuth();
   const insets = useSafeAreaInsets();
@@ -81,8 +151,9 @@ export function CaptureScreen() {
   const [notice, setNotice] = useState<PermissionKind | null>(null);
   const [albumOpen, setAlbumOpen] = useState(false);
   const [projectOpen, setProjectOpen] = useState(false);
-  const [preparing, setPreparing] = useState(false);
   const [draftError, setDraftError] = useState("");
+  // 提交重入锁：状态更新是异步的，连点两次可能都在 running 变 true 之前进来
+  const submittingRef = useRef(false);
 
   const projectsQuery = useQuery({
     queryKey: ["projects", "mobile-capture"],
@@ -94,7 +165,8 @@ export function CaptureScreen() {
 
   const runUnits = useCallback(
     async (units: CaptureSubmitUnit[], meta: SessionMeta) => {
-      if (!token) return;
+      if (!token || submittingRef.current) return;
+      submittingRef.current = true;
       const update = (key: string, patch: Partial<CaptureResult>) =>
         setSession((previous) =>
           previous
@@ -106,21 +178,46 @@ export function CaptureScreen() {
               }
             : previous,
         );
-      await submitCaptureUnits(units, {
-        upload: async (unit) => {
-          const source = await uploadSource({
-            token,
-            unit,
-            note: meta.note,
-            projectId: meta.projectId,
-          });
-          return source.id;
-        },
-        triggerProcessing: (sourceId) => triggerSourceProcessing(token, sourceId),
-        onUpdate: update,
-      });
-      // 提交结束一律停留在结果页，由用户点底部的「回到收集」返回
-      setSession((previous) => (previous ? { ...previous, running: false } : previous));
+      const setPreparing = (next: CaptureSession["preparing"]) =>
+        setSession((previous) => (previous ? { ...previous, preparing: next } : previous));
+      try {
+        // 压缩在提交覆盖层内进行：连点两下也只会压一次、传一次
+        const { units: compressed, ready } = await compressUnits(units, {
+          onPrepareStart: (total) => setPreparing({ total, current: 1 }),
+          onPrepareStep: (current, total) => setPreparing({ total, current }),
+          onUpdate: update,
+        });
+        setSession((previous) =>
+          previous
+            ? {
+                ...previous,
+                preparing: null,
+                units: previous.units.map(
+                  (unit) => compressed.find((item) => item.key === unit.key) ?? unit,
+                ),
+              }
+            : previous,
+        );
+        await submitCaptureUnits(ready, {
+          upload: async (unit) => {
+            const source = await uploadSource({
+              token,
+              unit,
+              note: meta.note,
+              projectId: meta.projectId,
+            });
+            return source.id;
+          },
+          triggerProcessing: (sourceId) => triggerSourceProcessing(token, sourceId),
+          onUpdate: update,
+        });
+      } finally {
+        submittingRef.current = false;
+        // 提交结束一律停留在结果页，由用户点底部的「回到收集」返回
+        setSession((previous) =>
+          previous ? { ...previous, running: false, preparing: null } : previous,
+        );
+      }
     },
     [token],
   );
@@ -150,18 +247,11 @@ export function CaptureScreen() {
     setPage("form");
   }
 
-  async function prepareFromAssets(assets: PickedAsset[], kind: CaptureKind) {
+  /** 选择器一返回就直接进采集页；压缩与上传都放到提交覆盖层里做。 */
+  function openImagesDraft(assets: PickedAsset[], kind: CaptureKind) {
     if (assets.length === 0) return;
-    setPreparing(true);
     setDraftError("");
-    try {
-      const images = await prepareImages(assets);
-      openDraft(emptyDraft(kind, images));
-    } catch {
-      setDraftError("图片处理失败，请重新选择。");
-    } finally {
-      setPreparing(false);
-    }
+    openDraft(emptyDraft(kind, draftImages(assets)));
   }
 
   async function onCamera() {
@@ -174,7 +264,7 @@ export function CaptureScreen() {
       }
       const asset = await capturePhoto();
       if (!asset) return;
-      await prepareFromAssets([asset], "camera");
+      openImagesDraft([asset], "camera");
     } catch {
       setDraftError("无法打开系统相机，请稍后重试。");
     }
@@ -199,7 +289,7 @@ export function CaptureScreen() {
     setDraftError("");
     try {
       const assets = await pickImages();
-      await prepareFromAssets(assets, kind);
+      openImagesDraft(assets, kind);
     } catch {
       setDraftError("无法打开系统相册，请稍后重试。");
     }
@@ -210,7 +300,7 @@ export function CaptureScreen() {
     try {
       const asset = await capturePhoto();
       if (!asset) return;
-      await prepareFromAssets([asset], "camera");
+      openImagesDraft([asset], "camera");
     } catch {
       setDraftError("无法打开系统相机，请稍后重试。");
     }
@@ -227,7 +317,7 @@ export function CaptureScreen() {
   }
 
   async function onSubmit() {
-    if (!draft || !token || running) return;
+    if (!draft || !token || running || submittingRef.current) return;
     setDraftError("");
     // 一次采集动作一个批次 UUID；重试沿用同一批次的同一序号键
     const batchId = newBatchId();
@@ -249,13 +339,13 @@ export function CaptureScreen() {
       projectId: draft.projectId,
     };
     const results = createCaptureResults(units);
-    setSession({ batchId, ...meta, units, results, running: true });
+    setSession({ batchId, ...meta, units, results, running: true, preparing: null });
     setSubmitOpen(true);
     await runUnits(units, meta);
   }
 
   async function onRetryUnits(keys: string[]) {
-    if (!session || running) return;
+    if (!session || running || submittingRef.current) return;
     const units = session.units.filter((unit) => keys.includes(unit.key));
     if (units.length === 0) return;
     setSession({ ...session, running: true });
@@ -317,19 +407,12 @@ export function CaptureScreen() {
           <Text style={styles.title}>收集</Text>
           <Text style={styles.subtitle}>先收进来，慢慢整理成自己的知识。</Text>
           <EntryRow
-            disabled={preparing || running}
             onSelect={(entry) => {
               if (entry === "camera") void onCamera();
               else if (entry === "album") void onAlbumEntry();
               else openDraft(emptyDraft("text", []));
             }}
           />
-          {preparing ? (
-            <View style={styles.busyRow}>
-              <ActivityIndicator color={theme.green} />
-              <Text style={styles.busyText}>正在压缩图片…</Text>
-            </View>
-          ) : null}
           {draftError ? (
             <View style={styles.errorCard} accessibilityRole="alert">
               <Text style={styles.errorTitle}>采集未开始</Text>
@@ -441,8 +524,6 @@ const styles = StyleSheet.create({
   content: { paddingHorizontal: 16, paddingTop: 12 },
   title: { fontSize: 20, fontWeight: "700", color: theme.ink },
   subtitle: { marginTop: 4, marginBottom: 14, fontSize: 12, lineHeight: 19, color: theme.muted },
-  busyRow: { marginTop: 12, flexDirection: "row", alignItems: "center", gap: 8 },
-  busyText: { fontSize: 12, color: theme.muted },
   footer: {
     position: "absolute",
     right: 0,

@@ -3,6 +3,7 @@ import {
   createCaptureResults,
   createCaptureSubmitUnits,
   formatImageTitle,
+  prepareProgressText,
   progressText,
   summarizeCapture,
   summaryText,
@@ -122,6 +123,11 @@ test("汇总口径区分全部成功与部分失败", () => {
   expect(summaryText(summary)).toBe("已提交 2 条，1 条未成功");
   expect(summaryText({ total: 3, saved: 3, failed: 0, pending: 0 })).toBe("已提交 3 条");
   expect(summaryText({ total: 3, saved: 0, failed: 3, pending: 0 })).toBe("已提交 0 条，3 条未成功");
+});
+
+test("压缩进度文案不含百分比", () => {
+  expect(prepareProgressText({ total: 3, current: 2 })).toBe("正在压缩 3 张中的第 2 张…");
+  expect(prepareProgressText({ total: 1, current: 1 })).toBe("正在压缩图片…");
 });
 
 test("进度文案不含百分比", () => {

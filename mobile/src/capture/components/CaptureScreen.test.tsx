@@ -51,15 +51,30 @@ jest.mock("expo-image-picker", () => ({
 jest.mock("expo-image-manipulator", () => {
   const context: { resize: jest.Mock; renderAsync: jest.Mock } = {
     resize: jest.fn(),
-    renderAsync: jest.fn(async () => ({
-      saveAsync: jest.fn(async () => ({ uri: "file://grove.jpg", width: 2048, height: 1536 })),
-    })),
+    renderAsync: jest.fn(),
   };
   context.resize.mockReturnValue(context);
-  return { SaveFormat: { JPEG: "jpeg" }, ImageManipulator: { manipulate: jest.fn(() => context) } };
+  return {
+    SaveFormat: { JPEG: "jpeg" },
+    ImageManipulator: { manipulate: jest.fn(() => context) },
+    // 暴露给用例：压缩的时机与挂起都由它控制
+    __context: context,
+  };
 });
 
 const picker = ImagePicker as jest.Mocked<typeof ImagePicker>;
+const manipulator = (
+  jest.requireMock("expo-image-manipulator") as {
+    __context: { resize: jest.Mock; renderAsync: jest.Mock };
+  }
+).__context;
+
+/** 压缩结果的默认替身：成功返回本地 jpg 副本。 */
+function stubPreparedImage() {
+  manipulator.renderAsync.mockImplementation(async () => ({
+    saveAsync: async () => ({ uri: "file://grove.jpg", width: 2048, height: 1536 }),
+  }));
+}
 const originalFetch = globalThis.fetch;
 
 async function renderScreen() {
@@ -79,7 +94,14 @@ async function renderScreen() {
 }
 
 function asset(uri: string) {
-  return { uri, width: 4000, height: 3000, fileName: null, fileSize: 10 } as unknown as ImagePicker.ImagePickerAsset;
+  return {
+    uri,
+    width: 4000,
+    height: 3000,
+    fileName: "IMG_0001.HEIC",
+    mimeType: "image/heic",
+    fileSize: 10,
+  } as unknown as ImagePicker.ImagePickerAsset;
 }
 
 /** 从入口页进入相册「每张一条」采集页并选中 3 张图。 */
@@ -99,6 +121,8 @@ let restoreFormData: () => void;
 beforeEach(() => {
   restoreFormData = installExpoFetchFormData();
   jest.clearAllMocks();
+  manipulator.renderAsync.mockReset();
+  stubPreparedImage();
   mockGetProjects.mockResolvedValue([]);
   mockRequest.mockResolvedValue({ id: 1 });
 });
@@ -274,6 +298,74 @@ test("提交进行中底部没有回到收集，返回键也不关闭覆盖层",
 
   // 返回键（Modal onRequestClose）不关闭覆盖层
   await fireEvent(screen.getByLabelText("提交状态"), "requestClose");
+  expect(screen.getByLabelText("提交状态")).toBeTruthy();
+});
+
+test("选完图片直接进采集页，压缩留到提交时才做", async () => {
+  stubUpload();
+  const screen = await renderScreen();
+
+  await openAlbumSeparate(screen);
+
+  // 采集页立刻可用：不出现任何准备中提示，也还没有调用压缩
+  expect(screen.queryByText(/正在压缩/)).toBeNull();
+  expect(manipulator.renderAsync).not.toHaveBeenCalled();
+});
+
+test("压缩过程呈现在提交覆盖层里，压缩完才上传", async () => {
+  stubUpload();
+  let release: (() => void) | null = null;
+  manipulator.renderAsync.mockImplementationOnce(
+    () =>
+      new Promise((resolve) => {
+        release = () =>
+          resolve({
+            saveAsync: async () => ({ uri: "file://grove.jpg", width: 2048, height: 1536 }),
+          });
+      }),
+  );
+  const screen = await renderScreen();
+
+  await openAlbumSeparate(screen);
+  await fireEvent.press(screen.getByLabelText("提交采集"));
+
+  await waitFor(() => expect(screen.getByText("正在压缩 3 张中的第 1 张…")).toBeTruthy());
+  expect(screen.getByLabelText("提交状态")).toBeTruthy();
+  expect(screen.getByText("正在压缩图片")).toBeTruthy();
+  expect(globalThis.fetch).not.toHaveBeenCalled();
+
+  (release as unknown as () => void)();
+  await waitFor(() => expect(screen.getByText("已提交 3 条")).toBeTruthy());
+  expect(globalThis.fetch).toHaveBeenCalledTimes(3);
+});
+
+test("单张压缩失败只标记该条，其余继续上传", async () => {
+  stubUpload();
+  manipulator.renderAsync.mockImplementationOnce(() =>
+    Promise.reject(new Error("Failed to load image")),
+  );
+  const screen = await renderScreen();
+
+  await openAlbumSeparate(screen);
+  await fireEvent.press(screen.getByLabelText("提交采集"));
+
+  await waitFor(() => expect(screen.getByText("已提交 2 条，1 条未成功")).toBeTruthy());
+  expect(screen.getByText("图片处理失败，请重新选择。")).toBeTruthy();
+  expect(screen.queryByText("Failed to load image")).toBeNull();
+  expect(globalThis.fetch).toHaveBeenCalledTimes(2);
+});
+
+test("连点提交只跑一次，不会重复上传同一批", async () => {
+  const fetchMock = jest.fn(() => new Promise(() => {}));
+  globalThis.fetch = fetchMock as unknown as typeof fetch;
+  const screen = await renderScreen();
+
+  await openTextWithClipboard(screen);
+  const submit = screen.getByLabelText("提交采集");
+  await fireEvent.press(submit);
+  await fireEvent.press(submit);
+
+  await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1));
   expect(screen.getByLabelText("提交状态")).toBeTruthy();
 });
 
