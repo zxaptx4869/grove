@@ -10,6 +10,7 @@
 - `app.json` 为 `expo-image-picker` 注册插件并给出中文权限文案（`photosPermission` / `cameraPermission`），同时把 `microphonePermission` 设为 `false`：采集只拍照片、不录音，避免构建时写入用不到的麦克风权限与系统提示。
 - 上传文件名用 `grove-<时间戳>-<序号>.jpg`、MIME 固定 `image/jpeg`：原始文件名（相册/相机的 IMG_xxxx、HEIC 后缀）不适合作为来源标题，也不适合作为 multipart 文件名。
 - **压缩时机（真机验收后调整）**：选择器一返回就直接进采集页，缩略图先用原图 uri（`draftImages()` 只把资源包成草稿图片、`prepared: false`）；压缩推迟到用户点提交之后，在提交覆盖层内先跑「正在压缩 N 张中的第 M 张」再进入上传。原先在入口页压缩，真机会先闪一层「正在压缩图片…」再跳采集页，交互断裂，因此把整个加载过程收进提交页；表单因此不再有「正在压缩图片」这一中间态，单张压缩失败改为在覆盖层按条标记“图片处理失败，请重新选择”。
+- **相册选择器的蓝色进度浮层（真机实测结论，不随本 change 修）**：小米 15（Android 15）上，从相册确认后会出现系统浮层「白色圆角卡 + 蓝色进度条 + 100%」，看起来像闪在采集页底部。截图证据表明它画在我们窗口之上（连我们自己的弹层窗口都被它压暗），移动端色板与 `expo-image-picker` 的 Android 代码里都没有这样的进度 UI，故属系统侧。曾试过让 Android 走相册 App 的旧式选择器（`legacy: true`，即 `ACTION_GET_CONTENT`）以绕开系统照片选择器：真机复测选择器与蓝条都没有变化，已回退。原因有两条：① `expo-image-picker` 在 Android 13+ 的 `getMediaLibraryPermissions` 返回空数组（`ImagePickerModule.kt`），App 从不申请、也不持有完整相册读取权限；② Android 14+ 会把带图片 MIME 的旧式相册 intent 接管重定向到系统照片选择器。结论：Android 14+ 上无法从 App 侧离开系统照片选择器，也去不掉这张系统浮层；要彻底避开只能申请完整相册读取权限并自建选择器界面，属隐私更重的独立 change，本 change 不做。
 
 ## 2. 上传通道与超时
 
