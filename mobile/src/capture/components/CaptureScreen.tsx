@@ -10,6 +10,7 @@ import { useAuth } from "@/src/auth";
 import {
   createCaptureResults,
   createCaptureSubmitUnits,
+  MAX_SELECTION,
   type CaptureKind,
   type CaptureResult,
   type CaptureSubmitUnit,
@@ -238,6 +239,15 @@ export function CaptureScreen() {
   /** 选择器一返回就直接进采集页；压缩与上传都放到提交覆盖层里做。 */
   function openImagesDraft(assets: PickedAsset[], kind: CaptureKind) {
     if (assets.length === 0) return;
+    // Android 旧式相册选择器不认张数上限：超出时明确提示并留在入口页，不静默丢图
+    if (assets.length > MAX_SELECTION) {
+      setDraft(null);
+      setDraftError(
+        `一次最多选择 ${MAX_SELECTION} 张图片，本次选了 ${assets.length} 张，请重新选择。`,
+      );
+      setPage("entry");
+      return;
+    }
     setDraftError("");
     openDraft(emptyDraft(kind, draftImages(assets)));
   }
