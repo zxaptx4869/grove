@@ -22,6 +22,20 @@ jest.mock("@/src/api", () => ({
   request: (...args: unknown[]) => mockRequest(...args),
 }));
 
+// 采集用例不关心来源库：把列表/详情接口固定成空数据，避免依赖网络替身
+jest.mock("@/src/sources/api", () => ({
+  SOURCE_LIST_LIMIT: 20,
+  SOURCE_NETWORK_ERROR: "网络连接中断，请检查网络后重试。",
+  listSources: jest.fn(async () => []),
+  getSource: jest.fn(),
+  listSourceCandidates: jest.fn(async () => []),
+  updateSourceProject: jest.fn(),
+  deleteSource: jest.fn(),
+  triggerSourceProcessing: jest.fn(),
+  sourceAttachmentUrl: () => null,
+  sourceErrorMessage: () => "网络连接中断，请检查网络后重试。",
+}));
+
 jest.mock("expo-crypto", () => ({ randomUUID: () => "batch-uuid" }));
 jest.mock("expo-clipboard", () => ({ getStringAsync: jest.fn(async () => "剪贴板里的文字") }));
 
@@ -148,9 +162,10 @@ async function openTextWithClipboard(screen: Awaited<ReturnType<typeof renderScr
   await waitFor(() => expect(screen.getByDisplayValue("剪贴板里的文字")).toBeTruthy());
 }
 
-test("入口页只有三入口，不渲染表单与提交条", async () => {
+test("入口页同时承载三入口与最近收集列表，不渲染表单与提交条", async () => {
   const screen = await renderScreen();
 
+  expect(screen.getByText("最近收集")).toBeTruthy();
   expect(screen.getByLabelText("相机采集")).toBeTruthy();
   expect(screen.getByLabelText("相册采集")).toBeTruthy();
   expect(screen.getByLabelText("文本采集")).toBeTruthy();

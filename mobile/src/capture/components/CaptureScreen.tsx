@@ -2,7 +2,7 @@
 
 import { useQuery } from "@tanstack/react-query";
 import { useCallback, useRef, useState } from "react";
-import { Platform, ScrollView, StyleSheet, Text, View } from "react-native";
+import { Platform, RefreshControl, ScrollView, StyleSheet, Text, View } from "react-native";
 import { SafeAreaView, useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { getProjects } from "@/src/api";
@@ -36,6 +36,10 @@ import { submitCaptureUnits, toCaptureMessage } from "@/src/capture/submit";
 import { triggerSourceProcessing, uploadSource } from "@/src/capture/upload";
 import { useKeyboardHeight } from "@/src/knowledge-agent/hooks/useKeyboardHeight";
 import { AppButton } from "@/src/knowledge-agent/components/ui";
+import { sourceErrorMessage } from "@/src/sources/api";
+import { SourceDetailOverlay } from "@/src/sources/components/SourceDetailOverlay";
+import { SourceListSection } from "@/src/sources/components/SourceListSection";
+import { useSourceLibrary } from "@/src/sources/hooks/useSourceLibrary";
 import { theme } from "@/src/theme";
 
 /** 三个互斥页面，对应原型 data-screen。 */
@@ -152,6 +156,9 @@ export function CaptureScreen() {
   const [draftError, setDraftError] = useState("");
   // 提交重入锁：状态更新是异步的，连点两次可能都在 running 变 true 之前进来
   const submittingRef = useRef(false);
+  // 最近收集列表、只读详情与两个操作的网络失败提示
+  const [libraryError, setLibraryError] = useState("");
+  const library = useSourceLibrary(token);
 
   const projectsQuery = useQuery({
     queryKey: ["projects", "mobile-capture"],
@@ -160,6 +167,18 @@ export function CaptureScreen() {
   });
   const projects = projectsQuery.data ?? [];
   const running = Boolean(session?.running);
+  const retrySourceProcessing = library.retryProcessing;
+  const onRetrySource = useCallback(
+    async (sourceId: number) => {
+      setLibraryError("");
+      try {
+        await retrySourceProcessing(sourceId);
+      } catch (error) {
+        setLibraryError(sourceErrorMessage(error));
+      }
+    },
+    [retrySourceProcessing],
+  );
 
   const runUnits = useCallback(
     async (units: CaptureSubmitUnit[], meta: SessionMeta) => {
@@ -391,6 +410,13 @@ export function CaptureScreen() {
         <ScrollView
           contentContainerStyle={[styles.content, { paddingBottom: insets.bottom + 24 }]}
           keyboardShouldPersistTaps="handled"
+          refreshControl={
+            <RefreshControl
+              refreshing={library.refreshing}
+              onRefresh={library.refetchList}
+              tintColor={theme.green}
+            />
+          }
         >
           <Text style={styles.title}>收集</Text>
           <Text style={styles.subtitle}>先收进来，慢慢整理成自己的知识。</Text>
@@ -405,6 +431,27 @@ export function CaptureScreen() {
             <View style={styles.errorCard} accessibilityRole="alert">
               <Text style={styles.errorTitle}>采集未开始</Text>
               <Text style={styles.errorBody}>{draftError}</Text>
+            </View>
+          ) : null}
+          <SourceListSection
+            sources={library.sources}
+            projects={projects}
+            filter={library.filter}
+            onFilterChange={library.setFilter}
+            isPending={library.listPending}
+            errorText={library.listError}
+            isRefreshing={library.refreshing}
+            movingIds={library.movingIds}
+            onRefresh={library.refetchList}
+            onReload={library.refetchList}
+            onOpenSource={library.openSource}
+            onRetrySource={(sourceId) => void onRetrySource(sourceId)}
+            onStartCapture={() => void onAlbumEntry()}
+          />
+          {libraryError ? (
+            <View style={styles.errorCard} accessibilityRole="alert">
+              <Text style={styles.errorTitle}>操作未完成</Text>
+              <Text style={styles.errorBody}>{libraryError}</Text>
             </View>
           ) : null}
         </ScrollView>
@@ -487,6 +534,21 @@ export function CaptureScreen() {
         }}
         onClose={() => setProjectOpen(false)}
       />
+      {library.detailSourceId !== null ? (
+        <SourceDetailOverlay
+          source={library.detail}
+          candidates={library.candidates}
+          projects={projects}
+          loading={library.detailPending}
+          error={library.detailError}
+          candidatesError={library.candidatesError}
+          moving={library.movingIds.includes(library.detailSourceId)}
+          onClose={library.closeSource}
+          onRetryLoad={library.retryDetail}
+          onMove={(projectId) => library.moveSource(library.detailSourceId as number, projectId)}
+          onDelete={() => library.removeSource(library.detailSourceId as number)}
+        />
+      ) : null}
       {session ? (
         <SubmitOverlay
           visible={submitOpen}
