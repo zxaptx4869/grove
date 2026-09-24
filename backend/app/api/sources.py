@@ -129,6 +129,22 @@ async def _find_source_by_capture_key(
     ).scalar_one_or_none()
 
 
+async def _find_processing_task(db: DbSession, source_id: int) -> ProcessingTask | None:
+    """按来源查处理任务（并发触发时可能同时读到 None）。"""
+    return (
+        await db.execute(
+            select(ProcessingTask).where(ProcessingTask.source_id == source_id)
+        )
+    ).scalar_one_or_none()
+
+
+async def _has_processing_task(db: DbSession, source_id: int) -> bool:
+    """并发插入兜底：确认处理任务是否已由其它请求创建。"""
+    return (
+        await db.execute(select(ProcessingTask.id).where(ProcessingTask.source_id == source_id))
+    ).scalar_one_or_none() is not None
+
+
 async def _validate_project(db: DbSession, workspace_id: int, project_id: int) -> Project:
     """校验项目属于当前 Workspace，否则 404。"""
     project = await db.get(Project, project_id)
@@ -535,11 +551,7 @@ async def trigger_processing(
 ) -> SourceOut:
     """触发处理：创建或复位处理任务到等待处理。"""
     source = await _get_owned_source(db, workspace.id, source_id)
-    task = (
-        await db.execute(
-            select(ProcessingTask).where(ProcessingTask.source_id == source.id)
-        )
-    ).scalar_one_or_none()
+    task = await _find_processing_task(db, source.id)
 
     if task is None:
         task = ProcessingTask(source_id=source.id, status=WAITING, retry_count=0)
@@ -556,7 +568,14 @@ async def trigger_processing(
         task.step = None
 
     source.status = WAITING
-    await db.commit()
+    try:
+        await db.commit()
+    except IntegrityError:
+        # 并发触发同一来源时 processing_tasks.source_id 唯一索引会冲突：
+        # 回滚后按「任务已存在」幂等返回，MUST NOT 把正常的重复触发暴露成 500
+        await db.rollback()
+        if not await _has_processing_task(db, source_id):
+            raise
     return await _load_source_out(db, source_id)
 
 

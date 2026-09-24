@@ -1,5 +1,6 @@
 """处理任务管道测试。"""
 
+import asyncio
 import uuid
 
 import httpx
@@ -137,6 +138,61 @@ async def test_trigger_conflict_when_processing(client: httpx.AsyncClient) -> No
     response = await client.post(f"/api/sources/{source['id']}/process")
 
     assert response.status_code == 409
+
+
+@pytest.mark.asyncio
+async def test_concurrent_trigger_is_idempotent(client: httpx.AsyncClient) -> None:
+    """同一来源并发触发处理时不能因唯一约束冲突报 500（真机连点重试会走到这里）。"""
+    await _register(client)
+    source = await _create_text_source(client, "并发触发")
+
+    responses = await asyncio.gather(
+        client.post(f"/api/sources/{source['id']}/process"),
+        client.post(f"/api/sources/{source['id']}/process"),
+        client.post(f"/api/sources/{source['id']}/process"),
+    )
+
+    assert [response.status_code for response in responses] == [200, 200, 200]
+    task = await _get_task(source["id"])
+    assert task.status == WAITING
+
+
+@pytest.mark.asyncio
+async def test_trigger_survives_concurrent_insert(
+    client: httpx.AsyncClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """读到「无任务」后插入撞唯一索引时必须幂等返回，而不是 500。
+
+    用 monkeypatch 精确模拟并发窗口：本次请求读到 None，但任务已被另一请求插入。
+    """
+    from app.api import sources as sources_module
+
+    await _register(client)
+    source = await _create_text_source(client, "并发插入")
+    await client.post(f"/api/sources/{source['id']}/process")
+
+    real_find = sources_module._find_processing_task
+    calls = {"count": 0}
+
+    async def fake_find(db, source_id):
+        calls["count"] += 1
+        return None if calls["count"] == 1 else await real_find(db, source_id)
+
+    monkeypatch.setattr(sources_module, "_find_processing_task", fake_find)
+
+    real_has = sources_module._has_processing_task
+    fallback = {"count": 0}
+
+    async def fake_has(db, source_id):
+        fallback["count"] += 1
+        return await real_has(db, source_id)
+
+    monkeypatch.setattr(sources_module, "_has_processing_task", fake_has)
+
+    response = await client.post(f"/api/sources/{source['id']}/process")
+
+    assert response.status_code == 200
+    assert (calls["count"], fallback["count"]) == (1, 1)
 
 
 def test_factory_returns_organizing_by_default() -> None:
