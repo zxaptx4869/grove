@@ -88,22 +88,21 @@ function countUnprepared(units: CaptureSubmitUnit[]): number {
 
 /**
  * 上传前的本地压缩：把选择器给的原图逐张转成 jpg。
- * 单张失败只标记该条，其余条目继续；返回压缩后的单元与可直接上传的子集。
+ * 单张失败只标记该条，其余条目继续；返回可直接上传的单元。
+ * 压缩产物只用于本次上传，会话里的单元仍保留原图 uri，缩略图才不会中途换图。
  */
 async function compressUnits(
   units: CaptureSubmitUnit[],
   hooks: PrepareHooks,
-): Promise<{ units: CaptureSubmitUnit[]; ready: CaptureSubmitUnit[] }> {
+): Promise<CaptureSubmitUnit[]> {
   const total = countUnprepared(units);
-  if (total === 0) return { units, ready: units };
+  if (total === 0) return units;
   hooks.onPrepareStart(total);
   const now = Date.now();
   let done = 0;
-  const compressed: CaptureSubmitUnit[] = [];
   const ready: CaptureSubmitUnit[] = [];
   for (const unit of units) {
     if (!unit.files.some((file) => !file.prepared)) {
-      compressed.push(unit);
       ready.push(unit);
       continue;
     }
@@ -128,14 +127,13 @@ async function compressUnits(
       // 本地压缩失败没有服务端文案，用固定说明代替原生错误串
       console.warn("[capture] 图片压缩失败", { key: unit.key, error: failure });
       hooks.onUpdate(unit.key, { status: "failed", error: IMAGE_PREPARE_ERROR });
-      compressed.push(unit);
       continue;
     }
-    const next: CaptureSubmitUnit = { ...unit, files };
-    compressed.push(next);
-    ready.push(next);
+    // 压缩完回到「等待提交」，真正开始上传时才转 uploading
+    hooks.onUpdate(unit.key, { status: "pending" });
+    ready.push({ ...unit, files });
   }
-  return { units: compressed, ready };
+  return ready;
 }
 
 export function CaptureScreen() {
@@ -182,22 +180,12 @@ export function CaptureScreen() {
         setSession((previous) => (previous ? { ...previous, preparing: next } : previous));
       try {
         // 压缩在提交覆盖层内进行：连点两下也只会压一次、传一次
-        const { units: compressed, ready } = await compressUnits(units, {
+        const ready = await compressUnits(units, {
           onPrepareStart: (total) => setPreparing({ total, current: 1 }),
           onPrepareStep: (current, total) => setPreparing({ total, current }),
           onUpdate: update,
         });
-        setSession((previous) =>
-          previous
-            ? {
-                ...previous,
-                preparing: null,
-                units: previous.units.map(
-                  (unit) => compressed.find((item) => item.key === unit.key) ?? unit,
-                ),
-              }
-            : previous,
-        );
+        setPreparing(null);
         await submitCaptureUnits(ready, {
           upload: async (unit) => {
             const source = await uploadSource({

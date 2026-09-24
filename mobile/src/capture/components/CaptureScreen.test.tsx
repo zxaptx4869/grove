@@ -235,6 +235,8 @@ test("存在失败时覆盖层停留，逐条重试沿用同键且重试后仍�
 
   await waitFor(() => expect(screen.getByText("已提交 2 条，1 条未成功")).toBeTruthy());
   expect(screen.getByText("提交未成功")).toBeTruthy();
+  expect(screen.getByLabelText("材料 2：已提交")).toBeTruthy();
+  expect(screen.getByLabelText("材料 3：未成功")).toBeTruthy();
   expect(keys).toEqual(["batch-uuid:1", "batch-uuid:2", "batch-uuid:3"]);
   expect(screen.getByText("仅支持 png、jpg、webp 图片")).toBeTruthy();
 
@@ -332,11 +334,28 @@ test("压缩过程呈现在提交覆盖层里，压缩完才上传", async () =>
   await waitFor(() => expect(screen.getByText("正在压缩 3 张中的第 1 张…")).toBeTruthy());
   expect(screen.getByLabelText("提交状态")).toBeTruthy();
   expect(screen.getByText("正在压缩图片")).toBeTruthy();
+  // 进度压在材料缩略图上：正在压缩的那张显示动效，其余等待
+  expect(screen.getByLabelText("材料 1：压缩中")).toBeTruthy();
+  expect(screen.getByLabelText("材料 2：等待")).toBeTruthy();
   expect(globalThis.fetch).not.toHaveBeenCalled();
 
   (release as unknown as () => void)();
   await waitFor(() => expect(screen.getByText("已提交 3 条")).toBeTruthy());
   expect(globalThis.fetch).toHaveBeenCalledTimes(3);
+  expect(screen.getByLabelText("材料 1：已提交")).toBeTruthy();
+});
+
+test("上传中缩略图上显示加载动效，未轮到的材料显示等待", async () => {
+  globalThis.fetch = jest.fn(() => new Promise(() => {})) as unknown as typeof fetch;
+  const screen = await renderScreen();
+
+  await openAlbumSeparate(screen);
+  await fireEvent.press(screen.getByLabelText("提交采集"));
+
+  await waitFor(() => expect(screen.getByText("正在上传 3 张中的第 1 张…")).toBeTruthy());
+  expect(screen.getByLabelText("材料 1：上传中")).toBeTruthy();
+  expect(screen.getByLabelText("材料 2：等待")).toBeTruthy();
+  expect(screen.getByLabelText("材料 3：等待")).toBeTruthy();
 });
 
 test("单张压缩失败只标记该条，其余继续上传", async () => {
