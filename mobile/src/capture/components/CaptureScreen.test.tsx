@@ -159,25 +159,6 @@ test("入口页只有三入口，不渲染表单与提交条", async () => {
   expect(screen.queryByLabelText("提交状态")).toBeNull();
 });
 
-test("相册返回超过上限时留在入口页并明确提示，不静默丢图", async () => {
-  const screen = await renderScreen();
-  picker.getMediaLibraryPermissionsAsync.mockResolvedValue({ granted: true } as never);
-  // Android 旧式相册选择器不认张数上限，可能返回超量资源
-  picker.launchImageLibraryAsync.mockResolvedValue({
-    canceled: false,
-    assets: [1, 2, 3, 4, 5, 6].map((index) => asset(`file://${index}.heic`)),
-  } as never);
-
-  await fireEvent.press(screen.getByLabelText("相册采集"));
-  await fireEvent.press(await screen.findByLabelText(/每张一条/));
-
-  await waitFor(() =>
-    expect(screen.getByText("一次最多选择 5 张图片，本次选了 6 张，请重新选择。")).toBeTruthy(),
-  );
-  expect(screen.getByLabelText("相机采集")).toBeTruthy();
-  expect(screen.queryByLabelText("提交采集")).toBeNull();
-});
-
 test("进入采集页后入口行消失，返回会丢弃草稿", async () => {
   const screen = await renderScreen();
 

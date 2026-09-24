@@ -1,7 +1,7 @@
 /** 系统相机、相册与权限：只调用系统能力，不自建取景或图库界面。 */
 
 import * as ImagePicker from "expo-image-picker";
-import { Linking, Platform } from "react-native";
+import { Linking } from "react-native";
 
 import { MAX_SELECTION } from "@/src/capture/batch";
 import type { PickedAsset } from "@/src/capture/image";
@@ -56,22 +56,15 @@ export async function capturePhoto(): Promise<PickedAsset | null> {
 }
 
 /**
- * 系统相册多选，最多 5 张。
- *
- * Android 走相册 App 的旧式选择器（`legacy`，即 `ACTION_GET_CONTENT`）：系统照片
- * 选择器（隐私「安全访问」模式）在准备选中的图片时会自己弹一张蓝色进度卡，退场
- * 瞬间闪在采集页上（真机验收反馈），而系统相册入口与其它 App 一致、没有这张卡。
- * 旧式选择器不接受选择器侧张数上限，因此 Android 不下发上限，改由调用方校验并把
- * 超出结果明确提示给用户（MUST NOT 静默丢图）。
+ * 系统相册多选，最多 5 张：数量上限交给系统选择器（`selectionLimit`），
+ * 不在客户端静默截断；若系统仍返回超量资源，交给提交环节报出「一次最多上传 5 张图片」。
  */
 export async function pickImages(limit = MAX_SELECTION): Promise<PickedAsset[]> {
-  const useLegacyPicker = Platform.OS === "android";
   const result = await ImagePicker.launchImageLibraryAsync({
     mediaTypes: ["images"],
     allowsMultipleSelection: true,
-    selectionLimit: useLegacyPicker ? 0 : limit,
+    selectionLimit: limit,
     quality: 1,
-    legacy: useLegacyPicker,
   });
   if (result.canceled) return [];
   return result.assets.map(toAsset);
