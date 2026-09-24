@@ -9,6 +9,7 @@
 - 系统选择器偶尔给出 0 宽高（无法判断长边）：此时跳过 `resize`，只做 jpg 转码与 quality 0.8 压缩，宁可少缩一次也不按错误方向放大。
 - `app.json` 为 `expo-image-picker` 注册插件并给出中文权限文案（`photosPermission` / `cameraPermission`），同时把 `microphonePermission` 设为 `false`：采集只拍照片、不录音，避免构建时写入用不到的麦克风权限与系统提示。
 - 上传文件名用 `grove-<时间戳>-<序号>.jpg`、MIME 固定 `image/jpeg`：原始文件名（相册/相机的 IMG_xxxx、HEIC 后缀）不适合作为来源标题，也不适合作为 multipart 文件名。
+- **压缩时机（真机验收后调整）**：选择器一返回就直接进采集页，缩略图先用原图 uri（`draftImages()` 只把资源包成草稿图片、`prepared: false`）；压缩推迟到用户点提交之后，在提交覆盖层内先跑「正在压缩 N 张中的第 M 张」再进入上传。原先在入口页压缩，真机会先闪一层「正在压缩图片…」再跳采集页，交互断裂，因此把整个加载过程收进提交页；表单因此不再有「正在压缩图片」这一中间态，单张压缩失败改为在覆盖层按条标记“图片处理失败，请重新选择”。
 
 ## 2. 上传通道与超时
 
@@ -40,14 +41,15 @@
 
 `mobile/src/capture/`：
 
-- `image.ts`：`prepareImage(asset)`（朝向判断 + 压缩 + jpg 转码，返回 `{ uri, name, type, width, height }`）。
+- `image.ts`：`draftImages(assets)`（把选择器结果包成待压缩草稿图片，缩略图沿用原图 uri）、`prepareImage(asset)`（朝向判断 + 压缩 + jpg 转码，返回 `{ uri, name, type, width, height, prepared: true }`）；压缩进度文案由 `batch.ts` 的 `prepareProgressText` 派生。
 - `picker.ts`：权限检查/申请（`requestCameraPermissionsAsync` / `requestMediaLibraryPermissionsAsync`）、`launchCameraAsync`、`launchImageLibraryAsync({ allowsMultipleSelection: true, selectionLimit: 5 })`、`openAppSettings()`（`Linking.openSettings()`）。
 - `batch.ts`：纯函数 `buildCaptureKey`、`createCaptureSubmitUnits`（按提交形态与张数派生提交单元）、`createCaptureResults`、`summarizeCapture`、`summaryText`、`progressText`；不含 React 与网络，便于单测。
 - `submit.ts`：`submitCaptureUnits(units, deps)` 串行执行器，`deps` 注入 `upload` / `triggerProcessing` / `onUpdate`；失败只标记该条，不中断循环。
+- `components/CaptureScreen.tsx`：`compressUnits(units, hooks)` 在上传前逐张压缩并回报进度（单张失败只标记该条），随后才把可直接上传的子集交给 `submitCaptureUnits`；`submittingRef` 与 `running` 共同保证一次提交只跑一遍。
 - `upload.ts`：真实网络实现与 `CaptureSubmitError`（带 `status`）；失败时 `console.warn` 打印 url / 文件 uri / 幂等键 / 真实原因，避免「网络连接中断」掩盖真实错误（开发模式下并在文案后附「诊断：…」）。
 - `components/`：`CaptureScreen`（页面状态机主体）、`CaptureHeader`、`CaptureForm`、`EntryRow`、`AlbumChoiceSheet`、`ProjectSheet`、`PermissionPage`、`SubmitOverlay`。
 
-条目状态：`pending → uploading → saved | failed`，另记 `processError` 表示「已保存但处理未启动」。汇总口径：`saved` 计入已提交、`failed` 计入未成功；全部成功 / 部分失败 / 全部失败由这两个计数派生，四种状态都在提交覆盖层内自包含展示，不依赖列表，也不自动离开覆盖层。
+条目状态：`pending → preparing（图片压缩中）→ uploading → saved | failed`，另记 `processError` 表示「已保存但处理未启动」；会话另带 `preparing: { total, current } | null` 表示整批是否处于压缩阶段。压缩与上传都算进行中：`running` 期间覆盖层不给关闭出口、返回键不关闭、重入的提交动作被 `submittingRef` 直接拒绝。汇总口径：`saved` 计入已提交、`failed` 计入未成功；全部成功 / 部分失败 / 全部失败由这两个计数派生，四种状态都在提交覆盖层内自包含展示，不依赖列表，也不自动离开覆盖层。
 
 ## 5. 权限与「去设置」
 
@@ -59,7 +61,7 @@
 - 纯逻辑（`batch.ts`）直接单测：键派生（重试复用、新一轮换键）、部分失败汇总与文案、进度文案。
 - `submit.ts` 用注入的假上传器单测：串行顺序、部分失败继续、只重试失败项。
 - `upload.ts` 用 `global.fetch` mock 单测：multipart 字段（含 `capture_key`、不设置 `Content-Type`）、超时中止、`detail` 原文透传、200/201 都算成功。FormData 用 `src/capture/testing/expo-fetch-formdata.ts` 替身，按 Expo 的契约只接受 string 与带 `bytes()` 的部件，因此「退回 `{ uri, name, type }`」会被测试直接拦下（jest 里 Node 自带的 undici FormData 与运行时契约不同，不能用真身）。
-- `picker.ts` / `image.ts` / 组件测试用 `jest.mock` 替换 `expo-image-picker`、`expo-image-manipulator`、`expo-linking`，不依赖真机或模拟器；权限被拒场景断言提示文案与「去设置」动作；提交结束断言「全部成功停在结果页 + 底部出现回到收集 + 不自动跳转」「处理未启动在卡片内提示」「存在失败停留覆盖层且重试沿用同键」「400 仍在覆盖层显示原文」「进行中无底部出口且返回键不关闭」。
+- `picker.ts` / `image.ts` / 组件测试用 `jest.mock` 替换 `expo-image-picker`、`expo-image-manipulator`、`expo-linking`，不依赖真机或模拟器；权限被拒场景断言提示文案与「去设置」动作；提交结束断言「全部成功停在结果页 + 底部出现回到收集 + 不自动跳转」「处理未启动在卡片内提示」「存在失败停留覆盖层且重试沿用同键」「400 仍在覆盖层显示原文」「进行中无底部出口且返回键不关闭」；压缩时机断言「选完图片立刻进采集页且尚未调用压缩」「压缩进度出现在覆盖层内且压缩完成前没有上传请求」「连点提交只产生一次上传」。
 - 模拟器与真机走查由用户执行，AI 不安装、不启动、不操作设备。
 
 ## 7. 与后端合同的其它约定
