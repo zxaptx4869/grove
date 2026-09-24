@@ -66,6 +66,7 @@ def _source_out(
     candidate_count: int = 0,
     failure_reason: str | None = None,
     retry_count: int = 0,
+    has_processing_task: bool = False,
 ) -> SourceOut:
     """把 ORM 对象组装为响应模型。"""
     return SourceOut(
@@ -84,6 +85,7 @@ def _source_out(
         candidate_count=candidate_count,
         failure_reason=failure_reason,
         retry_count=retry_count,
+        has_processing_task=has_processing_task,
         attachments=[
             AttachmentOut(
                 id=item.id,
@@ -161,7 +163,7 @@ async def _load_source_out(db: DbSession, source_id: int) -> SourceOut:
         )
     ).scalar_one()
     locked, counts, pending, total = await _source_state_counts(db, [source.id])
-    failures, retries = await _source_failure_info(db, [source.id])
+    failures, retries, task_sources = await _source_task_info(db, [source.id])
     return _source_out(
         source,
         list(source.attachments),
@@ -171,6 +173,7 @@ async def _load_source_out(db: DbSession, source_id: int) -> SourceOut:
         total.get(source.id, 0),
         failure_reason=failures.get(source.id),
         retry_count=retries.get(source.id, 0),
+        has_processing_task=source.id in task_sources,
     )
 
 
@@ -227,17 +230,19 @@ async def _source_state_counts(
     return locked, counts, pending_counts, candidate_counts
 
 
-async def _source_failure_info(
+async def _source_task_info(
     db: DbSession,
     source_ids: list[int],
-) -> tuple[dict[int, str | None], dict[int, int]]:
-    """批量读取处理任务的失败文案与重试次数，避免列表 N+1。
+) -> tuple[dict[int, str | None], dict[int, int], set[int]]:
+    """批量读取处理任务的失败文案、重试次数与任务存在性，避免列表 N+1。
 
     口径：仅当任务失败且记录了错误时给出文案，其它状态为 None，避免把历史错误
-    当成当前问题展示；无任务时重试次数为 0。
+    当成当前问题展示；无任务时重试次数为 0。任务存在性用于区分「等待处理且没有
+    任务」（处理未启动）与正常等待，不能由状态或等待时长推断。
     """
     failures: dict[int, str | None] = {}
     retries: dict[int, int] = {}
+    task_sources: set[int] = set()
     if source_ids:
         rows = (
             await db.execute(
@@ -250,9 +255,10 @@ async def _source_failure_info(
             )
         ).all()
         for source_id, task_status, error, retry_count in rows:
+            task_sources.add(source_id)
             failures[source_id] = error if task_status == FAILED and error else None
             retries[source_id] = retry_count or 0
-    return failures, retries
+    return failures, retries, task_sources
 
 
 @router.get("", response_model=list[SourceOut])
@@ -281,7 +287,7 @@ async def list_sources(
     sources = (await db.execute(ordered)).scalars().unique().all()
     source_ids = [source.id for source in sources]
     locked, counts, pending, candidate_total = await _source_state_counts(db, source_ids)
-    failures, retries = await _source_failure_info(db, source_ids)
+    failures, retries, task_sources = await _source_task_info(db, source_ids)
     return [
         _source_out(
             source,
@@ -292,6 +298,7 @@ async def list_sources(
             candidate_total.get(source.id, 0),
             failure_reason=failures.get(source.id),
             retry_count=retries.get(source.id, 0),
+            has_processing_task=source.id in task_sources,
         )
         for source in sources
     ]
@@ -333,7 +340,7 @@ async def query_sources(
     sources = result.scalars().unique().all()
     source_ids = [source.id for source in sources]
     locked, counts, pending, candidate_total = await _source_state_counts(db, source_ids)
-    failures, retries = await _source_failure_info(db, source_ids)
+    failures, retries, task_sources = await _source_task_info(db, source_ids)
     return SourcePageOut(
         items=[
             _source_out(
@@ -345,6 +352,7 @@ async def query_sources(
                 candidate_total.get(source.id, 0),
                 failure_reason=failures.get(source.id),
                 retry_count=retries.get(source.id, 0),
+                has_processing_task=source.id in task_sources,
             )
             for source in sources
         ],

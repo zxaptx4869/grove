@@ -388,3 +388,33 @@ def test_create_source_title_override_and_default(client: TestClient) -> None:
     assert blank.json()["title"] == "IMG_0002.png"
     assert defaulted.json()["title"] == "默认标题行"
 
+
+
+def test_source_has_processing_task_field(client: TestClient) -> None:
+    """`has_processing_task` 区分「等待处理且有任务」与「等待处理但没有任务」。"""
+    _register(client)
+    with_task = client.post("/api/sources", data={"text": "已触发处理的来源"}).json()
+    without_task = client.post("/api/sources", data={"text": "从未触发处理的来源"}).json()
+
+    fresh = {item["id"]: item for item in client.get("/api/sources").json()}
+    assert fresh[with_task["id"]]["has_processing_task"] is False
+    assert fresh[without_task["id"]]["has_processing_task"] is False
+
+    processed = client.post(f"/api/sources/{with_task['id']}/process")
+    assert processed.status_code == 200
+    assert processed.json()["has_processing_task"] is True
+
+    listed = {item["id"]: item for item in client.get("/api/sources").json()}
+    assert listed[with_task["id"]]["has_processing_task"] is True
+    assert listed[with_task["id"]]["status"] == "waiting"
+    assert listed[without_task["id"]]["has_processing_task"] is False
+
+    queried = {item["id"]: item for item in client.get("/api/sources/query").json()["items"]}
+    detail = client.get(f"/api/sources/{with_task['id']}").json()
+    assert queried[with_task["id"]]["has_processing_task"] is True
+    assert detail["has_processing_task"] is True
+    assert client.get(f"/api/sources/{without_task['id']}").json()["has_processing_task"] is False
+
+    # 清理本次创建的任务：测试库为会话级共享，遗留的等待任务会被处理 Worker 抢先消费
+    for source_id in (with_task["id"], without_task["id"]):
+        assert client.delete(f"/api/sources/{source_id}").status_code == 200

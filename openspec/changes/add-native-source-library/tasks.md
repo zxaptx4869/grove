@@ -4,7 +4,7 @@
 
 ## 2. 后端：等待处理未启动可识别
 
-- [ ] 2.1 `SourceOut` 新增 `has_processing_task: bool`；把 `backend/app/api/sources.py` 的 `_source_failure_info` 扩展为批量返回任务存在集合（复用同一条任务查询，零额外查询），列表、历史查询、详情、创建、幂等命中、修改与触发处理统一带出该字段。验收：`backend/tests/test_sources.py`、`test_source_guards.py` 覆盖「有任务」与「无任务」两种取值，并断言列表与详情口径一致。
+- [x] 2.1 `SourceOut` 新增 `has_processing_task: bool`；把 `backend/app/api/sources.py` 的 `_source_failure_info` 扩展为批量返回任务存在集合（复用同一条任务查询，零额外查询），列表、历史查询、详情、创建、幂等命中、修改与触发处理统一带出该字段。验收：`backend/tests/test_sources.py`、`test_source_guards.py` 覆盖「有任务」与「无任务」两种取值，并断言列表与详情口径一致。
 
 ## 3. 移动端：来源库数据层
 

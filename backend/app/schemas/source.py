@@ -32,6 +32,8 @@ class SourceOut(BaseModel):
     attachments: list[AttachmentOut] = []
     failure_reason: str | None = None
     retry_count: int = 0
+    # 是否存在处理任务：等待处理但没有任务表示「处理未启动」，只能靠任务存在性判断
+    has_processing_task: bool = False
     project_locked: bool = False
     evidence_entry_count: int = 0
     pending_candidate_count: int = 0
