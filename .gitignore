@@ -11,6 +11,8 @@ data/
 backend/uploads/
 *.log
 *.db
+*.db-wal
+*.db-shm
 *.sqlite3
 backend/.ruff_cache/
 *.egg-info/

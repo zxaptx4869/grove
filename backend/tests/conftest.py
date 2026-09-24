@@ -33,9 +33,11 @@ def prepare_database() -> None:
     from pathlib import Path
 
     # 每次测试会话从干净数据库开始，避免残留数据影响结果
+    # WAL 模式会留下 -wal/-shm 边车文件，必须一并清掉，否则残留事务会污染新库
     db_file = Path("test_grove.db")
-    if db_file.exists():
-        db_file.unlink()
+    for target in (db_file, Path("test_grove.db-wal"), Path("test_grove.db-shm")):
+        if target.exists():
+            target.unlink()
 
     async def _create_all() -> None:
         async with engine.begin() as conn:

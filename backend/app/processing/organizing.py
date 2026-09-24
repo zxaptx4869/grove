@@ -17,13 +17,28 @@ from app.services.routing import route_source
 logger = logging.getLogger(__name__)
 
 
+async def _end_write_transaction(db: AsyncSession) -> None:
+    """结束当前写事务：写库可以持写锁，模型调用期间绝对不可以。
+
+    SQLite 下写事务会持写锁到提交为止，若在持锁期间等待模型返回，并发采集的
+    提交会等到超时并返回 500「database is locked」。因此每次进入模型调用前都
+    先把已产生的写入落库（含 get_settings_row 的惰性建行）。
+    """
+    await db.commit()
+
+
 class OrganizingProcessingProvider(ProcessingProvider):
     """调用 Organizing Agent 处理 Source。"""
 
     provider_name = "organizing"
 
     async def process(self, db: AsyncSession, source: Source) -> None:
-        """解析 Source 并持久化版本化 Extraction 与 Candidate。"""
+        """解析 Source 并持久化版本化 Extraction 与 Candidate。
+
+        写库与模型调用必须分段提交：SQLite 下写事务会持写锁到提交为止，
+        若在持锁期间等待模型返回，并发采集的提交会等到超时并返回 500
+        「database is locked」。因此每段写入结束就先提交，再进入下一次模型调用。
+        """
         loaded = (
             await db.execute(
                 select(Source)
@@ -44,6 +59,7 @@ class OrganizingProcessingProvider(ProcessingProvider):
                 )
             ).scalars().all()
         try:
+            await _end_write_transaction(db)
             draft = await run_organizing_agent(
                 db,
                 loaded,
@@ -65,6 +81,8 @@ class OrganizingProcessingProvider(ProcessingProvider):
                 valid_project_ids = {project.id for project in workspace_projects}
                 if draft.recommended_project_id in valid_project_ids:
                     loaded.project_id = draft.recommended_project_id
+            # 先落库解析结果再进路由：路由里还有两次模型调用，不能持写锁等模型
+            await _end_write_transaction(db)
         except Exception as exc:  # noqa: BLE001
             await save_failed_extraction(
                 db,
@@ -78,9 +96,13 @@ class OrganizingProcessingProvider(ProcessingProvider):
         if loaded.project_id is not None:
             try:
                 await route_source(db, loaded.id)
+                await _end_write_transaction(db)
             except Exception:  # noqa: BLE001
+                await db.rollback()
                 logger.exception("路由来源失败：%s", loaded.id)
             try:
                 await route_relations(db, loaded.id)
+                await _end_write_transaction(db)
             except Exception:  # noqa: BLE001
+                await db.rollback()
                 logger.exception("关系判断来源失败：%s", loaded.id)
