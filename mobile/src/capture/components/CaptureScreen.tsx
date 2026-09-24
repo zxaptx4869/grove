@@ -167,6 +167,7 @@ export function CaptureScreen() {
   });
   const projects = projectsQuery.data ?? [];
   const running = Boolean(session?.running);
+  const invalidateSources = library.invalidateSources;
   const retrySourceProcessing = library.retryProcessing;
   const onRetrySource = useCallback(
     async (sourceId: number) => {
@@ -238,7 +239,7 @@ export function CaptureScreen() {
     setPage("entry");
   }
 
-  /** 覆盖层关闭 / 「回到收集」：清空草稿、提交会话与批次键，回入口页。 */
+  /** 覆盖层关闭 / 「回到收集」：清空草稿、提交会话与批次键，回入口页并刷新列表。 */
   function closeSubmission() {
     setSubmitOpen(false);
     setSession(null);
@@ -246,6 +247,8 @@ export function CaptureScreen() {
     setDraftError("");
     setNotice(null);
     setPage("entry");
+    // 刚提交的来源要立刻出现在「最近收集」里，不能等用户手动下拉
+    invalidateSources();
   }
 
   function openDraft(next: CaptureDraft) {

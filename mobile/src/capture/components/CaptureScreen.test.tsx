@@ -9,6 +9,7 @@ import { CaptureScreen } from "@/src/capture/components/CaptureScreen";
 import { installExpoFetchFormData } from "@/src/capture/testing/expo-fetch-formdata";
 
 const mockGetProjects = jest.fn(async () => []);
+const mockListSources = jest.fn(async (..._args: unknown[]) => []);
 const mockRequest = jest.fn(async (..._args: unknown[]) => ({ id: 1 }));
 
 jest.mock("@/src/auth", () => ({
@@ -26,7 +27,7 @@ jest.mock("@/src/api", () => ({
 jest.mock("@/src/sources/api", () => ({
   SOURCE_LIST_LIMIT: 20,
   SOURCE_NETWORK_ERROR: "网络连接中断，请检查网络后重试。",
-  listSources: jest.fn(async () => []),
+  listSources: (...args: unknown[]) => mockListSources(...args),
   getSource: jest.fn(),
   listSourceCandidates: jest.fn(async () => []),
   updateSourceProject: jest.fn(),
@@ -34,6 +35,10 @@ jest.mock("@/src/sources/api", () => ({
   triggerSourceProcessing: jest.fn(),
   sourceAttachmentUrl: () => null,
   sourceErrorMessage: () => "网络连接中断，请检查网络后重试。",
+}));
+
+jest.mock("@/src/knowledge-agent/hooks/useAppState", () => ({
+  useAppStateActive: () => true,
 }));
 
 jest.mock("expo-crypto", () => ({ randomUUID: () => "batch-uuid" }));
@@ -209,9 +214,14 @@ test("全部成功时停留在结果页，由底部按钮回到收集", async ()
   expect(screen.getByLabelText("回到收集")).toBeTruthy();
   expect(screen.queryByLabelText("相机采集")).toBeNull();
 
+  const listCallsBeforeClose = mockListSources.mock.calls.length;
   await fireEvent.press(screen.getByLabelText("回到收集"));
   expect(screen.getByLabelText("相机采集")).toBeTruthy();
   expect(screen.queryByLabelText("提交状态")).toBeNull();
+  // 回到收集要重新取数，刚提交的来源必须立刻出现在「最近收集」里
+  await waitFor(() =>
+    expect(mockListSources.mock.calls.length).toBeGreaterThan(listCallsBeforeClose),
+  );
 
   // 草稿、会话与批次键都清空：重新进入是空草稿
   await fireEvent.press(screen.getByLabelText("文本采集"));

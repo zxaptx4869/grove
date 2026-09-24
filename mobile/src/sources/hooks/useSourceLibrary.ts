@@ -124,6 +124,8 @@ export function useSourceLibrary(token: string | null) {
       ? sourceErrorMessage(candidatesQuery.error)
       : null,
     retryDetail: () => void detailQuery.refetch(),
+    /** 采集提交结束后重新取数：新来源必须立刻出现在「最近收集」里。 */
+    invalidateSources: () => void invalidate(),
     movingIds,
     retryProcessing,
     moveSource,

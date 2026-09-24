@@ -8,33 +8,33 @@
 
 ## 3. 移动端：来源库数据层
 
-- [ ] 3.1 `mobile/src/sources/types.ts` 与 `api.ts`：按 `SourceOut` / `AttachmentOut` / `CandidateOut` 定义类型，封装列表（`limit=20`、可选 `unassigned=true`）、详情、候选、附件图片地址、改归属、删除与触发处理。验收：fetch mock 断言查询串与 4xx `detail` 透传。
-- [ ] 3.2 `mobile/src/sources/state.ts`：状态徽标（含「处理未启动」）、`done` 副状态四态与优先级、附件摘要、时间文案、失败原因与可重试判定、改归属预判、删除三类阻止与 pending 二次确认文案、`shouldPollSources`。验收：单测覆盖全部派生口径。
-- [ ] 3.3 `mobile/src/sources/hooks/useSourceLibrary.ts`：列表查询（按筛选分键、前台启用、活动条目按 4000ms 轮询）、详情与候选查询、重试处理、改归属、删除动作与刷新。验收：组件测试断言轮询开关条件与后台停止。
+- [x] 3.1 `mobile/src/sources/types.ts` 与 `api.ts`：按 `SourceOut` / `AttachmentOut` / `CandidateOut` 定义类型，封装列表（`limit=20`、可选 `unassigned=true`）、详情、候选、附件图片地址、改归属、删除与触发处理。验收：fetch mock 断言查询串与 4xx `detail` 透传。
+- [x] 3.2 `mobile/src/sources/state.ts`：状态徽标（含「处理未启动」）、`done` 副状态四态与优先级、附件摘要、时间文案、失败原因与可重试判定、改归属预判、删除三类阻止与 pending 二次确认文案、`shouldPollSources`。验收：单测覆盖全部派生口径。
+- [x] 3.3 `mobile/src/sources/hooks/useSourceLibrary.ts`：列表查询（按筛选分键、前台启用、活动条目按 4000ms 轮询）、详情与候选查询、重试处理、改归属、删除动作与刷新。验收：组件测试断言轮询开关条件与后台停止。
 
 ## 4. 移动端：列表与筛选
 
-- [ ] 4.1 入口页在三入口下方接入「最近收集」列表：类型、标题、附件摘要、创建时间、状态徽标、归属标签、`done` 副状态；补充说明不进列表。验收：组件测试断言四态渲染与补充说明不出现。
-- [ ] 4.2 「全部 / 未归属」轻量文字筛选与下拉刷新；切换筛选重新查询并保留已有内容，刷新中不闪空。
-- [ ] 4.3 列表四态：正常 / 空（说明 + 一个采集动作）/ 加载失败（说明 + 重新加载）/ 有活动条目（等待或处理中提示）。
+- [x] 4.1 入口页在三入口下方接入「最近收集」列表：类型、标题、附件摘要、创建时间、状态徽标、归属标签、`done` 副状态；补充说明不进列表。验收：组件测试断言四态渲染与补充说明不出现。
+- [x] 4.2 「全部 / 未归属」轻量文字筛选与下拉刷新；切换筛选重新查询并保留已有内容，刷新中不闪空。
+- [x] 4.3 列表四态：正常 / 空（说明 + 一个采集动作）/ 加载失败（说明 + 重新加载）/ 有活动条目（等待或处理中提示）。
 
 ## 5. 移动端：失败与未启动的重试
 
-- [ ] 5.1 失败来源行内展示 `failure_reason` 原文与「重试」；等待处理且 `has_processing_task` 为 false 显示「处理未启动」与「重试处理」；两者都调 `POST /api/sources/{id}/process`，409 视为正常并只刷新状态。验收：单测覆盖判定口径，组件测试覆盖两个入口与 409 不报错。
+- [x] 5.1 失败来源行内展示 `failure_reason` 原文与「重试」；等待处理且 `has_processing_task` 为 false 显示「处理未启动」与「重试处理」；两者都调 `POST /api/sources/{id}/process`，409 视为正常并只刷新状态。验收：单测覆盖判定口径，组件测试覆盖两个入口与 409 不报错。
 
 ## 6. 移动端：只读详情与两个操作
 
-- [ ] 6.1 全屏只读详情：元信息、原始材料（图片网格 + 放大查看 / 文字正文）、OCR 文本、AI 候选只读列表；无任何候选写入入口。验收：组件测试断言不存在确认 / 拒绝 / 写入 / 归档入口，且不渲染 AI 建议字段。
-- [ ] 6.2 改归属：项目选项来自 `GET /api/projects`，打开前用 `project_locked` 与处理状态预判，409 兜底原样透传，请求期间显示「正在重新路由」，成功后详情与列表更新归属。验收：组件测试覆盖锁定预判、处理中预判、409 兜底与成功刷新。
-- [ ] 6.3 删除：处理中与已被引用由服务端 409 阻止并原样展示文案；有 pending 候选二次确认并说明一并移除；成功后关闭详情并刷新列表，失败保留详情并展示服务端文案。验收：组件测试覆盖三类阻止与二次确认文案。
-- [ ] 6.4 列表与详情的网络错误分别可重试；后端 4xx 文案原样透传。验收：组件测试覆盖详情加载失败不关闭详情。
+- [x] 6.1 全屏只读详情：元信息、原始材料（图片网格 + 放大查看 / 文字正文）、OCR 文本、AI 候选只读列表；无任何候选写入入口。验收：组件测试断言不存在确认 / 拒绝 / 写入 / 归档入口，且不渲染 AI 建议字段。
+- [x] 6.2 改归属：项目选项来自 `GET /api/projects`，打开前用 `project_locked` 与处理状态预判，409 兜底原样透传，请求期间显示「正在重新路由」，成功后详情与列表更新归属。验收：组件测试覆盖锁定预判、处理中预判、409 兜底与成功刷新。
+- [x] 6.3 删除：处理中与已被引用由服务端 409 阻止并原样展示文案；有 pending 候选二次确认并说明一并移除；成功后关闭详情并刷新列表，失败保留详情并展示服务端文案。验收：组件测试覆盖三类阻止与二次确认文案。
+- [x] 6.4 列表与详情的网络错误分别可重试；后端 4xx 文案原样透传。验收：组件测试覆盖详情加载失败不关闭详情。
 
 ## 7. 验证与收尾
 
-- [ ] 7.1 `cd mobile && npm run lint && npm run typecheck && npm test` 全部通过。
-- [ ] 7.2 `cd backend && .venv/bin/pytest tests/test_sources.py tests/test_source_guards.py tests/test_processing.py` 全绿，`.venv/bin/ruff check` 通过，并用 `curl` 冒烟确认列表响应包含 `has_processing_task`（未认证 401 而非 404）。
-- [ ] 7.3 `openspec validate --all --strict` 通过。
-- [ ] 7.4 每段可验证修改做本地提交（中文 Conventional Commits），输出改动清单、规格条目、验证命令与结果、未验证项与真机走查清单；**不推送、不合并、不归档**。
+- [x] 7.1 `cd mobile && npm run lint && npm run typecheck && npm test` 全部通过。
+- [x] 7.2 `cd backend && .venv/bin/pytest tests/test_sources.py tests/test_source_guards.py tests/test_processing.py` 全绿，`.venv/bin/ruff check` 通过，并用 `curl` 冒烟确认列表响应包含 `has_processing_task`（未认证 401 而非 404）。
+- [x] 7.3 `openspec validate --all --strict` 通过。
+- [x] 7.4 每段可验证修改做本地提交（中文 Conventional Commits），输出改动清单、规格条目、验证命令与结果、未验证项与真机走查清单；**不推送、不合并、不归档**。
 
 ## 8. 待人工走查（用户执行）
 
