@@ -34,21 +34,20 @@
 - `entry`：标题、副句与三入口横排，不渲染表单与结果区。原型入口页的「最近收集」列表属后续来源列表 change，本 change 不实现。
 - `form`：独立滚动页，顶栏左侧返回箭头（丢弃草稿回入口页）、居中类型标题（相机 / 相册 / 文本）；底部固定提交条位于底部导航之上，iOS 键盘弹出时按键盘高度上移（Android 走窗口 resize，配合 `tabBarHideOnKeyboard` 不遮挡）。
 - `permission`：权限被拒时替换整页（不再是入口页上的浮层），顶栏可返回入口页。
-- `submit` 覆盖层：全屏 `Modal`（`statusBarTranslucent`）盖住页面内容与底部导航，标题「提交材料」/ 失败时「提交未成功」，无底部按钮。提交结束后按结果分流：全部成功（含「已保存但处理未启动」）时不进结果态，自动关闭覆盖层、回入口页并给出轻提示（处理未启动时提示带数量）；存在未成功条目时停留在失败态，汇总「已提交 M 条，N−M 条未成功」并逐条重试；失败全是服务端业务拒绝（4xx）且没有一条成功时，关闭覆盖层回到采集页，草稿保留、表单内原样显示服务端文案。关闭或「回到收集」清空草稿、提交会话与批次键后回入口页。进行中不提供关闭出口，返回键不关闭，避免重复进入采集页。
-- `CaptureToast`：底部轻提示（深色底白字、约 2.4 秒自动消失、不阻塞操作），位于底部导航之上并避开安全区，提交覆盖层打开时不显示。
+- `submit` 覆盖层：全屏 `Modal`（`statusBarTranslucent`）盖住页面内容与底部导航，标题「提交材料」/ 失败时「提交未成功」。提交结束（无论成功、部分失败、全部失败还是服务端拒绝）MUST 停留在结果页，由用户点覆盖层底部固定区域的「回到收集」返回；该区域对齐原型 `.overlay-footer`（位于安全区之上、顶部 1px 分隔线、surface 背景、不随内容滚动），进行中不提供该出口，返回键也不关闭覆盖层。关闭后清空草稿、提交会话与批次键。批量重试与逐条重试仍在结果卡内。
 
-**有意偏离原型**：原型在全部成功后仍停在结果页等用户点「返回收集」（内置演示数据才自动返回）。正式实现改为自动关闭 + 轻提示，理由是连续采集是高频动作，成功结果页没有可操作内容，只增加一次点击；失败才保留覆盖层，因为失败项需要逐条重试与查看原文。
+**有意偏离原型**：原型在全部成功后自动返回收集页（`submitForm` 成功后 `setPage('home')`）。正式实现改为停留结果页 + 底部手动返回，理由是实测自动返回会先闪现结果再跳转，体感差，用户明确要求手动返回。
 
 `mobile/src/capture/`：
 
 - `image.ts`：`prepareImage(asset)`（朝向判断 + 压缩 + jpg 转码，返回 `{ uri, name, type, width, height }`）。
 - `picker.ts`：权限检查/申请（`requestCameraPermissionsAsync` / `requestMediaLibraryPermissionsAsync`）、`launchCameraAsync`、`launchImageLibraryAsync({ allowsMultipleSelection: true, selectionLimit: 5 })`、`openAppSettings()`（`Linking.openSettings()`）。
-- `batch.ts`：纯函数 `buildCaptureKey`、`createCaptureSubmitUnits`（按提交形态与张数派生提交单元）、`createCaptureResults`、`summarizeCapture`（含未启动处理计数）、`summaryText`、`progressText`、`successToastText`、`isBusinessRejection`、`rejectionText`；不含 React 与网络，便于单测。
+- `batch.ts`：纯函数 `buildCaptureKey`、`createCaptureSubmitUnits`（按提交形态与张数派生提交单元）、`createCaptureResults`、`summarizeCapture`、`summaryText`、`progressText`；不含 React 与网络，便于单测。
 - `submit.ts`：`submitCaptureUnits(units, deps)` 串行执行器，`deps` 注入 `upload` / `triggerProcessing` / `onUpdate`；失败只标记该条，不中断循环。
 - `upload.ts`：真实网络实现与 `CaptureSubmitError`（带 `status`）；失败时 `console.warn` 打印 url / 文件 uri / 幂等键 / 真实原因，避免「网络连接中断」掩盖真实错误（开发模式下并在文案后附「诊断：…」）。
-- `components/`：`CaptureScreen`（页面状态机与提交分流主体）、`CaptureHeader`、`CaptureForm`、`EntryRow`、`AlbumChoiceSheet`、`ProjectSheet`、`PermissionPage`、`SubmitOverlay`、`CaptureToast`。
+- `components/`：`CaptureScreen`（页面状态机主体）、`CaptureHeader`、`CaptureForm`、`EntryRow`、`AlbumChoiceSheet`、`ProjectSheet`、`PermissionPage`、`SubmitOverlay`。
 
-条目状态：`pending → uploading → saved | failed`，另记 `processError` 表示「已保存但处理未启动」、`httpStatus` 用于区分服务端业务拒绝（4xx）与网络/服务端故障。汇总口径：`saved` 计入已提交、`failed` 计入未成功，两者共同决定覆盖层是否停留；`processError` 只影响成功轻提示的数量文案。
+条目状态：`pending → uploading → saved | failed`，另记 `processError` 表示「已保存但处理未启动」。汇总口径：`saved` 计入已提交、`failed` 计入未成功；全部成功 / 部分失败 / 全部失败由这两个计数派生，四种状态都在提交覆盖层内自包含展示，不依赖列表，也不自动离开覆盖层。
 
 ## 5. 权限与「去设置」
 
@@ -57,13 +56,13 @@
 
 ## 6. 测试策略
 
-- 纯逻辑（`batch.ts`）直接单测：键派生（重试复用、新一轮换键）、部分失败汇总与文案、进度文案、成功轻提示文案与「全是 4xx 且无成功条目」判定。
-- `submit.ts` 用注入的假上传器单测：串行顺序、部分失败继续、只重试失败项、失败时记录 HTTP 状态码。
+- 纯逻辑（`batch.ts`）直接单测：键派生（重试复用、新一轮换键）、部分失败汇总与文案、进度文案。
+- `submit.ts` 用注入的假上传器单测：串行顺序、部分失败继续、只重试失败项。
 - `upload.ts` 用 `global.fetch` mock 单测：multipart 字段（含 `capture_key`、不设置 `Content-Type`）、超时中止、`detail` 原文透传、200/201 都算成功。FormData 用 `src/capture/testing/expo-fetch-formdata.ts` 替身，按 Expo 的契约只接受 string 与带 `bytes()` 的部件，因此「退回 `{ uri, name, type }`」会被测试直接拦下（jest 里 Node 自带的 undici FormData 与运行时契约不同，不能用真身）。
-- `picker.ts` / `image.ts` / 组件测试用 `jest.mock` 替换 `expo-image-picker`、`expo-image-manipulator`、`expo-linking`，不依赖真机或模拟器；权限被拒场景断言提示文案与「去设置」动作；提交结果分流断言「全部成功自动关闭 + 轻提示 + 草稿清空」「处理未启动提示带数量」「存在失败停留覆盖层且重试沿用同键」「全是 4xx 且无成功条目回到采集页并保留草稿」。
+- `picker.ts` / `image.ts` / 组件测试用 `jest.mock` 替换 `expo-image-picker`、`expo-image-manipulator`、`expo-linking`，不依赖真机或模拟器；权限被拒场景断言提示文案与「去设置」动作；提交结束断言「全部成功停在结果页 + 底部出现回到收集 + 不自动跳转」「处理未启动在卡片内提示」「存在失败停留覆盖层且重试沿用同键」「400 仍在覆盖层显示原文」「进行中无底部出口且返回键不关闭」。
 - 模拟器与真机走查由用户执行，AI 不安装、不启动、不操作设备。
 
 ## 7. 与后端合同的其它约定
 
-- 每条来源创建成功后立即 `POST /api/sources/{id}/process`。该端点对处理中或已完成来源返回 409 且不改状态，对等待处理来源保持等待处理，因此重复触发不会破坏状态或产生重复执行。移动端把 **409 视为正常**（来源已在处理或已完成，幂等重试命中旧来源时会出现），不提示处理启动失败；其它失败按「来源已保存，但处理启动失败」处理：整批都成功时只在轻提示里带数量，仍停留在失败覆盖层时该行给出「重试处理」（后续在来源列表里也能重试）。
+- 每条来源创建成功后立即 `POST /api/sources/{id}/process`。该端点对处理中或已完成来源返回 409 且不改状态，对等待处理来源保持等待处理，因此重复触发不会破坏状态或产生重复执行。移动端把 **409 视为正常**（来源已在处理或已完成，幂等重试命中旧来源时会出现），不提示处理启动失败；其它失败按「来源已保存，但处理启动失败」处理：结果页对应条目给出「重试处理」提示与入口，来源本身仍算已提交。
 - 后端 400 文案（最多 5 张 / 单张 10MB / 仅 png/jpg/webp）原样展示，客户端不预判、不改写；张数上限由系统选择器与表单共同约束。
