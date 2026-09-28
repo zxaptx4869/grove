@@ -1,31 +1,69 @@
-/** 图片附件：读取需要认证头，地址来自后端附件端点。 */
+/**
+ * 图片附件：通过带认证的下载通道读取（见 useAttachmentImage），失败时给出可重试的提示。
+ */
 
-import { Image, StyleSheet, View, type ImageStyle, type StyleProp } from "react-native";
+import {
+  ActivityIndicator,
+  Image,
+  Pressable,
+  StyleSheet,
+  Text,
+  View,
+  type ImageStyle,
+  type StyleProp,
+} from "react-native";
 
-import { useAuth } from "@/src/auth";
-import { sourceAttachmentUrl } from "@/src/sources/api";
+import { SourceIcon } from "@/src/sources/components/SourceIcon";
+import { useAttachmentImage } from "@/src/sources/hooks/useAttachmentImage";
 import { theme } from "@/src/theme";
 
 export function SourceImage({
   sourceId,
   attachmentId,
+  fileName,
   style,
   resizeMode = "cover",
   accessibilityLabel,
 }: {
   sourceId: number;
   attachmentId: number;
+  fileName?: string | null;
   style?: StyleProp<ImageStyle>;
   resizeMode?: "cover" | "contain";
   accessibilityLabel?: string;
 }) {
-  const { token } = useAuth();
-  const uri = sourceAttachmentUrl(sourceId, attachmentId);
-  if (!uri || !token) return <View style={[styles.placeholder, style]} />;
+  const { uri, loading, failed, retry } = useAttachmentImage(sourceId, attachmentId, fileName);
+  const name = fileName?.trim() || `附件 ${attachmentId}`;
+
+  if (failed) {
+    return (
+      <View style={[styles.fallback, style]} accessibilityLabel={`图片读取失败：${name}`}>
+        <SourceIcon name="cloudOff" size={16} color={theme.muted} />
+        <Text style={styles.fallbackText}>图片读取失败</Text>
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel={`重试读取图片：${name}`}
+          onPress={retry}
+          style={({ pressed }) => [styles.retry, pressed && styles.pressed]}
+        >
+          <Text style={styles.retryText}>重试</Text>
+        </Pressable>
+      </View>
+    );
+  }
+
+  if (!uri) {
+    return (
+      <View style={[styles.placeholder, style]}>
+        {loading ? <ActivityIndicator size="small" color={theme.muted} /> : null}
+      </View>
+    );
+  }
+
   return (
     <Image
       accessibilityLabel={accessibilityLabel}
-      source={{ uri, headers: { Authorization: `Bearer ${token}` } }}
+      source={{ uri }}
       style={style}
       resizeMode={resizeMode}
     />
@@ -33,5 +71,26 @@ export function SourceImage({
 }
 
 const styles = StyleSheet.create({
-  placeholder: { backgroundColor: theme.soft },
+  placeholder: {
+    backgroundColor: theme.soft,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  fallback: {
+    backgroundColor: theme.soft,
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 4,
+  },
+  fallbackText: { fontSize: 11.5, color: theme.muted },
+  retry: {
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+    borderWidth: 1,
+    borderColor: theme.border,
+    borderRadius: 8,
+    backgroundColor: theme.surface,
+  },
+  retryText: { fontSize: 11.5, fontWeight: "600", color: theme.ink },
+  pressed: { opacity: 0.75 },
 });
