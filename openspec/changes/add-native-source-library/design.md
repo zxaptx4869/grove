@@ -4,7 +4,8 @@
 
 - 列表直接使用既有 `GET /api/sources?limit=20`（可选 `unassigned=true`），不复用 Web 的 `GET /api/sources/query`：移动端本轮不做分页、搜索与状态筛选，`query` 的分页与总数对移动端无价值，而 `sources` 已按创建时间倒序并支持 `limit`。
 - 详情读 `GET /api/sources/{id}`（整条最新状态与 `project_locked`）与 `GET /api/sources/{id}/candidates`，图片读 `GET /api/sources/{id}/attachments/{attachment_id}/file`。三者都走 `mobile/src/api.ts` 的 `request()`：它们是 JSON 或图片 GET，既有的 12 秒超时对元数据请求足够，不需要采集上传那条 90 秒通道。
-- 图片来源用 `<Image source={{ uri, headers: { Authorization } }}>` 读取，避免为鉴权另开通道；放大查看用提供 `resizeMode="contain"` 的覆盖层，不引入图片库。
+- 图片来源**不走** `<Image source={{ uri, headers }}>`：真机验收时附件端点收到的是 401，说明 RN 图片组件的自带请求头在 Expo Go 下没有真正发出。改为用 `expo-file-system` 的 `File.downloadFileAsync(url, dest, { headers })` 把图片下载到缓存目录，再让 `<Image>` 渲染本地 `file://` 地址；同一附件的并发与重复请求用一个模块级 in-flight/已落盘判断合并，避免重复下载。放大查看仍用提供 `resizeMode="contain"` 的覆盖层，不引入图片库。
+- 单张图片的读取状态（加载中 / 失败 / 成功）由图片组件自己负责，失败时在图片位置给出「图片加载失败」与重试入口：这样原始材料的失败不会退化成一块静默的灰底。
 - 查询键集中在 `mobile/src/sources/queryKeys.ts`：列表按筛选值分键，详情按来源 id 分键。筛选切换即换键，会自然重新查询；TanStack Query 的全局默认 `staleTime: 0` 已满足「切换即取最新」。
 - 拉取用 `ScrollView` 的 `RefreshControl` 触发 `refetch()`，不实现自定义下拉手势；刷新期间保留原条目，避免布局跳动。
 - 列表查询的 `enabled` 同时依赖已登录与前台（见第 3 节），因此没有额外的手动生命周期管理。
@@ -34,7 +35,9 @@
 
 ## 5. 改归属与删除的口径
 
-- **改归属**：打开弹层前用 `project_locked` 与 `status === "processing"` 预判，命中就不渲染项目列表、只给阻断说明（对应原型 `moveBlockedReason`）。预判未命中仍保留服务端 409 兜底，弹层内原样展示 `detail`。提交成功后 `PATCH` 响应返回时服务端已经跑完重新路由（`update_source` 在返回前 `await route_source/route_relations`），因此「正在重新路由」pending 态**就是这次请求的进行时间**：请求发出即标记、响应返回即清除，不需要额外轮询或用列表数据反推。
+- **改归属**：打开弹层前用 `project_locked` 与 `status === "processing"` 预判，命中就不渲染项目列表、只给阻断说明（对应原型 `moveBlockedReason`）。预判未命中仍保留服务端 409 兜底，弹层内原样展示 `detail`。
+- **改归属的确认与加载**：点选项目只更新界面选择态（选项标记随选择变化，当前归属额外标「当前」），必须点「确认修改」才发 `PATCH`；选择与当前归属相同时确认入口禁用。`update_source` 在返回前 `await route_source/route_relations`，即接口是**同步**的，所以提交期间必须给出加载态：确认按钮文案切成进行中、弹层内补一行「正在更换项目并重新路由，请稍候…」，选项与取消一并禁用防重复提交。成功后关闭弹层并刷新；失败保留弹层、保留选择并原样展示服务端文案。
+- 「正在重新路由」的列表徽标**就是这次请求的进行时间**：请求发出即标记、响应返回即清除，不需要额外轮询或用列表数据反推。
 - **删除**：三类阻止中「处理中」「已被正式知识引用」都由服务端 409 拒绝，界面只做预判提示与原文透传；「有 pending 候选」由后端放行，界面用确认弹层做二次确认并写明「将一并移除这些候选」。没有 pending 候选时也保留确认弹层，但文案改为说明原始材料与候选都会移除且无法恢复。删除成功后关闭详情并刷新列表。
 - 行为信号（`SIGNAL_PROJECT_DECISION`）由后端在改归属时记录，客户端不上报、也不展示推荐值。
 
@@ -42,7 +45,7 @@
 
 - 纯逻辑放 `mobile/src/sources/state.ts`，直接单测：状态徽标四态 + 处理未启动、`done` 副状态四种组合与优先级、附件摘要、时间文案、失败原因与可重试判定、改归属预判两种阻断、删除三类阻止与 pending 二次确认文案、`shouldPollSources`（有活动条目才轮询、无活动条目返回 false、后台返回 false）。
 - `mobile/src/sources/api.ts` 走 `global.fetch` mock：断言列表查询串（`limit=20`、`unassigned=true`）、4xx `detail` 原文透传为错误信息。
-- 组件测试用 `@testing-library/react-native` + `QueryClientProvider`，`jest.mock` 掉 `@/src/auth` 与 `@/src/sources/api`：断言列表四态、筛选切换触发不同查询、失败原因与两个重试入口、详情只读（候选区域没有任何确认/拒绝/写入/归档按钮，`onPress` 型写入入口数量为 0）、改归属锁定预判不出选项、409 兜底展示原文、删除三类阻止与 pending 二次确认、轮询开关条件与后台停止。expo 与网络全部 mock，不依赖真机或模拟器。
+- 组件测试用 `@testing-library/react-native` + `QueryClientProvider`，`jest.mock` 掉 `@/src/auth`、`@/src/sources/api` 与 `expo-file-system`：断言列表四态、筛选切换触发不同查询、失败原因与两个重试入口、详情只读（候选区域没有任何确认/拒绝/写入/归档按钮，`onPress` 型写入入口数量为 0）、改归属锁定预判不出选项、选择后不提交与确认后才提交、选择当前归属时确认禁用、提交中禁用与进行中文案、409 兜底展示原文、图片下载失败展示重试且重试成功后渲染图片、删除三类阻止与 pending 二次确认、轮询开关条件与后台停止。expo 与网络全部 mock，不依赖真机或模拟器。
 - 后端 `backend/tests/test_sources.py` / `test_source_guards.py` 补 `has_processing_task` 的有任务 / 无任务两种取值，以及列表、详情、历史查询口径一致。
 
 ## 7. 已知取舍

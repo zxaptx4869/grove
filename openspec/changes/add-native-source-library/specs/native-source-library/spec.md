@@ -106,7 +106,7 @@
 
 ### Requirement: 只读来源详情
 
-系统 MUST 提供来源详情的只读视图，读取 `GET /api/sources/{id}` 与 `GET /api/sources/{id}/candidates`，并展示：元信息（类型、创建时间、项目归属、补充说明，未归属与未填写 MUST 有明确文案）、原始材料（图片网格并支持放大查看，文字来源显示正文）、OCR 文本（图片无 OCR 时说明原因）与 AI 候选列表（MUST 标注为候选且未应用，含目录建议与理由）。图片 MUST 通过 `GET /api/sources/{id}/attachments/{attachment_id}/file` 携带认证读取。详情 MUST NOT 提供候选的确认、拒绝、写入或归档入口，MUST NOT 展示 `recommended_project_id` 与 `project_recommendation_reason`。
+系统 MUST 提供来源详情的只读视图，读取 `GET /api/sources/{id}` 与 `GET /api/sources/{id}/candidates`，并展示：元信息（类型、创建时间、项目归属、补充说明，未归属与未填写 MUST 有明确文案）、原始材料（图片网格并支持放大查看，文字来源显示正文）、OCR 文本（图片无 OCR 时说明原因）与 AI 候选列表（MUST 标注为候选且未应用，含目录建议与理由）。图片 MUST 通过 `GET /api/sources/{id}/attachments/{attachment_id}/file` 携带认证读取；读取 MUST 走带认证头的下载通道并落到本地缓存后再渲染，MUST NOT 依赖图片组件自带的请求头（Expo Go 下该请求头不会发出，附件端点会收到 401）。单张图片读取失败 MUST 在图片位置给出失败提示与重试入口，MUST NOT 静默留白，其余详情内容 MUST 仍可阅读。详情 MUST NOT 提供候选的确认、拒绝、写入或归档入口，MUST NOT 展示 `recommended_project_id` 与 `project_recommendation_reason`。
 
 #### Scenario: 查看图片来源详情
 - **WHEN** 用户点开一条图片来源
@@ -116,17 +116,33 @@
 - **WHEN** 用户点开一条文字来源
 - **THEN** 详情显示元信息、文字正文、OCR 区域的说明文案与候选列表
 
+#### Scenario: 图片读取失败可重试
+- **WHEN** 原始材料中的某张图片读取失败
+- **THEN** 该图片位置显示失败提示与重试入口，详情其余内容仍可阅读，重试成功后显示图片
+
 #### Scenario: 候选只读
 - **WHEN** 用户浏览详情里的 AI 候选
 - **THEN** 只看到候选内容、目录建议与理由，没有任何确认、拒绝、写入或归档入口
 
 ### Requirement: 改归属
 
-详情 MUST 通过 `GET /api/projects` 提供「未归属」与全部项目作为目标选项，并提交 `PATCH /api/sources/{id}`（`project_id`）。打开操作前 MUST 先用 `project_locked` 与处理状态预判：已被正式知识引用 MUST 只显示阻断说明（提示先到桌面工作台处理关联的正式知识），处理中 MUST 只显示阻断说明（等处理结束后再改），两种情况 MUST NOT 渲染项目列表。预判未命中时服务端 409 MUST 作为兜底并原样透传文案。请求进行中 MUST 显示「正在重新路由」状态。成功后详情与列表 MUST 更新归属；失败 MUST 保留详情并原样展示服务端文案。行为信号由后端记录，客户端 MUST NOT 额外上报。
+详情 MUST 通过 `GET /api/projects` 提供「未归属」与全部项目作为目标选项。选择目标 MUST 只更新界面选择态，MUST NOT 立即提交；MUST 由用户点「确认修改」后才提交 `PATCH /api/sources/{id}`（`project_id`）。选择的目标与当前归属相同时确认入口 MUST 不可用且 MUST NOT 发起请求。提交进行中 MUST 显示加载状态、禁用项目选项与两个按钮，并 MUST NOT 允许重复提交。打开操作前 MUST 先用 `project_locked` 与处理状态预判：已被正式知识引用 MUST 只显示阻断说明（提示先到桌面工作台处理关联的正式知识），处理中 MUST 只显示阻断说明（等处理结束后再改），两种情况 MUST NOT 渲染项目列表。预判未命中时服务端 409 MUST 作为兜底并原样透传文案。提交成功后 MUST 关闭弹层并更新详情与列表的归属；失败 MUST 保留弹层并原样展示服务端文案。行为信号由后端记录，客户端 MUST NOT 额外上报。
 
-#### Scenario: 正常改归属
-- **WHEN** 用户为未锁定且不在处理中的来源选择新项目
-- **THEN** 系统提交 `project_id`，成功后在详情与列表显示新归属
+#### Scenario: 选择后需确认再提交
+- **WHEN** 用户在弹层里点了另一个项目但未点「确认修改」
+- **THEN** 系统只更新选择态（选项标记随之改变），不发起任何写请求，弹层保持打开
+
+#### Scenario: 确认后才提交
+- **WHEN** 用户点「确认修改」
+- **THEN** 系统提交所选 `project_id`，成功后关闭弹层并在详情与列表显示新归属
+
+#### Scenario: 选择当前归属时确认不可用
+- **WHEN** 用户选择的目标与当前归属相同
+- **THEN** 确认入口不可用，不发起请求
+
+#### Scenario: 提交中显示加载状态
+- **WHEN** 改归属请求正在进行
+- **THEN** 确认入口与弹层显示进行中的加载状态，项目选项不可切换，取消入口不可用，重复点击不会再次提交
 
 #### Scenario: 锁定来源的预判
 - **WHEN** 用户对 `project_locked` 为 true 的来源点击「改归属」
@@ -138,7 +154,7 @@
 
 #### Scenario: 服务端 409 兜底
 - **WHEN** 预判未命中但服务端返回 409
-- **THEN** 系统在阻断说明里原样展示服务端文案，不执行修改
+- **THEN** 系统在弹层里原样展示服务端文案，保留弹层与当前选择，不执行修改
 
 #### Scenario: 重新路由 pending 态
 - **WHEN** 改归属请求正在进行
