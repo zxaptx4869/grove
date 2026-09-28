@@ -13,6 +13,7 @@ import { AppButton, Badge, Card, CardBody, Sheet } from "@/src/knowledge-agent/c
 import { sourceErrorMessage } from "@/src/sources/api";
 import { SourceIcon } from "@/src/sources/components/SourceIcon";
 import { SourceImage } from "@/src/sources/components/SourceImage";
+import { ZoomableImage } from "@/src/sources/components/ZoomableImage";
 import {
   candidateDirectoryLine,
   deleteBlockedReason,
@@ -84,6 +85,8 @@ export function SourceDetailOverlay({
   onDelete: () => Promise<void>;
 }) {
   const [zoomIndex, setZoomIndex] = useState<number | null>(null);
+  // 原图尺寸：拿到后放大视图按宽度铺满渲染，缩放时更清晰
+  const [zoomImageSize, setZoomImageSize] = useState<{ width: number; height: number } | null>(null);
   const [moveOpen, setMoveOpen] = useState(false);
   const [deleteOpen, setDeleteOpen] = useState(false);
   const [moveError, setMoveError] = useState("");
@@ -251,7 +254,10 @@ export function SourceDetailOverlay({
                       key={item.id}
                       accessibilityRole="button"
                       accessibilityLabel={`放大查看第 ${index + 1} 张：${item.file_name ?? "图片"}`}
-                      onPress={() => setZoomIndex(index)}
+                      onPress={() => {
+                        setZoomImageSize(null);
+                        setZoomIndex(index);
+                      }}
                       style={({ pressed }) => [styles.photo, pressed && styles.pressed]}
                     >
                       <SourceImage
@@ -355,7 +361,7 @@ export function SourceDetailOverlay({
               onPress={() => setZoomIndex(null)}
               style={({ pressed }) => [styles.headerIcon, pressed && styles.pressed]}
             >
-              <SourceIcon name="close" size={22} color="#FFFFFF" />
+              <SourceIcon name="close" size={22} color={theme.ink} />
             </Pressable>
             <Text style={[styles.headerTitle, styles.lightboxTitle]}>
               第 {(zoomIndex ?? 0) + 1} / {images.length} 张
@@ -363,19 +369,27 @@ export function SourceDetailOverlay({
             <View style={styles.headerIcon} />
           </View>
           {source && zoomIndex !== null && images[zoomIndex] ? (
-            <ScrollView contentContainerStyle={styles.lightboxBody}>
-              <SourceImage
-                sourceId={source.id}
-                attachmentId={images[zoomIndex].id}
-                fileName={images[zoomIndex].file_name}
-                style={styles.lightboxImage}
-                resizeMode="contain"
-                accessibilityLabel={`第 ${zoomIndex + 1} 张原图`}
-              />
+            <View style={styles.lightboxBody}>
+              <ZoomableImage
+                resetKey={images[zoomIndex].id}
+                style={styles.lightboxStage}
+                contentSize={zoomImageSize}
+              >
+                <SourceImage
+                  sourceId={source.id}
+                  attachmentId={images[zoomIndex].id}
+                  fileName={images[zoomIndex].file_name}
+                  style={styles.lightboxImage}
+                  resizeMode="contain"
+                  accessibilityLabel={`第 ${zoomIndex + 1} 张原图`}
+                  onLoadSize={setZoomImageSize}
+                />
+              </ZoomableImage>
+              <Text style={styles.lightboxZoomHint}>双指缩放，双击放大 / 还原</Text>
               <Text style={styles.lightboxCaption}>
                 {images[zoomIndex].file_name ?? "图片附件"}
               </Text>
-            </ScrollView>
+            </View>
           ) : null}
         </SafeAreaView>
       </Modal>
@@ -602,11 +616,22 @@ const styles = StyleSheet.create({
     backgroundColor: theme.bg,
   },
   footerButton: { flex: 1 },
-  lightbox: { flex: 1, backgroundColor: "#101C16" },
-  lightboxTitle: { color: "#FFFFFF" },
-  lightboxBody: { padding: 16, gap: 12 },
-  lightboxImage: { width: "100%", height: 460, borderRadius: 10 },
-  lightboxCaption: { fontSize: 12, color: "#DDE3DF", textAlign: "center" },
+  // 背景用应用浅色底：原来的近黑色在长截图场景下压得人难受，也和整体浅色主题不一致
+  lightbox: { flex: 1, backgroundColor: theme.bg },
+  lightboxTitle: { color: theme.ink },
+  lightboxBody: { flex: 1, paddingHorizontal: 16, paddingTop: 8, paddingBottom: 12, gap: 8 },
+  lightboxStage: { flex: 1 },
+  // 高度交给原图长宽比（ZoomableImage 按视口宽度铺满），这里只兜底固定高度
+  lightboxImage: {
+    width: "100%",
+    height: "100%",
+    borderRadius: 10,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: theme.border,
+    backgroundColor: theme.surface,
+  },
+  lightboxZoomHint: { fontSize: 11, color: theme.muted, textAlign: "center" },
+  lightboxCaption: { fontSize: 12, color: theme.muted, textAlign: "center" },
   sheetCaption: { marginBottom: 6, fontSize: 11.5, color: theme.muted },
   option: {
     minHeight: 48,

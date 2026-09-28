@@ -33,6 +33,7 @@
 - 列表作为独立组件挂到入口页，查询与操作状态集中在一个 `useSourceLibrary` 钩子中，由 `CaptureScreen` 托管，保证详情、列表与重试操作共享同一份数据，不需要跨组件回传刷新。
 - 改归属与删除分别用 `Sheet`（底部弹层，复用 `knowledge-agent/components/ui.tsx` 的 `Sheet`），与原型 `#projectSheet` / `#deleteSheet` 对应。
 - 复用的语义令牌与组件：`theme.ts`、`AppButton`、`Badge`、`Card`、`Sheet`。状态只用文字 + 颜色，不靠颜色单独表达。
+- 放大查看用独立的全屏 `Modal` + 自研 `ZoomableImage`：背景跟随应用浅色底（近黑底在长截图场景下压迫感强，也与整体浅色主题不一致）；缩放与平移用 View 原生触摸事件 + `Animated` 实现，不引入手势库。内容按视口宽度铺满渲染（长截图即按宽度适配），起始对齐顶部，所以放大后仍是接近原图的分辨率，长截图也能从上往下拖着读；拿不到原图尺寸时回退到撑满视口。
 
 ## 5. 改归属与删除的口径
 

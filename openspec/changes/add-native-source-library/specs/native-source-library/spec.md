@@ -108,9 +108,15 @@
 
 系统 MUST 提供来源详情的只读视图，读取 `GET /api/sources/{id}` 与 `GET /api/sources/{id}/candidates`，并展示：元信息（类型、创建时间、项目归属、补充说明，未归属与未填写 MUST 有明确文案）、原始材料（图片网格并支持放大查看，文字来源显示正文）、OCR 文本（图片无 OCR 时说明原因）与 AI 候选列表（MUST 标注为候选且未应用，含目录建议与理由）。图片 MUST 通过 `GET /api/sources/{id}/attachments/{attachment_id}/file` 携带认证读取；读取 MUST 走带认证头的下载通道并落到本地缓存后再渲染，MUST NOT 依赖图片组件自带的请求头（Expo Go 下该请求头不会发出，附件端点会收到 401）。单张图片读取失败 MUST 在图片位置给出失败提示与重试入口，MUST NOT 静默留白，其余详情内容 MUST 仍可阅读。详情 MUST NOT 提供候选的确认、拒绝、写入或归档入口，MUST NOT 展示 `recommended_project_id` 与 `project_recommendation_reason`。
 
+放大查看 MUST 使用浅色背景（MUST NOT 用近黑底），MUST 支持双指捏合缩放与放大后的拖动平移，并提供双击放大 / 还原与可见的操作提示。图片 MUST 按视口宽度铺满渲染并保持长宽比，使长截图放大后仍接近原图清晰度；内容超出视口时 MUST 可拖动，起始位置对齐图片顶部。切换图片 MUST 复位缩放与位移。
+
 #### Scenario: 查看图片来源详情
 - **WHEN** 用户点开一条图片来源
 - **THEN** 详情显示元信息、图片网格、OCR 文本与候选列表，点图片可放大查看
+
+#### Scenario: 放大查看长截图
+- **WHEN** 用户点开一张长截图并双指放大，随后拖动
+- **THEN** 图片在浅色背景上按宽度铺满显示，可继续放大并拖动看到局部细节，关闭后回到详情
 
 #### Scenario: 查看文字来源详情
 - **WHEN** 用户点开一条文字来源

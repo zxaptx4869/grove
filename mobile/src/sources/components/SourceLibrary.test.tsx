@@ -263,6 +263,26 @@ test("等待处理但没有任务时显示处理未启动，重试处理调用�
   await waitFor(() => expect(mockTriggerProcessing).toHaveBeenCalledWith("token", 7));
 });
 
+test("详情：放大查看打开原图视图，给出缩放提示与文件名，关闭后回到详情", async () => {
+  mockListSources.mockResolvedValue([source({ id: 1, status: "done" })]);
+  mockGetSource.mockResolvedValue(source({ id: 1, status: "done" }));
+
+  const screen = await renderScreen();
+  await waitFor(() => expect(screen.getByText("厨房插座位置确认")).toBeTruthy());
+  fireEvent.press(screen.getByLabelText("查看来源详情：厨房插座位置确认"));
+  await waitFor(() => expect(screen.getByText("来源详情")).toBeTruthy());
+
+  fireEvent.press(screen.getByLabelText("放大查看第 1 张：a.jpg"));
+  await waitFor(() => expect(screen.getByText("第 1 / 1 张")).toBeTruthy());
+  expect(screen.getByText("双指缩放，双击放大 / 还原")).toBeTruthy();
+  expect(screen.getByText("a.jpg")).toBeTruthy();
+  expect(screen.getByLabelText("第 1 张原图")).toBeTruthy();
+  expect(screen.getByTestId("zoomable-image-content")).toBeTruthy();
+
+  fireEvent.press(screen.getByLabelText("关闭原图"));
+  await waitFor(() => expect(screen.queryByText("第 1 / 1 张")).toBeNull());
+});
+
 test("详情只读：展示元信息、原始材料、OCR 与候选，且没有任何候选写入入口", async () => {
   const detail = source({
     id: 1,

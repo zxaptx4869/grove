@@ -9,7 +9,9 @@ import {
   StyleSheet,
   Text,
   View,
+  type ImageLoadEventData,
   type ImageStyle,
+  type NativeSyntheticEvent,
   type StyleProp,
 } from "react-native";
 
@@ -24,6 +26,7 @@ export function SourceImage({
   style,
   resizeMode = "cover",
   accessibilityLabel,
+  onLoadSize,
 }: {
   sourceId: number;
   attachmentId: number;
@@ -31,6 +34,8 @@ export function SourceImage({
   style?: StyleProp<ImageStyle>;
   resizeMode?: "cover" | "contain";
   accessibilityLabel?: string;
+  /** 原图尺寸回调：放大查看要按宽度铺满渲染，需要知道图片的长宽比。 */
+  onLoadSize?: (size: { width: number; height: number }) => void;
 }) {
   const { uri, loading, failed, retry } = useAttachmentImage(sourceId, attachmentId, fileName);
   const name = fileName?.trim() || `附件 ${attachmentId}`;
@@ -66,6 +71,11 @@ export function SourceImage({
       source={{ uri }}
       style={style}
       resizeMode={resizeMode}
+      onLoad={
+        onLoadSize
+          ? (event: NativeSyntheticEvent<ImageLoadEventData>) => onLoadSize(event.nativeEvent.source)
+          : undefined
+      }
     />
   );
 }
