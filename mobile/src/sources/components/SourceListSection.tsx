@@ -77,9 +77,6 @@ export function SourceListSection({
       <View style={styles.filters} accessibilityRole="tablist">
         {FILTERS.map((item) => {
           const selected = item.value === filter;
-          const count = item.value === "all"
-            ? sources.length
-            : sources.filter((source) => source.project_id === null).length;
           return (
             <Pressable
               key={item.value}
@@ -92,7 +89,6 @@ export function SourceListSection({
               <Text style={[styles.filterText, selected && styles.filterTextActive]}>
                 {item.label}
               </Text>
-              {showList ? <Text style={styles.filterCount}>{count}</Text> : null}
               {selected ? <View style={styles.filterUnderline} /> : null}
             </Pressable>
           );
@@ -184,7 +180,6 @@ const styles = StyleSheet.create({
   filter: { flexDirection: "row", alignItems: "center", gap: 5, paddingBottom: 4 },
   filterText: { fontSize: 12.5, fontWeight: "600", color: theme.muted },
   filterTextActive: { color: theme.green },
-  filterCount: { fontSize: 11, color: theme.faint },
   filterUnderline: {
     position: "absolute",
     right: 0,

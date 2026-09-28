@@ -5,7 +5,7 @@
 
 import React from "react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { act, cleanup, fireEvent, render, waitFor } from "@testing-library/react-native";
+import { act, cleanup, fireEvent, render, waitFor, within } from "@testing-library/react-native";
 import { SafeAreaProvider } from "react-native-safe-area-context";
 
 import { CaptureScreen } from "@/src/capture/components/CaptureScreen";
@@ -230,6 +230,25 @@ test("筛选在两态间切换并重新查询", async () => {
   fireEvent.press(screen.getByLabelText("未归属"));
 
   await waitFor(() => expect(mockListSources).toHaveBeenCalledWith("token", "unassigned"));
+});
+
+test("筛选标签不显示按当前窗口现算的条数", async () => {
+  mockListSources.mockResolvedValue([
+    source({ id: 1, title: "第一条" }),
+    source({ id: 2, title: "第二条" }),
+  ]);
+
+  const screen = await renderScreen();
+  await waitFor(() => expect(screen.getByText("第一条")).toBeTruthy());
+
+  // 列表只取最近 20 条，按窗口现算的条数会随筛选切换而变（切到未归属后两个标签变成同一个数），
+  // 属于误导信息，因此筛选标签只显示文字
+  const allTab = within(screen.getByLabelText("全部"));
+  const unassignedTab = within(screen.getByLabelText("未归属"));
+  expect(allTab.getByText("全部")).toBeTruthy();
+  expect(unassignedTab.getByText("未归属")).toBeTruthy();
+  expect(allTab.queryByText(/\d/)).toBeNull();
+  expect(unassignedTab.queryByText(/\d/)).toBeNull();
 });
 
 test("等待处理但没有任务时显示处理未启动，重试处理调用处理端点", async () => {
