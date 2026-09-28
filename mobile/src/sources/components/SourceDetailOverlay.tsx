@@ -435,9 +435,12 @@ export function SourceDetailOverlay({
                   );
                 })}
                 {moveError ? <Text style={styles.sheetError}>{moveError}</Text> : null}
-                {busy ? (
-                  <Text style={styles.hint}>正在更换项目并重新推荐目录，请稍候…</Text>
-                ) : null}
+                {/* 固定高度占位：进行中说明出现时不会把弹层撑高 */}
+                <View style={styles.sheetProgress}>
+                  {busy ? (
+                    <Text style={styles.hint}>正在更换项目并重新推荐目录，请稍候…</Text>
+                  ) : null}
+                </View>
                 <View style={styles.sheetActions}>
                   <View style={styles.sheetAction}>
                     <AppButton label="取消" disabled={busy} onPress={() => setMoveOpen(false)} />
@@ -456,7 +459,14 @@ export function SourceDetailOverlay({
             )}
           </Sheet>
 
-          <Sheet visible={deleteOpen} title="删除来源" onClose={() => setDeleteOpen(false)}>
+          <Sheet
+            visible={deleteOpen}
+            title="删除来源"
+            onClose={() => {
+              // 删除进行中不允许关闭：请求是同步的，关掉弹层会让用户失去进度反馈
+              if (!busy) setDeleteOpen(false);
+            }}
+          >
             {deleteBlocked || deleteError ? (
               <>
                 <View style={styles.notice}>
@@ -474,16 +484,21 @@ export function SourceDetailOverlay({
                   <Text style={styles.noticeTitle}>{confirm?.title}</Text>
                   <Text style={styles.noticeBody}>{confirm?.detail}</Text>
                 </View>
-                {busy ? <Text style={styles.hint}>正在删除…</Text> : null}
+                {/* 进度落在确认按钮上：不插入新的提示行，弹层高度保持不变 */}
                 <View style={styles.sheetActions}>
                   <View style={styles.sheetAction}>
-                    <AppButton label="取消" onPress={() => setDeleteOpen(false)} />
+                    <AppButton
+                      label="取消"
+                      disabled={busy}
+                      onPress={() => setDeleteOpen(false)}
+                    />
                   </View>
                   <View style={styles.sheetAction}>
                     <AppButton
-                      label="确认删除"
+                      label={busy ? "删除中…" : "确认删除"}
                       variant="danger"
                       disabled={busy}
+                      icon={busy ? <ActivityIndicator size="small" color={theme.error} /> : undefined}
                       onPress={() => void submitDelete()}
                     />
                   </View>
@@ -619,6 +634,7 @@ const styles = StyleSheet.create({
     overflow: "hidden",
   },
   sheetError: { marginTop: 12, fontSize: 12, lineHeight: 19, color: theme.error },
+  sheetProgress: { height: 24, justifyContent: "center" },
   sheetActions: { flexDirection: "row", gap: 10, marginTop: 12 },
   sheetAction: { flex: 1 },
   pressed: { opacity: 0.85 },

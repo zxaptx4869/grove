@@ -494,6 +494,44 @@ test("原始材料图片：读取失败给出重试入口，重试成功后渲�
   warn.mockRestore();
 });
 
+test("删除：提交期间进度落在确认按钮上，不再插入「正在删除…」提示行", async () => {
+  mockListSources.mockResolvedValue([source({ id: 1, status: "done" })]);
+  mockGetSource.mockResolvedValue(source({ id: 1, status: "done" }));
+  let resolveDelete: () => void = () => undefined;
+  mockDeleteSource.mockImplementation(
+    () =>
+      new Promise((resolve) => {
+        resolveDelete = () => resolve({ id: 1 });
+      }),
+  );
+
+  const screen = await renderScreen();
+  await waitFor(() => expect(screen.getByText("厨房插座位置确认")).toBeTruthy());
+  fireEvent.press(screen.getByLabelText("查看来源详情：厨房插座位置确认"));
+  await waitFor(() => expect(screen.getByText("来源详情")).toBeTruthy());
+
+  fireEvent.press(screen.getByLabelText("删除"));
+  await waitFor(() => expect(screen.getByLabelText("确认删除")).toBeTruthy());
+  fireEvent.press(screen.getByLabelText("确认删除"));
+
+  // 进行中：确认按钮变为「删除中…」，且没有额外的提示行撑高弹层
+  await waitFor(() => expect(screen.getByLabelText("删除中…")).toBeTruthy());
+  expect(screen.queryByLabelText("确认删除")).toBeNull();
+  expect(screen.queryByText("正在删除…")).toBeNull();
+  expect(screen.getByLabelText("取消").props.accessibilityState.disabled).toBe(true);
+
+  // 重复点击不会再次提交
+  fireEvent.press(screen.getByLabelText("删除中…"));
+  expect(mockDeleteSource).toHaveBeenCalledTimes(1);
+
+  await act(async () => {
+    resolveDelete();
+  });
+  await waitFor(() => expect(screen.queryByText("来源详情")).toBeNull());
+  await flushAsyncWork();
+  expect(mockListSources.mock.calls.length).toBeGreaterThan(1);
+});
+
 test("删除：处理中被阻止，不提供确认删除", async () => {
   mockListSources.mockResolvedValue([source({ id: 1, status: "processing" })]);
   mockGetSource.mockResolvedValue(source({ id: 1, status: "processing" }));
