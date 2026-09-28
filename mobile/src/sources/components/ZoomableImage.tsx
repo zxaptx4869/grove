@@ -24,6 +24,9 @@ export const ZOOM_DOUBLE_TAP_SCALE = 2.5;
 const TAP_MAX_DURATION_MS = 250;
 const TAP_MAX_MOVE_PX = 8;
 const DOUBLE_TAP_INTERVAL_MS = 300;
+/** 左右滑动的距离阈值与「横向明显占优」的倍数：避免把斜着的手势误判成切换。 */
+export const SWIPE_MIN_DISTANCE = 60;
+export const SWIPE_DOMINANCE = 1.5;
 
 export type Size = { width: number; height: number };
 
@@ -59,6 +62,13 @@ export function clampOffset(offset: number, scale: number, contentSize: number, 
   return clamp(offset, -limit, limit);
 }
 
+/** 判断横向滑动方向：1 = 下一张（手指向左滑），-1 = 上一张，0 = 不算切换。 */
+export function swipeDirection(dx: number, dy: number) {
+  if (Math.abs(dx) < SWIPE_MIN_DISTANCE) return 0;
+  if (Math.abs(dx) < Math.abs(dy) * SWIPE_DOMINANCE) return 0;
+  return dx < 0 ? 1 : -1;
+}
+
 type GestureState = {
   scale: number;
   x: number;
@@ -72,6 +82,8 @@ type GestureState = {
   startAt: number;
   moved: boolean;
   lastTapAt: number;
+  moveX: number;
+  moveY: number;
   viewportW: number;
   viewportH: number;
   contentW: number;
@@ -83,6 +95,8 @@ export function ZoomableImage({
   style,
   resetKey,
   contentSize,
+  onSwipeLeft,
+  onSwipeRight,
 }: {
   children: ReactNode;
   style?: StyleProp<ViewStyle>;
@@ -90,6 +104,10 @@ export function ZoomableImage({
   resetKey?: string | number;
   /** 原图尺寸（像素）；给到后内容按视口宽度铺满，放大时更清晰。 */
   contentSize?: Size | null;
+  /** 1x 下向左滑动（看下一张）；多图时由调用方切换图片。 */
+  onSwipeLeft?: () => void;
+  /** 1x 下向右滑动（看上一张）。 */
+  onSwipeRight?: () => void;
 }) {
   const [scale] = useState(() => new Animated.Value(ZOOM_MIN_SCALE));
   const [translateX] = useState(() => new Animated.Value(0));
@@ -108,6 +126,8 @@ export function ZoomableImage({
     startAt: 0,
     moved: false,
     lastTapAt: 0,
+    moveX: 0,
+    moveY: 0,
     viewportW: 0,
     viewportH: 0,
     contentW: 0,
@@ -130,25 +150,21 @@ export function ZoomableImage({
     translateY.setValue(state.y);
   }, [box, resetKey, scale, translateX, translateY, viewport]);
 
-  /** 把当前缩放与位移吸附到合法范围；回到 1x 时连位移一起回位。 */
+  /**
+   * 把当前缩放与位移吸附到合法范围；1x 下也能停在长截图的中段，不再弹回顶部。
+   * 回位动画与手势里的 setValue 都走 JS driver：同一个值混用原生驱动与 setValue
+   * 会让后续 setValue 不生效（拖动一下之后就跟不动了）。
+   */
   const settle = useCallback(() => {
     const state = gestureRef.current;
-    if (state.scale <= ZOOM_MIN_SCALE + 0.01) {
-      state.scale = ZOOM_MIN_SCALE;
-      state.x = 0;
-      state.y = maxOffset(ZOOM_MIN_SCALE, state.contentH, state.viewportH);
-      Animated.parallel([
-        Animated.spring(scale, { toValue: ZOOM_MIN_SCALE, useNativeDriver: true }),
-        Animated.spring(translateX, { toValue: 0, useNativeDriver: true }),
-        Animated.spring(translateY, { toValue: state.y, useNativeDriver: true }),
-      ]).start();
-      return;
-    }
+    const atMinScale = state.scale <= ZOOM_MIN_SCALE + 0.01;
+    if (atMinScale) state.scale = ZOOM_MIN_SCALE;
     state.x = clampOffset(state.x, state.scale, state.contentW, state.viewportW);
     state.y = clampOffset(state.y, state.scale, state.contentH, state.viewportH);
     Animated.parallel([
-      Animated.spring(translateX, { toValue: state.x, useNativeDriver: true }),
-      Animated.spring(translateY, { toValue: state.y, useNativeDriver: true }),
+      Animated.spring(scale, { toValue: state.scale, useNativeDriver: false }),
+      Animated.spring(translateX, { toValue: state.x, useNativeDriver: false }),
+      Animated.spring(translateY, { toValue: state.y, useNativeDriver: false }),
     ]).start();
   }, [scale, translateX, translateY]);
 
@@ -157,11 +173,12 @@ export function ZoomableImage({
       const state = gestureRef.current;
       state.scale = clampScale(next);
       state.x = 0;
-      state.y = maxOffset(state.scale, state.contentH, state.viewportH);
+      // 保持当前纵向位置而不是跳回顶部，双击放大时视线不会跑掉
+      state.y = clampOffset(state.y, state.scale, state.contentH, state.viewportH);
       Animated.parallel([
-        Animated.spring(scale, { toValue: state.scale, useNativeDriver: true }),
-        Animated.spring(translateX, { toValue: 0, useNativeDriver: true }),
-        Animated.spring(translateY, { toValue: state.y, useNativeDriver: true }),
+        Animated.spring(scale, { toValue: state.scale, useNativeDriver: false }),
+        Animated.spring(translateX, { toValue: 0, useNativeDriver: false }),
+        Animated.spring(translateY, { toValue: state.y, useNativeDriver: false }),
       ]).start();
     },
     [scale, translateX, translateY],
@@ -176,6 +193,8 @@ export function ZoomableImage({
     state.startDistance = touches.length >= 2 ? pinchDistance(touches) : 0;
     state.startTouchX = touches[0]?.pageX ?? 0;
     state.startTouchY = touches[0]?.pageY ?? 0;
+    state.moveX = 0;
+    state.moveY = 0;
     state.startAt = Date.now();
     state.moved = false;
   }, []);
@@ -215,6 +234,8 @@ export function ZoomableImage({
       }
       const dx = touch.pageX - state.startTouchX;
       const dy = touch.pageY - state.startTouchY;
+      state.moveX = dx;
+      state.moveY = dy;
       if (Math.abs(dx) > TAP_MAX_MOVE_PX || Math.abs(dy) > TAP_MAX_MOVE_PX) {
         state.moved = true;
       }
@@ -231,6 +252,16 @@ export function ZoomableImage({
       // 还有手指留在屏幕上就不结算，等最后一根抬起
       if (event.nativeEvent.touches.length > 0) return;
       const state = gestureRef.current;
+      // 未放大时横向滑动切换图片；放大后横向拖动是平移，不触发切换
+      if (state.scale <= ZOOM_MIN_SCALE + 0.01) {
+        const direction = swipeDirection(state.moveX, state.moveY);
+        if (direction !== 0) {
+          state.lastTapAt = 0;
+          if (direction > 0) onSwipeLeft?.();
+          else onSwipeRight?.();
+          return;
+        }
+      }
       const isTap = !state.moved && Date.now() - state.startAt < TAP_MAX_DURATION_MS;
       if (isTap) {
         const now = Date.now();
@@ -243,7 +274,7 @@ export function ZoomableImage({
       }
       settle();
     },
-    [settle, zoomTo],
+    [onSwipeLeft, onSwipeRight, settle, zoomTo],
   );
 
   const handleLayout = useCallback((event: LayoutChangeEvent) => {

@@ -47,6 +47,8 @@
 - [x] 9.7 `openspec validate --all --strict` 重新通过；`cd mobile && npm run lint && npm run typecheck && npm test` 全绿。
 - [x] 9.8 放大查看可用性：背景由近黑色改为应用浅色底；新增 `ZoomableImage`（双指捏合缩放 1x–4x、放大后拖动平移、双击放大 / 还原、切换图片复位），内容按视口宽度铺满并保持长宽比、起始对齐顶部，长截图放大后仍接近原图清晰度。验收：`ZoomableImage.test.tsx` 覆盖铺满尺寸、位移边界与缩放范围的几何口径；组件测试断言放大视图渲染、缩放提示与关闭返回。
 - [x] 9.9 `openspec validate --all --strict` 通过，规格补「放大查看」要求与长截图场景。
+- [x] 9.10 长截图在 1x 下可以上下拖动并停在原处（原实现未放大就回弹到顶部）；多图时在未放大状态下左右滑动切换（到头停住、切换复位缩放）。位移边界改为按「内容 × 缩放 − 视口」计算，回位动画与手势统一走 JS driver 避免同一个值混用原生驱动后跟不动。验收：`ZoomableImage.gesture.test.tsx` 覆盖滑动方向判定、切换到首尾停住、纵向拖动不误判、1x 下拖动与边界收敛；组件测试覆盖多图左右滑动切换与序号更新。
+- [x] 9.11 `openspec validate --all --strict` 通过；`cd mobile && npm run lint && npm run typecheck && npm test` 全绿。
 
 ## 8. 待人工走查（用户执行）
 

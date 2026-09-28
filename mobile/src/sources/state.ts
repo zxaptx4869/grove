@@ -79,6 +79,12 @@ export function imageAttachments(source: SourceOut) {
   return source.attachments.filter((item) => item.kind === "image");
 }
 
+/** 放大查看里切换图片：到头就停住，不做首尾环绕（与系统相册一致）。 */
+export function nextImageIndex(current: number | null, total: number, delta: number) {
+  if (current === null || total <= 0) return current;
+  return Math.min(Math.max(current + delta, 0), total - 1);
+}
+
 export function textContent(source: SourceOut): string {
   return source.attachments.find((item) => item.kind === "text")?.text_content ?? "";
 }

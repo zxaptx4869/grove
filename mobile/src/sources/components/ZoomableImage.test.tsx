@@ -11,6 +11,8 @@ import {
   fittedSize,
   maxOffset,
   pinchDistance,
+  SWIPE_MIN_DISTANCE,
+  swipeDirection,
 } from "@/src/sources/components/ZoomableImage";
 
 test("clampScale 限制在 1x 到 4x 之间", () => {
@@ -62,4 +64,18 @@ test("clampOffset 把位移收在边界内", () => {
   // 长截图纵向余量大于视口，回中不会把内容拖出边界
   expect(clampOffset(50, 1, 800, 600)).toBe(50);
   expect(clampOffset(999, 1, 800, 600)).toBe(100);
+});
+
+test("swipeDirection 只在横向明显占优且超过阈值时触发切换", () => {
+  // 向左滑 = 下一张，向右滑 = 上一张
+  expect(swipeDirection(-SWIPE_MIN_DISTANCE, 0)).toBe(1);
+  expect(swipeDirection(SWIPE_MIN_DISTANCE, 0)).toBe(-1);
+  // 距离不够
+  expect(swipeDirection(-10, 0)).toBe(0);
+  // 纵向更明显：是拖动阅读，不是切换
+  expect(swipeDirection(-80, 200)).toBe(0);
+  // 斜向但横向明显占优仍算切换
+  expect(swipeDirection(-120, 40)).toBe(1);
+  // 原地双击（无位移）不算切换
+  expect(swipeDirection(0, 0)).toBe(0);
 });

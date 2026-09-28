@@ -10,6 +10,7 @@ import {
   isProcessingNotStarted,
   moveBlockedReason,
   needsProcessingRetry,
+  nextImageIndex,
   retryLabel,
   shouldPollSources,
   sourceMaterialSummary,
@@ -135,6 +136,17 @@ test("轮询开关：有活动条目且在前台才轮询", () => {
   expect(shouldPollSources(settled, true)).toBe(false);
   expect(shouldPollSources(active, false)).toBe(false);
   expect(shouldPollSources(undefined, true)).toBe(false);
+});
+
+test("切换图片：只前后移动一位，到头停住不做环绕", () => {
+  expect(nextImageIndex(0, 3, 1)).toBe(1);
+  expect(nextImageIndex(1, 3, -1)).toBe(0);
+  // 首尾边界停住
+  expect(nextImageIndex(2, 3, 1)).toBe(2);
+  expect(nextImageIndex(0, 3, -1)).toBe(0);
+  // 不在放大状态或没有图片时保持原值
+  expect(nextImageIndex(null, 3, 1)).toBeNull();
+  expect(nextImageIndex(0, 0, 1)).toBe(0);
 });
 
 test("候选目录建议只展示可读内容", () => {

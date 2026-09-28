@@ -263,6 +263,51 @@ test("等待处理但没有任务时显示处理未启动，重试处理调用�
   await waitFor(() => expect(mockTriggerProcessing).toHaveBeenCalledWith("token", 7));
 });
 
+test("详情：多张图时左右滑动切换，到头停住", async () => {
+  const multi = source({
+    id: 1,
+    status: "done",
+    attachments: [
+      { id: 11, kind: "image", position: 0, mime_type: "image/jpeg", file_name: "a.jpg", text_content: null, ocr_text: null },
+      { id: 12, kind: "image", position: 1, mime_type: "image/jpeg", file_name: "b.jpg", text_content: null, ocr_text: null },
+    ],
+  });
+  mockListSources.mockResolvedValue([multi]);
+  mockGetSource.mockResolvedValue(multi);
+
+  const screen = await renderScreen();
+  await waitFor(() => expect(screen.getByText("厨房插座位置确认")).toBeTruthy());
+  fireEvent.press(screen.getByLabelText("查看来源详情：厨房插座位置确认"));
+  await waitFor(() => expect(screen.getByText("来源详情")).toBeTruthy());
+
+  fireEvent.press(screen.getByLabelText("放大查看第 1 张：a.jpg"));
+  await waitFor(() => expect(screen.getByText("第 1 / 2 张")).toBeTruthy());
+  expect(screen.getByText("双指缩放 · 双击放大 / 还原 · 左右滑动切换")).toBeTruthy();
+
+  // 手指向左滑 = 看下一张
+  const swipe = async (from: number, to: number) => {
+    const viewport = screen.getByTestId("zoomable-image-viewport");
+    const event = (pageX: number) => ({ nativeEvent: { touches: [{ pageX, pageY: 300 }] } });
+    await act(async () => {
+      viewport.props.onTouchStart(event(from));
+      viewport.props.onTouchMove(event(to));
+      viewport.props.onTouchEnd({ nativeEvent: { touches: [] } });
+    });
+  };
+
+  await swipe(300, 140);
+  await waitFor(() => expect(screen.getByText("第 2 / 2 张")).toBeTruthy());
+  expect(screen.getByLabelText("第 2 张原图")).toBeTruthy();
+
+  // 已经在最后一张，继续向左滑停在原地
+  await swipe(300, 140);
+  await waitFor(() => expect(screen.getByText("第 2 / 2 张")).toBeTruthy());
+
+  // 向右滑回到上一张
+  await swipe(140, 300);
+  await waitFor(() => expect(screen.getByText("第 1 / 2 张")).toBeTruthy());
+});
+
 test("详情：放大查看打开原图视图，给出缩放提示与文件名，关闭后回到详情", async () => {
   mockListSources.mockResolvedValue([source({ id: 1, status: "done" })]);
   mockGetSource.mockResolvedValue(source({ id: 1, status: "done" }));
@@ -274,7 +319,7 @@ test("详情：放大查看打开原图视图，给出缩放提示与文件名�
 
   fireEvent.press(screen.getByLabelText("放大查看第 1 张：a.jpg"));
   await waitFor(() => expect(screen.getByText("第 1 / 1 张")).toBeTruthy());
-  expect(screen.getByText("双指缩放，双击放大 / 还原")).toBeTruthy();
+  expect(screen.getByText("双指缩放 · 双击放大 / 还原")).toBeTruthy();
   expect(screen.getByText("a.jpg")).toBeTruthy();
   expect(screen.getByLabelText("第 1 张原图")).toBeTruthy();
   expect(screen.getByTestId("zoomable-image-content")).toBeTruthy();

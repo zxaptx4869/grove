@@ -21,6 +21,7 @@ import {
   imageAttachments,
   isProcessingNotStarted,
   moveBlockedReason,
+  nextImageIndex,
   ocrText,
   sourceKind,
   sourceProjectLabel,
@@ -85,8 +86,10 @@ export function SourceDetailOverlay({
   onDelete: () => Promise<void>;
 }) {
   const [zoomIndex, setZoomIndex] = useState<number | null>(null);
-  // 原图尺寸：拿到后放大视图按宽度铺满渲染，缩放时更清晰
-  const [zoomImageSize, setZoomImageSize] = useState<{ width: number; height: number } | null>(null);
+  // 原图尺寸（按附件缓存）：拿到后放大视图按宽度铺满渲染，缩放时更清晰
+  const [zoomImageSizes, setZoomImageSizes] = useState<
+    Record<number, { width: number; height: number }>
+  >({});
   const [moveOpen, setMoveOpen] = useState(false);
   const [deleteOpen, setDeleteOpen] = useState(false);
   const [moveError, setMoveError] = useState("");
@@ -254,10 +257,7 @@ export function SourceDetailOverlay({
                       key={item.id}
                       accessibilityRole="button"
                       accessibilityLabel={`放大查看第 ${index + 1} 张：${item.file_name ?? "图片"}`}
-                      onPress={() => {
-                        setZoomImageSize(null);
-                        setZoomIndex(index);
-                      }}
+                      onPress={() => setZoomIndex(index)}
                       style={({ pressed }) => [styles.photo, pressed && styles.pressed]}
                     >
                       <SourceImage
@@ -373,7 +373,9 @@ export function SourceDetailOverlay({
               <ZoomableImage
                 resetKey={images[zoomIndex].id}
                 style={styles.lightboxStage}
-                contentSize={zoomImageSize}
+                contentSize={zoomImageSizes[images[zoomIndex].id] ?? null}
+                onSwipeLeft={() => setZoomIndex((current) => nextImageIndex(current, images.length, 1))}
+                onSwipeRight={() => setZoomIndex((current) => nextImageIndex(current, images.length, -1))}
               >
                 <SourceImage
                   sourceId={source.id}
@@ -382,10 +384,16 @@ export function SourceDetailOverlay({
                   style={styles.lightboxImage}
                   resizeMode="contain"
                   accessibilityLabel={`第 ${zoomIndex + 1} 张原图`}
-                  onLoadSize={setZoomImageSize}
+                  onLoadSize={(size) =>
+                    setZoomImageSizes((current) =>
+                      current[images[zoomIndex].id] ? current : { ...current, [images[zoomIndex].id]: size },
+                    )
+                  }
                 />
               </ZoomableImage>
-              <Text style={styles.lightboxZoomHint}>双指缩放，双击放大 / 还原</Text>
+              <Text style={styles.lightboxZoomHint}>
+                {images.length > 1 ? "双指缩放 · 双击放大 / 还原 · 左右滑动切换" : "双指缩放 · 双击放大 / 还原"}
+              </Text>
               <Text style={styles.lightboxCaption}>
                 {images[zoomIndex].file_name ?? "图片附件"}
               </Text>
