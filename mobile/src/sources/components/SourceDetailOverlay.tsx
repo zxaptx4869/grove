@@ -89,6 +89,7 @@ export function SourceDetailOverlay({
   const [moveError, setMoveError] = useState("");
   const [deleteError, setDeleteError] = useState("");
   const [busy, setBusy] = useState(false);
+  const [selectedProjectId, setSelectedProjectId] = useState<number | null>(null);
 
   const images = source ? imageAttachments(source) : [];
   const badge = source ? sourceStatusBadge(source) : null;
@@ -96,13 +97,20 @@ export function SourceDetailOverlay({
   const moveBlocked = source ? moveBlockedReason(source) : null;
   const deleteBlocked = source ? deleteBlockedReason(source) : null;
 
-  async function submitMove(projectId: number | null) {
+  function openMoveSheet() {
+    setMoveError("");
+    setSelectedProjectId(source?.project_id ?? null);
+    setMoveOpen(true);
+  }
+
+  async function submitMove() {
     setMoveError("");
     setBusy(true);
     try {
-      await onMove(projectId);
+      await onMove(selectedProjectId);
       setMoveOpen(false);
     } catch (moveFailure) {
+      // 失败保留弹层与当前选择，原样展示服务端文案
       setMoveError(sourceErrorMessage(moveFailure));
     } finally {
       setBusy(false);
@@ -249,6 +257,7 @@ export function SourceDetailOverlay({
                       <SourceImage
                         sourceId={source.id}
                         attachmentId={item.id}
+                        fileName={item.file_name}
                         style={styles.photoImage}
                       />
                       <View style={styles.zoomHint}>
@@ -323,7 +332,7 @@ export function SourceDetailOverlay({
               <AppButton
                 label={moving ? "正在重新路由…" : "改归属"}
                 disabled={moving}
-                onPress={() => setMoveOpen(true)}
+                onPress={openMoveSheet}
               />
             </View>
             <View style={styles.footerButton}>
@@ -358,6 +367,7 @@ export function SourceDetailOverlay({
               <SourceImage
                 sourceId={source.id}
                 attachmentId={images[zoomIndex].id}
+                fileName={images[zoomIndex].file_name}
                 style={styles.lightboxImage}
                 resizeMode="contain"
                 accessibilityLabel={`第 ${zoomIndex + 1} 张原图`}
@@ -372,7 +382,14 @@ export function SourceDetailOverlay({
 
       {source ? (
         <>
-          <Sheet visible={moveOpen} title="修改归属" onClose={() => setMoveOpen(false)}>
+          <Sheet
+            visible={moveOpen}
+            title="修改归属"
+            onClose={() => {
+              // 提交期间不允许关闭：请求是同步的，关掉弹层会让用户失去进度反馈
+              if (!busy) setMoveOpen(false);
+            }}
+          >
             {moveBlocked ? (
               <>
                 <View style={styles.notice}>
@@ -385,15 +402,19 @@ export function SourceDetailOverlay({
               <>
                 <Text style={styles.sheetCaption}>{source.title}</Text>
                 {[{ id: null, name: "未归属" }, ...projects].map((option) => {
-                  const selected = option.id === source.project_id;
+                  const selected = option.id === selectedProjectId;
+                  const current = option.id === source.project_id;
                   return (
                     <Pressable
                       key={option.id ?? "none"}
                       accessibilityRole="radio"
-                      accessibilityState={{ checked: selected }}
+                      accessibilityState={{ checked: selected, disabled: busy }}
                       accessibilityLabel={option.name}
                       disabled={busy}
-                      onPress={() => void submitMove(option.id)}
+                      onPress={() => {
+                        setMoveError("");
+                        setSelectedProjectId(option.id);
+                      }}
                       style={({ pressed }) => [
                         styles.option,
                         selected && styles.optionSelected,
@@ -408,13 +429,29 @@ export function SourceDetailOverlay({
                       <Text style={[styles.optionText, selected && styles.optionTextSelected]}>
                         {option.name}
                       </Text>
+                      {current ? <Text style={styles.optionCurrent}>当前</Text> : null}
                       {selected ? <SourceIcon name="check" size={16} color={theme.green} /> : null}
                     </Pressable>
                   );
                 })}
                 {moveError ? <Text style={styles.sheetError}>{moveError}</Text> : null}
-                {busy ? <Text style={styles.hint}>正在提交并重新路由，请稍候…</Text> : null}
-                <AppButton label="取消" onPress={() => setMoveOpen(false)} />
+                {busy ? (
+                  <Text style={styles.hint}>正在更换项目并重新路由，请稍候…</Text>
+                ) : null}
+                <View style={styles.sheetActions}>
+                  <View style={styles.sheetAction}>
+                    <AppButton label="取消" disabled={busy} onPress={() => setMoveOpen(false)} />
+                  </View>
+                  <View style={styles.sheetAction}>
+                    <AppButton
+                      label={busy ? "正在更换…" : "确认修改"}
+                      variant="primary"
+                      disabled={busy || selectedProjectId === source.project_id}
+                      icon={busy ? <ActivityIndicator size="small" color="#FFFFFF" /> : undefined}
+                      onPress={() => void submitMove()}
+                    />
+                  </View>
+                </View>
               </>
             )}
           </Sheet>
@@ -571,6 +608,16 @@ const styles = StyleSheet.create({
   optionSelected: { borderColor: "#BAD5C5", backgroundColor: theme.greenSoft },
   optionText: { flex: 1, fontSize: 13, fontWeight: "600", color: theme.ink },
   optionTextSelected: { color: theme.green },
+  optionCurrent: {
+    fontSize: 11,
+    fontWeight: "600",
+    color: theme.muted,
+    paddingHorizontal: 6,
+    paddingVertical: 1,
+    borderRadius: 6,
+    backgroundColor: theme.soft,
+    overflow: "hidden",
+  },
   sheetError: { marginTop: 12, fontSize: 12, lineHeight: 19, color: theme.error },
   sheetActions: { flexDirection: "row", gap: 10, marginTop: 12 },
   sheetAction: { flex: 1 },
