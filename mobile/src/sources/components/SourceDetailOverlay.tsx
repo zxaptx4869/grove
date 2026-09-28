@@ -330,7 +330,7 @@ export function SourceDetailOverlay({
           <View style={styles.footer}>
             <View style={styles.footerButton}>
               <AppButton
-                label={moving ? "正在重新路由…" : "改归属"}
+                label={moving ? "更换中…" : "改归属"}
                 disabled={moving}
                 onPress={openMoveSheet}
               />
@@ -436,7 +436,7 @@ export function SourceDetailOverlay({
                 })}
                 {moveError ? <Text style={styles.sheetError}>{moveError}</Text> : null}
                 {busy ? (
-                  <Text style={styles.hint}>正在更换项目并重新路由，请稍候…</Text>
+                  <Text style={styles.hint}>正在更换项目并重新推荐目录，请稍候…</Text>
                 ) : null}
                 <View style={styles.sheetActions}>
                   <View style={styles.sheetAction}>

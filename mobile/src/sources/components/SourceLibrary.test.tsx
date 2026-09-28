@@ -429,7 +429,7 @@ test("改归属：提交期间显示进行中状态并禁用选项与按钮", as
   fireEvent.press(screen.getByLabelText("确认修改"));
 
   await waitFor(() => expect(screen.getByLabelText("正在更换…")).toBeTruthy());
-  expect(screen.getByText("正在更换项目并重新路由，请稍候…")).toBeTruthy();
+  expect(screen.getByText("正在更换项目并重新推荐目录，请稍候…")).toBeTruthy();
   expect(screen.getByLabelText("新房装修").props.accessibilityState.disabled).toBe(true);
   expect(screen.getByLabelText("取消").props.accessibilityState.disabled).toBe(true);
 
@@ -440,7 +440,7 @@ test("改归属：提交期间显示进行中状态并禁用选项与按钮", as
   await act(async () => {
     resolveMove();
   });
-  await waitFor(() => expect(screen.queryByText("正在更换项目并重新路由，请稍候…")).toBeNull());
+  await waitFor(() => expect(screen.queryByText("正在更换项目并重新推荐目录，请稍候…")).toBeNull());
 });
 
 test("原始材料图片：读取失败给出重试入口，重试成功后渲染本地缓存文件", async () => {

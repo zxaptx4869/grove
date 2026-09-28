@@ -122,7 +122,7 @@ test("重试处理调用处理端点并失效来源缓存", async () => {
   expect(mockInvalidateQueries).toHaveBeenCalled();
 });
 
-test("改归属请求期间标记正在重新路由，返回后清除", async () => {
+test("改归属请求期间标记为更换中，返回后清除", async () => {
   let resolveMove: () => void = () => undefined;
   mockUpdateSourceProject.mockImplementation(
     () => new Promise<void>((resolve) => (resolveMove = resolve)),

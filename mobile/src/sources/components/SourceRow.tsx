@@ -84,7 +84,7 @@ export function SourceRow({
             {subStatus.label}
           </Badge>
         ) : null}
-        {moving ? <Badge tone="ai">正在重新路由</Badge> : null}
+        {moving ? <Badge tone="ai">更换项目中</Badge> : null}
       </View>
 
       {failure ? (
