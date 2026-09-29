@@ -23,12 +23,18 @@ export const FAILED = "failed";
 export const SOURCE_POLL_INTERVAL_MS = 4000;
 
 export function hasActiveSources(sources: SourceOut[] | undefined): boolean {
+  // 处理中一定会变（Worker 正在跑）；等待处理只有存在处理任务才会变，
+  // 「处理未启动」的条目需要用户手动重试，没有任务时轮询只会空转。
   return Boolean(
-    sources?.some((source) => source.status === WAITING || source.status === PROCESSING),
+    sources?.some(
+      (source) =>
+        source.status === PROCESSING ||
+        (source.status === WAITING && source.has_processing_task),
+    ),
   );
 }
 
-/** 仅前台且存在等待处理 / 处理中的条目时轮询，否则返回 false 停止定时请求。 */
+/** 仅前台且存在处理中或「等待处理且有处理任务」的条目时轮询，否则返回 false 停止定时请求。 */
 export function shouldPollSources(
   sources: SourceOut[] | undefined,
   appActive: boolean,
@@ -195,6 +201,40 @@ export function deleteConfirmCopy(source: SourceOut): { title: string; detail: s
     };
   }
   return { title, detail: "删除后这条来源的原始材料与已经生成的候选都会移除，无法恢复。" };
+}
+
+export type DeleteNotice = {
+  title: string;
+  detail: string;
+  hint: string | null;
+  /** 是否给「重试删除」入口：只有本次请求失败（非业务阻断）才值得重试。 */
+  retryable: boolean;
+};
+
+/** 服务端 409 与本地预判同类，都是「这条来源现在不能删」的业务阻断。 */
+export function isDeleteConflict(error: unknown): boolean {
+  return (error as { status?: number } | null)?.status === 409;
+}
+
+/**
+ * 删除弹层当前要展示的提示。
+ *
+ * - 本地预判（已被正式知识引用 / 处理中）：只读阻断，不给重试。
+ * - 服务端 409：同样是业务阻断，用服务端原文但不给重试，避免诱导用户反复点。
+ * - 其他失败（网络 / 5xx）：标题「删除失败」并保留重试入口，否则用户会被困在弹层里。
+ */
+export function deleteFailureNotice(
+  blocked: BlockedNotice | null,
+  failure: { message: string; conflict: boolean } | null,
+): DeleteNotice | null {
+  if (blocked) {
+    return { title: blocked.title, detail: blocked.detail, hint: blocked.hint ?? null, retryable: false };
+  }
+  if (!failure) return null;
+  if (failure.conflict) {
+    return { title: "不能删除", detail: failure.message, hint: null, retryable: false };
+  }
+  return { title: "删除失败", detail: failure.message, hint: null, retryable: true };
 }
 
 /** 候选的目录建议文案：只展示能读懂的内容，不暴露无名称的节点编号以外的内部字段。 */

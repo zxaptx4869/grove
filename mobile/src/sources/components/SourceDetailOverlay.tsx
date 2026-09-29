@@ -18,7 +18,10 @@ import {
   candidateDirectoryLine,
   deleteBlockedReason,
   deleteConfirmCopy,
+  deleteFailureNotice,
+  formatSourceTime,
   imageAttachments,
+  isDeleteConflict,
   isProcessingNotStarted,
   moveBlockedReason,
   nextImageIndex,
@@ -93,7 +96,8 @@ export function SourceDetailOverlay({
   const [moveOpen, setMoveOpen] = useState(false);
   const [deleteOpen, setDeleteOpen] = useState(false);
   const [moveError, setMoveError] = useState("");
-  const [deleteError, setDeleteError] = useState("");
+  // 删除失败留原文，弹层里按「业务阻断 / 可重试失败」两种口径展示
+  const [deleteFailure, setDeleteFailure] = useState<unknown>(null);
   const [busy, setBusy] = useState(false);
   const [selectedProjectId, setSelectedProjectId] = useState<number | null>(null);
 
@@ -107,6 +111,12 @@ export function SourceDetailOverlay({
     setMoveError("");
     setSelectedProjectId(source?.project_id ?? null);
     setMoveOpen(true);
+  }
+
+  function openDeleteSheet() {
+    // 每次打开都从确认态开始：上一次的失败提示不带到下一次
+    setDeleteFailure(null);
+    setDeleteOpen(true);
   }
 
   async function submitMove() {
@@ -124,19 +134,24 @@ export function SourceDetailOverlay({
   }
 
   async function submitDelete() {
-    setDeleteError("");
     setBusy(true);
     try {
       await onDelete();
       setDeleteOpen(false);
-    } catch (deleteFailure) {
-      setDeleteError(sourceErrorMessage(deleteFailure));
+    } catch (failure) {
+      setDeleteFailure(failure);
     } finally {
       setBusy(false);
     }
   }
 
   const confirm = source ? deleteConfirmCopy(source) : null;
+  const deleteNotice = deleteFailureNotice(
+    deleteBlocked,
+    deleteFailure === null
+      ? null
+      : { message: sourceErrorMessage(deleteFailure), conflict: isDeleteConflict(deleteFailure) },
+  );
 
   return (
     <Modal
@@ -204,7 +219,7 @@ export function SourceDetailOverlay({
                         sourceKind(source) === "text" ? "文字" : `图片 · ${images.length} 张`
                       }
                     />
-                    <MetaRow label="创建时间" value={source.created_at} />
+                    <MetaRow label="创建时间" value={formatSourceTime(source.created_at)} />
                     <MetaRow
                       label="项目归属"
                       value={
@@ -342,7 +357,7 @@ export function SourceDetailOverlay({
               />
             </View>
             <View style={styles.footerButton}>
-              <AppButton label="删除" variant="danger" onPress={() => setDeleteOpen(true)} />
+              <AppButton label="删除" variant="danger" onPress={openDeleteSheet} />
             </View>
           </View>
         ) : null}
@@ -489,16 +504,36 @@ export function SourceDetailOverlay({
               if (!busy) setDeleteOpen(false);
             }}
           >
-            {deleteBlocked || deleteError ? (
+            {deleteNotice ? (
               <>
                 <View style={styles.notice}>
-                  <Text style={styles.noticeTitle}>{deleteBlocked?.title ?? "不能删除"}</Text>
-                  <Text style={styles.noticeBody}>{deleteError || deleteBlocked?.detail}</Text>
-                  {deleteBlocked?.hint && !deleteError ? (
-                    <Text style={styles.noticeHint}>{deleteBlocked.hint}</Text>
+                  <Text style={styles.noticeTitle}>{deleteNotice.title}</Text>
+                  <Text style={styles.noticeBody}>{deleteNotice.detail}</Text>
+                  {deleteNotice.hint ? (
+                    <Text style={styles.noticeHint}>{deleteNotice.hint}</Text>
                   ) : null}
                 </View>
-                <AppButton label="知道了" onPress={() => setDeleteOpen(false)} />
+                {deleteNotice.retryable ? (
+                  // 可重试失败：给退路也给重试，布局与确认态一致，弹层高度不跳
+                  <View style={styles.sheetActions}>
+                    <View style={styles.sheetAction}>
+                      <AppButton label="取消" disabled={busy} onPress={() => setDeleteOpen(false)} />
+                    </View>
+                    <View style={styles.sheetAction}>
+                      <AppButton
+                        label={busy ? "删除中…" : "重试删除"}
+                        variant="danger"
+                        disabled={busy}
+                        icon={
+                          busy ? <ActivityIndicator size="small" color={theme.error} /> : undefined
+                        }
+                        onPress={() => void submitDelete()}
+                      />
+                    </View>
+                  </View>
+                ) : (
+                  <AppButton label="知道了" onPress={() => setDeleteOpen(false)} />
+                )}
               </>
             ) : (
               <>

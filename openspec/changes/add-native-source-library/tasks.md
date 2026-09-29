@@ -49,6 +49,10 @@
 - [x] 9.9 `openspec validate --all --strict` 通过，规格补「放大查看」要求与长截图场景。
 - [x] 9.10 长截图在 1x 下可以上下拖动并停在原处（原实现未放大就回弹到顶部）；多图时在未放大状态下左右滑动切换（到头停住、切换复位缩放）。位移边界改为按「内容 × 缩放 − 视口」计算，回位动画与手势统一走 JS driver 避免同一个值混用原生驱动后跟不动。验收：`ZoomableImage.gesture.test.tsx` 覆盖滑动方向判定、切换到首尾停住、纵向拖动不误判、1x 下拖动与边界收敛；组件测试覆盖多图左右滑动切换与序号更新。
 - [x] 9.11 `openspec validate --all --strict` 通过；`cd mobile && npm run lint && npm run typecheck && npm test` 全绿。
+- [x] 9.12 详情「创建时间」与列表行同口径：改用 `formatSourceTime(source.created_at)`，不再直接渲染原始 ISO 串。验收：组件测试断言详情出现与列表一致的格式化文案，且列表与详情都不出现 `T` 分隔的 ISO 串。
+- [x] 9.13 前台轮询口径收窄：`hasActiveSources` 把「等待处理但没有处理任务」（处理未启动）排除在活动条目之外（`processing` 一律算活动，`waiting` 只在 `has_processing_task` 为 true 时算），避免前台每 4000ms 空转请求；规格「前台轮询」与 `design.md` 第 3 节同步记录。验收：`state.test.ts` 覆盖 waiting+无任务不轮询、waiting+有任务与 processing 仍轮询。
+- [x] 9.14 删除失败不再是死胡同：区分业务阻断（本地预判 / 服务端 409，只给「知道了」）与本次请求失败（标题「删除失败」+「重试删除」，原地重试成功仍关闭详情并刷新列表），口径记入 `design.md` 第 5 节。验收：组件测试断言 409 为阻断样式且无重试入口、网络失败给出「删除失败」与重试入口且点击会再次发起删除请求。
+- [x] 9.15 `openspec validate --all --strict` 通过；`cd mobile && npm run lint && npm run typecheck && npm test` 全绿。
 
 ## 8. 待人工走查（用户执行）
 

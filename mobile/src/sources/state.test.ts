@@ -4,9 +4,11 @@ import {
   candidateDirectoryLine,
   deleteBlockedReason,
   deleteConfirmCopy,
+  deleteFailureNotice,
   failureLine,
   formatSourceTime,
   hasActiveSources,
+  isDeleteConflict,
   isProcessingNotStarted,
   moveBlockedReason,
   needsProcessingRetry,
@@ -123,19 +125,60 @@ test("删除阻止覆盖锁定与处理中，待确认候选单独走二次确�
   );
 });
 
-test("轮询开关：有活动条目且在前台才轮询", () => {
-  const active = [source({ status: "waiting" }), source({ id: 2, status: "done" })];
+test("轮询开关：处理中与「等待处理且有任务」才轮询，处理未启动不轮询", () => {
+  const waitingWithTask = [source({ status: "waiting", has_processing_task: true })];
+  const waitingWithoutTask = [source({ status: "waiting", has_processing_task: false })];
+  const processing = [source({ status: "processing", has_processing_task: true })];
   const settled = [source({ status: "done" }), source({ id: 2, status: "failed" })];
 
-  expect(hasActiveSources(active)).toBe(true);
+  expect(hasActiveSources(waitingWithTask)).toBe(true);
+  expect(hasActiveSources(processing)).toBe(true);
+  // 处理未启动：没有处理任务，状态不会自己变，前台不该一直轮询
+  expect(hasActiveSources(waitingWithoutTask)).toBe(false);
   expect(hasActiveSources(settled)).toBe(false);
   expect(hasActiveSources(undefined)).toBe(false);
 
-  expect(shouldPollSources(active, true)).toBe(SOURCE_POLL_INTERVAL_MS);
-  expect(shouldPollSources([source({ status: "processing" })], true)).toBe(SOURCE_POLL_INTERVAL_MS);
+  expect(shouldPollSources(waitingWithTask, true)).toBe(SOURCE_POLL_INTERVAL_MS);
+  expect(shouldPollSources(processing, true)).toBe(SOURCE_POLL_INTERVAL_MS);
+  expect(shouldPollSources(waitingWithoutTask, true)).toBe(false);
   expect(shouldPollSources(settled, true)).toBe(false);
-  expect(shouldPollSources(active, false)).toBe(false);
+  expect(shouldPollSources(waitingWithTask, false)).toBe(false);
   expect(shouldPollSources(undefined, true)).toBe(false);
+  // 处理未启动的条目混在列表里也不会把轮询打开
+  expect(shouldPollSources([...waitingWithoutTask, ...settled], true)).toBe(false);
+});
+
+test("删除提示口径：预判与 409 是只读阻断，其余失败给重试入口", () => {
+  const blocked = deleteBlockedReason(source({ project_locked: true }));
+  expect(deleteFailureNotice(blocked, null)).toEqual({
+    title: "不能删除",
+    detail: "该来源已被正式知识引用，不能删除；请先处理关联 Entry",
+    hint: "请先在桌面工作台处理关联的正式知识。",
+    retryable: false,
+  });
+  // 服务端 409：用服务端原文，但不给重试
+  expect(
+    deleteFailureNotice(null, { message: "该来源已被正式知识引用，不能删除", conflict: true }),
+  ).toEqual({ title: "不能删除", detail: "该来源已被正式知识引用，不能删除", hint: null, retryable: false });
+  // 本地预判命中时以预判为准，即使同时带着失败信息
+  expect(deleteFailureNotice(blocked, { message: "网络连接中断，请检查网络后重试。", conflict: false })?.retryable).toBe(false);
+  // 网络 / 5xx：标题「删除失败」并保留重试
+  expect(
+    deleteFailureNotice(null, { message: "网络连接中断，请检查网络后重试。", conflict: false }),
+  ).toEqual({
+    title: "删除失败",
+    detail: "网络连接中断，请检查网络后重试。",
+    hint: null,
+    retryable: true,
+  });
+  expect(deleteFailureNotice(null, null)).toBeNull();
+});
+
+test("删除冲突判定只看 409", () => {
+  expect(isDeleteConflict(Object.assign(new Error("冲突"), { status: 409 }))).toBe(true);
+  expect(isDeleteConflict(Object.assign(new Error("挂了"), { status: 500 }))).toBe(false);
+  expect(isDeleteConflict(new Error("网络错误"))).toBe(false);
+  expect(isDeleteConflict(null)).toBe(false);
 });
 
 test("切换图片：只前后移动一位，到头停住不做环绕", () => {

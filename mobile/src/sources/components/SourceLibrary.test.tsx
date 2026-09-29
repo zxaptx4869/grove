@@ -9,6 +9,7 @@ import { act, cleanup, fireEvent, render, waitFor, within } from "@testing-libra
 import { SafeAreaProvider } from "react-native-safe-area-context";
 
 import { CaptureScreen } from "@/src/capture/components/CaptureScreen";
+import { formatSourceTime } from "@/src/sources/state";
 import type { SourceOut } from "@/src/sources/types";
 
 const mockListSources = jest.fn(async (..._args: unknown[]): Promise<unknown> => []);
@@ -261,6 +262,25 @@ test("等待处理但没有任务时显示处理未启动，重试处理调用�
   fireEvent.press(screen.getByLabelText("重试处理：没有任务的来源"));
 
   await waitFor(() => expect(mockTriggerProcessing).toHaveBeenCalledWith("token", 7));
+});
+
+test("详情：创建时间与列表同一口径，不出现原始 ISO 串", async () => {
+  const iso = "2026-09-24T02:12:00.000Z";
+  mockListSources.mockResolvedValue([source({ id: 1, status: "done", created_at: iso })]);
+  mockGetSource.mockResolvedValue(source({ id: 1, status: "done", created_at: iso }));
+
+  const screen = await renderScreen();
+  await waitFor(() => expect(screen.getByText("厨房插座位置确认")).toBeTruthy());
+  // 列表行的材料与时间共用同一个 Text（「1 张图片 · 9 月 24 日 10:12」），按子串匹配
+  expect(screen.getByText(formatSourceTime(iso), { exact: false })).toBeTruthy();
+  expect(screen.queryByText(/\d{4}-\d{2}-\d{2}T\d{2}:/)).toBeNull();
+
+  fireEvent.press(screen.getByLabelText("查看来源详情：厨房插座位置确认"));
+  await waitFor(() => expect(screen.getByText("来源详情")).toBeTruthy());
+  expect(screen.getByText("创建时间")).toBeTruthy();
+  // 详情里的时间独占一行，必须是列表同一口径的格式化文案，而不是原始 ISO 串
+  expect(screen.getAllByText(formatSourceTime(iso)).length).toBeGreaterThan(0);
+  expect(screen.queryByText(/\d{4}-\d{2}-\d{2}T\d{2}:/)).toBeNull();
 });
 
 test("详情：多张图时左右滑动切换，到头停住", async () => {
@@ -636,7 +656,7 @@ test("删除：有待确认候选时二次确认说明会一并移除，确认�
   expect(mockListSources.mock.calls.length).toBeGreaterThan(1);
 });
 
-test("删除失败时保留详情并原样展示服务端文案", async () => {
+test("删除：服务端 409 仍按阻断展示，不给重试入口", async () => {
   mockListSources.mockResolvedValue([source({ id: 1, status: "done" })]);
   mockGetSource.mockResolvedValue(source({ id: 1, status: "done" }));
   mockDeleteSource.mockRejectedValue(conflictError("该来源已被正式知识引用，不能删除；请先处理关联 Entry"));
@@ -655,5 +675,35 @@ test("删除失败时保留详情并原样展示服务端文案", async () => {
       screen.getByText("该来源已被正式知识引用，不能删除；请先处理关联 Entry"),
     ).toBeTruthy(),
   );
+  expect(screen.getByText("不能删除")).toBeTruthy();
+  expect(screen.queryByLabelText("重试删除")).toBeNull();
+  expect(screen.getByLabelText("知道了")).toBeTruthy();
   expect(screen.getByText("来源详情")).toBeTruthy();
+});
+
+test("删除：网络失败给出「删除失败」与重试入口，重试会再次发起删除", async () => {
+  mockListSources.mockResolvedValue([source({ id: 1, status: "done" })]);
+  mockGetSource.mockResolvedValue(source({ id: 1, status: "done" }));
+  mockDeleteSource.mockRejectedValueOnce(new Error("Network request failed"));
+  mockDeleteSource.mockResolvedValueOnce({ ok: true });
+
+  const screen = await renderScreen();
+  await waitFor(() => expect(screen.getByText("厨房插座位置确认")).toBeTruthy());
+  fireEvent.press(screen.getByLabelText("查看来源详情：厨房插座位置确认"));
+  await waitFor(() => expect(screen.getByText("来源详情")).toBeTruthy());
+
+  fireEvent.press(screen.getByLabelText("删除"));
+  await waitFor(() => expect(screen.getByLabelText("确认删除")).toBeTruthy());
+  fireEvent.press(screen.getByLabelText("确认删除"));
+
+  // 失败不是死胡同：标题说明是本次失败，并保留重试入口
+  await waitFor(() => expect(screen.getByText("删除失败")).toBeTruthy());
+  expect(screen.getByText("网络连接中断，请检查网络后重试。")).toBeTruthy();
+  expect(mockDeleteSource).toHaveBeenCalledTimes(1);
+
+  fireEvent.press(screen.getByLabelText("重试删除"));
+  await waitFor(() => expect(mockDeleteSource).toHaveBeenCalledTimes(2));
+  await waitFor(() => expect(screen.queryByText("来源详情")).toBeNull());
+  await flushAsyncWork();
+  expect(mockListSources.mock.calls.length).toBeGreaterThan(1);
 });
