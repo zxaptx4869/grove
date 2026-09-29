@@ -107,6 +107,34 @@ export function sourceMaterialSummary(source: SourceOut): string {
   return `${imageAttachments(source).length} 张图片`;
 }
 
+/** 附件图片本地缓存的前缀：清理旧版本文件时按它筛。 */
+export const ATTACHMENT_CACHE_PREFIX = "grove-source-";
+
+function versionToken(value?: string | null): string | null {
+  const token = (value ?? "").replace(/[^A-Za-z0-9]/g, "");
+  return token ? token.slice(0, 48) : null;
+}
+
+/**
+ * 附件图片的本地缓存文件名。
+ *
+ * 只拼「来源 id + 附件 id」不够：开发库重建后这两个 id 会被复用，
+ * 上一代同号文件会被当成缓存命中，详情里就显示成另一条来源的图（真机走查就是这个问题，
+ * 手机上压根没有请求附件接口）。所以再拼一段随内容变化的版本串：优先来源创建时间，退回原始文件名。
+ */
+export function attachmentCacheFileName(options: {
+  sourceId: number;
+  attachmentId: number;
+  fileName?: string | null;
+  cacheVersion?: string | null;
+}): string {
+  const matched = /\.([A-Za-z0-9]{1,5})$/.exec(options.fileName ?? "");
+  const extension = matched ? `.${matched[1].toLowerCase()}` : ".jpg";
+  const version =
+    versionToken(options.cacheVersion) ?? versionToken(options.fileName) ?? "0";
+  return `${ATTACHMENT_CACHE_PREFIX}${options.sourceId}-${options.attachmentId}-${version}${extension}`;
+}
+
 function pad(value: number): string {
   return String(value).padStart(2, "0");
 }
@@ -119,9 +147,18 @@ function isSameDay(left: Date, right: Date): boolean {
   );
 }
 
+/**
+ * 服务端时间串解析：SQLite 下 `created_at` 存的是 UTC，序列化后却不带 `Z`，
+ * 直接 `new Date()` 会按本地时区解析，东八区整整差 8 小时（真机走查：几分钟前采集的显示成 7:23）。
+ * 与 Web 的 ReviewPage 同一口径：缺时区就补 `Z`。
+ */
+function parseServerTime(value: string): Date {
+  return new Date(/(?:Z|[+-]\d{2}:?\d{2})$/.test(value) ? value : `${value}Z`);
+}
+
 /** 列表时间文案：今天 10:12 / 昨天 18:05 / 9 月 20 日 15:20 / 2025 年 9 月 20 日。 */
 export function formatSourceTime(iso: string, now: Date = new Date()): string {
-  const date = new Date(iso);
+  const date = parseServerTime(iso);
   if (Number.isNaN(date.getTime())) return iso;
   const clock = `${pad(date.getHours())}:${pad(date.getMinutes())}`;
   if (isSameDay(date, now)) return `今天 ${clock}`;

@@ -56,21 +56,34 @@ jest.mock("expo-clipboard", () => ({ getStringAsync: jest.fn(async () => "") }))
 jest.mock("expo-file-system", () => {
   class MockFile {
     uri: string;
+    name: string;
     type = "image/jpeg";
     constructor(...parts: unknown[]) {
       const last = parts[parts.length - 1];
+      this.name = String(last);
       this.uri =
         typeof last === "string" && last.startsWith("file://")
           ? last
           : `file://cache/${String(last)}`;
     }
     exists = false;
+    info() {
+      return { size: 1024 };
+    }
+    delete() {
+      this.exists = false;
+    }
     async bytes() {
       return new Uint8Array();
     }
     static downloadFileAsync = (...args: unknown[]) => mockDownloadFileAsync(...args);
   }
-  return { File: MockFile, Paths: { cache: "file://cache" } };
+  class MockDirectory {
+    list() {
+      return [];
+    }
+  }
+  return { File: MockFile, Directory: MockDirectory, Paths: { cache: "file://cache" } };
 });
 jest.mock("expo-image-picker", () => ({
   getCameraPermissionsAsync: jest.fn(),
@@ -281,6 +294,20 @@ test("详情：创建时间与列表同一口径，不出现原始 ISO 串", asy
   // 详情里的时间独占一行，必须是列表同一口径的格式化文案，而不是原始 ISO 串
   expect(screen.getAllByText(formatSourceTime(iso)).length).toBeGreaterThan(0);
   expect(screen.queryByText(/\d{4}-\d{2}-\d{2}T\d{2}:/)).toBeNull();
+});
+
+test("详情：附件图片的缓存名带上来源版本，库重置后不复用同号旧文件", async () => {
+  mockListSources.mockResolvedValue([source({ id: 1, status: "done" })]);
+  mockGetSource.mockResolvedValue(source({ id: 1, status: "done" }));
+
+  const screen = await renderScreen();
+  await waitFor(() => expect(screen.getByText("厨房插座位置确认")).toBeTruthy());
+  fireEvent.press(screen.getByLabelText("查看来源详情：厨房插座位置确认"));
+  await waitFor(() => expect(screen.getByText("来源详情")).toBeTruthy());
+
+  await waitFor(() => expect(mockDownloadFileAsync).toHaveBeenCalled());
+  const target = mockDownloadFileAsync.mock.calls[0][1] as { name: string };
+  expect(target.name).toBe("grove-source-1-11-20260924T021200000Z.jpg");
 });
 
 test("详情：多张图时左右滑动切换，到头停住", async () => {

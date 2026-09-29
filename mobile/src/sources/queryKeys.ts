@@ -7,6 +7,6 @@ export const sourceKeys = {
   list: (filter: SourceFilter) => ["sources", "list", filter] as const,
   detail: (sourceId: number) => ["sources", "detail", sourceId] as const,
   candidates: (sourceId: number) => ["sources", "candidates", sourceId] as const,
-  attachmentImage: (sourceId: number, attachmentId: number) =>
-    ["sources", "attachment-image", sourceId, attachmentId] as const,
+  attachmentImage: (sourceId: number, attachmentId: number, version?: string | null) =>
+    ["sources", "attachment-image", sourceId, attachmentId, version ?? null] as const,
 };

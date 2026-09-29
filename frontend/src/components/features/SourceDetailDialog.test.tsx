@@ -89,4 +89,41 @@ describe('SourceDetailDialog', () => {
     expect(screen.getByText('已拒绝')).toBeInTheDocument()
     vi.unstubAllGlobals()
   })
+
+  it('创建时间按 UTC 解析服务端不带时区的时间串', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn((input: RequestInfo | URL) => {
+        const url = String(input)
+        // 元信息块只在有候选时渲染
+        if (url.includes('/candidates')) return ok([{ ...BASE, id: 1, status: 'pending' }])
+        if (url.endsWith('/api/sources/1')) {
+          return ok({
+            id: 1,
+            title: '来源',
+            note: null,
+            project_id: null,
+            status: 'done',
+            recommended_project_id: null,
+            project_recommendation_reason: null,
+            created_at: '2026-09-29T07:23:51',
+            updated_at: '2026-09-29T07:23:51',
+            attachments: [],
+            project_locked: false,
+            evidence_entry_count: 0,
+            pending_candidate_count: 0,
+            candidate_count: 0,
+          })
+        }
+        return ok({})
+      }),
+    )
+
+    renderDialog()
+
+    // 07:23:51Z 在东八区是 15:23:51：不补 Z 会按本地时间解析，整整差 8 小时
+    const expected = new Date('2026-09-29T07:23:51Z').toLocaleString('zh-CN', { hour12: false })
+    expect(await screen.findByText(expected)).toBeInTheDocument()
+    vi.unstubAllGlobals()
+  })
 })

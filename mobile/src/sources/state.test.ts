@@ -1,6 +1,7 @@
 /** 来源库派生口径：状态徽标、done 副状态、时间、重试与两个操作的阻断判定。 */
 
 import {
+  attachmentCacheFileName,
   candidateDirectoryLine,
   deleteBlockedReason,
   deleteConfirmCopy,
@@ -92,6 +93,29 @@ test("创建时间文案区分今天、昨天、同年与跨年", () => {
   expect(formatSourceTime(new Date(2026, 8, 23, 18, 5).toISOString(), now)).toBe("昨天 18:05");
   expect(formatSourceTime(new Date(2026, 8, 20, 15, 20).toISOString(), now)).toBe("9 月 20 日 15:20");
   expect(formatSourceTime(new Date(2025, 8, 20, 15, 20).toISOString(), now)).toBe("2025 年 9 月 20 日");
+});
+
+test("不带时区的服务端时间按 UTC 解析，不再整体差一个时区", () => {
+  const now = new Date();
+  const aware = "2026-09-29T07:23:51Z";
+  // 真机走查：几分钟前采集的显示成 7:23，正是把 UTC 串当成本地时间解析
+  expect(formatSourceTime("2026-09-29T07:23:51", now)).toBe(formatSourceTime(aware, now));
+  // 已带偏移的串保持原样解析
+  expect(formatSourceTime("2026-09-29T15:23:51+08:00", now)).toBe(formatSourceTime(aware, now));
+  // 解析不了的串原样返回，不显示 Invalid Date
+  expect(formatSourceTime("不是时间", now)).toBe("不是时间");
+});
+
+test("附件图片缓存名带上版本串，库重置后不会复用上一代的同号文件", () => {
+  const base = { sourceId: 138, attachmentId: 154, fileName: "88452349-2a41.jpg" };
+  const first = attachmentCacheFileName({ ...base, cacheVersion: "2026-09-29T07:23:51" });
+  const second = attachmentCacheFileName({ ...base, cacheVersion: "2026-08-01T02:00:00" });
+  expect(first).toMatch(/^grove-source-138-154-.*\.jpg$/);
+  expect(first).not.toBe(second);
+  // 同一版本的重复渲染复用同一个文件名
+  expect(attachmentCacheFileName({ ...base, cacheVersion: "2026-09-29T07:23:51" })).toBe(first);
+  // 没有版本串时退回原始文件名，仍然不会和上一代撞名
+  expect(attachmentCacheFileName(base)).toContain("884523492a41");
 });
 
 test("失败原因只对处理失败来源给出原文，重试口径覆盖失败与未启动", () => {

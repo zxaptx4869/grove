@@ -279,6 +279,7 @@ export function SourceDetailOverlay({
                         sourceId={source.id}
                         attachmentId={item.id}
                         fileName={item.file_name}
+                        cacheVersion={source.created_at}
                         style={styles.photoImage}
                       />
                       <View style={styles.zoomHint}>
@@ -396,6 +397,7 @@ export function SourceDetailOverlay({
                   sourceId={source.id}
                   attachmentId={images[zoomIndex].id}
                   fileName={images[zoomIndex].file_name}
+                  cacheVersion={source.created_at}
                   style={styles.lightboxImage}
                   resizeMode="contain"
                   accessibilityLabel={`第 ${zoomIndex + 1} 张原图`}

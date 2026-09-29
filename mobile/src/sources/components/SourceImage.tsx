@@ -23,6 +23,7 @@ export function SourceImage({
   sourceId,
   attachmentId,
   fileName,
+  cacheVersion,
   style,
   resizeMode = "cover",
   accessibilityLabel,
@@ -31,13 +32,20 @@ export function SourceImage({
   sourceId: number;
   attachmentId: number;
   fileName?: string | null;
+  /** 来源创建时间：本地缓存名带上它，库重置后同号附件不会复用上一代的图。 */
+  cacheVersion?: string | null;
   style?: StyleProp<ImageStyle>;
   resizeMode?: "cover" | "contain";
   accessibilityLabel?: string;
   /** 原图尺寸回调：放大查看要按宽度铺满渲染，需要知道图片的长宽比。 */
   onLoadSize?: (size: { width: number; height: number }) => void;
 }) {
-  const { uri, loading, failed, retry } = useAttachmentImage(sourceId, attachmentId, fileName);
+  const { uri, loading, failed, retry } = useAttachmentImage(
+    sourceId,
+    attachmentId,
+    fileName,
+    cacheVersion,
+  );
   const name = fileName?.trim() || `附件 ${attachmentId}`;
 
   if (failed) {

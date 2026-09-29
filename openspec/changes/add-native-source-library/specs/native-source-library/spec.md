@@ -106,7 +106,11 @@
 
 ### Requirement: 只读来源详情
 
-系统 MUST 提供来源详情的只读视图，读取 `GET /api/sources/{id}` 与 `GET /api/sources/{id}/candidates`，并展示：元信息（类型、创建时间、项目归属、补充说明，未归属与未填写 MUST 有明确文案）、原始材料（图片网格并支持放大查看，文字来源显示正文）、OCR 文本（图片无 OCR 时说明原因）与 AI 候选列表（MUST 标注为候选且未应用，含目录建议与理由）。图片 MUST 通过 `GET /api/sources/{id}/attachments/{attachment_id}/file` 携带认证读取；读取 MUST 走带认证头的下载通道并落到本地缓存后再渲染，MUST NOT 依赖图片组件自带的请求头（Expo Go 下该请求头不会发出，附件端点会收到 401）。单张图片读取失败 MUST 在图片位置给出失败提示与重试入口，MUST NOT 静默留白，其余详情内容 MUST 仍可阅读。详情 MUST NOT 提供候选的确认、拒绝、写入或归档入口，MUST NOT 展示 `recommended_project_id` 与 `project_recommendation_reason`。
+系统 MUST 提供来源详情的只读视图，读取 `GET /api/sources/{id}` 与 `GET /api/sources/{id}/candidates`，并展示：元信息（类型、创建时间、项目归属、补充说明，未归属与未填写 MUST 有明确文案）、原始材料（图片网格并支持放大查看，文字来源显示正文）、OCR 文本（图片无 OCR 时说明原因）与 AI 候选列表（MUST 标注为候选且未应用，含目录建议与理由）。图片 MUST 通过 `GET /api/sources/{id}/attachments/{attachment_id}/file` 携带认证读取；读取 MUST 走带认证头的下载通道并落到本地缓存后再渲染，MUST NOT 依赖图片组件自带的请求头（Expo Go 下该请求头不会发出，附件端点会收到 401）。
+
+详情元信息里的创建时间 MUST 与列表行同一口径（服务端返回的 UTC 串缺时区时按 UTC 解析），MUST NOT 整体偏移一个时区或直接展示原始 ISO 串。本地附件图片缓存名 MUST 带上来源版本（来源创建时间），MUST NOT 只凭来源 id 与附件 id 复用缓存文件——同号复用时必须重新下载并显示当前来源的图片。
+
+单张图片读取失败 MUST 在图片位置给出失败提示与重试入口，MUST NOT 静默留白，其余详情内容 MUST 仍可阅读。详情 MUST NOT 提供候选的确认、拒绝、写入或归档入口，MUST NOT 展示 `recommended_project_id` 与 `project_recommendation_reason`。
 
 放大查看 MUST 使用浅色背景（MUST NOT 用近黑底），MUST 支持双指捏合缩放与拖动平移，并提供双击放大 / 还原与可见的操作提示。图片 MUST 按视口宽度铺满渲染并保持长宽比，使长截图放大后仍接近原图清晰度；内容超出视口时 MUST 可拖动，起始位置对齐图片顶部，且松开手 MUST 停住当前阅读位置（MUST NOT 因为未放大就弹回顶部）。多张图片时 MUST 支持在未放大状态下左右滑动切换（到了首尾 MUST 停住、不做环绕），滑动切换 MUST 复位缩放与位移。
 

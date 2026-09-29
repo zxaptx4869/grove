@@ -37,7 +37,9 @@ function statusClass(status: SourceStatus) {
 }
 
 function formatTime(value: string): string {
-  const date = new Date(value)
+  // 服务端 SQLite 下的时间串不带时区（实际是 UTC），不补 Z 会被按本地时间解析，东八区差 8 小时
+  const normalized = /(Z|[+-]\d{2}:?\d{2})$/.test(value) ? value : `${value}Z`
+  const date = new Date(normalized)
   return Number.isNaN(date.getTime()) ? value : date.toLocaleString('zh-CN', { hour12: false })
 }
 

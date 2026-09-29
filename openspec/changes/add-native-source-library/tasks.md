@@ -53,6 +53,8 @@
 - [x] 9.13 前台轮询口径收窄：`hasActiveSources` 把「等待处理但没有处理任务」（处理未启动）排除在活动条目之外（`processing` 一律算活动，`waiting` 只在 `has_processing_task` 为 true 时算），避免前台每 4000ms 空转请求；规格「前台轮询」与 `design.md` 第 3 节同步记录。验收：`state.test.ts` 覆盖 waiting+无任务不轮询、waiting+有任务与 processing 仍轮询。
 - [x] 9.14 删除失败不再是死胡同：区分业务阻断（本地预判 / 服务端 409，只给「知道了」）与本次请求失败（标题「删除失败」+「重试删除」，原地重试成功仍关闭详情并刷新列表），口径记入 `design.md` 第 5 节。验收：组件测试断言 409 为阻断样式且无重试入口、网络失败给出「删除失败」与重试入口且点击会再次发起删除请求。
 - [x] 9.15 `openspec validate --all --strict` 通过；`cd mobile && npm run lint && npm run typecheck && npm test` 全绿。
+- [x] 9.16 真机走查第二轮（移动端 + Web 时间）：① 详情「创建时间」差的 8 小时来自把不带时区的 UTC 串按本地时间解析，移动端 `formatSourceTime` 与 Web 来源详情 `formatTime` 统一补 `Z`（与 `ReviewPage` 同口径）；② 详情「原始材料」显示成另一条来源的图，原因是本地缓存名只含「来源 id + 附件 id」，开发库重建后 id 复用导致命中上一代的旧文件（手机根本没请求附件接口），改为缓存名带上来源 `created_at` 并把版本串并入查询键，同时清理同一附件的旧版本缓存、丢弃半截缓存文件。口径记入 `design.md` 第 1 节，规格补「创建时间同口径」与「缓存名带来源版本」。验收：`state.test.ts` 断言不带时区的时间串与带 `Z` 串格式化结果一致、缓存名随版本变化；组件测试断言下载目标文件名带来源版本；Web `SourceDetailDialog.test.tsx` 断言 UTC 串按东八区渲染。
+- [x] 9.17 `openspec validate --all --strict` 通过；`cd mobile && npm run lint && npm run typecheck && npm test` 与 `cd frontend && npm run lint && npm run typecheck && npm run test:run` 全绿。
 
 ## 8. 待人工走查（用户执行）
 

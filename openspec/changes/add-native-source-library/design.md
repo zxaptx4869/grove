@@ -6,6 +6,8 @@
 - 详情读 `GET /api/sources/{id}`（整条最新状态与 `project_locked`）与 `GET /api/sources/{id}/candidates`，图片读 `GET /api/sources/{id}/attachments/{attachment_id}/file`。三者都走 `mobile/src/api.ts` 的 `request()`：它们是 JSON 或图片 GET，既有的 12 秒超时对元数据请求足够，不需要采集上传那条 90 秒通道。
 - 图片来源**不走** `<Image source={{ uri, headers }}>`：真机验收时附件端点收到的是 401，说明 RN 图片组件的自带请求头在 Expo Go 下没有真正发出。改为用 `expo-file-system` 的 `File.downloadFileAsync(url, dest, { headers })` 把图片下载到缓存目录，再让 `<Image>` 渲染本地 `file://` 地址；同一附件的并发与重复请求用一个模块级 in-flight/已落盘判断合并，避免重复下载。放大查看仍用提供 `resizeMode="contain"` 的覆盖层，不引入图片库。
 - 单张图片的读取状态（加载中 / 失败 / 成功）由图片组件自己负责，失败时在图片位置给出「图片加载失败」与重试入口：这样原始材料的失败不会退化成一块静默的灰底。
+- **图片缓存的失效口径**：缓存文件名除「来源 id + 附件 id」外必须再带来源版本（来源 `created_at`，同一次运行内仍复用）。真实故障：开发库重建后来源与附件 id 会复用，只按 id 命名的旧文件被当成缓存命中，详情里显示成上一代来源的图片，而手机上根本没有请求附件接口。`created_at` 对一条来源不可变、跨库重建必然不同，是稳定的内容版本。顺带两个防御：Android 上下载失败会在目标位置留下半截文件，因此异常时删掉目标文件、尺寸为 0 的缓存不算命中；下载新版本前删掉同一附件的旧版本缓存，避免缓存目录随迭代堆积。
+- **服务端时间串的解析口径**：SQLite 下 `DateTime(timezone=True)` 取出来是不带时区的 UTC 串（如 `2026-09-29T07:23:51`），直接 `new Date()` 会按本地时区解析，东八区整整差 8 小时。移动端 `formatSourceTime` 与 Web 来源详情的 `formatTime` 统一「缺时区就补 `Z`」，与 Web `ReviewPage` 已有口径一致，解析失败时原样返回。
 - 查询键集中在 `mobile/src/sources/queryKeys.ts`：列表按筛选值分键，详情按来源 id 分键。筛选切换即换键，会自然重新查询；TanStack Query 的全局默认 `staleTime: 0` 已满足「切换即取最新」。
 - 筛选标签**不显示条数**：列表只取最近 20 条，任何按当前窗口现算的数字都会随筛选切换而变（切到「未归属」后两个标签会显示同一个数），属于误导信息；`GET /api/sources` 也不返回总数。要显示真实总数必须改用 `query` 的 `total`（每个筛选一次额外请求），本轮不做。
 - 拉取用 `ScrollView` 的 `RefreshControl` 触发 `refetch()`，不实现自定义下拉手势；刷新期间保留原条目，避免布局跳动。
