@@ -1,9 +1,18 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
-import { render, screen } from '@testing-library/react'
+import { render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { MemoryRouter } from 'react-router-dom'
-import { describe, expect, it, vi } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import { InboxPage } from './InboxPage'
+
+const toastError = vi.fn()
+const toastSuccess = vi.fn()
+vi.mock('sonner', () => ({
+  toast: {
+    error: (...args: unknown[]) => toastError(...args),
+    success: (...args: unknown[]) => toastSuccess(...args),
+  },
+}))
 
 function renderInbox() {
   const queryClient = new QueryClient()
@@ -16,7 +25,47 @@ function renderInbox() {
   )
 }
 
+const PROCESS_NOT_STARTED_SOURCE = {
+  id: 1,
+  title: '待处理来源',
+  note: null,
+  project_id: null,
+  status: 'waiting',
+  has_processing_task: false,
+  created_at: '',
+  updated_at: '',
+  attachments: [],
+}
+
+function stubSources(processStatus = 200) {
+  const calls: Array<{ method: string; path: string }> = []
+  vi.stubGlobal(
+    'fetch',
+    vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
+      const url = new URL(String(input), 'http://localhost')
+      calls.push({ method: init?.method ?? 'GET', path: url.pathname })
+      if (url.pathname === '/api/projects') {
+        return Promise.resolve({ ok: true, json: async () => [] })
+      }
+      if (url.pathname === '/api/sources/1/process') {
+        return Promise.resolve({
+          ok: processStatus < 400,
+          status: processStatus,
+          json: async () => ({ detail: '来源正在处理中' }),
+        })
+      }
+      if (url.pathname === '/api/sources') {
+        return Promise.resolve({ ok: true, json: async () => [PROCESS_NOT_STARTED_SOURCE] })
+      }
+      return Promise.resolve({ ok: true, json: async () => [] })
+    }),
+  )
+  return calls
+}
+
 describe('InboxPage', () => {
+  afterEach(() => vi.clearAllMocks())
+
   it('渲染收集箱标题与未归属来源列表', async () => {
     vi.stubGlobal(
       'fetch',
@@ -37,6 +86,7 @@ describe('InboxPage', () => {
                 note: '关注烘干默认设置',
                 project_id: null,
                 status: 'waiting',
+                has_processing_task: true,
                 created_at: '',
                 updated_at: '',
                 attachments: [
@@ -151,6 +201,32 @@ describe('InboxPage', () => {
     await userEvent.click(screen.getByRole('button', { name: '重试' }))
 
     expect(calls.some((call) => call.method === 'POST' && call.path === '/api/sources/1/process')).toBe(true)
+    vi.unstubAllGlobals()
+  })
+
+  it('等待处理但没有任务的来源显示处理未启动并可重试处理', async () => {
+    const calls = stubSources()
+
+    renderInbox()
+    expect(await screen.findByText('处理未启动')).toBeInTheDocument()
+    await userEvent.click(screen.getByRole('button', { name: '重试处理' }))
+
+    await waitFor(() =>
+      expect(
+        calls.some((call) => call.method === 'POST' && call.path === '/api/sources/1/process'),
+      ).toBe(true),
+    )
+    vi.unstubAllGlobals()
+  })
+
+  it('重试处理命中 409 不提示失败', async () => {
+    stubSources(409)
+
+    renderInbox()
+    await screen.findByText('处理未启动')
+    await userEvent.click(screen.getByRole('button', { name: '重试处理' }))
+
+    await waitFor(() => expect(toastError).not.toHaveBeenCalled())
     vi.unstubAllGlobals()
   })
 })

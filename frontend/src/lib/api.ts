@@ -222,6 +222,8 @@ export interface SourcePayload {
   evidence_entry_count: number
   pending_candidate_count: number
   candidate_count: number
+  // 是否存在处理任务：等待处理但没有任务表示「处理未启动」，只能靠任务存在性判断
+  has_processing_task: boolean
   attachments: AttachmentPayload[]
 }
 

@@ -8,11 +8,11 @@ import { SourceList } from '@/components/features/SourceList'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { useGroveMutation } from '@/hooks/useGroveMutation'
+import { useSourceProcessingTrigger } from '@/hooks/useSourceProcessingTrigger'
 import {
   deleteSource,
   fetchProjects,
   fetchSourcePage,
-  triggerProcessing,
   updateSource,
   type ProjectStatus,
   type SourceStatus,
@@ -102,16 +102,8 @@ export function SourceHistoryPage() {
     onError: (error) =>
       toast.error(error instanceof Error ? error.message : '删除失败，请重试'),
   })
-  const trigger = useGroveMutation({
-    mutationFn: (id: number) => triggerProcessing(id),
-    invalidates: [queryKeys.sources],
-    onSuccess: () => {
-      invalidatePages()
-      toast.success('已开始处理')
-    },
-    onError: (error) =>
-      toast.error(error instanceof Error ? error.message : '触发处理失败'),
-  })
+  // 失败重试与「处理未启动」重试共用一处实现（409 视为状态本身正常）
+  const trigger = useSourceProcessingTrigger({ invalidates: [['sources-page']] })
 
   const total = sources.data?.total ?? 0
   const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE))

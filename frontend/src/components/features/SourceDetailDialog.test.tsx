@@ -1,5 +1,6 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
-import { render, screen } from '@testing-library/react'
+import { render, screen, waitFor } from '@testing-library/react'
+import userEvent from '@testing-library/user-event'
 import { describe, expect, it, vi } from 'vitest'
 
 import { SourceDetailDialog } from './SourceDetailDialog'
@@ -159,6 +160,96 @@ describe('SourceDetailDialog', () => {
 
     const expected = new Date('2026-09-29T07:23:51Z').toLocaleString('zh-CN', { hour12: false })
     expect(await screen.findByText(expected)).toBeInTheDocument()
+    vi.unstubAllGlobals()
+  })
+
+  it('处理未启动的来源显示说明并可重试处理', async () => {
+    const calls: Array<{ method: string; path: string }> = []
+    vi.stubGlobal(
+      'fetch',
+      vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
+        const url = new URL(String(input), 'http://localhost')
+        calls.push({ method: init?.method ?? 'GET', path: url.pathname })
+        if (url.pathname === '/api/sources/1/candidates') return ok([])
+        if (url.pathname === '/api/sources/1/process') {
+          return Promise.resolve({
+            ok: false,
+            status: 409,
+            json: async () => ({ detail: '来源正在处理中' }),
+          })
+        }
+        if (url.pathname === '/api/sources/1') {
+          return ok({
+            id: 1,
+            title: '来源',
+            note: null,
+            project_id: null,
+            status: 'waiting',
+            recommended_project_id: null,
+            project_recommendation_reason: null,
+            created_at: '2026-09-29T07:23:51',
+            updated_at: '2026-09-29T07:23:51',
+            attachments: [],
+            project_locked: false,
+            evidence_entry_count: 0,
+            pending_candidate_count: 0,
+            candidate_count: 0,
+            has_processing_task: false,
+          })
+        }
+        return ok({})
+      }),
+    )
+
+    renderDialog()
+
+    expect(await screen.findByText('处理未启动')).toBeInTheDocument()
+    await userEvent.click(screen.getByRole('button', { name: '重试处理' }))
+
+    // 409 视为状态本身正常：只触发刷新，不把弹窗变成失败态
+    await waitFor(() =>
+      expect(
+        calls.some((call) => call.method === 'POST' && call.path === '/api/sources/1/process'),
+      ).toBe(true),
+    )
+    expect(screen.getByText('处理未启动')).toBeInTheDocument()
+    vi.unstubAllGlobals()
+  })
+
+  it('等待处理但有任务的来源不显示处理未启动', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn((input: RequestInfo | URL) => {
+        const url = String(input)
+        if (url.includes('/candidates')) return ok([])
+        if (url.endsWith('/api/sources/1')) {
+          return ok({
+            id: 1,
+            title: '来源',
+            note: null,
+            project_id: null,
+            status: 'waiting',
+            recommended_project_id: null,
+            project_recommendation_reason: null,
+            created_at: '2026-09-29T07:23:51',
+            updated_at: '2026-09-29T07:23:51',
+            attachments: [],
+            project_locked: false,
+            evidence_entry_count: 0,
+            pending_candidate_count: 0,
+            candidate_count: 0,
+            has_processing_task: true,
+          })
+        }
+        return ok({})
+      }),
+    )
+
+    renderDialog()
+
+    expect(await screen.findByText('还没有候选')).toBeInTheDocument()
+    expect(screen.queryByText('处理未启动')).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: '重试处理' })).not.toBeInTheDocument()
     vi.unstubAllGlobals()
   })
 })

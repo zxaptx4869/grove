@@ -3,12 +3,12 @@ import { toast } from 'sonner'
 
 import { SourceList } from '@/components/features/SourceList'
 import { useGroveMutation } from '@/hooks/useGroveMutation'
+import { useSourceProcessingTrigger } from '@/hooks/useSourceProcessingTrigger'
 import { Button } from '@/components/ui/button'
 import {
   deleteSource,
   fetchProjects,
   fetchSources,
-  triggerProcessing,
   updateSource,
   type ProjectStatus,
 } from '@/lib/api'
@@ -53,12 +53,8 @@ export function ProjectSources({ projectId }: { projectId: number }) {
     },
     onError: (error) => toast.error(error instanceof Error ? error.message : '删除失败，请重试'),
   })
-  const trigger = useGroveMutation({
-    mutationFn: (id: number) => triggerProcessing(id),
-    invalidates: [queryKeys.sources],
-    onSuccess: () => toast.success('已开始处理'),
-    onError: (error) => toast.error(error instanceof Error ? error.message : '触发处理失败'),
-  })
+  // 失败重试与「处理未启动」重试共用一处实现（409 视为状态本身正常）
+  const trigger = useSourceProcessingTrigger()
 
   const projectOptions = (projects.data ?? []).map((project) => ({
     id: project.id,

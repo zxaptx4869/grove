@@ -1,10 +1,11 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
-import { FileText, Loader2 } from 'lucide-react'
+import { FileText, Loader2, RotateCw } from 'lucide-react'
 import { createPortal } from 'react-dom'
 
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
+import { useSourceProcessingTrigger } from '@/hooks/useSourceProcessingTrigger'
 import {
   Dialog,
   DialogContent,
@@ -18,24 +19,15 @@ import {
   sourceImageUrl,
   type CandidateDecisionStatus,
   type CandidatePayload,
-  type SourceStatus,
 } from '@/lib/api'
 import { highlightEvidenceAll } from '@/lib/evidenceHighlight'
 import { queryKeys } from '@/lib/queryKeys'
+import {
+  isProcessingNotStarted,
+  sourceStatusClass,
+  sourceStatusLabel,
+} from '@/lib/sourceStatus'
 import { formatServerTime } from '@/lib/time'
-
-const STATUS_LABELS: Record<SourceStatus, string> = {
-  waiting: '等待处理',
-  processing: '处理中',
-  done: '提取完成',
-  failed: '失败',
-}
-
-function statusClass(status: SourceStatus) {
-  if (status === 'done') return 'bg-confirmed-soft text-confirmed'
-  if (status === 'failed') return 'bg-error-soft text-destructive'
-  return 'bg-muted text-muted-foreground'
-}
 
 function formatTime(value: string): string {
   // 服务端时间串的解析口径统一在 @/lib/time；解析不了时退回原串，不显示 Invalid Date
@@ -161,6 +153,9 @@ export function SourceDetailDialog({
   const [selectedId, setSelectedId] = useState<number | null>(null)
   const [lightboxUrl, setLightboxUrl] = useState<string | null>(null)
   const evidenceAreaRef = useRef<HTMLElement>(null)
+  const trigger = useSourceProcessingTrigger()
+  const detail = source.data ?? null
+  const processingNotStarted = detail !== null && isProcessingNotStarted(detail)
 
   // 未显式选择或选中项已不在当前候选列表时，回退第一条（渲染期派生）
   const effectiveSelectedId = useMemo(() => {
@@ -224,6 +219,23 @@ export function SourceDetailDialog({
               重试
             </Button>
           </div>
+        ) : (candidates.data?.length ?? 0) === 0 && processingNotStarted ? (
+          <div className="min-h-40 rounded-md bg-warning-soft px-4 py-4 text-body-sm text-warning">
+            <p className="font-[650]">处理未启动</p>
+            <p className="mt-1">这条来源没有处理任务，不会被自动处理。</p>
+            <Button
+              className="mt-3"
+              variant="outline"
+              size="sm"
+              disabled={trigger.isPending}
+              onClick={() => {
+                if (detail) trigger.mutate(detail.id)
+              }}
+            >
+              <RotateCw className="size-3.5" />
+              重试处理
+            </Button>
+          </div>
         ) : (candidates.data?.length ?? 0) === 0 ? (
           <div className="flex min-h-40 items-center justify-center text-body-sm text-muted-foreground">
             <FileText className="mr-2 size-4" />
@@ -237,8 +249,8 @@ export function SourceDetailDialog({
                   {source.data?.title ?? '来源'}
                 </h3>
                 {source.data ? (
-                  <Badge className={`shrink-0 ${statusClass(source.data.status)}`}>
-                    {STATUS_LABELS[source.data.status]}
+                  <Badge className={`shrink-0 ${sourceStatusClass(source.data)}`}>
+                    {sourceStatusLabel(source.data)}
                   </Badge>
                 ) : null}
               </div>

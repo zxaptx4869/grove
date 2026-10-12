@@ -11,7 +11,13 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog'
-import type { SourcePayload, SourceStatus } from '@/lib/api'
+import type { SourcePayload } from '@/lib/api'
+import {
+  needsProcessingRetry,
+  processingRetryLabel,
+  sourceStatusClass,
+  sourceStatusLabel,
+} from '@/lib/sourceStatus'
 import { SourceDetailDialog } from '@/components/features/SourceDetailDialog'
 
 interface ProjectOption {
@@ -25,19 +31,6 @@ interface SourceListProps {
   onAssign: (sourceId: number, projectId: number | null) => void
   onTrigger: (sourceId: number) => void
   onDelete: (sourceId: number) => void
-}
-
-const STATUS_LABELS: Record<SourceStatus, string> = {
-  waiting: '等待处理',
-  processing: '处理中',
-  done: '提取完成',
-  failed: '失败',
-}
-
-function statusClass(status: SourceStatus) {
-  if (status === 'done') return 'bg-confirmed-soft text-confirmed'
-  if (status === 'failed') return 'bg-error-soft text-destructive'
-  return 'bg-muted text-muted-foreground'
 }
 
 function attachmentSummary(source: SourcePayload) {
@@ -120,9 +113,9 @@ export function SourceList({
               </select>
             ) : null}
             <Badge
-              className={`min-h-[22px] shrink-0 rounded px-[7px] py-0.5 text-[11px] font-semibold ${statusClass(source.status)}`}
+              className={`min-h-[22px] shrink-0 rounded px-[7px] py-0.5 text-[11px] font-semibold ${sourceStatusClass(source)}`}
             >
-              {STATUS_LABELS[source.status]}
+              {sourceStatusLabel(source)}
             </Badge>
             {source.status === 'done' ? (
               <Badge variant="outline" className="shrink-0 bg-muted/60 text-muted-foreground">
@@ -137,14 +130,14 @@ export function SourceList({
               <Eye className="size-3.5" />
               查看
             </Button>
-            {source.status === 'failed' ? (
+            {needsProcessingRetry(source) ? (
               <Button
                 size="sm"
                 variant="outline"
                 onClick={() => onTrigger(source.id)}
               >
                 <RotateCw className="size-3.5" />
-                重试
+                {processingRetryLabel(source)}
               </Button>
             ) : null}
             {showOperations ? (

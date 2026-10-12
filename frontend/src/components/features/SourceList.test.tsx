@@ -21,12 +21,13 @@ function baseSource(overrides: Partial<SourcePayload>): SourcePayload {
     evidence_entry_count: 0,
     pending_candidate_count: 0,
     candidate_count: 0,
+    has_processing_task: true,
     attachments: [],
     ...overrides,
   }
 }
 
-function renderList(source: SourcePayload, onDelete = vi.fn()) {
+function renderList(source: SourcePayload, onDelete = vi.fn(), onTrigger = vi.fn()) {
   const queryClient = new QueryClient()
   render(
     <QueryClientProvider client={queryClient}>
@@ -34,7 +35,7 @@ function renderList(source: SourcePayload, onDelete = vi.fn()) {
         sources={[source]}
         projects={[]}
         onAssign={vi.fn()}
-        onTrigger={vi.fn()}
+        onTrigger={onTrigger}
         onDelete={onDelete}
       />
     </QueryClientProvider>,
@@ -140,5 +141,32 @@ describe('SourceList', () => {
     expect(screen.getByLabelText('测试来源 所属项目')).toBeInTheDocument()
     await userEvent.click(screen.getByRole('button', { name: '删除 测试来源' }))
     expect(onDelete).toHaveBeenCalledWith(1)
+  })
+
+  it('等待处理但没有任务的来源显示处理未启动并可重试处理', async () => {
+    const onTrigger = vi.fn()
+    renderList(baseSource({ status: 'waiting', has_processing_task: false }), vi.fn(), onTrigger)
+
+    expect(screen.getByText('处理未启动')).toBeInTheDocument()
+    await userEvent.click(screen.getByRole('button', { name: '重试处理' }))
+    expect(onTrigger).toHaveBeenCalledWith(1)
+  })
+
+  it('等待处理且有任务的来源仍显示等待处理且不给触发入口', () => {
+    renderList(baseSource({ status: 'waiting', has_processing_task: true }))
+
+    expect(screen.getByText('等待处理')).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: '重试处理' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: '重试' })).not.toBeInTheDocument()
+  })
+
+  it('失败来源显示失败原因与「重试」，与未启动入口区分', async () => {
+    const onTrigger = vi.fn()
+    renderList(baseSource({ status: 'failed', has_processing_task: true }), vi.fn(), onTrigger)
+
+    expect(screen.getByText('失败')).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: '重试处理' })).not.toBeInTheDocument()
+    await userEvent.click(screen.getByRole('button', { name: '重试' }))
+    expect(onTrigger).toHaveBeenCalledWith(1)
   })
 })
