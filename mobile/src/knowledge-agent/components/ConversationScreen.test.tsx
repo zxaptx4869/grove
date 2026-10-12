@@ -1,7 +1,7 @@
 import React from "react";
 import { act, cleanup, fireEvent, render, waitFor } from "@testing-library/react-native";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { ScrollView } from "react-native";
+import { Keyboard, ScrollView } from "react-native";
 
 import { ConversationScreen } from "@/src/knowledge-agent/components/ConversationScreen";
 import type { ConversationController } from "@/src/knowledge-agent/hooks/useConversationController";
@@ -88,7 +88,14 @@ jest.mock("@/src/knowledge-agent/components/ScopeSheet", () => {
 });
 
 jest.mock("@/src/knowledge-agent/components/ModeSheet", () => ({
-  ModeSheet: () => null,
+  ModeSheet: ({ visible }: { visible: boolean }) => {
+    const ReactModule = jest.requireActual<typeof import("react")>("react");
+    const { Text: NativeText } =
+      jest.requireActual<typeof import("react-native")>("react-native");
+    return visible
+      ? ReactModule.createElement(NativeText, null, "本次提问设置弹层")
+      : null;
+  },
 }));
 
 jest.mock("@/src/knowledge-agent/components/EntryDetailSheet", () => ({
@@ -458,4 +465,47 @@ test("同一会话页面重挂载恢复内存阅读位置，不强制跳到底�
     900,
   );
   expect(scrollTo).toHaveBeenCalledWith({ y: 180, animated: false });
+});
+
+test("键盘可见时点本次提问设置先收起键盘，键盘隐藏后再打开弹层", async () => {
+  const state = controller();
+  mockUseConversationController.mockReturnValue(state);
+  const listeners: Record<string, () => void> = {};
+  const remove = jest.fn();
+  jest.spyOn(Keyboard, "isVisible").mockReturnValue(true);
+  jest.spyOn(Keyboard, "dismiss").mockImplementation(() => undefined);
+  jest.spyOn(Keyboard, "addListener").mockImplementation(((
+    event: string,
+    listener: () => void,
+  ) => {
+    listeners[event] = listener;
+    return { remove };
+  }) as unknown as typeof Keyboard.addListener);
+  const rendered = await renderScreen();
+
+  await fireEvent.press(rendered.getByLabelText("本次提问设置"));
+
+  // 键盘仍在时弹层不打开，先等键盘收起，避免底部重排与弹层淡入同时发生
+  expect(Keyboard.dismiss).toHaveBeenCalledTimes(1);
+  expect(rendered.queryByText("本次提问设置弹层")).toBeNull();
+
+  await act(async () => {
+    listeners.keyboardDidHide?.();
+  });
+
+  expect(rendered.getByText("本次提问设置弹层")).toBeTruthy();
+  expect(remove).toHaveBeenCalled();
+});
+
+test("键盘不可见时点本次提问设置立即打开弹层", async () => {
+  const state = controller();
+  mockUseConversationController.mockReturnValue(state);
+  jest.spyOn(Keyboard, "isVisible").mockReturnValue(false);
+  const addListener = jest.spyOn(Keyboard, "addListener");
+  const rendered = await renderScreen();
+
+  await fireEvent.press(rendered.getByLabelText("本次提问设置"));
+
+  expect(rendered.getByText("本次提问设置弹层")).toBeTruthy();
+  expect(addListener).not.toHaveBeenCalled();
 });

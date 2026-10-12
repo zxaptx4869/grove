@@ -208,7 +208,14 @@ export function Sheet({
     );
   }
   return (
-    <Modal visible={visible} transparent animationType={animationType} onRequestClose={onClose}>
+    <Modal
+      visible={visible}
+      transparent
+      animationType={animationType}
+      statusBarTranslucent
+      navigationBarTranslucent
+      onRequestClose={onClose}
+    >
       <View style={styles.modalRoot}>
         <Pressable
           accessibilityLabel="关闭弹层"
@@ -408,6 +415,8 @@ function BottomSheetMotion({
       transparent
       animationType="none"
       hardwareAccelerated
+      statusBarTranslucent
+      navigationBarTranslucent
       onRequestClose={requestClose}
       onShow={handleModalShow}
     >

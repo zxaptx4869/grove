@@ -48,6 +48,8 @@ const THUMB_LABEL: Record<CaptureResult["status"], string> = {
 
 /** 缩略图底部固定出口高度：内容要留出这么多，最后一条才不会被挡住。 */
 const FOOTER_HEIGHT = 62;
+/** 顶栏上下内边距；顶部安全区由顶栏自身承担，白色顶栏从屏幕最上沿开始。 */
+const HEADER_PADDING = 8;
 
 function unitLabel(unit: CaptureSubmitUnit): string {
   if (unit.text) return unit.text.split("\n")[0].slice(0, 40) || "文字来源";
@@ -104,13 +106,14 @@ export function SubmitOverlay({
       visible={visible}
       animationType="slide"
       statusBarTranslucent
+      navigationBarTranslucent
       onRequestClose={() => {
         // 提交进行中不允许关闭，避免重复进入采集页
         if (!session.running) onClose();
       }}
     >
-      <SafeAreaView style={styles.page} edges={["top"]} accessibilityLabel="提交状态">
-        <View style={styles.header}>
+      <SafeAreaView style={styles.page} edges={[]} accessibilityLabel="提交状态">
+        <View style={[styles.header, { paddingTop: HEADER_PADDING + insets.top }]}>
           <View style={styles.headerSlot} />
           <Text style={styles.headerTitle} numberOfLines={1}>
             {title}
@@ -254,7 +257,8 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     alignItems: "center",
     gap: 8,
-    paddingVertical: 8,
+    paddingTop: HEADER_PADDING,
+    paddingBottom: HEADER_PADDING,
     paddingHorizontal: 12,
     borderBottomWidth: 1,
     borderBottomColor: theme.border,

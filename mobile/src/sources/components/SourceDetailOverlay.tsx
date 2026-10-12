@@ -157,6 +157,8 @@ export function SourceDetailOverlay({
     <Modal
       visible
       animationType="slide"
+      statusBarTranslucent
+      navigationBarTranslucent
       onRequestClose={onClose}
       accessibilityViewIsModal
     >
@@ -367,6 +369,8 @@ export function SourceDetailOverlay({
       <Modal
         visible={zoomIndex !== null}
         animationType="fade"
+        statusBarTranslucent
+        navigationBarTranslucent
         onRequestClose={() => setZoomIndex(null)}
       >
         <SafeAreaView style={styles.lightbox} edges={["top", "bottom"]}>

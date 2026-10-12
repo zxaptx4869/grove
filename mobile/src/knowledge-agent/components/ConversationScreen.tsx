@@ -1,6 +1,7 @@
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   ActivityIndicator,
+  Keyboard,
   type NativeScrollEvent,
   type NativeSyntheticEvent,
   Pressable,
@@ -9,7 +10,7 @@ import {
   Text,
   View,
 } from "react-native";
-import { SafeAreaView, useSafeAreaInsets } from "react-native-safe-area-context";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useQuery } from "@tanstack/react-query";
 
 import { getProjects } from "@/src/api";
@@ -42,6 +43,56 @@ function scopeLabel(scopeType: string, projectName?: string | null): string {
   return scopeType === "project" ? projectName ?? "项目" : "全部知识";
 }
 
+/** 顶栏内容高度；顶部安全区由顶栏自身承担，白色顶栏从屏幕最上沿开始。 */
+const HEADER_MIN_HEIGHT = 58;
+
+/**
+ * 打开弹层前先让键盘收起：Modal 抢焦点会让键盘自动收起，底层窗口回弹、底栏重现
+ * 与弹层淡入同时发生，会在屏幕底部形成闪动。键盘可见时等收起事件再展示弹层，
+ * 并用超时兜底，避免个别机型不派发事件时弹层打不开。
+ */
+function useSheetAfterKeyboard() {
+  const [visible, setVisible] = useState(false);
+  const pendingRef = useRef(false);
+  const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const subscriptionRef = useRef<{ remove: () => void } | null>(null);
+
+  const clearPending = useCallback(() => {
+    if (timerRef.current !== null) {
+      clearTimeout(timerRef.current);
+      timerRef.current = null;
+    }
+    subscriptionRef.current?.remove();
+    subscriptionRef.current = null;
+    pendingRef.current = false;
+  }, []);
+
+  useEffect(() => clearPending, [clearPending]);
+
+  const open = useCallback(() => {
+    if (pendingRef.current) return;
+    if (!Keyboard.isVisible()) {
+      setVisible(true);
+      return;
+    }
+    pendingRef.current = true;
+    const reveal = () => {
+      clearPending();
+      setVisible(true);
+    };
+    subscriptionRef.current = Keyboard.addListener("keyboardDidHide", reveal);
+    timerRef.current = setTimeout(reveal, 400);
+    Keyboard.dismiss();
+  }, [clearPending]);
+
+  const close = useCallback(() => {
+    clearPending();
+    setVisible(false);
+  }, [clearPending]);
+
+  return { visible, open, close };
+}
+
 export function ConversationScreen() {
   const { token } = useAuth();
   const insets = useSafeAreaInsets();
@@ -55,9 +106,9 @@ export function ConversationScreen() {
   const positionedConversationRef = useRef<string | null>(null);
   const layoutConversationRef = useRef<string | null>(null);
   const followNextContentRef = useRef(false);
-  const [scopeOpen, setScopeOpen] = useState(false);
+  const scopeSheet = useSheetAfterKeyboard();
   const [scopeRecoveryNotice, setScopeRecoveryNotice] = useState<string | null>(null);
-  const [modeOpen, setModeOpen] = useState(false);
+  const modeSheet = useSheetAfterKeyboard();
   const [entryDetail, setEntryDetail] = useState<EntryDetailTarget | null>(null);
   const closeEntryDetail = useCallback(() => setEntryDetail(null), []);
   const projectsQuery = useQuery({
@@ -65,7 +116,7 @@ export function ConversationScreen() {
     queryFn: () => getProjects(token as string),
     enabled: Boolean(
       token &&
-        (scopeOpen ||
+        (scopeSheet.visible ||
           (controller.isDraft && controller.currentScope.scopeType === "project")),
     ),
   });
@@ -160,7 +211,7 @@ export function ConversationScreen() {
   const handleScopeChange = async (scope: KnowledgeScopeChangeRequest) => {
     setScopeRecoveryNotice(null);
     await controller.changeScope(scope);
-    setScopeOpen(false);
+    scopeSheet.close();
   };
 
   const handleScroll = (event: NativeSyntheticEvent<NativeScrollEvent>) => {
@@ -208,9 +259,14 @@ export function ConversationScreen() {
     controller.conversationsError !== null && !controller.userInitiatedDraft;
 
   return (
-    <SafeAreaView style={styles.safe} edges={["top"]}>
+    <View style={styles.page}>
       <View style={styles.root}>
-        <View style={styles.header}>
+        <View
+          style={[
+            styles.header,
+            { paddingTop: insets.top, minHeight: HEADER_MIN_HEIGHT + insets.top },
+          ]}
+        >
           <View style={styles.brandSlot} accessibilityLabel="Grove">
             <View style={styles.brandMark}>
               <Text style={styles.brandText}>G</Text>
@@ -219,7 +275,7 @@ export function ConversationScreen() {
           <Pressable
             accessibilityRole="button"
             accessibilityLabel={`修改当前知识范围，当前为${controller.scopeLabel}`}
-            onPress={() => setScopeOpen(true)}
+            onPress={scopeSheet.open}
             style={({ pressed }) => [styles.scopeButton, pressed && styles.pressed]}
           >
             <Text style={styles.scopeButtonText} numberOfLines={1}>
@@ -480,7 +536,7 @@ export function ConversationScreen() {
             onChangeText={controller.setInput}
             onSend={() => void handleSend()}
             modes={controller.modes}
-            onOpenModes={() => setModeOpen(true)}
+            onOpenModes={modeSheet.open}
             onRemoveContextOverride={() => controller.setContextMode("auto")}
             submitting={controller.pending !== null}
             disabled={
@@ -498,7 +554,7 @@ export function ConversationScreen() {
       </View>
 
       <ScopeSheet
-        visible={scopeOpen}
+        visible={scopeSheet.visible}
         current={controller.currentScope}
         projects={projectsQuery.data}
         loadingProjects={projectsQuery.isLoading}
@@ -510,16 +566,16 @@ export function ConversationScreen() {
             : null
         }
         onChange={(scope) => void handleScopeChange(scope)}
-        onClose={() => setScopeOpen(false)}
+        onClose={scopeSheet.close}
       />
       <ModeSheet
-        visible={modeOpen}
+        visible={modeSheet.visible}
         modes={controller.modes}
         onChange={controller.setModes}
-        onClose={() => setModeOpen(false)}
+        onClose={modeSheet.close}
       />
       <EntryDetailSheet target={entryDetail} onClose={closeEntryDetail} />
-    </SafeAreaView>
+    </View>
   );
 }
 
@@ -540,19 +596,19 @@ const HistoryControl = memo(function HistoryControl({
   onSelect: (conversationId: number) => void;
   onNew: () => void;
 }) {
-  const [open, setOpen] = useState(false);
+  const sheet = useSheetAfterKeyboard();
   return (
     <>
       <Pressable
         accessibilityRole="button"
         accessibilityLabel="打开对话历史"
-        onPress={() => setOpen(true)}
+        onPress={sheet.open}
         style={({ pressed }) => [styles.historyButton, pressed && styles.pressed]}
       >
         <AgentIcon name="history" size={21} color={theme.ink} />
       </Pressable>
       <HistorySheet
-        visible={open}
+        visible={sheet.visible}
         conversations={conversations}
         activeConversationId={activeConversationId}
         loading={loading}
@@ -560,13 +616,13 @@ const HistoryControl = memo(function HistoryControl({
         onRetry={onRetry}
         onSelect={(id) => {
           onSelect(id);
-          setOpen(false);
+          sheet.close();
         }}
         onNew={() => {
           onNew();
-          setOpen(false);
+          sheet.close();
         }}
-        onClose={() => setOpen(false)}
+        onClose={sheet.close}
       />
     </>
   );
@@ -663,10 +719,10 @@ function ThreadMessage({
 }
 
 const styles = StyleSheet.create({
-  safe: { flex: 1, backgroundColor: theme.bg },
+  page: { flex: 1, backgroundColor: theme.bg },
   root: { flex: 1, backgroundColor: theme.bg },
   header: {
-    minHeight: 58,
+    minHeight: HEADER_MIN_HEIGHT,
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "space-between",
@@ -702,7 +758,7 @@ const styles = StyleSheet.create({
     width: 58,
     height: 44,
     alignItems: "center",
-    justifyContent: "flex-end",
+    justifyContent: "center",
   },
   thread: { flex: 1 },
   threadContent: { padding: 12, paddingBottom: 20 },
