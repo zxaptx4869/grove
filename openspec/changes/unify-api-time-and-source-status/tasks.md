@@ -6,13 +6,13 @@
 
 - [x] 2.1 新增 `backend/app/schemas/base.py` 的 `ApiModel`：通配 `field_validator("*", mode="after")` 把 `datetime` 归一化到 UTC（naive 按 UTC、带偏移换算），`list` / `tuple` / `dict` 递归，其余原样返回；归一化失败记 warning 日志（含堆栈与字段信息）后向上抛出，不做静默兜底。验收：`backend/tests/test_schema_time_contract.py` 覆盖 naive、带 `+08:00`、嵌套模型与非法值四类行为，并断言失败路径有日志。
 - [x] 2.2 `backend/app/schemas/` 全部模型改为继承 `ApiModel`（12 个文件，含请求模型），清理不再使用的 `BaseModel` 导入。验收：同一测试文件断言 `app/schemas/` 下每个模型都是 `ApiModel` 子类，新增模型漏继承即失败。
-- [x] 2.3 端点级口径验证：沿用既有夹具断言来源列表 / 详情、项目、条目与知识 Agent Run 等响应的时间字段以 `Z` 结尾且不再是裸串（含嵌套的列表项）。验收：`backend/tests/test_sources.py`、`backend/tests/test_knowledge_agent_conversations.py`（或同族测试）中新增断言。
+- [x] 2.3 端点级口径验证：沿用既有夹具断言来源列表 / 详情、项目、条目与知识 Agent Run 等响应的时间字段以 `Z` 结尾且不再是裸串（含嵌套的列表项）。验收：`backend/tests/test_sources.py`、`backend/tests/test_projects.py`、`backend/tests/test_knowledge_agent_api.py` 中新增断言。
 - [x] 2.4 生产侧核对结论与前提写入 `design.md`（第 3 节）：`default-time-zone='+00:00'`、核对 SQL、回滚方式、不写代码级会话设置的理由。验收：设计文档可照做核对。
 
-## 3. 生产与本地库时区核对（需用户执行）
+## 3. 生产 MySQL 与本地库时区核对
 
-- [ ] 3.1 生产 MySQL 核对 `SELECT @@global.time_zone, @@session.time_zone;` 为 `+00:00`，若偏离按运维项固定为 `default-time-zone='+00:00'` 后重启核对。验收：两项输出均为 `+00:00`（或 `UTC`）。
-- [ ] 3.2 本地开发库（SQLite）无需配置：确认 `CURRENT_TIMESTAMP` 为 UTC 这一前提仍成立（`select CURRENT_TIMESTAMP, datetime('now')`）。验收：输出为 UTC 墙钟时间。
+- [ ] 3.1（需用户在生产环境执行）生产 MySQL 核对 `SELECT @@global.time_zone, @@session.time_zone;` 为 `+00:00`，若偏离按运维项固定为 `default-time-zone='+00:00'` 后重启核对。验收：两项输出均为 `+00:00`（或 `UTC`）。
+- [x] 3.2 本地开发库（SQLite）无需配置：已确认 `CURRENT_TIMESTAMP` 为 UTC，`select CURRENT_TIMESTAMP, datetime('now')` 返回 `2026-10-12 06:15:36`，与同刻 UTC 墙钟一致（东八区为 14:15）。验收：输出为 UTC 墙钟时间。
 
 ## 4. Web：共用时间工具与 7 处收口
 
@@ -25,7 +25,7 @@
 - [x] 5.2 新增 `frontend/src/lib/sourceStatus.ts`：`isProcessingNotStarted`（`status === 'waiting' && !has_processing_task`）、状态文案与配色（未启动用 `bg-warning-soft text-warning`）、`processingRetryLabel`（「重试处理」/「重试」）。验收：`frontend/src/lib/sourceStatus.test.ts` 覆盖等待处理有任务 / 无任务、处理中、完成、失败五种取值与两个重试文案。
 - [x] 5.3 新增 `frontend/src/hooks/useSourceProcessingTrigger.ts`：封装 `POST /api/sources/{id}/process` 与 `queryKeys.sources` 失效，409 视为正常（不弹错误、改为失效刷新）。验收：`frontend/src/hooks/useSourceProcessingTrigger.test.tsx` 断言 409 不触发错误提示且会刷新、非 409 错误仍提示失败。
 - [x] 5.4 `SourceList.tsx` 与 `SourceDetailDialog.tsx` 使用共用状态口径：未启动行显示「处理未启动」与「重试处理」，失败行仍为「重试」，等待处理且有任务的行不提供触发入口；详情在无候选时显示未启动说明卡片与就地「重试处理」。验收：`SourceList.test.tsx`、`SourceDetailDialog.test.tsx` 覆盖未启动徽标、两个重试入口区分、详情就地重试与 409 不报错。
-- [x] 5.5 `InboxPage`、`SourceHistoryPage`、`ProjectSources` 的触发 mutation 改为复用同一 hook（分页失效键按页面传入）。验收：三个页面测试的触发场景改为经共用 hook 断言（含 409 场景）。
+- [x] 5.5 `InboxPage`、`SourceHistoryPage`、`ProjectSources` 的触发 mutation 改为复用同一 hook（分页失效键按页面传入）。验收：`InboxPage.test.tsx` 补「重试处理命中 409 不提示失败」断言，`useSourceProcessingTrigger.test.tsx` 覆盖 409 与其它错误两条分支；`SourceHistoryPage.test.tsx`、`ProjectSources.test.tsx` 只覆盖查询与渲染，改用共用 hook 后继续通过。
 
 ## 6. 原生端：时间解析收编
 
@@ -34,7 +34,7 @@
 
 ## 7. 验证与收尾
 
-- [x] 7.1 `cd backend && .venv/bin/pytest -q` 全绿，`.venv/bin/ruff check .` 无错误；`curl` 冒烟确认来源列表响应时间字段带 `Z`（未认证为 401 而非 404）。
+- [x] 7.1 `cd backend && .venv/bin/pytest -q` 仅 `tests/test_embedding_retrieval.py::test_backfill_creates_missing_rows` 失败（`assert 32 == 1`，全量会话内的既有测试隔离问题；该用例单跑通过，且在未含本 change 的 pristine 检出上同样失败，与本 change 无关），其余全绿；`.venv/bin/ruff check .` 通过。`curl` 冒烟（独立 SQLite 库 + 全部 Worker 关闭）：注册 201、创建来源 201、来源列表 200、触发处理 200、来源详情 200，时间字段均为 `2026-10-12T06:15:19Z`（`datetime.fromisoformat(...).utcoffset() == 0`），未认证来源接口为 401 而非 404，`has_processing_task` 在存在处理任务时返回 `true`。
 - [x] 7.2 `cd frontend && npm run lint && npm run typecheck && npm run test:run` 全绿。
 - [x] 7.3 `cd mobile && npm run lint && npm run typecheck && npm test` 全绿。
 - [x] 7.4 `openspec validate --all --strict` 通过。
