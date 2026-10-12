@@ -5,10 +5,10 @@ TBD - created by archiving change add-native-source-capture. Update Purpose afte
 ## Requirements
 ### Requirement: 原生采集入口
 
-收集栏目 MUST 提供「相机 / 相册 / 文本」三个入口并替换此前的未接入占位。入口页 MUST 在三个采集入口之外同时承载「最近收集」列表，两者同页；列表的查询、筛选、状态、详情、改归属、删除与轮询 MUST 按 `native-source-library` 提供，本需求只规定入口页同时容纳采集入口与列表，MUST NOT 把列表拆成独立的「全部来源」页。相机入口 MUST 调用系统相机拍摄 1 张并提交为一条单图 Source，MUST NOT 做连拍或连续扫描。相册入口 MUST 先让用户选择「每张一条」或「多张合并一条」，再打开系统相册选择器，两种形态都 MUST 支持多选 1–5 张，选择器 MUST 以 5 作为数量上限而不做静默截断。文本入口 MUST 支持输入或从系统剪贴板填入文字并提交为一条文字 Source。
+收集箱栏目 MUST 提供「相机 / 相册 / 文本」三个入口并替换此前的未接入占位。入口页 MUST 在三个采集入口之外同时承载「最近收集」列表，两者同页；列表的查询、筛选、状态、详情、改归属、删除与轮询 MUST 按 `native-source-library` 提供，本需求只规定入口页同时容纳采集入口与列表，MUST NOT 把列表拆成独立的「全部来源」页。相机入口 MUST 调用系统相机拍摄 1 张并提交为一条单图 Source，MUST NOT 做连拍或连续扫描。相册入口 MUST 先让用户选择「每张一条」或「多张合并一条」，再打开系统相册选择器，两种形态都 MUST 支持多选 1–5 张，选择器 MUST 以 5 作为数量上限而不做静默截断。文本入口 MUST 支持输入或从系统剪贴板填入文字并提交为一条文字 Source。
 
 #### Scenario: 相机拍一张
-- **WHEN** 用户在收集栏目点击相机并完成拍摄
+- **WHEN** 用户在收集箱栏目点击相机并完成拍摄
 - **THEN** 系统得到 1 张图片并进入采集表单，提交后生成一条单图来源
 
 #### Scenario: 相册每张一条
@@ -24,7 +24,7 @@ TBD - created by archiving change add-native-source-capture. Update Purpose afte
 - **THEN** 系统生成一条只包含该文字的来源
 
 #### Scenario: 入口页同时承载最近收集列表
-- **WHEN** 用户进入收集栏目
+- **WHEN** 用户进入收集箱栏目
 - **THEN** 页面同时显示三个采集入口与「最近收集」列表，采集行为与列表行为互不阻塞
 
 ### Requirement: 采集表单字段
@@ -154,7 +154,7 @@ TBD - created by archiving change add-native-source-capture. Update Purpose afte
 #### Scenario: 400 原文透传
 - **WHEN** 后端返回 400（最多 5 张、单张 10MB、仅支持 png/jpg/webp）
 - **THEN** 覆盖层逐条显示该原文，并说明材料未保存、可调整后重新提交
-- **AND** 覆盖层停留在原地，由用户点底部「回到收集」返回
+- **AND** 覆盖层停留在原地，由用户点底部「回到收集箱」返回
 
 #### Scenario: 网络中断
 - **WHEN** 上传过程中网络中断且没有服务端文案
@@ -162,12 +162,12 @@ TBD - created by archiving change add-native-source-capture. Update Purpose afte
 
 ### Requirement: 提交状态与结果呈现
 
-本 change MUST NOT 提供来源列表或来源详情，因此提交状态 MUST 以全屏覆盖层呈现进行中、全部成功、部分失败与全部失败四种状态，并说明可在桌面工作台或后端接口核对是否入库。进行中 MUST 覆盖图片压缩与逐条上传两个阶段，两者的进度与当前阶段文案都 MUST 只在覆盖层内呈现。图片采集的进度 MUST 压在材料缩略图上：缩略图 MUST 用采集时的原图渲染（MUST NOT 因压缩替换图片源），压缩与上传期间 MUST 显示加载动效与阶段文案，完成后 MUST 给出已提交标记，失败 MUST 给出未成功标记。提交结束 MUST NOT 自动关闭覆盖层、MUST NOT 自动跳回任何页面；结束后 MUST 在覆盖层底部固定区域提供「回到收集」，该区域 MUST 位于安全区之上且不随内容滚动，进行中 MUST NOT 提供该出口。关闭覆盖层或点「回到收集」MUST 回到入口页，MUST 清空草稿、提交会话与批次键，用户随后再次采集 MUST 使用新批次。
+本 change MUST NOT 提供来源列表或来源详情，因此提交状态 MUST 以全屏覆盖层呈现进行中、全部成功、部分失败与全部失败四种状态，并说明可在桌面工作台或后端接口核对是否入库。进行中 MUST 覆盖图片压缩与逐条上传两个阶段，两者的进度与当前阶段文案都 MUST 只在覆盖层内呈现。图片采集的进度 MUST 压在材料缩略图上：缩略图 MUST 用采集时的原图渲染（MUST NOT 因压缩替换图片源），压缩与上传期间 MUST 显示加载动效与阶段文案，完成后 MUST 给出已提交标记，失败 MUST 给出未成功标记。提交结束 MUST NOT 自动关闭覆盖层、MUST NOT 自动跳回任何页面；结束后 MUST 在覆盖层底部固定区域提供「回到收集箱」，该区域 MUST 位于安全区之上且不随内容滚动，进行中 MUST NOT 提供该出口。关闭覆盖层或点「回到收集箱」MUST 回到入口页，MUST 清空草稿、提交会话与批次键，用户随后再次采集 MUST 使用新批次。
 
 #### Scenario: 全部成功
 - **WHEN** 一次采集的全部提交单元成功
 - **THEN** 覆盖层停留在成功汇总「已提交 N 条」并说明可到桌面工作台查看处理进展，不自动关闭、不自动跳转
-- **AND** 用户点覆盖层底部的「回到收集」后才回入口页
+- **AND** 用户点覆盖层底部的「回到收集箱」后才回入口页
 
 #### Scenario: 缩略图上的进度
 - **WHEN** 用户提交图片采集
@@ -179,19 +179,19 @@ TBD - created by archiving change add-native-source-capture. Update Purpose afte
 
 #### Scenario: 底部返回出口的可见性
 - **WHEN** 提交仍在进行中
-- **THEN** 覆盖层底部不出现「回到收集」，返回键也不关闭覆盖层
+- **THEN** 覆盖层底部不出现「回到收集箱」，返回键也不关闭覆盖层
 
 #### Scenario: 全部失败
 - **WHEN** 一次采集的全部提交单元失败
 - **THEN** 覆盖层停留在失败态，显示失败数量与逐条重试入口，不展示任何业务记录
 
 #### Scenario: 关闭覆盖层后清空
-- **WHEN** 用户关闭覆盖层或点「回到收集」
+- **WHEN** 用户关闭覆盖层或点「回到收集箱」
 - **THEN** 系统回到入口页，草稿与提交会话被清空，再次采集使用新的批次键
 
 ### Requirement: 采集页面流转
 
-收集栏目 MUST 由入口页、采集页、权限页三个互斥页面与一个提交覆盖层构成，同一时刻 MUST 只渲染其中一个页面。入口页 MUST NOT 渲染采集表单与提交结果，采集页 MUST NOT 渲染入口行。采集页 MUST 提供返回入口页的入口，返回时 MUST 丢弃草稿。提交 MUST 以覆盖页面内容与底部导航的全屏覆盖层呈现；提交进行中（含图片压缩阶段）MUST NOT 再次提交或重新进入采集页，MUST NOT 提供关闭出口；客户端 MUST 拒绝重入的提交动作，连点 MUST 只产生一次请求。
+收集箱栏目 MUST 由入口页、采集页、权限页三个互斥页面与一个提交覆盖层构成，同一时刻 MUST 只渲染其中一个页面。入口页 MUST NOT 渲染采集表单与提交结果，采集页 MUST NOT 渲染入口行。采集页 MUST 提供返回入口页的入口，返回时 MUST 丢弃草稿。提交 MUST 以覆盖页面内容与底部导航的全屏覆盖层呈现；提交进行中（含图片压缩阶段）MUST NOT 再次提交或重新进入采集页，MUST NOT 提供关闭出口；客户端 MUST 拒绝重入的提交动作，连点 MUST 只产生一次请求。
 
 #### Scenario: 入口页与采集页互斥
 - **WHEN** 用户从入口页进入任一采集页
@@ -207,7 +207,7 @@ TBD - created by archiving change add-native-source-capture. Update Purpose afte
 
 #### Scenario: 提交期间不可重复进入
 - **WHEN** 提交仍在进行中（含图片压缩阶段）
-- **THEN** 覆盖层不提供关闭或回到收集的出口，返回键不关闭覆盖层，用户无法重新进入采集页
+- **THEN** 覆盖层不提供关闭或回到收集箱的出口，返回键不关闭覆盖层，用户无法重新进入采集页
 
 #### Scenario: 连点提交只提交一次
 - **WHEN** 用户在极短时间内连续点两次提交

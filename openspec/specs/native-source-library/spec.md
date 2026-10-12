@@ -5,14 +5,14 @@ TBD - created by archiving change add-native-source-library. Update Purpose afte
 ## Requirements
 ### Requirement: 最近收集列表与筛选
 
-收集入口页 MUST 在三个采集入口之外同时承载「最近收集」列表，MUST NOT 新增独立的「全部来源」页。列表 MUST 通过 `GET /api/sources` 携带 `limit=20` 取最近 20 条并按创建时间倒序，MUST NOT 实现分页浏览。采集提交结束回到入口页时 MUST 立即重新查询，使刚提交的来源立刻出现在列表里。列表上方 MUST 提供「全部 / 未归属」两态轻量文字筛选，切换 MUST 重新查询（未归属态 MUST 携带 `unassigned=true`），MUST NOT 提供搜索、状态筛选或批量操作。向下拉动列表 MUST 重新查询并保留当前筛选。
+收集箱入口页 MUST 在三个采集入口之外同时承载「最近收集」列表，MUST NOT 新增独立的「全部来源」页。列表 MUST 通过 `GET /api/sources` 携带 `limit=20` 取最近 20 条并按创建时间倒序，MUST NOT 实现分页浏览。采集提交结束回到入口页时 MUST 立即重新查询，使刚提交的来源立刻出现在列表里。列表上方 MUST 提供「全部 / 未归属」两态轻量文字筛选，切换 MUST 重新查询（未归属态 MUST 携带 `unassigned=true`），MUST NOT 提供搜索、状态筛选或批量操作。向下拉动列表 MUST 重新查询并保留当前筛选。
 
 #### Scenario: 入口页同时承载采集与列表
-- **WHEN** 用户进入收集栏目
+- **WHEN** 用户进入收集箱栏目
 - **THEN** 页面显示三个采集入口与下方的「最近收集」列表，两者同页，不跳转到单独的来源页
 
 #### Scenario: 默认展示全部
-- **WHEN** 用户首次进入收集栏目
+- **WHEN** 用户首次进入收集箱栏目
 - **THEN** 筛选为「全部」，列表按创建时间倒序显示最近 20 条来源
 
 #### Scenario: 切换未归属
@@ -20,7 +20,7 @@ TBD - created by archiving change add-native-source-library. Update Purpose afte
 - **THEN** 系统携带 `unassigned=true` 重新查询，只显示未归属来源
 
 #### Scenario: 采集结束回到列表
-- **WHEN** 用户完成一次采集并从提交结果回到收集列表
+- **WHEN** 用户完成一次采集并从提交结果回到收集箱列表
 - **THEN** 系统立即重新查询，刚提交的来源出现在「最近收集」里
 
 #### Scenario: 下拉刷新

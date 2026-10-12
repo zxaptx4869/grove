@@ -16,4 +16,5 @@
 - [x] 3.1 `cd mobile && npm run typecheck && npm run lint && npm test` 全绿（typecheck 无输出、eslint 无告警、28 个套件 187 个用例通过）
 - [x] 3.2 `openspec validate --all --strict` 通过（68 passed / 0 failed）
 - [x] 3.4 `rg -n "回到收集|返回收集" mobile/src mobile/app` 无残留（栏目名相关文案已全部改为收集箱口径；「要收集的文字」「最近收集」等动作词与区块名按 Non-Goals 保留）
+- [x] 3.5 归档校验发现 `native-source-capture` 增量漏改 `后端错误原文透传` 的出口按钮文案（主规格此处仍写「回到收集」），已补进增量并把场景正文改为「回到收集箱」
 - [x] 3.3 用户真机走查通过（2026-10-12，用户反馈「没问题了，改名好了」）：底栏第二栏、入口页标题与提交结果页出口按钮均为收集箱口径，采集 → 提交 → 返回流转正常；窄视口标签截断与读屏播报未单独复述
