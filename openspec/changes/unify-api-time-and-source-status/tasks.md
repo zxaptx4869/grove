@@ -11,7 +11,7 @@
 
 ## 3. 生产 MySQL 与本地库时区核对
 
-- [ ] 3.1（需用户在生产环境执行）生产 MySQL 核对 `SELECT @@global.time_zone, @@session.time_zone;` 为 `+00:00`，若偏离按运维项固定为 `default-time-zone='+00:00'` 后重启核对。验收：两项输出均为 `+00:00`（或 `UTC`）。
+- [x] 3.1（用户在生产环境执行，2026-10-12）生产 MySQL 核对 `SELECT @@global.time_zone, @@session.time_zone, @@system_time_zone, NOW(), UTC_TIMESTAMP();` 实际输出 `SYSTEM  SYSTEM  UTC  <同一时刻>  <同一时刻>`：`@@system_time_zone` 为 `UTC`，`NOW()` 与 `UTC_TIMESTAMP()` 完全相等，库口径等价于 UTC，验收通过。时区本就是 UTC 等价，未做参数变更，也未使用 `default-time-zone` 覆盖。
 - [x] 3.2 本地开发库（SQLite）无需配置：已确认 `CURRENT_TIMESTAMP` 为 UTC，`select CURRENT_TIMESTAMP, datetime('now')` 返回 `2026-10-12 06:15:36`，与同刻 UTC 墙钟一致（东八区为 14:15）。验收：输出为 UTC 墙钟时间。
 
 ## 4. Web：共用时间工具与 7 处收口
