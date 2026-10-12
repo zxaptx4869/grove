@@ -113,7 +113,7 @@ describe('InboxPage', () => {
     expect(await screen.findByRole('heading', { name: '收集箱' })).toBeInTheDocument()
     expect(
       screen.getByText(
-        '先放进来，让 AI 来帮你提取知识、推荐项目、推荐目录，你有空了再到项目的确认台中点点采纳就完事了。',
+        '先放进来，让 AI 来帮你提取知识、推荐项目、推荐目录，有空再到项目的确认台中进行采纳',
       ),
     ).toBeInTheDocument()
     expect(await screen.findByText('洗烘使用体验.png')).toBeInTheDocument()

@@ -76,7 +76,7 @@ export function InboxPage() {
       <header className="mb-5">
         <h1 className="text-[22px] font-[650] leading-[30px]">收集箱</h1>
         <p className="mt-0.5 text-body text-muted-foreground">
-          先放进来，让 AI 来帮你提取知识、推荐项目、推荐目录，你有空了再到项目的确认台中点点采纳就完事了。
+          先放进来，让 AI 来帮你提取知识、推荐项目、推荐目录，有空再到项目的确认台中进行采纳
         </p>
       </header>
 
