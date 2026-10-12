@@ -5,7 +5,7 @@ TBD - created by archiving change add-native-source-capture. Update Purpose afte
 ## Requirements
 ### Requirement: 原生采集入口
 
-收集栏目 MUST 提供「相机 / 相册 / 文本」三个入口并替换此前的未接入占位；入口页 MUST NOT 提供「最近收集」列表，来源列表属后续 change 的范围。相机入口 MUST 调用系统相机拍摄 1 张并提交为一条单图 Source，MUST NOT 做连拍或连续扫描。相册入口 MUST 先让用户选择「每张一条」或「多张合并一条」，再打开系统相册选择器，两种形态都 MUST 支持多选 1–5 张，选择器 MUST 以 5 作为数量上限而不做静默截断。文本入口 MUST 支持输入或从系统剪贴板填入文字并提交为一条文字 Source。
+收集栏目 MUST 提供「相机 / 相册 / 文本」三个入口并替换此前的未接入占位。入口页 MUST 在三个采集入口之外同时承载「最近收集」列表，两者同页；列表的查询、筛选、状态、详情、改归属、删除与轮询 MUST 按 `native-source-library` 提供，本需求只规定入口页同时容纳采集入口与列表，MUST NOT 把列表拆成独立的「全部来源」页。相机入口 MUST 调用系统相机拍摄 1 张并提交为一条单图 Source，MUST NOT 做连拍或连续扫描。相册入口 MUST 先让用户选择「每张一条」或「多张合并一条」，再打开系统相册选择器，两种形态都 MUST 支持多选 1–5 张，选择器 MUST 以 5 作为数量上限而不做静默截断。文本入口 MUST 支持输入或从系统剪贴板填入文字并提交为一条文字 Source。
 
 #### Scenario: 相机拍一张
 - **WHEN** 用户在收集栏目点击相机并完成拍摄
@@ -22,6 +22,10 @@ TBD - created by archiving change add-native-source-capture. Update Purpose afte
 #### Scenario: 文本采集
 - **WHEN** 用户在文本入口输入或从剪贴板填入文字并提交
 - **THEN** 系统生成一条只包含该文字的来源
+
+#### Scenario: 入口页同时承载最近收集列表
+- **WHEN** 用户进入收集栏目
+- **THEN** 页面同时显示三个采集入口与「最近收集」列表，采集行为与列表行为互不阻塞
 
 ### Requirement: 采集表单字段
 
