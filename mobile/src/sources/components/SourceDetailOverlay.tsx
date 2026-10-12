@@ -166,7 +166,7 @@ export function SourceDetailOverlay({
         <View style={styles.header}>
           <Pressable
             accessibilityRole="button"
-            accessibilityLabel="返回收集列表"
+            accessibilityLabel="返回收集箱列表"
             onPress={onClose}
             style={({ pressed }) => [styles.headerIcon, pressed && styles.pressed]}
           >

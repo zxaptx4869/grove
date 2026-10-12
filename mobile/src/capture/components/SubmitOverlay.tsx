@@ -243,7 +243,7 @@ export function SubmitOverlay({
         </ScrollView>
         {!session.running ? (
           <View style={[styles.footer, { paddingBottom: 9 + insets.bottom }]}>
-            <AppButton label="回到收集" block onPress={onClose} />
+            <AppButton label="回到收集箱" block onPress={onClose} />
           </View>
         ) : null}
       </SafeAreaView>

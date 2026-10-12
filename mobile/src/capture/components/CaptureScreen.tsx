@@ -1,4 +1,4 @@
-/** 收集栏目：入口页 / 采集页 / 权限页互斥，提交以全屏覆盖层呈现（对齐原型 setPage 与 #submitOverlay）。 */
+/** 收集箱栏目：入口页 / 采集页 / 权限页互斥，提交以全屏覆盖层呈现（对齐原型 setPage 与 #submitOverlay）。 */
 
 import { useQuery } from "@tanstack/react-query";
 import { useCallback, useRef, useState } from "react";
@@ -53,7 +53,7 @@ const FORM_TITLE: Record<CaptureKind, string> = {
   text: "文字采集",
 };
 
-const READY_HINT = "提交后可在「收集」列表里查看处理状态";
+const READY_HINT = "提交后可在「收集箱」列表里查看处理状态";
 
 /** 本地压缩失败：没有服务端文案，用固定说明代替原生错误串。 */
 const IMAGE_PREPARE_ERROR = "图片处理失败，请重新选择。";
@@ -221,7 +221,7 @@ export function CaptureScreen() {
         });
       } finally {
         submittingRef.current = false;
-        // 提交结束一律停留在结果页，由用户点底部的「回到收集」返回
+        // 提交结束一律停留在结果页，由用户点底部的「回到收集箱」返回
         setSession((previous) =>
           previous ? { ...previous, running: false, preparing: null } : previous,
         );
@@ -239,7 +239,7 @@ export function CaptureScreen() {
     setPage("entry");
   }
 
-  /** 覆盖层关闭 / 「回到收集」：清空草稿、提交会话与批次键，回入口页并刷新列表。 */
+  /** 覆盖层关闭 / 「回到收集箱」：清空草稿、提交会话与批次键，回入口页并刷新列表。 */
   function closeSubmission() {
     setSubmitOpen(false);
     setSession(null);
@@ -424,7 +424,7 @@ export function CaptureScreen() {
             />
           }
         >
-          <Text style={styles.title}>收集</Text>
+          <Text style={styles.title}>收集箱</Text>
           <Text style={styles.subtitle}>先收进来，慢慢整理成自己的知识。</Text>
           <EntryRow
             onSelect={(entry) => {

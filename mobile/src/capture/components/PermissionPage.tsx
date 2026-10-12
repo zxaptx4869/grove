@@ -79,7 +79,7 @@ export function PermissionPage({
 
       <View style={styles.actions}>
         <AppButton label="去设置" variant="primary" block onPress={onOpenSettings} />
-        <AppButton label="返回收集" variant="ghost" block onPress={onBack} />
+        <AppButton label="返回收集箱" variant="ghost" block onPress={onBack} />
       </View>
     </View>
   );

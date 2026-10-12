@@ -22,7 +22,7 @@ export function CaptureHeader({
       <View style={styles.slot}>
         <Pressable
           accessibilityRole="button"
-          accessibilityLabel="返回收集列表"
+          accessibilityLabel="返回收集箱列表"
           onPress={onBack}
           style={({ pressed }) => [styles.icon, pressed && styles.pressed]}
         >
