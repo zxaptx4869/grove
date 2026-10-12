@@ -99,4 +99,16 @@ describe('EntryList 操作列', () => {
     expect(onAiRevise).toHaveBeenCalledWith(ENTRY)
     expect(onVersionHistory).toHaveBeenCalledWith(ENTRY)
   })
+
+  it('条目列表日期按 UTC 解析服务端不带时区的时间串', () => {
+    const expected = new Intl.DateTimeFormat('zh-CN', {
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit',
+    }).format(new Date('2026-09-29T07:23:51Z'))
+
+    render(<EntryList entries={[{ ...ENTRY, updated_at: '2026-09-29T07:23:51' }]} />)
+
+    expect(screen.getByText(expected)).toBeInTheDocument()
+  })
 })

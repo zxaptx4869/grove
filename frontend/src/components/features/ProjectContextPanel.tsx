@@ -23,6 +23,7 @@ import {
   type TreeNodePayload,
 } from '@/lib/api'
 import { queryKeys } from '@/lib/queryKeys'
+import { formatServerTime } from '@/lib/time'
 
 const STATUS_LABELS: Record<ProjectContextStatus, string> = {
   pending: '等待生成',
@@ -40,14 +41,12 @@ function statusClass(status: ProjectContextStatus) {
 
 function formatGeneratedAt(value: string | null) {
   if (!value) return '尚未生成'
-  const date = new Date(value)
-  if (Number.isNaN(date.getTime())) return '刚刚'
-  return new Intl.DateTimeFormat('zh-CN', {
-    month: 'short',
-    day: 'numeric',
-    hour: '2-digit',
-    minute: '2-digit',
-  }).format(date)
+  // 服务端时间串的解析口径统一在 @/lib/time，这里只决定显示格式
+  return formatServerTime(
+    value,
+    { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' },
+    '刚刚',
+  )
 }
 
 /** 项目上下文面板：展示 AI 候选概要，支持纠正与重新生成。 */

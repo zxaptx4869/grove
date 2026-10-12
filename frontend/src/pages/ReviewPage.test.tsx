@@ -7,7 +7,7 @@ import { ReviewPage } from './ReviewPage'
 
 function renderPage() {
   const queryClient = new QueryClient()
-  render(
+  return render(
     <QueryClientProvider client={queryClient}>
       <MemoryRouter initialEntries={['/projects/1/review']}>
         <Routes>
@@ -159,6 +159,69 @@ describe('ReviewPage', () => {
           call.body?.includes('10'),
       ),
     ).toBe(true)
+  })
+
+  it('待处理来源时间按 UTC 解析并按东八区展示', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn((input: RequestInfo | URL) => {
+        const url = new URL(String(input), 'http://localhost')
+        if (url.pathname === '/api/projects/1/review/sources') {
+          return Promise.resolve({
+            ok: true,
+            json: async () => [
+              {
+                id: 5,
+                title: '烘干使用体验',
+                note: null,
+                status: 'done',
+                review_status: 'pending_review',
+                pending_candidate_count: 1,
+                // 服务端时间串不带时区（实际是 UTC）
+                created_at: '2026-09-29T07:23:51',
+              },
+            ],
+          })
+        }
+        if (url.pathname === '/api/sources/5') {
+          return Promise.resolve({
+            ok: true,
+            json: async () => ({
+              id: 5,
+              title: '烘干使用体验',
+              note: null,
+              project_id: 1,
+              status: 'done',
+              review_status: 'pending_review',
+              created_at: '2026-09-29T07:23:51',
+              updated_at: '2026-09-29T07:23:51',
+              attachments: [],
+            }),
+          })
+        }
+        if (url.pathname === '/api/projects/1/tree') {
+          return Promise.resolve({ ok: true, json: async () => [] })
+        }
+        if (url.pathname === '/api/sources/5/candidates') {
+          return Promise.resolve({ ok: true, json: async () => [] })
+        }
+        return Promise.resolve({ ok: true, json: async () => [] })
+      }),
+    )
+
+    const { container } = renderPage()
+    await userEvent.click(await screen.findByRole('button', { name: /待处理来源 1/ }))
+
+    const expected = new Intl.DateTimeFormat('zh-CN', {
+      month: 'short',
+      day: 'numeric',
+      hour: '2-digit',
+      minute: '2-digit',
+      timeZone: 'Asia/Shanghai',
+    }).format(new Date('2026-09-29T07:23:51Z'))
+    await waitFor(() => expect(container.textContent).toContain('烘干使用体验'))
+    // 裸串按 UTC 解析后固定按东八区展示，偏移 8 小时会渲染成 07:23
+    expect(container.textContent).toContain(`· ${expected}`)
   })
 
   it('有目录推荐时预填推荐节点', async () => {

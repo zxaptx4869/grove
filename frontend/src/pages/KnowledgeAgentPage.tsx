@@ -35,6 +35,7 @@ import {
   type KnowledgeObservabilityPayload,
   type KnowledgeRunPayload,
 } from '@/lib/api'
+import { formatServerTime } from '@/lib/time'
 
 const ACTIVE_RUN_STATUSES = new Set(['waiting', 'processing'])
 
@@ -59,12 +60,11 @@ const DIALOGUE_STAGE_LABELS: Record<string, string> = {
 }
 
 function formatTime(value: string) {
-  return new Intl.DateTimeFormat('zh-CN', {
-    month: '2-digit',
-    day: '2-digit',
-    hour: '2-digit',
-    minute: '2-digit',
-  }).format(new Date(value))
+  return formatServerTime(
+    value,
+    { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' },
+    '—',
+  )
 }
 
 function runDisplayStatus(run?: KnowledgeRunPayload | null) {

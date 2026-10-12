@@ -149,6 +149,22 @@ describe('知识 Agent 实验工作台', () => {
     expect(screen.queryByText('实际输入 token：320')).not.toBeVisible()
   })
 
+  it('数据快照时间按 UTC 解析服务端不带时区的时间串', async () => {
+    const naive = structuredClone(state)
+    naive.metadata.snapshot_at = '2026-09-29T07:23:51'
+    vi.mocked(api.bootstrap).mockResolvedValue(naive)
+
+    render(<WorkbenchApp />)
+
+    const expected = new Intl.DateTimeFormat('zh-CN', {
+      month: '2-digit',
+      day: '2-digit',
+      hour: '2-digit',
+      minute: '2-digit',
+    }).format(new Date('2026-09-29T07:23:51Z'))
+    expect(await screen.findByText(expected)).toBeInTheDocument()
+  })
+
   it('发送任意消息时只提交一次客户端请求标识', async () => {
     const user = userEvent.setup()
     render(<WorkbenchApp />)

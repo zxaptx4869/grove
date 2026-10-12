@@ -18,6 +18,7 @@ import {
   type EntryPayload,
   type EntryVersionPayload,
 } from '@/lib/api'
+import { formatServerTime } from '@/lib/time'
 import { queryKeys } from '@/lib/queryKeys'
 
 const CHANGE_TYPE_LABELS: Record<EntryChangeType, string> = {
@@ -35,13 +36,17 @@ const MAIN_TYPE_LABELS: Record<string, string> = {
 }
 
 function formatDate(value: string): string {
-  return new Date(value).toLocaleString('zh-CN', {
-    year: 'numeric',
-    month: '2-digit',
-    day: '2-digit',
-    hour: '2-digit',
-    minute: '2-digit',
-  })
+  return formatServerTime(
+    value,
+    {
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit',
+      hour: '2-digit',
+      minute: '2-digit',
+    },
+    '—',
+  )
 }
 
 /** 版本历史右抽屉：左侧版本列表、右侧快照，可恢复到所选版本。 */

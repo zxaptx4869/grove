@@ -24,6 +24,7 @@ import { toast } from 'sonner'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Textarea } from '@/components/ui/textarea'
+import { formatServerTime } from '@/lib/time'
 import * as api from './api'
 import type {
   AnswerBlock,
@@ -82,13 +83,11 @@ const FEEDBACK_LABELS: Record<Feedback['kind'], string> = {
 }
 
 function formatDate(value?: string | null) {
-  if (!value) return '未知'
-  return new Intl.DateTimeFormat('zh-CN', {
-    month: '2-digit',
-    day: '2-digit',
-    hour: '2-digit',
-    minute: '2-digit',
-  }).format(new Date(value))
+  return formatServerTime(
+    value,
+    { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' },
+    '未知',
+  )
 }
 
 function formatDuration(ms?: number) {

@@ -126,4 +126,39 @@ describe('SourceDetailDialog', () => {
     expect(await screen.findByText(expected)).toBeInTheDocument()
     vi.unstubAllGlobals()
   })
+
+  it('创建时间已带偏移时不二次偏移', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn((input: RequestInfo | URL) => {
+        const url = String(input)
+        if (url.includes('/candidates')) return ok([{ ...BASE, id: 1, status: 'pending' }])
+        if (url.endsWith('/api/sources/1')) {
+          return ok({
+            id: 1,
+            title: '来源',
+            note: null,
+            project_id: null,
+            status: 'done',
+            recommended_project_id: null,
+            project_recommendation_reason: null,
+            created_at: '2026-09-29T07:23:51Z',
+            updated_at: '2026-09-29T07:23:51Z',
+            attachments: [],
+            project_locked: false,
+            evidence_entry_count: 0,
+            pending_candidate_count: 0,
+            candidate_count: 0,
+          })
+        }
+        return ok({})
+      }),
+    )
+
+    renderDialog()
+
+    const expected = new Date('2026-09-29T07:23:51Z').toLocaleString('zh-CN', { hour12: false })
+    expect(await screen.findByText(expected)).toBeInTheDocument()
+    vi.unstubAllGlobals()
+  })
 })

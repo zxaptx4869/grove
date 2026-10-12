@@ -35,7 +35,8 @@ describe('ProjectContextPanel', () => {
             current_focus: '优先确认预算',
             directory_topics: ['装修准备', '预算'],
             lifecycle_status: 'active',
-            generated_at: '2026-08-13T00:00:00Z',
+            // 服务端时间串不带时区（实际是 UTC）：本地时间解析会整体差一个时区
+            generated_at: '2026-09-29T07:23:51',
             version: 3,
             last_update_reason: 'entry_archived',
             entries_summary: {
@@ -75,6 +76,15 @@ describe('ProjectContextPanel', () => {
     expect(screen.getByText('真实模型')).toBeInTheDocument()
     expect(screen.getByText(/模型 deepseek-chat/)).toBeInTheDocument()
     expect(screen.getByText('已生成')).toBeInTheDocument()
+    const expectedGeneratedAt = new Intl.DateTimeFormat('zh-CN', {
+      month: 'short',
+      day: 'numeric',
+      hour: '2-digit',
+      minute: '2-digit',
+    }).format(new Date('2026-09-29T07:23:51Z'))
+    expect(
+      screen.getByText(`更新于 ${expectedGeneratedAt}`, { exact: false }),
+    ).toBeInTheDocument()
   })
 
   it('保存纠正会调用 PATCH 接口', async () => {

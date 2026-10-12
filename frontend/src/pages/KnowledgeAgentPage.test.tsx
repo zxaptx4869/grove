@@ -237,3 +237,19 @@ describe('KnowledgeAgentPage', () => {
     expect(screen.getByText('服务暂时不可用')).toBeInTheDocument()
   })
 })
+
+describe('KnowledgeAgentPage 时间口径', () => {
+  it('对话更新时间按 UTC 解析服务端不带时区的时间串', async () => {
+    setupFetch(makeRun({ updated_at: '2026-09-29T07:23:51' }))
+
+    render(<KnowledgeAgentPage />)
+
+    const expected = new Intl.DateTimeFormat('zh-CN', {
+      month: '2-digit',
+      day: '2-digit',
+      hour: '2-digit',
+      minute: '2-digit',
+    }).format(new Date('2026-09-29T07:23:51Z'))
+    expect(await screen.findByText(expected)).toBeInTheDocument()
+  })
+})

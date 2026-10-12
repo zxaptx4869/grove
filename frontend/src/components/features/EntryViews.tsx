@@ -10,6 +10,7 @@ import {
   TableRow,
 } from '@/components/ui/table'
 import type { EntryPayload } from '@/lib/api'
+import { formatServerTime } from '@/lib/time'
 
 export type EntryViewPayload = EntryPayload & { project_name?: string }
 
@@ -45,11 +46,7 @@ function sourceSummary(entry: EntryViewPayload): string {
 }
 
 function formatDate(value: string): string {
-  return new Date(value).toLocaleDateString('zh-CN', {
-    year: 'numeric',
-    month: '2-digit',
-    day: '2-digit',
-  })
+  return formatServerTime(value, { year: 'numeric', month: '2-digit', day: '2-digit' }, '—')
 }
 
 function escapeRegExp(value: string): string {

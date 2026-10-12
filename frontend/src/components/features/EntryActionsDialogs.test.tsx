@@ -144,6 +144,47 @@ describe('EntryVersionHistoryDialog', () => {
     await waitFor(() => expect(onRestored).toHaveBeenCalled())
     expect(calls.some((call) => call.path === '/api/entries/1/restore')).toBe(true)
   })
+
+  it('版本时间按 UTC 解析服务端不带时区的时间串', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn((input: RequestInfo | URL) => {
+        const url = new URL(String(input), 'http://localhost')
+        if (url.pathname === '/api/entries/1/versions') {
+          return jsonResponse([
+            {
+              id: 11,
+              version_number: 2,
+              title: '闭水试验时长（修订）',
+              content: '闭水试验至少持续 24 小时，观察渗漏',
+              main_type: 'knowledge',
+              info_nature: 'fact',
+              applicable_condition: null,
+              note: null,
+              node_id: 20,
+              node_name: '施工',
+              change_type: 'edited',
+              change_summary: '补充观察要点',
+              created_at: '2026-09-29T07:23:51',
+            },
+          ])
+        }
+        return jsonResponse(ENTRY)
+      }),
+    )
+    renderWithClient(
+      <EntryVersionHistoryDialog open entry={ENTRY} onOpenChange={vi.fn()} onRestored={vi.fn()} />,
+    )
+
+    const expected = new Intl.DateTimeFormat('zh-CN', {
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit',
+      hour: '2-digit',
+      minute: '2-digit',
+    }).format(new Date('2026-09-29T07:23:51Z'))
+    expect(await screen.findByText(expected)).toBeInTheDocument()
+  })
 })
 
 describe('RevisionSuggestionDialog', () => {

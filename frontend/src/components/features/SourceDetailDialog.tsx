@@ -22,6 +22,7 @@ import {
 } from '@/lib/api'
 import { highlightEvidenceAll } from '@/lib/evidenceHighlight'
 import { queryKeys } from '@/lib/queryKeys'
+import { formatServerTime } from '@/lib/time'
 
 const STATUS_LABELS: Record<SourceStatus, string> = {
   waiting: '等待处理',
@@ -37,10 +38,20 @@ function statusClass(status: SourceStatus) {
 }
 
 function formatTime(value: string): string {
-  // 服务端 SQLite 下的时间串不带时区（实际是 UTC），不补 Z 会被按本地时间解析，东八区差 8 小时
-  const normalized = /(Z|[+-]\d{2}:?\d{2})$/.test(value) ? value : `${value}Z`
-  const date = new Date(normalized)
-  return Number.isNaN(date.getTime()) ? value : date.toLocaleString('zh-CN', { hour12: false })
+  // 服务端时间串的解析口径统一在 @/lib/time；解析不了时退回原串，不显示 Invalid Date
+  return formatServerTime(
+    value,
+    {
+      year: 'numeric',
+      month: 'numeric',
+      day: 'numeric',
+      hour: '2-digit',
+      minute: '2-digit',
+      second: '2-digit',
+      hour12: false,
+    },
+    value,
+  )
 }
 
 const TYPE_LABELS: Record<CandidatePayload['main_type'], string> = {

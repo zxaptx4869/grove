@@ -37,18 +37,21 @@ import {
 } from '@/lib/api'
 import { highlightEvidenceAll } from '@/lib/evidenceHighlight'
 import { queryKeys } from '@/lib/queryKeys'
+import { formatServerTime } from '@/lib/time'
 
 function formatTime(value: string) {
-  const normalized = /(Z|[+-]\d{2}:\d{2})$/.test(value) ? value : `${value}Z`
-  const date = new Date(normalized)
-  if (Number.isNaN(date.getTime())) return ''
-  return new Intl.DateTimeFormat('zh-CN', {
-    month: 'short',
-    day: 'numeric',
-    hour: '2-digit',
-    minute: '2-digit',
-    timeZone: 'Asia/Shanghai',
-  }).format(date)
+  // 解析统一走 @/lib/time；审阅页固定按东八区展示
+  return formatServerTime(
+    value,
+    {
+      month: 'short',
+      day: 'numeric',
+      hour: '2-digit',
+      minute: '2-digit',
+      timeZone: 'Asia/Shanghai',
+    },
+    '',
+  )
 }
 
 function relationLabel(status: CandidatePayload['relation_status']): string {
