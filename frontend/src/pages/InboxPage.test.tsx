@@ -66,7 +66,7 @@ function stubSources(processStatus = 200) {
 describe('InboxPage', () => {
   afterEach(() => vi.clearAllMocks())
 
-  it('渲染收集箱标题与未归属来源列表', async () => {
+  it('默认展示全部来源并渲染收集箱标题与列表', async () => {
     vi.stubGlobal(
       'fetch',
       vi.fn((input: RequestInfo | URL) => {
@@ -75,7 +75,8 @@ describe('InboxPage', () => {
           return Promise.resolve({ ok: true, json: async () => [] })
         }
         if (url.pathname === '/api/sources') {
-          expect(url.searchParams.get('unassigned')).toBe('true')
+          // 默认选中「全部」：不带 unassigned 参数
+          expect(url.searchParams.get('unassigned')).toBeNull()
           expect(url.searchParams.get('limit')).toBe('10')
           return Promise.resolve({
             ok: true,
@@ -110,9 +111,37 @@ describe('InboxPage', () => {
     renderInbox()
 
     expect(await screen.findByRole('heading', { name: '收集箱' })).toBeInTheDocument()
+    expect(
+      screen.getByText(
+        '先放进来，让 AI 来帮你提取知识、推荐项目、推荐目录，你有空了再到项目的确认台中点点采纳就完事了。',
+      ),
+    ).toBeInTheDocument()
     expect(await screen.findByText('洗烘使用体验.png')).toBeInTheDocument()
     expect(screen.getByLabelText('来源列表')).toBeInTheDocument()
     expect(screen.getByText('等待处理')).toBeInTheDocument()
+    expect(screen.getByRole('tab', { name: '全部' })).toHaveAttribute('aria-selected', 'true')
+    expect(screen.getByRole('tab', { name: '未归属项目' })).toHaveAttribute(
+      'aria-selected',
+      'false',
+    )
+    vi.unstubAllGlobals()
+  })
+
+  it('切到「未归属项目」携带 unassigned=true 重新查询', async () => {
+    const searches: string[] = []
+    vi.stubGlobal(
+      'fetch',
+      vi.fn((input: RequestInfo | URL) => {
+        const url = new URL(String(input), 'http://localhost')
+        if (url.pathname === '/api/sources') searches.push(url.search)
+        return Promise.resolve({ ok: true, json: async () => [] })
+      }),
+    )
+
+    renderInbox()
+    await userEvent.click(await screen.findByRole('tab', { name: '未归属项目' }))
+
+    await waitFor(() => expect(searches).toContain('?unassigned=true&limit=10'))
     vi.unstubAllGlobals()
   })
 

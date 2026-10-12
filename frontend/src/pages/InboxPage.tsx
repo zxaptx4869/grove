@@ -19,11 +19,12 @@ import { queryKeys } from '@/lib/queryKeys'
 
 const PROJECT_STATUSES: ProjectStatus[] = ['active', 'paused', 'completed', 'archived']
 
-/** 全局收集箱：采集入口与未归属/全部来源列表。 */
+/** 全局收集箱：采集入口与全部/未归属项目来源列表。 */
 export function InboxPage() {
   const queryClient = useQueryClient()
   const navigate = useNavigate()
-  const [filter, setFilter] = useState<'all' | 'unassigned'>('unassigned')
+  // 默认展示「全部」：刚采集的来源可能已被 AI 自动归属，默认只看未归属会让人误以为没进来
+  const [filter, setFilter] = useState<'all' | 'unassigned'>('all')
 
   const projects = useQuery({
     queryKey: [...queryKeys.projects, 'all-statuses'],
@@ -75,7 +76,7 @@ export function InboxPage() {
       <header className="mb-5">
         <h1 className="text-[22px] font-[650] leading-[30px]">收集箱</h1>
         <p className="mt-0.5 text-body text-muted-foreground">
-          先放进来，稍后再归属项目。处理完成后会由 AI 推荐所属项目。
+          先放进来，让 AI 来帮你提取知识、推荐项目、推荐目录，你有空了再到项目的确认台中点点采纳就完事了。
         </p>
       </header>
 
@@ -87,7 +88,7 @@ export function InboxPage() {
             <div className="flex h-[34px] items-center gap-1.5" role="tablist" aria-label="来源筛选">
               {([
                 ['all', '全部'],
-                ['unassigned', '未归属'],
+                ['unassigned', '未归属项目'],
               ] as const).map(([key, label]) => (
                 <button
                   key={key}
