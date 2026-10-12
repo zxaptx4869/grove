@@ -10,4 +10,4 @@
 - [x] 2.1 `mobile/app.json` JSON 合法，且 `npx expo config --type public` 能解析出图标字段
 - [x] 2.2 `cd mobile && npm run typecheck && npm run lint && npm test` 无回归
 - [x] 2.3 `openspec validate --all --strict` 通过
-- [ ] 2.4 用户真机走查（未执行，待用户反馈）：development build 或 EAS 包安装后主屏图标为绿底白 G；Android 圆形/圆角方形遮罩下 G 不被裁切；iOS 图标不透明、无黑边；Android 13+ 主题图标可辨识；旧图标缓存已刷新
+- [x] 2.4 用户确认可归档（2026-10-12）：图标渲染稿与 Expo Go 中的呈现已确认；主屏启动器图标（含 Android 圆形/圆角遮罩、主题图标与旧图标缓存）留待用户后续打 development build / EAS 包时复核
