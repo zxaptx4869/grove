@@ -1,4 +1,4 @@
-import { cleanup, fireEvent, render } from "@testing-library/react-native";
+import { cleanup, fireEvent, render, waitFor } from "@testing-library/react-native";
 import { HistorySheet } from "@/src/knowledge-agent/components/HistorySheet";
 import type { KnowledgeConversation } from "@/src/knowledge-agent/types";
 
@@ -28,9 +28,13 @@ function props(overrides: Partial<React.ComponentProps<typeof HistorySheet>> = {
     activeConversationId: null,
     loading: false,
     error: null,
+    action: null,
     onRetry: jest.fn(),
     onSelect: jest.fn(),
     onNew: jest.fn(),
+    onRename: jest.fn(async () => ({ ok: true, message: null })),
+    onDelete: jest.fn(async () => ({ ok: true, message: null })),
+    onActionChange: jest.fn(),
     onClose: jest.fn(),
     ...overrides,
   };
@@ -76,4 +80,131 @@ test("大量历史摘要使用有限首批的非嵌套虚拟列表", async () =>
   expect(list.props.maxToRenderPerBatch).toBe(12);
   expect(list.props.windowSize).toBe(5);
   expect(list.props.removeClippedSubviews).toBe(true);
+});
+
+test("每行提供可读屏的重命名与删除入口，切换操作保持可用", async () => {
+  const base = props({ conversations: [conversation(1)], activeConversationId: 1 });
+  const rendered = await render(<HistorySheet {...base} />);
+
+  await fireEvent.press(rendered.getByLabelText("切换到对话：对话 1"));
+  expect(base.onSelect).toHaveBeenCalledWith(1);
+
+  await fireEvent.press(rendered.getByLabelText("重命名对话：对话 1"));
+  expect(base.onActionChange).toHaveBeenCalledWith({
+    type: "rename",
+    conversation: expect.objectContaining({ id: 1 }),
+  });
+
+  await fireEvent.press(rendered.getByLabelText("删除对话：对话 1"));
+  expect(base.onActionChange).toHaveBeenCalledWith({
+    type: "delete",
+    conversation: expect.objectContaining({ id: 1 }),
+  });
+});
+
+test("重命名非法输入就地提示且不发请求", async () => {
+  const base = props({
+    conversations: [conversation(1)],
+    action: { type: "rename", conversation: conversation(1) },
+  });
+  const rendered = await render(<HistorySheet {...base} />);
+
+  await fireEvent.changeText(rendered.getByTestId("conversation-rename-input"), "   ");
+  await fireEvent.press(rendered.getByLabelText("保存"));
+
+  await waitFor(() => expect(rendered.getByText("标题不能为空")).toBeTruthy());
+  expect(base.onRename).not.toHaveBeenCalled();
+
+  await fireEvent.changeText(
+    rendered.getByTestId("conversation-rename-input"),
+    "长".repeat(256),
+  );
+  await fireEvent.press(rendered.getByLabelText("保存"));
+  await waitFor(() =>
+    expect(rendered.getByText("标题不能超过 255 个字符")).toBeTruthy(),
+  );
+  expect(base.onRename).not.toHaveBeenCalled();
+});
+
+test("重命名成功后关闭操作区", async () => {
+  const onRename = jest.fn(async () => ({ ok: true, message: null }));
+  const onActionChange = jest.fn();
+  const rendered = await render(
+    <HistorySheet
+      {...props({
+        conversations: [conversation(1)],
+        action: { type: "rename", conversation: conversation(1) },
+        onRename,
+        onActionChange,
+      })}
+    />,
+  );
+
+  await fireEvent.changeText(rendered.getByTestId("conversation-rename-input"), "施工笔记");
+  await fireEvent.press(rendered.getByLabelText("保存"));
+
+  await waitFor(() => expect(onRename).toHaveBeenCalledWith(1, "施工笔记"));
+  await waitFor(() => expect(onActionChange).toHaveBeenCalledWith(null));
+});
+
+test("重命名失败就地提示并保留操作区", async () => {
+  const onRename = jest.fn(async () => ({ ok: false, message: "标题已被其他端修改" }));
+  const rendered = await render(
+    <HistorySheet
+      {...props({
+        conversations: [conversation(1)],
+        action: { type: "rename", conversation: conversation(1) },
+        onRename,
+      })}
+    />,
+  );
+
+  await fireEvent.press(rendered.getByLabelText("保存"));
+
+  await waitFor(() => expect(rendered.getByText("标题已被其他端修改")).toBeTruthy());
+  expect(rendered.getByTestId("conversation-rename-input")).toBeTruthy();
+});
+
+test("删除二次确认说明内容保留，取消不发请求", async () => {
+  const onDelete = jest.fn(async () => ({ ok: true, message: null }));
+  const onActionChange = jest.fn();
+  const rendered = await render(
+    <HistorySheet
+      {...props({
+        conversations: [conversation(1)],
+        action: { type: "delete", conversation: conversation(1) },
+        onDelete,
+        onActionChange,
+      })}
+    />,
+  );
+
+  expect(rendered.getByText(/将从列表移除，对话内容保留/)).toBeTruthy();
+
+  await fireEvent.press(rendered.getByLabelText("取消"));
+  expect(onActionChange).toHaveBeenCalledWith(null);
+  expect(onDelete).not.toHaveBeenCalled();
+});
+
+test("删除冲突时就地提示需等待完成", async () => {
+  const onDelete = jest.fn(async () => ({
+    ok: false,
+    message: "对话存在进行中的问答，请等待完成或取消后再删除",
+  }));
+  const rendered = await render(
+    <HistorySheet
+      {...props({
+        conversations: [conversation(1)],
+        action: { type: "delete", conversation: conversation(1) },
+        onDelete,
+      })}
+    />,
+  );
+
+  await fireEvent.press(rendered.getByLabelText("确认删除"));
+
+  await waitFor(() =>
+    expect(rendered.getByText(/对话存在进行中的问答/)).toBeTruthy(),
+  );
+  expect(onDelete).toHaveBeenCalledWith(1);
 });

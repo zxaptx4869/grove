@@ -2,8 +2,12 @@ import { act, renderHook, waitFor } from "@testing-library/react-native";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 
 import { knowledgeAgentApi } from "@/src/knowledge-agent/api";
-import { useConversationController } from "@/src/knowledge-agent/hooks/useConversationController";
 import {
+  useConversationController,
+  type ConversationActionResult,
+} from "@/src/knowledge-agent/hooks/useConversationController";
+import {
+  attachConversation,
   createPendingSubmission,
   type PendingSubmission,
 } from "@/src/knowledge-agent/state/submission";
@@ -88,6 +92,8 @@ jest.mock("@/src/knowledge-agent/api", () => ({
     createConversation: jest.fn(),
     getConversation: jest.fn(),
     changeScope: jest.fn(),
+    renameConversation: jest.fn(),
+    deleteConversation: jest.fn(),
     listMessages: jest.fn(),
     submitMessage: jest.fn(),
     getEntryCurrent: jest.fn(),
@@ -796,4 +802,146 @@ test("取消只提交当前活动 Run", async () => {
   });
   expect(api.cancelRun).toHaveBeenCalledWith("token", 10);
   await waitFor(() => expect(rendered.result.current.activeRun).toBeNull());
+});
+
+test("重命名就地更新列表标题，不重载整份历史", async () => {
+  const rendered = await setup([conversation(1), conversation(2)]);
+  await waitFor(() => expect(rendered.result.current.conversations).toHaveLength(2));
+  expect(api.listConversations).toHaveBeenCalledTimes(1);
+  api.renameConversation.mockResolvedValue({ ...conversation(1), title: "施工笔记" });
+
+  let result: ConversationActionResult | null = null;
+  await act(async () => {
+    result = await rendered.result.current.renameConversation(1, "  施工笔记  ");
+  });
+
+  expect(result!.ok).toBe(true);
+  expect(api.renameConversation).toHaveBeenCalledWith("token", 1, "施工笔记");
+  await waitFor(() =>
+    expect(
+      rendered.result.current.conversations?.find((item) => item.id === 1)?.title,
+    ).toBe("施工笔记"),
+  );
+  expect(api.listConversations).toHaveBeenCalledTimes(1);
+});
+
+test("重命名非法输入就地拒绝且不发请求", async () => {
+  const rendered = await setup([conversation(1)]);
+  await waitFor(() => expect(rendered.result.current.conversations).toHaveLength(1));
+
+  let blank: ConversationActionResult | null = null;
+  let tooLong: ConversationActionResult | null = null;
+  await act(async () => {
+    blank = await rendered.result.current.renameConversation(1, "   ");
+    tooLong = await rendered.result.current.renameConversation(1, "长".repeat(256));
+  });
+
+  expect(blank!.ok).toBe(false);
+  expect(blank!.message).toContain("标题不能为空");
+  expect(tooLong!.ok).toBe(false);
+  expect(tooLong!.message).toContain("255");
+  expect(api.renameConversation).not.toHaveBeenCalled();
+});
+
+test("删除当前对话回到空白新对话并清理本地 pending 与恢复状态", async () => {
+  mockSessionInitial = {
+    ...mockSessionInitial,
+    choice: 1,
+    input: "未发送的问题",
+    pending: attachConversation(
+      createPendingSubmission({ text: "待确认的问题", contextMode: "auto", random: () => "client-pending" }),
+      1,
+    ),
+    pendingState: "result_unknown",
+    recoveryRun: { conversationId: 1, runId: 10 },
+  };
+  const rendered = await setup([conversation(1)], {
+    1: page([message(1, "user", 10)], [run(10, "completed")]),
+  });
+  await waitFor(() => expect(rendered.result.current.activeConversation).not.toBeNull());
+  api.deleteConversation.mockResolvedValue({ ok: true });
+
+  let result: ConversationActionResult | null = null;
+  await act(async () => {
+    result = await rendered.result.current.deleteConversation(1);
+  });
+
+  expect(result!.ok).toBe(true);
+  expect(api.deleteConversation).toHaveBeenCalledWith("token", 1);
+  expect(rendered.result.current.isDraft).toBe(true);
+  expect(rendered.result.current.activeConversation).toBeNull();
+  expect(rendered.result.current.pending).toBeNull();
+  expect(rendered.result.current.thread.items).toHaveLength(0);
+  expect(rendered.result.current.input).toBe("");
+});
+
+test("删除非当前对话只移除该行，当前对话保持不变", async () => {
+  const rendered = await setup([conversation(1), conversation(2)]);
+  await waitFor(() => expect(rendered.result.current.conversations).toHaveLength(2));
+  api.deleteConversation.mockResolvedValue({ ok: true });
+  api.listConversations.mockResolvedValue([conversation(1)]);
+
+  await act(async () => {
+    await rendered.result.current.deleteConversation(2);
+  });
+
+  expect(rendered.result.current.isDraft).toBe(false);
+  expect(rendered.result.current.activeConversation?.id).toBe(1);
+  await waitFor(() =>
+    expect(
+      rendered.result.current.conversations?.map((item) => item.id),
+    ).toEqual([1]),
+  );
+});
+
+test("删除冲突时返回可读提示且保留该行", async () => {
+  const rendered = await setup([conversation(1)]);
+  await waitFor(() => expect(rendered.result.current.conversations).toHaveLength(1));
+  api.deleteConversation.mockRejectedValue(
+    Object.assign(new Error("对话存在进行中的问答，请等待完成或取消后再删除"), {
+      status: 409,
+    }),
+  );
+
+  let result: ConversationActionResult | null = null;
+  await act(async () => {
+    result = await rendered.result.current.deleteConversation(1);
+  });
+
+  expect(result!.ok).toBe(false);
+  expect(result!.message).toContain("进行中的问答");
+  expect(rendered.result.current.conversations).toHaveLength(1);
+  expect(rendered.result.current.isDraft).toBe(false);
+});
+
+test("重复删除返回 404 时仍按删除成功处理", async () => {
+  const rendered = await setup([conversation(1)]);
+  await waitFor(() => expect(rendered.result.current.conversations).toHaveLength(1));
+  api.deleteConversation.mockRejectedValue(
+    Object.assign(new Error("对话不存在"), { status: 404 }),
+  );
+
+  let result: ConversationActionResult | null = null;
+  await act(async () => {
+    result = await rendered.result.current.deleteConversation(1);
+  });
+
+  expect(result!.ok).toBe(true);
+  expect(rendered.result.current.isDraft).toBe(true);
+});
+
+test("对话查询返回 404 时按不存在处理并失效历史列表", async () => {
+  const rendered = await setup(
+    [conversation(1)],
+    { 1: page() },
+    undefined,
+    async () => {
+      throw Object.assign(new Error("对话不存在"), { status: 404 });
+    },
+  );
+
+  await waitFor(() => expect(rendered.result.current.isDraft).toBe(true));
+  expect(rendered.result.current.activeConversation).toBeNull();
+  expect(api.listConversations.mock.calls.length).toBeGreaterThanOrEqual(2);
+  expect(rendered.result.current.recoveryError).toBeNull();
 });

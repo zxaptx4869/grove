@@ -22,13 +22,19 @@ import {
   EntryDetailSheet,
   type EntryDetailTarget,
 } from "@/src/knowledge-agent/components/EntryDetailSheet";
-import { HistorySheet } from "@/src/knowledge-agent/components/HistorySheet";
+import {
+  HistorySheet,
+  type HistoryAction,
+} from "@/src/knowledge-agent/components/HistorySheet";
 import { ModeSheet } from "@/src/knowledge-agent/components/ModeSheet";
 import { ProcessCard } from "@/src/knowledge-agent/components/ProcessCard";
 import { RichText } from "@/src/knowledge-agent/components/RichText";
 import { ScopeSheet } from "@/src/knowledge-agent/components/ScopeSheet";
 import { toUserErrorMessage } from "@/src/knowledge-agent/errors";
-import { useConversationController } from "@/src/knowledge-agent/hooks/useConversationController";
+import {
+  useConversationController,
+  type ConversationActionResult,
+} from "@/src/knowledge-agent/hooks/useConversationController";
 import { useKeyboardHeight } from "@/src/knowledge-agent/hooks/useKeyboardHeight";
 import type {
   KnowledgeConversation,
@@ -291,6 +297,8 @@ export function ConversationScreen() {
             loading={controller.conversationsLoading}
             error={controller.conversationsError}
             onRetry={controller.retryConversations}
+            onRename={controller.renameConversation}
+            onDelete={controller.deleteConversation}
             onSelect={(id) => {
               if (!controller.pending) {
                 controller.clearReadingPosition(String(id));
@@ -585,6 +593,8 @@ const HistoryControl = memo(function HistoryControl({
   loading,
   error,
   onRetry,
+  onRename,
+  onDelete,
   onSelect,
   onNew,
 }: {
@@ -593,16 +603,30 @@ const HistoryControl = memo(function HistoryControl({
   loading: boolean;
   error: string | null;
   onRetry: () => void;
+  onRename: (
+    conversationId: number,
+    title: string,
+  ) => Promise<ConversationActionResult>;
+  onDelete: (conversationId: number) => Promise<ConversationActionResult>;
   onSelect: (conversationId: number) => void;
   onNew: () => void;
 }) {
   const sheet = useSheetAfterKeyboard();
+  const [action, setAction] = useState<HistoryAction | null>(null);
+  const openSheet = () => {
+    setAction(null);
+    sheet.open();
+  };
+  const closeSheet = () => {
+    setAction(null);
+    sheet.close();
+  };
   return (
     <>
       <Pressable
         accessibilityRole="button"
         accessibilityLabel="打开对话历史"
-        onPress={sheet.open}
+        onPress={openSheet}
         style={({ pressed }) => [styles.historyButton, pressed && styles.pressed]}
       >
         <AgentIcon name="history" size={21} color={theme.ink} />
@@ -613,16 +637,20 @@ const HistoryControl = memo(function HistoryControl({
         activeConversationId={activeConversationId}
         loading={loading}
         error={error}
+        action={action}
         onRetry={onRetry}
+        onRename={onRename}
+        onDelete={onDelete}
+        onActionChange={setAction}
         onSelect={(id) => {
           onSelect(id);
-          sheet.close();
+          closeSheet();
         }}
         onNew={() => {
           onNew();
-          sheet.close();
+          closeSheet();
         }}
-        onClose={sheet.close}
+        onClose={closeSheet}
       />
     </>
   );

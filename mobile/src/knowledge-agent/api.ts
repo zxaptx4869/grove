@@ -99,6 +99,24 @@ export const knowledgeAgentApi = {
       ),
     ),
 
+  renameConversation: (token: string, conversationId: number, title: string) =>
+    withToken(token, (value) =>
+      request<KnowledgeConversation>(
+        `/api/knowledge-agent/conversations/${conversationId}`,
+        { method: "PATCH", body: JSON.stringify({ title }) },
+        value,
+      ),
+    ),
+
+  deleteConversation: (token: string, conversationId: number) =>
+    withToken(token, (value) =>
+      request<{ ok: boolean }>(
+        `/api/knowledge-agent/conversations/${conversationId}`,
+        { method: "DELETE" },
+        value,
+      ),
+    ),
+
   listMessages: (token: string, conversationId: number, cursor: string | null) => {
     const query = cursor
       ? `?cursor=${encodeURIComponent(cursor)}&limit=${MESSAGE_PAGE_LIMIT}`

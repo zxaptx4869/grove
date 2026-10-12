@@ -1,6 +1,15 @@
-import { FlatList, Pressable, StyleSheet, Text, View } from "react-native";
+import { useState } from "react";
+import {
+  FlatList,
+  Pressable,
+  StyleSheet,
+  Text,
+  TextInput,
+  View,
+} from "react-native";
 
 import { AgentIcon } from "@/src/knowledge-agent/components/AgentIcon";
+import type { ConversationActionResult } from "@/src/knowledge-agent/hooks/useConversationController";
 import { AppButton, Badge, Sheet } from "@/src/knowledge-agent/components/ui";
 import type {
   KnowledgeConversation,
@@ -42,15 +51,128 @@ function conversationStatus(conversation: KnowledgeConversation): string {
   return `${scopePrefix} · ${RUN_STATUS_LABELS[conversation.recentRunStatus ?? "completed"]}`;
 }
 
+export interface HistoryAction {
+  type: "rename" | "delete";
+  conversation: KnowledgeConversation;
+}
+
+/** 行内操作区：打开期间列表保持挂载，重命名成功后只更新该行标题。 */
+function ConversationActionPanel({
+  action,
+  onRename,
+  onDelete,
+  onClose,
+}: {
+  action: HistoryAction;
+  onRename: (
+    conversationId: number,
+    title: string,
+  ) => Promise<ConversationActionResult>;
+  onDelete: (conversationId: number) => Promise<ConversationActionResult>;
+  onClose: () => void;
+}) {
+  const [title, setTitle] = useState(action.conversation.title);
+  const [error, setError] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+
+  const submitRename = async () => {
+    if (busy) return;
+    const trimmed = title.trim();
+    if (!trimmed) {
+      setError("标题不能为空");
+      return;
+    }
+    if (trimmed.length > 255) {
+      setError("标题不能超过 255 个字符");
+      return;
+    }
+    setError(null);
+    setBusy(true);
+    const result = await onRename(action.conversation.id, trimmed);
+    setBusy(false);
+    if (result.ok) {
+      onClose();
+      return;
+    }
+    setError(result.message ?? "重命名失败，请重试");
+  };
+
+  const submitDelete = async () => {
+    if (busy) return;
+    setError(null);
+    setBusy(true);
+    const result = await onDelete(action.conversation.id);
+    setBusy(false);
+    if (result.ok) {
+      onClose();
+      return;
+    }
+    setError(result.message ?? "删除失败，请重试");
+  };
+
+  return (
+    <View style={styles.actionPanel}>
+      <Text style={styles.actionTitle}>
+        {action.type === "rename" ? "重命名对话" : "删除对话"}
+      </Text>
+      {action.type === "rename" ? (
+        <>
+          <Text style={styles.actionCopy}>只修改列表里的对话名称，消息与问答记录保持不变。</Text>
+          <TextInput
+            testID="conversation-rename-input"
+            accessibilityLabel="对话名称"
+            value={title}
+            onChangeText={setTitle}
+            maxLength={255}
+            autoFocus
+            style={styles.actionInput}
+          />
+        </>
+      ) : (
+        <Text style={styles.actionCopy}>
+          「{action.conversation.title}」将从列表移除，对话内容保留。
+        </Text>
+      )}
+      {error !== null ? (
+        <Text style={styles.actionError} accessibilityRole="alert">
+          {error}
+        </Text>
+      ) : null}
+      <View style={styles.actionButtons}>
+        <AppButton label="取消" variant="ghost" onPress={onClose} />
+        {action.type === "rename" ? (
+          <AppButton
+            label={busy ? "保存中…" : "保存"}
+            variant="primary"
+            disabled={busy}
+            onPress={() => void submitRename()}
+          />
+        ) : (
+          <AppButton
+            label={busy ? "删除中…" : "确认删除"}
+            variant="danger"
+            disabled={busy}
+            onPress={() => void submitDelete()}
+          />
+        )}
+      </View>
+    </View>
+  );
+}
+
 export function HistorySheet({
   visible,
   conversations,
   activeConversationId,
   loading,
   error,
+  action,
   onRetry,
   onSelect,
   onNew,
+  onRename,
+  onDelete,
+  onActionChange,
   onClose,
 }: {
   visible: boolean;
@@ -58,14 +180,30 @@ export function HistorySheet({
   activeConversationId: number | null;
   loading: boolean;
   error: string | null;
+  action: HistoryAction | null;
   onRetry: () => void;
   onSelect: (conversationId: number) => void;
   onNew: () => void;
+  onRename: (
+    conversationId: number,
+    title: string,
+  ) => Promise<ConversationActionResult>;
+  onDelete: (conversationId: number) => Promise<ConversationActionResult>;
+  onActionChange: (action: HistoryAction | null) => void;
   onClose: () => void;
 }) {
   return (
     <Sheet visible={visible} title="对话历史" onClose={onClose} scrollable={false}>
       <View style={styles.body}>
+        {action ? (
+          <ConversationActionPanel
+            key={`${action.type}-${action.conversation.id}`}
+            action={action}
+            onRename={onRename}
+            onDelete={onDelete}
+            onClose={() => onActionChange(null)}
+          />
+        ) : null}
         <View style={styles.newRow}>
           <Pressable
             accessibilityRole="button"
@@ -112,31 +250,48 @@ export function HistorySheet({
           renderItem={({ item: conversation }) => {
           const selected = conversation.id === activeConversationId;
           return (
-            <Pressable
-              accessibilityRole="button"
-              accessibilityLabel={`切换到对话：${conversation.title}`}
-              accessibilityState={{ selected }}
-              onPress={() => onSelect(conversation.id)}
-              style={({ pressed }) => [styles.row, pressed && styles.pressed]}
-            >
-              <View style={styles.rowTop}>
-                <Badge tone={selected ? "confirmed" : "neutral"}>
-                  {conversation.scopeType === "project"
-                    ? conversation.projectName ?? "项目"
-                    : "全部知识"}
-                </Badge>
-                <Text style={styles.time}>{relativeTime(conversation.lastActivityAt)}</Text>
+            <View style={styles.row}>
+              <Pressable
+                accessibilityRole="button"
+                accessibilityLabel={`切换到对话：${conversation.title}`}
+                accessibilityState={{ selected }}
+                onPress={() => onSelect(conversation.id)}
+                style={({ pressed }) => [styles.rowSwitch, pressed && styles.pressed]}
+              >
+                <View style={styles.rowTop}>
+                  <Badge tone={selected ? "confirmed" : "neutral"}>
+                    {conversation.scopeType === "project"
+                      ? conversation.projectName ?? "项目"
+                      : "全部知识"}
+                  </Badge>
+                  <Text style={styles.time}>{relativeTime(conversation.lastActivityAt)}</Text>
+                </View>
+                <Text style={styles.rowTitle} numberOfLines={1}>
+                  {conversation.title}
+                </Text>
+                <Text style={styles.rowStatus}>
+                  {conversation.activeTopicLabel
+                    ? `主题：${conversation.activeTopicLabel} · `
+                    : ""}
+                  {conversationStatus(conversation)}
+                </Text>
+              </Pressable>
+              <View style={styles.rowActions}>
+                <AppButton
+                  label="重命名"
+                  variant="ghost"
+                  accessibilityLabel={`重命名对话：${conversation.title}`}
+                  icon={<AgentIcon name="edit" size={14} color={theme.green} />}
+                  onPress={() => onActionChange({ type: "rename", conversation })}
+                />
+                <AppButton
+                  label="删除"
+                  variant="ghost"
+                  accessibilityLabel={`删除对话：${conversation.title}`}
+                  onPress={() => onActionChange({ type: "delete", conversation })}
+                />
               </View>
-              <Text style={styles.rowTitle} numberOfLines={1}>
-                {conversation.title}
-              </Text>
-              <Text style={styles.rowStatus}>
-                {conversation.activeTopicLabel
-                  ? `主题：${conversation.activeTopicLabel} · `
-                  : ""}
-                {conversationStatus(conversation)}
-              </Text>
-            </Pressable>
+            </View>
           );
           }}
         />
@@ -163,10 +318,41 @@ const styles = StyleSheet.create({
   },
   newButtonText: { color: theme.green, fontSize: 13, fontWeight: "700" },
   pressed: { opacity: 0.85 },
+  actionPanel: {
+    marginHorizontal: 16,
+    marginTop: 8,
+    marginBottom: 4,
+    padding: 12,
+    borderWidth: 1,
+    borderColor: theme.border,
+    borderRadius: 10,
+    backgroundColor: theme.soft,
+    gap: 8,
+  },
+  actionTitle: { color: theme.ink, fontSize: 14, fontWeight: "700" },
+  actionCopy: { color: theme.muted, fontSize: 12, lineHeight: 18 },
+  actionInput: {
+    minHeight: 44,
+    paddingHorizontal: 11,
+    borderWidth: 1,
+    borderColor: theme.border,
+    borderRadius: 8,
+    backgroundColor: theme.surface,
+    color: theme.ink,
+    fontSize: 14,
+  },
+  actionError: { color: theme.error, fontSize: 12, lineHeight: 18 },
+  actionButtons: { flexDirection: "row", justifyContent: "flex-end", gap: 8 },
   row: {
-    paddingVertical: 12,
     borderBottomWidth: 1,
     borderBottomColor: theme.border,
+  },
+  rowSwitch: { paddingTop: 12, paddingBottom: 4 },
+  rowActions: {
+    flexDirection: "row",
+    justifyContent: "flex-end",
+    gap: 8,
+    paddingBottom: 8,
   },
   rowTop: {
     flexDirection: "row",

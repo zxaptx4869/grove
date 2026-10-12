@@ -39,10 +39,14 @@ jest.mock("@/src/knowledge-agent/components/HistorySheet", () => {
       visible,
       onNew,
       onSelect,
+      onRename,
+      onDelete,
     }: {
       visible: boolean;
       onNew: () => void;
       onSelect: (conversationId: number) => void;
+      onRename: (conversationId: number, title: string) => Promise<unknown>;
+      onDelete: (conversationId: number) => Promise<unknown>;
     }) =>
       visible
         ? ReactModule.createElement(
@@ -53,6 +57,14 @@ jest.mock("@/src/knowledge-agent/components/HistorySheet", () => {
               NativePressable,
               { accessibilityLabel: "切换到对话：对话一", onPress: () => onSelect(1) },
             ),
+            ReactModule.createElement(NativePressable, {
+              accessibilityLabel: "重命名对话：对话一",
+              onPress: () => void onRename(1, "新的对话名称"),
+            }),
+            ReactModule.createElement(NativePressable, {
+              accessibilityLabel: "删除对话：对话一",
+              onPress: () => void onDelete(1),
+            }),
             ReactModule.createElement(NativePressable, {
               accessibilityLabel: "新建对话",
               onPress: onNew,
@@ -171,6 +183,8 @@ function controller(
     switchToConversation: jest.fn(),
     startNewConversation: jest.fn(),
     retryConversations: jest.fn(),
+    renameConversation: jest.fn(async () => ({ ok: true, message: null })),
+    deleteConversation: jest.fn(async () => ({ ok: true, message: null })),
     thread: {
       items: [],
       runsById: new Map(),
@@ -508,4 +522,19 @@ test("键盘不可见时点本次提问设置立即打开弹层", async () => {
 
   expect(rendered.getByText("本次提问设置弹层")).toBeTruthy();
   expect(addListener).not.toHaveBeenCalled();
+});
+
+test("历史列表行操作透传到控制器", async () => {
+  const state = controller();
+  mockUseConversationController.mockReturnValue(state);
+  const rendered = await renderScreen();
+
+  await fireEvent.press(rendered.getByLabelText("打开对话历史"));
+  await waitFor(() => expect(rendered.getByText("对话历史")).toBeTruthy());
+
+  await fireEvent.press(rendered.getByLabelText("重命名对话：对话一"));
+  expect(state.renameConversation).toHaveBeenCalledWith(1, "新的对话名称");
+
+  await fireEvent.press(rendered.getByLabelText("删除对话：对话一"));
+  expect(state.deleteConversation).toHaveBeenCalledWith(1);
 });

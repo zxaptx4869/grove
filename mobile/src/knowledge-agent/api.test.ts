@@ -108,4 +108,38 @@ describe("知识 Agent 正式对话 API", () => {
     );
     expect((globalThis.fetch as jest.Mock).mock.calls[0][1].method).toBeUndefined();
   });
+
+  test("重命名对话提交标题并归一化返回", async () => {
+    mockFetch({ id: 5, title: "施工笔记", scope_type: "workspace" });
+    const updated = await api.knowledgeAgentApi.renameConversation(
+      "token-4",
+      5,
+      "施工笔记",
+    );
+    const [url, init] = (globalThis.fetch as jest.Mock).mock.calls[0] as [
+      string,
+      RequestInit,
+    ];
+    expect(url).toBe("http://example.test/api/knowledge-agent/conversations/5");
+    expect(init.method).toBe("PATCH");
+    expect(JSON.parse(String(init.body))).toEqual({ title: "施工笔记" });
+    expect(updated.title).toBe("施工笔记");
+  });
+
+  test("删除对话返回 ok 并把 409 映射为冲突错误", async () => {
+    mockFetch({ ok: true });
+    const removed = await api.knowledgeAgentApi.deleteConversation("token-5", 5);
+    const [url, init] = (globalThis.fetch as jest.Mock).mock.calls[0] as [
+      string,
+      RequestInit,
+    ];
+    expect(url).toBe("http://example.test/api/knowledge-agent/conversations/5");
+    expect(init.method).toBe("DELETE");
+    expect(removed).toEqual({ ok: true });
+
+    mockFetch({ detail: "对话存在进行中的问答，请等待完成或取消后再删除" }, 409);
+    await expect(
+      api.knowledgeAgentApi.deleteConversation("token-6", 5),
+    ).rejects.toMatchObject({ kind: "conflict", status: 409 });
+  });
 });

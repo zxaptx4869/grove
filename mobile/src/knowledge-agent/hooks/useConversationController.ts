@@ -53,6 +53,13 @@ export interface ConversationController {
   switchToConversation: (conversationId: number) => void;
   startNewConversation: () => void;
   retryConversations: () => void;
+  renameConversation: (
+    conversationId: number,
+    title: string,
+  ) => Promise<ConversationActionResult>;
+  deleteConversation: (
+    conversationId: number,
+  ) => Promise<ConversationActionResult>;
   thread: MessageThreadState;
   messagesLoading: boolean;
   messagesError: string | null;
@@ -90,6 +97,12 @@ export interface ConversationController {
   cancelError: string | null;
   requestCancelRun: () => Promise<void>;
   appActive: boolean;
+}
+
+/** 历史列表行操作结果：失败时就地提示，不抛出给界面。 */
+export interface ConversationActionResult {
+  ok: boolean;
+  message: string | null;
 }
 
 interface RunCancelError {
@@ -407,6 +420,124 @@ export function useConversationController(
     }
     setModesState(DEFAULT_MODES);
   }, [pending, resetConversationLocalState, session]);
+
+  /**
+   * 对话已不存在（被删除）时回到空白新对话。
+
+   * 与 startNewConversation 的区别：这里必须强制清理引用该对话的本地 pending 与
+   * recovery 持久化状态，否则重启后会去恢复已删除的对话。
+   */
+  const returnToDraft = useCallback(() => {
+    resetConversationLocalState();
+    setModesState(DEFAULT_MODES);
+    setSubmitError(null);
+    session.update({
+      choice: "draft",
+      input: "",
+      pending: null,
+      pendingState: null,
+      recoveryRun: null,
+    });
+  }, [resetConversationLocalState, session]);
+
+  const forgetConversation = useCallback(
+    (conversationId: number) => {
+      queryClient.setQueryData<KnowledgeConversation[]>(
+        knowledgeAgentKeys.conversations(),
+        (current) => current?.filter((item) => item.id !== conversationId) ?? current,
+      );
+      void queryClient.invalidateQueries({ queryKey: knowledgeAgentKeys.conversations() });
+      if (conversationId === selectedConversationId) returnToDraft();
+    },
+    [queryClient, returnToDraft, selectedConversationId],
+  );
+
+  const renameConversation = useCallback(
+    async (
+      conversationId: number,
+      title: string,
+    ): Promise<ConversationActionResult> => {
+      if (!token) return { ok: false, message: "登录已失效，请重新登录" };
+      const trimmed = title.trim();
+      if (!trimmed) return { ok: false, message: "标题不能为空" };
+      if (trimmed.length > 255) return { ok: false, message: "标题不能超过 255 个字符" };
+      try {
+        const updated = await knowledgeAgentApi.renameConversation(
+          token,
+          conversationId,
+          trimmed,
+        );
+        // 就地更新该行，不重载整份历史
+        queryClient.setQueryData<KnowledgeConversation[]>(
+          knowledgeAgentKeys.conversations(),
+          (current) =>
+            current?.map((item) => (item.id === updated.id ? updated : item)) ?? current,
+        );
+        if (conversationId === selectedConversationId) {
+          queryClient.setQueryData(
+            knowledgeAgentKeys.conversation(conversationId),
+            updated,
+          );
+        }
+        return { ok: true, message: null };
+      } catch (error) {
+        const classified = classifyKnowledgeAgentError(error);
+        if (classified.kind === "not_found") {
+          // 已被其他端删除：按不存在处理，该行随列表失效消失
+          forgetConversation(conversationId);
+          return { ok: true, message: null };
+        }
+        return { ok: false, message: classified.message };
+      }
+    },
+    [forgetConversation, queryClient, selectedConversationId, token],
+  );
+
+  const deleteConversation = useCallback(
+    async (conversationId: number): Promise<ConversationActionResult> => {
+      if (!token) return { ok: false, message: "登录已失效，请重新登录" };
+      try {
+        await knowledgeAgentApi.deleteConversation(token, conversationId);
+      } catch (error) {
+        const classified = classifyKnowledgeAgentError(error);
+        if (classified.kind === "conflict") {
+          return {
+            ok: false,
+            message:
+              classified.message || "对话存在进行中的问答，请等待完成或取消后再删除",
+          };
+        }
+        if (classified.kind !== "not_found") {
+          return { ok: false, message: classified.message };
+        }
+      }
+      // 删除成功或已被删除：都按不存在处理
+      forgetConversation(conversationId);
+      return { ok: true, message: null };
+    },
+    [forgetConversation, token],
+  );
+
+  useEffect(() => {
+    if (selectedConversationId === null || !activeConversationQuery.isError) return;
+    if (classifyKnowledgeAgentError(activeConversationQuery.error).kind !== "not_found") {
+      return;
+    }
+    // 对话已被删除：按不存在处理，回到空白新对话并失效历史列表，不反复重试
+    let cancelled = false;
+    queueMicrotask(() => {
+      if (cancelled) return;
+      forgetConversation(selectedConversationId);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [
+    activeConversationQuery.error,
+    activeConversationQuery.isError,
+    forgetConversation,
+    selectedConversationId,
+  ]);
 
   const loadOlderMessages = useCallback(async () => {
     if (
@@ -772,6 +903,8 @@ export function useConversationController(
     switchToConversation,
     startNewConversation,
     retryConversations: () => void conversationsQuery.refetch(),
+    renameConversation,
+    deleteConversation,
     thread,
     messagesLoading: recentPageQuery.isLoading,
     messagesError: recentPageQuery.isError
