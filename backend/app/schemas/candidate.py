@@ -1,23 +1,23 @@
 """Candidate 响应模型。"""
 
-from pydantic import BaseModel
+from app.schemas.base import ApiModel
 
 
-class EvidenceRefOut(BaseModel):
+class EvidenceRefOut(ApiModel):
     """候选证据引用。"""
 
     attachment_id: int
     quote: str
 
 
-class NodeAlternativeOut(BaseModel):
+class NodeAlternativeOut(ApiModel):
     """候选目录备选。"""
 
     node_id: int
     reason: str = ""
 
 
-class NewNodeSuggestionOut(BaseModel):
+class NewNodeSuggestionOut(ApiModel):
     """候选的新节点建议。"""
 
     name: str
@@ -25,7 +25,7 @@ class NewNodeSuggestionOut(BaseModel):
     reason: str | None = None
 
 
-class EntryRevisionDraftOut(BaseModel):
+class EntryRevisionDraftOut(ApiModel):
     """候选对已有 Entry 的修订草稿。"""
 
     title: str | None = None
@@ -37,7 +37,7 @@ class EntryRevisionDraftOut(BaseModel):
     change_summary: str = ""
 
 
-class CandidateOut(BaseModel):
+class CandidateOut(ApiModel):
     """AI 候选，非正式知识。"""
 
     id: int

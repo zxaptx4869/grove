@@ -2,6 +2,7 @@
 
 import json
 import uuid
+from datetime import datetime, timedelta
 
 import httpx
 import pytest
@@ -747,3 +748,14 @@ async def test_legacy_run_without_shared_graph_fields_remains_readable(
     assert page_response.status_code == 200
     assert run_response.json()["id"] == run_id
     assert {item["id"] for item in page_response.json()["runs"]} == {run_id}
+
+
+@pytest.mark.asyncio
+async def test_conversation_times_are_utc_with_offset(client: httpx.AsyncClient) -> None:
+    """知识 Agent 对话响应时间同样 UTC 带偏移，覆盖来源之外的端点。"""
+    await _register(client)
+    conversation = await _conversation(client)
+
+    for field in ("created_at", "last_activity_at"):
+        parsed = datetime.fromisoformat(conversation[field])
+        assert parsed.utcoffset() == timedelta(0), (field, conversation[field])

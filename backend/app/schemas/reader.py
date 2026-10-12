@@ -2,10 +2,12 @@
 
 from typing import Literal
 
-from pydantic import BaseModel, Field
+from pydantic import Field
+
+from app.schemas.base import ApiModel
 
 
-class ReaderAskRequest(BaseModel):
+class ReaderAskRequest(ApiModel):
     """一次问答请求。"""
 
     message: str = Field(min_length=1, max_length=2000)
@@ -13,7 +15,7 @@ class ReaderAskRequest(BaseModel):
     node_id: int | None = None
 
 
-class ReaderCitationOut(BaseModel):
+class ReaderCitationOut(ApiModel):
     """回答引用：Entry 与 Source 证据。"""
 
     entry_id: int
@@ -23,7 +25,7 @@ class ReaderCitationOut(BaseModel):
     quote: str
 
 
-class ReaderConflictOut(BaseModel):
+class ReaderConflictOut(ApiModel):
     """矛盾 Entry 展示。"""
 
     entry_id_a: int
@@ -33,7 +35,7 @@ class ReaderConflictOut(BaseModel):
     summary: str
 
 
-class ReaderAnswerOut(BaseModel):
+class ReaderAnswerOut(ApiModel):
     """一次问答的结构化响应。"""
 
     answer: str
@@ -50,7 +52,7 @@ class ReaderAnswerOut(BaseModel):
     error: str | None = None
 
 
-class ReaderCitationIn(BaseModel):
+class ReaderCitationIn(ApiModel):
     """保存回答时的引用输入。"""
 
     entry_id: int
@@ -58,7 +60,7 @@ class ReaderCitationIn(BaseModel):
     quote: str = ""
 
 
-class ReaderSaveRequest(BaseModel):
+class ReaderSaveRequest(ApiModel):
     """把回答保存为候选的请求。"""
 
     question: str = Field(min_length=1, max_length=2000)

@@ -2,10 +2,12 @@
 
 from datetime import datetime
 
-from pydantic import BaseModel, Field
+from pydantic import Field
+
+from app.schemas.base import ApiModel
 
 
-class AttachmentOut(BaseModel):
+class AttachmentOut(ApiModel):
     """附件摘要（图片返回文件信息，文字返回正文）。"""
 
     id: int
@@ -17,7 +19,7 @@ class AttachmentOut(BaseModel):
     ocr_text: str | None
 
 
-class SourceOut(BaseModel):
+class SourceOut(ApiModel):
     """Source 摘要（含附件）。"""
 
     id: int
@@ -40,7 +42,7 @@ class SourceOut(BaseModel):
     candidate_count: int = 0
 
 
-class SourcePageOut(BaseModel):
+class SourcePageOut(ApiModel):
     """全量来源历史查询的分页结果。"""
 
     items: list[SourceOut]
@@ -49,7 +51,7 @@ class SourcePageOut(BaseModel):
     offset: int
 
 
-class SourceUpdate(BaseModel):
+class SourceUpdate(ApiModel):
     """修改 Source 的说明或项目归属。"""
 
     note: str | None = Field(default=None, max_length=4000)

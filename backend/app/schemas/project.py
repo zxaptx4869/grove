@@ -3,10 +3,12 @@
 from datetime import datetime
 from typing import Literal
 
-from pydantic import BaseModel, Field
+from pydantic import Field
+
+from app.schemas.base import ApiModel
 
 
-class ProjectCreate(BaseModel):
+class ProjectCreate(ApiModel):
     """创建项目：新路径默认空目录，template 仅兼容旧客户端。"""
 
     name: str = Field(min_length=1, max_length=64)
@@ -14,7 +16,7 @@ class ProjectCreate(BaseModel):
     template: Literal["decoration", "empty"] | None = None
 
 
-class ProjectUpdate(BaseModel):
+class ProjectUpdate(ApiModel):
     """修改项目名称与可选说明。"""
 
     name: str | None = Field(default=None, min_length=1, max_length=64)
@@ -24,13 +26,13 @@ class ProjectUpdate(BaseModel):
 ProjectStatus = Literal["active", "paused", "completed", "archived"]
 
 
-class ProjectStatusUpdate(BaseModel):
+class ProjectStatusUpdate(ApiModel):
     """修改项目生命周期状态。"""
 
     status: ProjectStatus
 
 
-class ProjectOut(BaseModel):
+class ProjectOut(ApiModel):
     """项目摘要（含节点数）。"""
 
     id: int
@@ -42,7 +44,7 @@ class ProjectOut(BaseModel):
     created_at: datetime
 
 
-class NodeOut(BaseModel):
+class NodeOut(ApiModel):
     """目录树节点（递归结构）。"""
 
     id: int
@@ -56,7 +58,7 @@ class NodeOut(BaseModel):
 NodeOut.model_rebuild()
 
 
-class NodeCreate(BaseModel):
+class NodeCreate(ApiModel):
     """创建节点：不传 parent_id 时为根节点。"""
 
     name: str = Field(min_length=1, max_length=128)
@@ -64,7 +66,7 @@ class NodeCreate(BaseModel):
     parent_id: int | None = None
 
 
-class NodeUpdate(BaseModel):
+class NodeUpdate(ApiModel):
     """更新节点名称/描述。"""
 
     name: str | None = Field(default=None, min_length=1, max_length=128)
@@ -72,7 +74,7 @@ class NodeUpdate(BaseModel):
     parent_id: int | None = None
 
 
-class NodeReorderRequest(BaseModel):
+class NodeReorderRequest(ApiModel):
     """同级节点排序：parent_id 为空表示根级，ordered_ids 为新的顺序。"""
 
     parent_id: int | None = None

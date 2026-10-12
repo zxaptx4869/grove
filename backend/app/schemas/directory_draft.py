@@ -2,10 +2,12 @@
 
 from datetime import datetime
 
-from pydantic import BaseModel, Field
+from pydantic import Field
+
+from app.schemas.base import ApiModel
 
 
-class ClarifyQuestionOut(BaseModel):
+class ClarifyQuestionOut(ApiModel):
     """一道澄清问题（选项 + 是否多选）。"""
 
     id: str
@@ -14,7 +16,7 @@ class ClarifyQuestionOut(BaseModel):
     multiple: bool = False
 
 
-class DraftNodeOut(BaseModel):
+class DraftNodeOut(ApiModel):
     """草稿节点（扁平，parent_id 组成树）。"""
 
     id: int
@@ -25,7 +27,7 @@ class DraftNodeOut(BaseModel):
     selected: bool
 
 
-class DraftDiffNodeOut(BaseModel):
+class DraftDiffNodeOut(ApiModel):
     """节点拓展差异快照：新增 / 保留 / 建议移除（递归）。"""
 
     kind: str
@@ -41,7 +43,7 @@ class DraftDiffNodeOut(BaseModel):
 DraftDiffNodeOut.model_rebuild()
 
 
-class DraftOut(BaseModel):
+class DraftOut(ApiModel):
     """目录草稿响应。"""
 
     id: int
@@ -63,7 +65,7 @@ class DraftOut(BaseModel):
     updated_at: datetime
 
 
-class DraftMessageOut(BaseModel):
+class DraftMessageOut(ApiModel):
     """草稿会话消息。"""
 
     id: int
@@ -75,25 +77,25 @@ class DraftMessageOut(BaseModel):
 DraftOut.model_rebuild()
 
 
-class DraftCreateRequest(BaseModel):
+class DraftCreateRequest(ApiModel):
     """创建草稿的可选背景说明。"""
 
     background: str | None = Field(default=None, max_length=2000)
 
 
-class ExpandRequest(BaseModel):
+class ExpandRequest(ApiModel):
     """发起节点拓展的请求体。"""
 
     node_id: int
 
 
-class ClarifySubmitRequest(BaseModel):
+class ClarifySubmitRequest(ApiModel):
     """一次提交全部澄清答案。"""
 
     answers: dict[str, str | list[str]] = Field(default_factory=dict)
 
 
-class DraftNodeInput(BaseModel):
+class DraftNodeInput(ApiModel):
     """用户编辑草稿时提交的节点（嵌套树）。"""
 
     name: str = Field(min_length=1, max_length=128)
@@ -105,19 +107,19 @@ class DraftNodeInput(BaseModel):
 DraftNodeInput.model_rebuild()
 
 
-class DraftNodesUpdateRequest(BaseModel):
+class DraftNodesUpdateRequest(ApiModel):
     """全量替换草稿节点树。"""
 
     nodes: list[DraftNodeInput] = []
 
 
-class DraftApplyRequest(BaseModel):
+class DraftApplyRequest(ApiModel):
     """应用节点拓展草稿时提交的移除项。"""
 
     removed_node_ids: list[int] = []
 
 
-class DraftMessageSubmitRequest(BaseModel):
+class DraftMessageSubmitRequest(ApiModel):
     """发送一条对话调整消息。"""
 
     content: str = Field(min_length=1, max_length=2000)

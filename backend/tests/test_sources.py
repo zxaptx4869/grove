@@ -1,6 +1,7 @@
 """Source 采集与附件 API 测试。"""
 
 import uuid
+from datetime import datetime, timedelta
 
 from fastapi.testclient import TestClient
 
@@ -418,3 +419,23 @@ def test_source_has_processing_task_field(client: TestClient) -> None:
     # 清理本次创建的任务：测试库为会话级共享，遗留的等待任务会被处理 Worker 抢先消费
     for source_id in (with_task["id"], without_task["id"]):
         assert client.delete(f"/api/sources/{source_id}").status_code == 200
+
+
+def test_source_times_are_utc_with_offset(client: TestClient) -> None:
+    """来源响应时间统一 UTC 带偏移，创建、列表、详情与历史分页口径一致。"""
+    _register(client)
+    created = _upload_image(client)
+
+    for field in ("created_at", "updated_at"):
+        assert datetime.fromisoformat(created[field]).utcoffset() == timedelta(0)
+
+    listed = client.get("/api/sources").json()
+    detail = client.get(f"/api/sources/{created['id']}").json()
+    history = client.get("/api/sources/query").json()
+
+    assert listed and detail and history["items"]
+    for payload in (listed[0], detail, history["items"][0]):
+        for field in ("created_at", "updated_at"):
+            parsed = datetime.fromisoformat(payload[field])
+            assert parsed.utcoffset() == timedelta(0), (field, payload[field])
+            assert payload[field].endswith("Z"), (field, payload[field])

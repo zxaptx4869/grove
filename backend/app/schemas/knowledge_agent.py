@@ -7,7 +7,9 @@
 from datetime import datetime
 from typing import Annotated, Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import ConfigDict, Field
+
+from app.schemas.base import ApiModel
 
 KnowledgeScopeType = Literal["workspace", "project"]
 
@@ -104,14 +106,14 @@ InvestigationStopReason = Literal[
 ]
 
 
-class KnowledgeConversationCreate(BaseModel):
+class KnowledgeConversationCreate(ApiModel):
     """创建知识对话：范围只能是 Workspace「全部知识」或具体项目。"""
 
     scope_type: KnowledgeScopeType = "workspace"
     project_id: int | None = None
 
 
-class KnowledgeConversationOut(BaseModel):
+class KnowledgeConversationOut(ApiModel):
     """知识对话摘要：含活动主题与活动工作集版本摘要。"""
 
     id: int
@@ -131,14 +133,14 @@ class KnowledgeConversationOut(BaseModel):
     created_at: datetime
 
 
-class KnowledgeScopeChangeRequest(BaseModel):
+class KnowledgeScopeChangeRequest(ApiModel):
     """切换对话当前范围；活动 Run 期间切换返回 409。"""
 
     scope_type: KnowledgeScopeType
     project_id: int | None = None
 
 
-class KnowledgeMessageOut(BaseModel):
+class KnowledgeMessageOut(ApiModel):
     """单条对话消息：保留生成时的范围快照。"""
 
     id: int
@@ -170,7 +172,7 @@ class KnowledgeMessageOut(BaseModel):
     created_at: datetime
 
 
-class KnowledgeMessagePageOut(BaseModel):
+class KnowledgeMessagePageOut(ApiModel):
     """游标分页的消息页：无 cursor 时返回最近一页且页内按时间正序；
     `next_cursor` 指向更早消息；`runs` 是本页关联且去重的 Run 集合；
     `candidate_drafts` 是本页 operation Run 关联且去重的草稿集合。"""
@@ -182,7 +184,7 @@ class KnowledgeMessagePageOut(BaseModel):
     entry_revision_drafts: list["KnowledgeEntryRevisionDraftOut"] = []
 
 
-class KnowledgeRunCitationOut(BaseModel):
+class KnowledgeRunCitationOut(ApiModel):
     """最终回答引用：来自本 Run 服务端核验的 Evidence。"""
 
     evidence_id: int
@@ -199,7 +201,7 @@ class KnowledgeRunCitationOut(BaseModel):
     node_path: str | None = None
 
 
-class KnowledgeConflictOut(BaseModel):
+class KnowledgeConflictOut(ApiModel):
     """由不同有效 Evidence 支持的冲突展示。
 
     `citation_a` / `citation_b` 携带双方完整可展示 Evidence；旧响应可能只有
@@ -217,7 +219,7 @@ class KnowledgeConflictOut(BaseModel):
     citation_b: "KnowledgeRunCitationOut | None" = None
 
 
-class KnowledgeAnswerPointOut(BaseModel):
+class KnowledgeAnswerPointOut(ApiModel):
     """回答结构化要点：每条携带服务端重验后的逐条引用。"""
 
     section: str | None = None
@@ -227,7 +229,7 @@ class KnowledgeAnswerPointOut(BaseModel):
     requirement_ids: list[str] = []
 
 
-class KnowledgeAnswerOut(BaseModel):
+class KnowledgeAnswerOut(ApiModel):
     """结构化回答：引用只能来自本 Run 的 Evidence 句柄。"""
 
     answer: str
@@ -242,7 +244,7 @@ class KnowledgeAnswerOut(BaseModel):
     gaps: list[str] = []
 
 
-class KnowledgeAnswerBasisGroveOut(BaseModel):
+class KnowledgeAnswerBasisGroveOut(ApiModel):
     """Grove 依据：数量只从最终通过校验的 Citation/Entry 派生。"""
 
     used: bool = False
@@ -250,25 +252,25 @@ class KnowledgeAnswerBasisGroveOut(BaseModel):
     entry_count: int = 0
 
 
-class KnowledgeAnswerBasisUserStatementsOut(BaseModel):
+class KnowledgeAnswerBasisUserStatementsOut(ApiModel):
     """用户提供的信息：只保存服务端允许集合内的消息 ID。"""
 
     message_ids: list[int] = []
 
 
-class KnowledgeAnswerBasisModelKnowledgeOut(BaseModel):
+class KnowledgeAnswerBasisModelKnowledgeOut(ApiModel):
     """模型通用知识依据：由服务端按执行分支与提示权限保守标记。"""
 
     used: bool = False
 
 
-class KnowledgeAnswerBasisExternalMaterialOut(BaseModel):
+class KnowledgeAnswerBasisExternalMaterialOut(ApiModel):
     """外部材料边界：只允许 not_used 或 required_unavailable。"""
 
     status: ExternalMaterialStatus = "not_used"
 
 
-class KnowledgeAnswerBasisOut(BaseModel):
+class KnowledgeAnswerBasisOut(ApiModel):
     """服务端校验后的版本化实际回答依据（AnswerBasis v1）。"""
 
     schema_version: Literal["v1"] = "v1"
@@ -286,7 +288,7 @@ class KnowledgeAnswerBasisOut(BaseModel):
     )
 
 
-class KnowledgeEntryResultItemOut(BaseModel):
+class KnowledgeEntryResultItemOut(ApiModel):
     """结构化 Entry 结果项：正式知识对象快照，不是 Citation。
 
     只保存服务端从正式 Entry / Project / Node / Evidence 关系装配的有界字段；
@@ -311,7 +313,7 @@ class KnowledgeEntryResultItemOut(BaseModel):
     matched_fields: list[str] = []
 
 
-class KnowledgeEntrySetSummaryOut(BaseModel):
+class KnowledgeEntrySetSummaryOut(ApiModel):
     """v2 共享集合摘要：范围由 Run 注入，客户端只读展示。"""
 
     schema_version: Literal["v1"] = "v1"
@@ -326,7 +328,7 @@ class KnowledgeEntrySetSummaryOut(BaseModel):
     completeness: ResultCompleteness
 
 
-class KnowledgeEntrySortOut(BaseModel):
+class KnowledgeEntrySortOut(ApiModel):
     """v2 Entry 列表稳定排序摘要。"""
 
     field: StructuredQuerySortField
@@ -334,7 +336,7 @@ class KnowledgeEntrySortOut(BaseModel):
     tie_breaker: Literal["entry_id"] = "entry_id"
 
 
-class KnowledgeCountResultOut(BaseModel):
+class KnowledgeCountResultOut(ApiModel):
     """直接查询共享集合得到的 count；不是卡片数量反推。"""
 
     value: int = Field(ge=0)
@@ -342,7 +344,7 @@ class KnowledgeCountResultOut(BaseModel):
     status: StructuredQueryToolStatus
 
 
-class KnowledgeGroupBucketOut(BaseModel):
+class KnowledgeGroupBucketOut(ApiModel):
     """受限、稳定排序的单个分组桶。"""
 
     key: str
@@ -350,7 +352,7 @@ class KnowledgeGroupBucketOut(BaseModel):
     count: int = Field(ge=0)
 
 
-class KnowledgeGroupCountResultOut(BaseModel):
+class KnowledgeGroupCountResultOut(ApiModel):
     """直接查询共享集合得到的 group_count。"""
 
     group_by: StructuredQueryGroupField
@@ -360,7 +362,7 @@ class KnowledgeGroupCountResultOut(BaseModel):
     truncated: bool = False
 
 
-class KnowledgeOutputCompletenessOut(BaseModel):
+class KnowledgeOutputCompletenessOut(ApiModel):
     """v2 各输出独立完整性，避免用列表 limit 推断聚合边界。"""
 
     entries: ResultCompleteness | None = None
@@ -368,7 +370,7 @@ class KnowledgeOutputCompletenessOut(BaseModel):
     group_count: dict[StructuredQueryGroupField, ResultCompleteness] = {}
 
 
-class KnowledgeStructuredUpdatedAtOut(BaseModel):
+class KnowledgeStructuredUpdatedAtOut(ApiModel):
     """计划摘要中的 UTC 闭开更新时间区间。"""
 
     model_config = ConfigDict(populate_by_name=True)
@@ -377,7 +379,7 @@ class KnowledgeStructuredUpdatedAtOut(BaseModel):
     to: datetime | None = None
 
 
-class KnowledgeStructuredEntrySetPlanOut(BaseModel):
+class KnowledgeStructuredEntrySetPlanOut(ApiModel):
     """不含 Run 授权范围与对象 ID 的规范化集合条件。"""
 
     schema_version: Literal["v1"] = "v1"
@@ -397,24 +399,24 @@ class KnowledgeStructuredEntrySetPlanOut(BaseModel):
     updated_at: KnowledgeStructuredUpdatedAtOut | None = None
 
 
-class KnowledgeStructuredPlanSortOut(BaseModel):
+class KnowledgeStructuredPlanSortOut(ApiModel):
     """计划摘要中的白名单排序；稳定 tie-breaker 由结果协议表达。"""
 
     field: StructuredQuerySortField
     direction: StructuredQuerySortDirection
 
 
-class KnowledgeStructuredEntriesOutputOut(BaseModel):
+class KnowledgeStructuredEntriesOutputOut(ApiModel):
     kind: Literal["entries"] = "entries"
     limit: int = Field(ge=1)
     sort: KnowledgeStructuredPlanSortOut
 
 
-class KnowledgeStructuredCountOutputOut(BaseModel):
+class KnowledgeStructuredCountOutputOut(ApiModel):
     kind: Literal["count"] = "count"
 
 
-class KnowledgeStructuredGroupCountOutputOut(BaseModel):
+class KnowledgeStructuredGroupCountOutputOut(ApiModel):
     kind: Literal["group_count"] = "group_count"
     group_by: StructuredQueryGroupField
 
@@ -427,7 +429,7 @@ KnowledgeStructuredOutputOut = Annotated[
 ]
 
 
-class KnowledgeStructuredQueryPlanOut(BaseModel):
+class KnowledgeStructuredQueryPlanOut(ApiModel):
     """服务端规范化计划摘要；不包含模型原始输出、reason 或 prompt。"""
 
     schema_version: Literal["v1"] = "v1"
@@ -436,7 +438,7 @@ class KnowledgeStructuredQueryPlanOut(BaseModel):
     outputs: list[KnowledgeStructuredOutputOut]
 
 
-class KnowledgeCompositeRequirementSummaryOut(BaseModel):
+class KnowledgeCompositeRequirementSummaryOut(ApiModel):
     """可展示的回答义务摘要；不包含 prompt 或内部工具参数。"""
 
     id: str
@@ -446,7 +448,7 @@ class KnowledgeCompositeRequirementSummaryOut(BaseModel):
     basis_policy: CompositeBasisPolicy
 
 
-class KnowledgeCompositeAnswerPlanSummaryOut(BaseModel):
+class KnowledgeCompositeAnswerPlanSummaryOut(ApiModel):
     """复合回答计划的有界 API 摘要。"""
 
     schema_version: Literal["v1"] = "v1"
@@ -454,7 +456,7 @@ class KnowledgeCompositeAnswerPlanSummaryOut(BaseModel):
     input_kinds: list[CompositeInputKind] = []
 
 
-class KnowledgeCompositeRequirementCoverageOut(BaseModel):
+class KnowledgeCompositeRequirementCoverageOut(ApiModel):
     """一个回答义务的服务端终态覆盖摘要。"""
 
     requirement_id: str
@@ -472,14 +474,14 @@ class KnowledgeCompositeRequirementCoverageOut(BaseModel):
     note: str | None = None
 
 
-class KnowledgeCompositeAnswerCoverageOut(BaseModel):
+class KnowledgeCompositeAnswerCoverageOut(ApiModel):
     """复合回答逐项覆盖快照；不暴露内部句柄。"""
 
     schema_version: Literal["v1"] = "v1"
     requirements: list[KnowledgeCompositeRequirementCoverageOut] = []
 
 
-class KnowledgeEntryResultSnapshotOut(BaseModel):
+class KnowledgeEntryResultSnapshotOut(ApiModel):
     """Run 上持久化的有界 Entry 结果快照（首屏随 Run/消息页返回）。"""
 
     schema_version: Literal["v1", "v2"] = "v1"
@@ -500,7 +502,7 @@ class KnowledgeEntryResultSnapshotOut(BaseModel):
     warnings: list[str] = []
 
 
-class KnowledgeEntryResultsPageOut(BaseModel):
+class KnowledgeEntryResultsPageOut(ApiModel):
     """结果分页响应：只读取同一持久化快照，不重新搜索。"""
 
     schema_version: Literal["v1", "v2"] = "v1"
@@ -522,7 +524,7 @@ class KnowledgeEntryResultsPageOut(BaseModel):
     warnings: list[str] = []
 
 
-class FallbackStageOut(BaseModel):
+class FallbackStageOut(ApiModel):
     """单个 AI 阶段的降级状态。"""
 
     purpose: str
@@ -533,14 +535,14 @@ class FallbackStageOut(BaseModel):
     error: str | None = None
 
 
-class FallbackSummaryOut(BaseModel):
+class FallbackSummaryOut(ApiModel):
     """Run 聚合降级摘要：可识别具体受影响阶段，不掩盖局部失败。"""
 
     has_fallback: bool = False
     stages: list[FallbackStageOut] = []
 
 
-class InvestigationSummaryOut(BaseModel):
+class InvestigationSummaryOut(ApiModel):
     """Run 上聚合的调查摘要：过程元数据，不是正式知识。"""
 
     requested_answer_mode: AnswerMode
@@ -553,7 +555,7 @@ class InvestigationSummaryOut(BaseModel):
     conflicts: list[str] = []
 
 
-class KnowledgeRunOut(BaseModel):
+class KnowledgeRunOut(ApiModel):
     """一次持久化只读 Run 的查询结果。"""
 
     id: int
@@ -608,7 +610,7 @@ class KnowledgeRunOut(BaseModel):
     updated_at: datetime
 
 
-class KnowledgeRunSubmitRequest(BaseModel):
+class KnowledgeRunSubmitRequest(ApiModel):
     """提交新问题：client_message_id 用于网络重试幂等；模式默认 auto。"""
 
     client_message_id: str = Field(min_length=1, max_length=64)
@@ -623,14 +625,14 @@ class KnowledgeRunSubmitRequest(BaseModel):
     source_run_id: int | None = None
 
 
-class KnowledgeRunSubmitOut(BaseModel):
+class KnowledgeRunSubmitOut(ApiModel):
     """消息提交结果：立即返回等待中的 Run，客户端轮询恢复。"""
 
     user_message: KnowledgeMessageOut
     run: KnowledgeRunOut
 
 
-class KnowledgeDraftActionRequest(BaseModel):
+class KnowledgeDraftActionRequest(ApiModel):
     """显式「整理成知识」动作：锚定本会话的来源回答 Run 与可选目标项目。"""
 
     client_message_id: str = Field(min_length=1, max_length=64)
@@ -639,7 +641,7 @@ class KnowledgeDraftActionRequest(BaseModel):
     target_project_id: int | None = None
 
 
-class KnowledgeDraftEvidenceOut(BaseModel):
+class KnowledgeDraftEvidenceOut(ApiModel):
     """草稿采用的当前可核验 Evidence 摘要（服务端重验后输出）。"""
 
     handle: str
@@ -650,7 +652,7 @@ class KnowledgeDraftEvidenceOut(BaseModel):
     quote: str
 
 
-class KnowledgeCandidateDraftOut(BaseModel):
+class KnowledgeCandidateDraftOut(ApiModel):
     """持久化候选草稿：AI 建议语义，客户端只读状态与可编辑字段。"""
 
     id: int
@@ -677,7 +679,7 @@ class KnowledgeCandidateDraftOut(BaseModel):
     updated_at: datetime
 
 
-class KnowledgeDraftActionOut(BaseModel):
+class KnowledgeDraftActionOut(ApiModel):
     """草稿动作提交结果：可见用户消息、operation Run 与 generating Draft。"""
 
     user_message: KnowledgeMessageOut
@@ -685,7 +687,7 @@ class KnowledgeDraftActionOut(BaseModel):
     draft: KnowledgeCandidateDraftOut
 
 
-class KnowledgeDraftEditRequest(BaseModel):
+class KnowledgeDraftEditRequest(ApiModel):
     """编辑草稿允许字段；目标项目、source Run 与 Evidence 集合不可编辑。"""
 
     title: str | None = Field(default=None, min_length=1, max_length=255)
@@ -694,13 +696,13 @@ class KnowledgeDraftEditRequest(BaseModel):
     info_nature: Literal["fact", "experience", "advice", "speculation", "other"] | None = None
 
 
-class KnowledgeDraftConfirmRequest(BaseModel):
+class KnowledgeDraftConfirmRequest(ApiModel):
     """确认草稿：只接收稳定幂等键，不接受任何自由引用字段。"""
 
     client_operation_id: str = Field(min_length=1, max_length=64)
 
 
-class CandidateReceiptOut(BaseModel):
+class CandidateReceiptOut(ApiModel):
     """确认后创建的待确认 Candidate 回执。"""
 
     id: int
@@ -714,14 +716,14 @@ class CandidateReceiptOut(BaseModel):
     created_at: datetime
 
 
-class KnowledgeDraftConfirmOut(BaseModel):
+class KnowledgeDraftConfirmOut(ApiModel):
     """确认回执：Draft 进入 confirmed，Candidate 仍待确认、尚未写入正式知识。"""
 
     draft: KnowledgeCandidateDraftOut
     candidate: CandidateReceiptOut
 
 
-class KnowledgeRevisionActionRequest(BaseModel):
+class KnowledgeRevisionActionRequest(ApiModel):
     """显式「修订这条知识」动作：锚定来源回答 Run、目标 Entry 与非空指令。"""
 
     client_message_id: str = Field(min_length=1, max_length=64)
@@ -730,7 +732,7 @@ class KnowledgeRevisionActionRequest(BaseModel):
     instruction: str = Field(min_length=1, max_length=2000)
 
 
-class KnowledgeRevisionFieldDiffOut(BaseModel):
+class KnowledgeRevisionFieldDiffOut(ApiModel):
     """单字段差异：服务端按 base snapshot 与当前草稿计算，客户端不提交 diff。"""
 
     field: str
@@ -739,7 +741,7 @@ class KnowledgeRevisionFieldDiffOut(BaseModel):
     after: str | None = None
 
 
-class KnowledgeRevisionExecutionOut(BaseModel):
+class KnowledgeRevisionExecutionOut(ApiModel):
     """一次确认/撤销执行的可展示摘要；不暴露内部快照与幂等键。"""
 
     id: int
@@ -755,7 +757,7 @@ class KnowledgeRevisionExecutionOut(BaseModel):
     updated_at: datetime
 
 
-class KnowledgeEntryRevisionDraftOut(BaseModel):
+class KnowledgeEntryRevisionDraftOut(ApiModel):
     """持久化修订草稿：AI 建议语义，展示可编辑字段与服务端差异。"""
 
     id: int
@@ -787,7 +789,7 @@ class KnowledgeEntryRevisionDraftOut(BaseModel):
     updated_at: datetime
 
 
-class KnowledgeRevisionActionOut(BaseModel):
+class KnowledgeRevisionActionOut(ApiModel):
     """修订动作提交结果：可见用户消息、entry_revision Run 与 generating Draft。"""
 
     user_message: KnowledgeMessageOut
@@ -795,7 +797,7 @@ class KnowledgeRevisionActionOut(BaseModel):
     draft: KnowledgeEntryRevisionDraftOut
 
 
-class KnowledgeRevisionDraftEditRequest(BaseModel):
+class KnowledgeRevisionDraftEditRequest(ApiModel):
     """编辑候选字段；target Entry/项目/source Run/基线与 Evidence 集合不可编辑。"""
 
     model_config = ConfigDict(extra="forbid")
@@ -809,19 +811,19 @@ class KnowledgeRevisionDraftEditRequest(BaseModel):
     change_summary: str | None = Field(default=None, min_length=1, max_length=1000)
 
 
-class KnowledgeRevisionConfirmRequest(BaseModel):
+class KnowledgeRevisionConfirmRequest(ApiModel):
     """确认修订：只接收稳定幂等键，不接受任何自由引用字段。"""
 
     client_operation_id: str = Field(min_length=1, max_length=64)
 
 
-class KnowledgeRevisionUndoRequest(BaseModel):
+class KnowledgeRevisionUndoRequest(ApiModel):
     """撤销修订：只接收稳定幂等键，不接受任何自由引用字段。"""
 
     client_operation_id: str = Field(min_length=1, max_length=64)
 
 
-class KnowledgeRevisionEntryOut(BaseModel):
+class KnowledgeRevisionEntryOut(ApiModel):
     """确认/撤销后的正式 Entry 摘要（移动端回执使用）。"""
 
     id: int
@@ -834,7 +836,7 @@ class KnowledgeRevisionEntryOut(BaseModel):
     updated_at: datetime
 
 
-class KnowledgeRevisionConfirmOut(BaseModel):
+class KnowledgeRevisionConfirmOut(ApiModel):
     """确认回执：Entry 已更新、版本已追加、Execution 为 applied。"""
 
     draft: KnowledgeEntryRevisionDraftOut
@@ -842,7 +844,7 @@ class KnowledgeRevisionConfirmOut(BaseModel):
     entry: KnowledgeRevisionEntryOut
 
 
-class KnowledgeRevisionUndoOut(BaseModel):
+class KnowledgeRevisionUndoOut(ApiModel):
     """撤销回执：Entry 已恢复、Execution 为 undone，审计保留。"""
 
     draft: KnowledgeEntryRevisionDraftOut
@@ -850,7 +852,7 @@ class KnowledgeRevisionUndoOut(BaseModel):
     entry: KnowledgeRevisionEntryOut
 
 
-class KnowledgeToolCallOut(BaseModel):
+class KnowledgeToolCallOut(ApiModel):
     """工具调用可审计记录（脱敏摘要）。"""
 
     id: int
@@ -867,7 +869,7 @@ class KnowledgeToolCallOut(BaseModel):
     created_at: datetime
 
 
-class KnowledgeModelInvocationOut(BaseModel):
+class KnowledgeModelInvocationOut(ApiModel):
     """单次模型调用可观测记录。"""
 
     id: int
@@ -886,7 +888,7 @@ class KnowledgeModelInvocationOut(BaseModel):
     created_at: datetime
 
 
-class KnowledgeRunObservabilityOut(BaseModel):
+class KnowledgeRunObservabilityOut(ApiModel):
     """Run 的分阶段可排障记录。"""
 
     run_id: int
@@ -894,7 +896,7 @@ class KnowledgeRunObservabilityOut(BaseModel):
     model_invocations: list[KnowledgeModelInvocationOut] = []
 
 
-class KnowledgeInvestigationRoundOut(BaseModel):
+class KnowledgeInvestigationRoundOut(ApiModel):
     """一轮调查的审计详情：观察摘要、增量计数与控制器调用归属。"""
 
     id: int
@@ -917,7 +919,7 @@ class KnowledgeInvestigationRoundOut(BaseModel):
     created_at: datetime
 
 
-class KnowledgeInvestigationQueryOut(BaseModel):
+class KnowledgeInvestigationQueryOut(ApiModel):
     """轮次内一条查询的审计详情。"""
 
     id: int
@@ -930,7 +932,7 @@ class KnowledgeInvestigationQueryOut(BaseModel):
     created_at: datetime
 
 
-class KnowledgeInvestigationDetailOut(BaseModel):
+class KnowledgeInvestigationDetailOut(ApiModel):
     """按 Run 读取的逐轮调查详情（只读、分页/长度受限）。"""
 
     investigation_id: int

@@ -1,6 +1,7 @@
 """项目与目录树 API 测试。"""
 
 import uuid
+from datetime import datetime, timedelta
 
 from fastapi.testclient import TestClient
 
@@ -248,3 +249,14 @@ def test_delete_project_cascades(client: TestClient) -> None:
 
     assert response.status_code == 200
     assert client.get("/api/projects").json() == []
+
+
+def test_project_times_are_utc_with_offset(client: TestClient) -> None:
+    """项目响应时间同样交付 UTC 带偏移，不只来源相关模型。"""
+    _register(client)
+    project = _create_project(client, "时区项目")
+
+    assert datetime.fromisoformat(project["created_at"]).utcoffset() == timedelta(0)
+
+    listed = client.get("/api/projects").json()[0]
+    assert listed["created_at"].endswith("Z")

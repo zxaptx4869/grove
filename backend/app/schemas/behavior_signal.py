@@ -3,10 +3,12 @@
 import json
 from datetime import datetime
 
-from pydantic import BaseModel, ConfigDict, field_validator
+from pydantic import ConfigDict, field_validator
+
+from app.schemas.base import ApiModel
 
 
-class BehaviorSignalOut(BaseModel):
+class BehaviorSignalOut(ApiModel):
     """单条行为信号（只读）。"""
 
     model_config = ConfigDict(from_attributes=True)

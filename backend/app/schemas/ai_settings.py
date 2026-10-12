@@ -2,10 +2,12 @@
 
 from typing import Literal
 
-from pydantic import BaseModel, Field
+from pydantic import Field
+
+from app.schemas.base import ApiModel
 
 
-class AIProviderSettingsOut(BaseModel):
+class AIProviderSettingsOut(ApiModel):
     """当前 Workspace 的脱敏模型配置。"""
 
     text_provider: str
@@ -26,34 +28,34 @@ class AIProviderSettingsOut(BaseModel):
     embedding_tested: bool
 
 
-class TextProviderUpdate(BaseModel):
+class TextProviderUpdate(ApiModel):
     """保存文本模型密钥；模型名可选覆盖。"""
 
     api_key: str = Field(min_length=1, max_length=512)
     model: str | None = Field(default=None, min_length=1, max_length=128)
 
 
-class VisionProviderUpdate(BaseModel):
+class VisionProviderUpdate(ApiModel):
     """保存视觉模型密钥；模型名可选覆盖。"""
 
     api_key: str = Field(min_length=1, max_length=512)
     model: str | None = Field(default=None, min_length=1, max_length=128)
 
 
-class EmbeddingProviderUpdate(BaseModel):
+class EmbeddingProviderUpdate(ApiModel):
     """保存 embedding 模型名；密钥复用豆包视觉密钥。"""
 
     model: str | None = Field(default=None, min_length=1, max_length=128)
 
 
-class ConnectionTestOut(BaseModel):
+class ConnectionTestOut(ApiModel):
     """模型连接测试结果。"""
 
     ok: bool
     message: str
 
 
-class EmbeddingIndexStatusItem(BaseModel):
+class EmbeddingIndexStatusItem(ApiModel):
     """单条失败向量明细。"""
 
     entry_id: int
@@ -61,7 +63,7 @@ class EmbeddingIndexStatusItem(BaseModel):
     error: str | None
 
 
-class EmbeddingIndexStatusOut(BaseModel):
+class EmbeddingIndexStatusOut(ApiModel):
     """当前 Workspace（或项目）的语义索引状态统计。"""
 
     total: int
@@ -72,7 +74,7 @@ class EmbeddingIndexStatusOut(BaseModel):
     failed_items: list[EmbeddingIndexStatusItem] = []
 
 
-class EmbeddingRebuildRequest(BaseModel):
+class EmbeddingRebuildRequest(ApiModel):
     """重建请求：failed 只重试失败项，all 全量重建。"""
 
     mode: Literal["failed", "all"] = "failed"

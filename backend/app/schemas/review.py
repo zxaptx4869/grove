@@ -3,12 +3,13 @@
 from datetime import datetime
 from typing import Literal
 
-from pydantic import BaseModel, Field
+from pydantic import Field
 
+from app.schemas.base import ApiModel
 from app.schemas.candidate import CandidateOut
 
 
-class CandidateUpdate(BaseModel):
+class CandidateUpdate(ApiModel):
     """编辑候选字段；字段缺失表示不修改，传 null 表示清空。"""
 
     title: str | None = Field(default=None, min_length=1, max_length=255)
@@ -19,20 +20,20 @@ class CandidateUpdate(BaseModel):
     note: str | None = Field(default=None, max_length=4000)
 
 
-class CandidateDecisionUpdate(BaseModel):
+class CandidateDecisionUpdate(ApiModel):
     """单条候选决策。"""
 
     status: Literal["pending", "confirmed", "rejected"]
 
 
-class BatchCandidateDecisionRequest(BaseModel):
+class BatchCandidateDecisionRequest(ApiModel):
     """Source 内批量决策。"""
 
     candidate_ids: list[int] = Field(min_length=1)
     status: Literal["confirmed", "rejected"]
 
 
-class ReviewSourceOut(BaseModel):
+class ReviewSourceOut(ApiModel):
     """项目内待审 Source 摘要。"""
 
     id: int
@@ -53,7 +54,7 @@ class ReviewCandidateOut(CandidateOut):
     user_node_id: int | None = None
 
 
-class ProjectBatchDecisionRequest(BaseModel):
+class ProjectBatchDecisionRequest(ApiModel):
     """项目内批量决策请求。"""
 
     candidate_ids: list[int] = Field(min_length=1)
@@ -61,7 +62,7 @@ class ProjectBatchDecisionRequest(BaseModel):
     node_id: int | None = None
 
 
-class ProjectBatchDecisionResult(BaseModel):
+class ProjectBatchDecisionResult(ApiModel):
     """项目内批量决策的单条结果。"""
 
     candidate_id: int
@@ -69,14 +70,14 @@ class ProjectBatchDecisionResult(BaseModel):
     error: str | None = None
 
 
-class BatchUpdateDirectoryRequest(BaseModel):
+class BatchUpdateDirectoryRequest(ApiModel):
     """批量更新候选的统一目录。"""
 
     candidate_ids: list[int] = Field(min_length=1)
     node_id: int
 
 
-class BatchUpdateDirectoryResult(BaseModel):
+class BatchUpdateDirectoryResult(ApiModel):
     """批量更新目录结果。"""
 
     updated: int

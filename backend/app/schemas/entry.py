@@ -3,10 +3,12 @@
 from datetime import datetime
 from typing import Literal
 
-from pydantic import BaseModel, Field
+from pydantic import Field
+
+from app.schemas.base import ApiModel
 
 
-class EntryEvidenceOut(BaseModel):
+class EntryEvidenceOut(ApiModel):
     """Entry 来源证据。"""
 
     id: int
@@ -16,7 +18,7 @@ class EntryEvidenceOut(BaseModel):
     source_title: str
 
 
-class EntryOut(BaseModel):
+class EntryOut(ApiModel):
     """正式知识。"""
 
     id: int
@@ -36,7 +38,7 @@ class EntryOut(BaseModel):
     evidences: list[EntryEvidenceOut] = []
 
 
-class EntryUpdate(BaseModel):
+class EntryUpdate(ApiModel):
     """编辑 Entry 字段；字段缺失表示不修改。"""
 
     title: str | None = Field(default=None, min_length=1, max_length=255)
@@ -48,7 +50,7 @@ class EntryUpdate(BaseModel):
     node_id: int | None = None
 
 
-class EntryVersionOut(BaseModel):
+class EntryVersionOut(ApiModel):
     """Entry 版本快照。"""
 
     id: int
@@ -66,19 +68,19 @@ class EntryVersionOut(BaseModel):
     created_at: datetime
 
 
-class RestoreRequest(BaseModel):
+class RestoreRequest(ApiModel):
     """恢复到指定 Entry 版本。"""
 
     version_id: int
 
 
-class ArchiveCandidateRequest(BaseModel):
+class ArchiveCandidateRequest(ApiModel):
     """采纳并归档候选。"""
 
     node_id: int
 
 
-class NewNodeArchiveRequest(BaseModel):
+class NewNodeArchiveRequest(ApiModel):
     """创建或复用节点并归档候选。"""
 
     name: str = Field(min_length=1, max_length=128)
@@ -86,13 +88,13 @@ class NewNodeArchiveRequest(BaseModel):
     description: str | None = Field(default=None, max_length=2000)
 
 
-class AddEvidenceRequest(BaseModel):
+class AddEvidenceRequest(ApiModel):
     """把候选来源证据补充到已有 Entry。"""
 
     entry_id: int
 
 
-class ApplyRevisionRequest(BaseModel):
+class ApplyRevisionRequest(ApiModel):
     """把候选修订草稿应用到已有 Entry。"""
 
     entry_id: int
@@ -105,20 +107,20 @@ class ApplyRevisionRequest(BaseModel):
     change_summary: str | None = Field(default=None, max_length=2000)
 
 
-class RevisionSuggestionRequest(BaseModel):
+class RevisionSuggestionRequest(ApiModel):
     """发起 AI 修订建议。"""
 
     instruction: str | None = Field(default=None, max_length=2000)
 
 
-class RevisionChatMessage(BaseModel):
+class RevisionChatMessage(ApiModel):
     """一次修订对话的单条消息。"""
 
     role: Literal["user", "assistant"]
     content: str
 
 
-class RevisionDraftPayload(BaseModel):
+class RevisionDraftPayload(ApiModel):
     """AI 修订建议的候选草稿。"""
 
     title: str | None = Field(default=None, max_length=255)
@@ -132,7 +134,7 @@ class RevisionDraftPayload(BaseModel):
     external_supplemented: bool = False
 
 
-class RevisionRefineRequest(BaseModel):
+class RevisionRefineRequest(ApiModel):
     """继续对话调整修订草稿。"""
 
     instruction: str = Field(min_length=1, max_length=2000)
@@ -140,7 +142,7 @@ class RevisionRefineRequest(BaseModel):
     draft: RevisionDraftPayload | None = None
 
 
-class ApplyRevisionSuggestionRequest(BaseModel):
+class ApplyRevisionSuggestionRequest(ApiModel):
     """应用确认后的 AI 修订草稿。"""
 
     title: str | None = Field(default=None, min_length=1, max_length=255)
@@ -158,7 +160,7 @@ class ApplyRevisionSuggestionRequest(BaseModel):
     external_supplemented: bool = False
 
 
-class RevisionSuggestionOut(BaseModel):
+class RevisionSuggestionOut(ApiModel):
     """AI 修订建议生成/调整结果。"""
 
     intent: Literal["discuss", "propose"]

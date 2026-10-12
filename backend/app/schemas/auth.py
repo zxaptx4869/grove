@@ -2,24 +2,26 @@
 
 from datetime import datetime
 
-from pydantic import BaseModel, Field
+from pydantic import Field
+
+from app.schemas.base import ApiModel
 
 
-class RegisterRequest(BaseModel):
+class RegisterRequest(ApiModel):
     """注册请求：账号 + 密码。"""
 
     username: str = Field(min_length=2, max_length=64, pattern=r"^\w+$", description="登录账号")
     password: str = Field(min_length=8, max_length=128, description="密码（至少 8 位）")
 
 
-class LoginRequest(BaseModel):
+class LoginRequest(ApiModel):
     """登录请求。"""
 
     username: str = Field(min_length=1, max_length=64)
     password: str = Field(min_length=1, max_length=128)
 
 
-class UserOut(BaseModel):
+class UserOut(ApiModel):
     """用户公开信息。"""
 
     id: int
@@ -27,21 +29,21 @@ class UserOut(BaseModel):
     created_at: datetime
 
 
-class WorkspaceOut(BaseModel):
+class WorkspaceOut(ApiModel):
     """Workspace 公开信息。"""
 
     id: int
     name: str
 
 
-class MeResponse(BaseModel):
+class MeResponse(ApiModel):
     """当前用户与默认空间信息（/api/me）。"""
 
     user: UserOut
     workspace: WorkspaceOut
 
 
-class MobileAuthResponse(BaseModel):
+class MobileAuthResponse(ApiModel):
     """原生移动端认证响应；Token 仅供安全存储后作为 Bearer 使用。"""
 
     user: UserOut

@@ -2,10 +2,12 @@
 
 from datetime import datetime
 
-from pydantic import BaseModel, Field
+from pydantic import Field
+
+from app.schemas.base import ApiModel
 
 
-class EntryRecentOut(BaseModel):
+class EntryRecentOut(ApiModel):
     """知识覆盖摘要中的近期 Entry。"""
 
     entry_id: int
@@ -14,7 +16,7 @@ class EntryRecentOut(BaseModel):
     updated_at: datetime | None
 
 
-class EntryTopNodeCoverageOut(BaseModel):
+class EntryTopNodeCoverageOut(ApiModel):
     """按顶级目录节点的 Entry 覆盖数。"""
 
     node_id: int
@@ -22,7 +24,7 @@ class EntryTopNodeCoverageOut(BaseModel):
     count: int
 
 
-class EntrySummaryOut(BaseModel):
+class EntrySummaryOut(ApiModel):
     """已确认 Entry 的确定性知识覆盖摘要。"""
 
     total: int
@@ -32,14 +34,14 @@ class EntrySummaryOut(BaseModel):
     truncated_count: int = 0
 
 
-class ProjectContextCorrectionsOut(BaseModel):
+class ProjectContextCorrectionsOut(ApiModel):
     """用户对 AI 生成字段的高优先级纠正（部分覆盖）。"""
 
     project_summary: str | None = None
     current_focus: str | None = None
 
 
-class ProjectContextOut(BaseModel):
+class ProjectContextOut(ApiModel):
     """项目上下文快照：派生上下文，不是正式知识。"""
 
     project_id: int
@@ -61,7 +63,7 @@ class ProjectContextOut(BaseModel):
     corrections: ProjectContextCorrectionsOut
 
 
-class ProjectContextCorrectionUpdate(BaseModel):
+class ProjectContextCorrectionUpdate(ApiModel):
     """纠正 AI 生成字段；字段缺失表示不修改，传 null 表示清除纠正。"""
 
     project_summary: str | None = Field(default=None, max_length=4000)
