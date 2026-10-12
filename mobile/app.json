@@ -6,6 +6,7 @@
     "version": "0.1.0",
     "orientation": "portrait",
     "userInterfaceStyle": "light",
+    "icon": "./assets/icon.png",
     "plugins": [
       "expo-router",
       "expo-secure-store",
@@ -29,7 +30,9 @@
       "package": "com.zxaptx4869.grove",
       "versionCode": 1,
       "adaptiveIcon": {
-        "backgroundColor": "#F7F8F7"
+        "foregroundImage": "./assets/adaptive-icon.png",
+        "monochromeImage": "./assets/adaptive-icon.png",
+        "backgroundColor": "#236748"
       },
       "softwareKeyboardLayoutMode": "resize"
     },
