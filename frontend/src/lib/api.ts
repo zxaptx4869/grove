@@ -1210,6 +1210,20 @@ export const createKnowledgeConversation = () =>
     body: JSON.stringify({ scope_type: 'workspace' }),
   })
 
+export const renameKnowledgeConversation = (conversationId: number, title: string) =>
+  request<KnowledgeConversationPayload>(
+    `/api/knowledge-agent/conversations/${conversationId}`,
+    {
+      method: 'PATCH',
+      body: JSON.stringify({ title }),
+    },
+  )
+
+export const deleteKnowledgeConversation = (conversationId: number) =>
+  request<{ ok: boolean }>(`/api/knowledge-agent/conversations/${conversationId}`, {
+    method: 'DELETE',
+  })
+
 export const fetchKnowledgeMessages = (conversationId: number) =>
   request<KnowledgeMessagePagePayload>(
     `/api/knowledge-agent/conversations/${conversationId}/messages?limit=100`,

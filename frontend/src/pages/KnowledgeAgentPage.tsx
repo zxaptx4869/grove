@@ -9,25 +9,45 @@ import {
   ListOrdered,
   LoaderCircle,
   MessageSquarePlus,
+  MoreHorizontal,
+  Pencil,
   Quote,
   RefreshCw,
   RotateCcw,
   Send,
   Sparkles,
+  Trash2,
   Wrench,
 } from 'lucide-react'
 import { toast } from 'sonner'
 
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog'
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu'
+import { Input } from '@/components/ui/input'
 import { Textarea } from '@/components/ui/textarea'
 import {
   ApiError,
   cancelKnowledgeRun,
   createKnowledgeConversation,
+  deleteKnowledgeConversation,
   fetchKnowledgeMessages,
   fetchKnowledgeRunObservability,
   listKnowledgeConversations,
+  renameKnowledgeConversation,
   submitKnowledgeMessage,
   type KnowledgeAnswerBlock,
   type KnowledgeConversationPayload,
@@ -362,6 +382,13 @@ export function KnowledgeAgentPage() {
   const [refreshing, setRefreshing] = useState(false)
   const [submitting, setSubmitting] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [renameTarget, setRenameTarget] = useState<KnowledgeConversationPayload | null>(null)
+  const [renameTitle, setRenameTitle] = useState('')
+  const [renameError, setRenameError] = useState('')
+  const [renamePending, setRenamePending] = useState(false)
+  const [deleteTarget, setDeleteTarget] = useState<KnowledgeConversationPayload | null>(null)
+  const [deleteError, setDeleteError] = useState('')
+  const [deletePending, setDeletePending] = useState(false)
   const endRef = useRef<HTMLDivElement>(null)
   const selectedIdRef = useRef<number | null>(null)
   const tracesRef = useRef<Record<number, KnowledgeObservabilityPayload>>({})
@@ -451,6 +478,99 @@ export function KnowledgeAgentPage() {
     }
   }
 
+  function openRename(conversation: KnowledgeConversationPayload) {
+    setRenameError('')
+    setRenameTitle(conversation.title)
+    setRenameTarget(conversation)
+  }
+
+  function openDelete(conversation: KnowledgeConversationPayload) {
+    setDeleteError('')
+    setDeleteTarget(conversation)
+  }
+
+  async function loadConversationPage(conversationId: number) {
+    const page = await fetchKnowledgeMessages(conversationId)
+    setMessages(page.items)
+    setRuns(page.runs)
+  }
+
+  /** 删除或发现对话已不存在后落到「新建」：直接创建并选中，不经过 refresh 的空列表自动创建分支。 */
+  async function fallBackToNewConversation(remaining: KnowledgeConversationPayload[]) {
+    const created = await createKnowledgeConversation()
+    setConversations([created, ...remaining])
+    setMessage('')
+    selectedIdRef.current = created.id
+    setSelectedId(created.id)
+    await loadConversationPage(created.id)
+  }
+
+  async function submitRename() {
+    const target = renameTarget
+    if (!target) return
+    const title = renameTitle.trim()
+    if (!title) {
+      setRenameError('标题不能为空。')
+      return
+    }
+    if (title.length > 255) {
+      setRenameError('标题不能超过 255 个字符。')
+      return
+    }
+    setRenamePending(true)
+    setRenameError('')
+    try {
+      const updated = await renameKnowledgeConversation(target.id, title)
+      setConversations((current) =>
+        current.map((item) => (item.id === updated.id ? updated : item)),
+      )
+      setRenameTarget(null)
+    } catch (cause) {
+      if (cause instanceof ApiError && cause.status === 404) {
+        // 已被其他端删除：本行移除；若是当前对话则落到新建
+        await dropMissingConversation(target.id)
+        setRenameTarget(null)
+      } else {
+        setRenameError(cause instanceof Error ? cause.message : '重命名失败，请重试。')
+      }
+    } finally {
+      setRenamePending(false)
+    }
+  }
+
+  async function dropMissingConversation(conversationId: number) {
+    const remaining = conversations.filter((item) => item.id !== conversationId)
+    if (selectedIdRef.current === conversationId) {
+      await fallBackToNewConversation(remaining)
+    } else {
+      setConversations(remaining)
+    }
+  }
+
+  async function submitDelete() {
+    const target = deleteTarget
+    if (!target) return
+    setDeletePending(true)
+    setDeleteError('')
+    try {
+      await deleteKnowledgeConversation(target.id)
+      setDeleteTarget(null)
+      await dropMissingConversation(target.id)
+    } catch (cause) {
+      if (cause instanceof ApiError && cause.status === 409) {
+        setDeleteError('该对话有正在进行的问答，请等待完成或停止后再删除。')
+      } else if (cause instanceof ApiError && cause.status === 404) {
+        // 重复删除或被其他端删除：按幂等成功处理
+        setDeleteTarget(null)
+        await dropMissingConversation(target.id)
+      } else {
+        setDeleteError(cause instanceof Error ? cause.message : '删除失败，请重试。')
+      }
+    } finally {
+      setDeletePending(false)
+    }
+  }
+
   async function send(value = message) {
     const trimmed = value.trim()
     if (!selectedId || !trimmed || submitting || activeRun) return
@@ -510,21 +630,55 @@ export function KnowledgeAgentPage() {
           </Button>
         </div>
         <nav className="min-h-0 flex-1 overflow-y-auto px-2 pb-3" aria-label="知识 Agent 对话">
-          {conversations.map((conversation) => (
-            <button
-              type="button"
-              key={conversation.id}
-              onClick={() => {
-                selectedIdRef.current = conversation.id
-                setSelectedId(conversation.id)
-              }}
-              className={`mb-1 flex min-h-11 w-full items-center justify-between gap-2 rounded-md px-2.5 py-2 text-left text-sm transition-colors ${selectedId === conversation.id ? 'bg-brand-soft text-brand' : 'text-muted-foreground hover:bg-muted hover:text-foreground'}`}
-              data-testid="agent-conversation-item"
-            >
-              <span className="min-w-0 truncate">{conversation.title || '新对话'}</span>
-              {conversation.recent_run_status && ACTIVE_RUN_STATUSES.has(conversation.recent_run_status) ? <LoaderCircle className="size-3.5 shrink-0 animate-spin" aria-label="处理中" /> : null}
-            </button>
-          ))}
+          {conversations.map((conversation) => {
+            const isSelected = selectedId === conversation.id
+            const displayTitle = conversation.title || '新对话'
+            return (
+              <div
+                key={conversation.id}
+                className={`mb-1 flex min-h-11 w-full items-center gap-0.5 rounded-md pr-1 transition-colors ${isSelected ? 'bg-brand-soft text-brand' : 'text-muted-foreground hover:bg-muted hover:text-foreground'}`}
+              >
+                <button
+                  type="button"
+                  onClick={() => {
+                    selectedIdRef.current = conversation.id
+                    setSelectedId(conversation.id)
+                  }}
+                  aria-current={isSelected ? 'true' : undefined}
+                  className="flex min-h-11 min-w-0 flex-1 items-center justify-between gap-2 rounded-md px-2.5 py-2 text-left text-sm"
+                  data-testid="agent-conversation-item"
+                >
+                  <span className="min-w-0 truncate">{displayTitle}</span>
+                  {conversation.recent_run_status && ACTIVE_RUN_STATUSES.has(conversation.recent_run_status) ? <LoaderCircle className="size-3.5 shrink-0 animate-spin" aria-label="处理中" /> : null}
+                </button>
+                <DropdownMenu>
+                  <DropdownMenuTrigger asChild>
+                    <Button
+                      size="icon-sm"
+                      variant="ghost"
+                      className="size-7 shrink-0"
+                      title="会话操作"
+                      aria-label={`${displayTitle} 会话操作`}
+                      data-testid="agent-conversation-menu"
+                    >
+                      <MoreHorizontal />
+                    </Button>
+                  </DropdownMenuTrigger>
+                  <DropdownMenuContent align="end" className="w-36">
+                    <DropdownMenuItem onSelect={() => openRename(conversation)}>
+                      <Pencil />重命名
+                    </DropdownMenuItem>
+                    <DropdownMenuItem
+                      variant="destructive"
+                      onSelect={() => openDelete(conversation)}
+                    >
+                      <Trash2 />删除对话
+                    </DropdownMenuItem>
+                  </DropdownMenuContent>
+                </DropdownMenu>
+              </div>
+            )
+          })}
         </nav>
       </aside>
 
@@ -567,6 +721,69 @@ export function KnowledgeAgentPage() {
           <p className="mt-2 text-xs text-muted-foreground">回答只作为当前 Workspace 的知识检索与整理结果；AI 候选稿需要人工确认。</p>
         </footer>
       </section>
+
+      <Dialog
+        open={renameTarget !== null}
+        onOpenChange={(open) => {
+          if (!open) {
+            setRenameTarget(null)
+            setRenameError('')
+          }
+        }}
+      >
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>重命名对话</DialogTitle>
+            <DialogDescription>只修改列表里的对话名称，消息与问答记录保持不变。</DialogDescription>
+          </DialogHeader>
+          <div className="space-y-3">
+            {renameError ? <div role="alert" className="rounded-md bg-error-soft px-3 py-2 text-body-sm text-destructive">{renameError}</div> : null}
+            <div className="space-y-1.5">
+              <label htmlFor="conversation-title" className="text-body-sm font-medium">对话名称</label>
+              <Input
+                id="conversation-title"
+                value={renameTitle}
+                onChange={(event) => setRenameTitle(event.target.value)}
+                maxLength={255}
+                autoFocus
+                data-testid="agent-rename-input"
+              />
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setRenameTarget(null)}>取消</Button>
+            <Button disabled={renamePending} onClick={() => void submitRename()} data-testid="agent-rename-submit">
+              {renamePending ? '保存中…' : '保存'}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog
+        open={deleteTarget !== null}
+        onOpenChange={(open) => {
+          if (!open) {
+            setDeleteTarget(null)
+            setDeleteError('')
+          }
+        }}
+      >
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>删除对话</DialogTitle>
+            <DialogDescription>
+              「{deleteTarget?.title || '新对话'}」将从列表移除，对话内容保留。
+            </DialogDescription>
+          </DialogHeader>
+          {deleteError ? <div role="alert" className="rounded-md bg-error-soft px-3 py-2 text-body-sm text-destructive">{deleteError}</div> : null}
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setDeleteTarget(null)}>取消</Button>
+            <Button variant="destructive" disabled={deletePending} onClick={() => void submitDelete()} data-testid="agent-delete-submit">
+              <Trash2 />{deletePending ? '删除中…' : '确认删除'}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   )
 }

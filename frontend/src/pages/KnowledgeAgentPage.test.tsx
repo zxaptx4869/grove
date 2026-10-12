@@ -73,6 +73,7 @@ function makeRun(overrides: Partial<KnowledgeRunPayload> = {}): KnowledgeRunPayl
 function setupFetch(
   initialRun: KnowledgeRunPayload = makeRun(),
   initialItems = [userMessage, assistantMessage],
+  options: { renameStatus?: number; deleteStatus?: number } = {},
 ) {
   let currentRun = initialRun
   let conversations = [conversation]
@@ -90,6 +91,31 @@ function setupFetch(
       items = []
       currentRun = makeRun({ id: 11, conversation_id: 2, dialogue_loop_status: null, status: 'waiting' })
       return Promise.resolve({ ok: true, json: async () => created })
+    }
+    if (/^\/api\/knowledge-agent\/conversations\/\d+$/.test(url)) {
+      const targetId = Number(url.split('/').pop())
+      if (init?.method === 'PATCH') {
+        if (options.renameStatus && options.renameStatus !== 200) {
+          if (options.renameStatus === 404) {
+            conversations = conversations.filter((item) => item.id !== targetId)
+          }
+          return Promise.resolve({ ok: false, status: options.renameStatus, json: async () => ({ detail: '重命名被拒绝' }) })
+        }
+        const title = (JSON.parse(String(init.body)) as { title: string }).title
+        conversations = conversations.map((item) => (item.id === targetId ? { ...item, title } : item))
+        return Promise.resolve({ ok: true, json: async () => conversations.find((item) => item.id === targetId) })
+      }
+      if (init?.method === 'DELETE') {
+        if (options.deleteStatus && options.deleteStatus !== 200) {
+          if (options.deleteStatus !== 409) {
+            // 404 表示服务端已不存在该对话，列表同样不再返回它
+            conversations = conversations.filter((item) => item.id !== targetId)
+          }
+          return Promise.resolve({ ok: false, status: options.deleteStatus, json: async () => ({ detail: '删除被拒绝' }) })
+        }
+        conversations = conversations.filter((item) => item.id !== targetId)
+        return Promise.resolve({ ok: true, json: async () => ({ ok: true }) })
+      }
     }
     if (url.includes('/observability')) {
       return Promise.resolve({ ok: true, json: async () => ({ run_id: currentRun.id, tool_calls: [], model_invocations: [] }) })
@@ -235,6 +261,162 @@ describe('KnowledgeAgentPage', () => {
     renderPage()
     expect(await screen.findByText('未完成')).toBeInTheDocument()
     expect(screen.getByText('服务暂时不可用')).toBeInTheDocument()
+  })
+})
+
+describe('KnowledgeAgentPage 会话重命名与删除', () => {
+  it('重命名后就地更新轨道与标题，不重载整份列表', async () => {
+    const { calls } = setupFetch()
+    renderPage()
+
+    await screen.findByTestId('agent-conversation-item')
+    const listCallsBefore = calls.filter((call) => call.url === '/api/knowledge-agent/conversations' && !call.init?.method).length
+    await userEvent.click(screen.getByRole('button', { name: '知识库问题 会话操作' }))
+    await userEvent.click(await screen.findByRole('menuitem', { name: '重命名' }))
+    const input = await screen.findByTestId('agent-rename-input')
+    await userEvent.clear(input)
+    await userEvent.type(input, '施工验收笔记')
+    await userEvent.click(screen.getByTestId('agent-rename-submit'))
+
+    await waitFor(() => expect(screen.getByTestId('agent-conversation-item')).toHaveTextContent('施工验收笔记'))
+    expect(screen.getByRole('heading', { level: 2 })).toHaveTextContent('施工验收笔记')
+    const listCalls = calls.filter((call) => call.url === '/api/knowledge-agent/conversations' && !call.init?.method)
+    expect(listCalls).toHaveLength(listCallsBefore)
+  })
+
+  it('重命名非法输入就地提示且不发请求', async () => {
+    const { calls } = setupFetch()
+    renderPage()
+
+    await screen.findByTestId('agent-conversation-item')
+    await userEvent.click(screen.getByRole('button', { name: '知识库问题 会话操作' }))
+    await userEvent.click(await screen.findByRole('menuitem', { name: '重命名' }))
+    const input = await screen.findByTestId('agent-rename-input')
+    await userEvent.clear(input)
+    await userEvent.type(input, '   ')
+    await userEvent.click(screen.getByTestId('agent-rename-submit'))
+
+    expect(await screen.findByRole('alert')).toHaveTextContent('标题不能为空')
+    expect(calls.some((call) => call.init?.method === 'PATCH')).toBe(false)
+  })
+
+  it('已命名对话在发送首条消息后仍保留用户标题', async () => {
+    setupFetch()
+    renderPage()
+
+    await screen.findByTestId('agent-conversation-item')
+    await userEvent.click(screen.getByRole('button', { name: '知识库问题 会话操作' }))
+    await userEvent.click(await screen.findByRole('menuitem', { name: '重命名' }))
+    const input = await screen.findByTestId('agent-rename-input')
+    await userEvent.clear(input)
+    await userEvent.type(input, '我的命名')
+    await userEvent.click(screen.getByTestId('agent-rename-submit'))
+    await waitFor(() => expect(screen.getByTestId('agent-conversation-item')).toHaveTextContent('我的命名'))
+
+    await userEvent.type(screen.getByTestId('agent-composer'), '闭水试验持续多久？')
+    await userEvent.click(screen.getByTestId('agent-send'))
+
+    await waitFor(() => expect(screen.getByTestId('agent-conversation-item')).toHaveTextContent('我的命名'))
+    expect(screen.getByRole('heading', { level: 2 })).toHaveTextContent('我的命名')
+  })
+
+  it('删除需二次确认并说明内容保留，取消不发请求', async () => {
+    const { calls } = setupFetch()
+    renderPage()
+
+    await screen.findByTestId('agent-conversation-item')
+    await userEvent.click(screen.getByRole('button', { name: '知识库问题 会话操作' }))
+    await userEvent.click(await screen.findByRole('menuitem', { name: '删除对话' }))
+
+    expect(await screen.findByText(/将从列表移除，对话内容保留/)).toBeInTheDocument()
+    expect(calls.some((call) => call.init?.method === 'DELETE')).toBe(false)
+
+    await userEvent.click(screen.getByRole('button', { name: '取消' }))
+    await waitFor(() => expect(screen.queryByText(/将从列表移除，对话内容保留/)).not.toBeInTheDocument())
+    expect(calls.some((call) => call.init?.method === 'DELETE')).toBe(false)
+  })
+
+  it('删除当前对话后落到新建，且不产生多余空对话', async () => {
+    const { calls } = setupFetch()
+    renderPage()
+
+    await screen.findByTestId('agent-conversation-item')
+    await userEvent.click(screen.getByRole('button', { name: '知识库问题 会话操作' }))
+    await userEvent.click(await screen.findByRole('menuitem', { name: '删除对话' }))
+    await userEvent.click(await screen.findByTestId('agent-delete-submit'))
+
+    await waitFor(() => expect(screen.getAllByTestId('agent-conversation-item')).toHaveLength(1))
+    expect(screen.getByTestId('agent-conversation-item')).toHaveTextContent('新对话')
+    expect(screen.getByRole('heading', { level: 2 })).toHaveTextContent('新对话')
+    const creates = calls.filter(
+      (call) => call.url === '/api/knowledge-agent/conversations' && call.init?.method === 'POST',
+    )
+    expect(creates).toHaveLength(1)
+  })
+
+  it('删除非当前对话只移除该行，不新建', async () => {
+    const { calls } = setupFetch()
+    renderPage()
+
+    await screen.findByTestId('agent-conversation-item')
+    await userEvent.click(screen.getByTestId('agent-new-conversation'))
+    await waitFor(() => expect(screen.getAllByTestId('agent-conversation-item')).toHaveLength(2))
+
+    const createsBefore = calls.filter(
+      (call) => call.url === '/api/knowledge-agent/conversations' && call.init?.method === 'POST',
+    ).length
+    await userEvent.click(screen.getByRole('button', { name: '知识库问题 会话操作' }))
+    await userEvent.click(await screen.findByRole('menuitem', { name: '删除对话' }))
+    await userEvent.click(await screen.findByTestId('agent-delete-submit'))
+
+    await waitFor(() => expect(screen.getAllByTestId('agent-conversation-item')).toHaveLength(1))
+    expect(screen.getByTestId('agent-conversation-item')).toHaveTextContent('新对话')
+    const createsAfter = calls.filter(
+      (call) => call.url === '/api/knowledge-agent/conversations' && call.init?.method === 'POST',
+    ).length
+    expect(createsAfter).toBe(createsBefore)
+  })
+
+  it('删除冲突时就地提示并保留该行', async () => {
+    setupFetch(makeRun(), [userMessage, assistantMessage], { deleteStatus: 409 })
+    renderPage()
+
+    await screen.findByTestId('agent-conversation-item')
+    await userEvent.click(screen.getByRole('button', { name: '知识库问题 会话操作' }))
+    await userEvent.click(await screen.findByRole('menuitem', { name: '删除对话' }))
+    await userEvent.click(await screen.findByTestId('agent-delete-submit'))
+
+    expect(await screen.findByRole('alert')).toHaveTextContent('正在进行的问答')
+    expect(screen.getAllByTestId('agent-conversation-item')).toHaveLength(1)
+  })
+
+  it('删除返回 404 时按已删除处理并落到新建', async () => {
+    setupFetch(makeRun(), [userMessage, assistantMessage], { deleteStatus: 404 })
+    renderPage()
+
+    await screen.findByTestId('agent-conversation-item')
+    await userEvent.click(screen.getByRole('button', { name: '知识库问题 会话操作' }))
+    await userEvent.click(await screen.findByRole('menuitem', { name: '删除对话' }))
+    await userEvent.click(await screen.findByTestId('agent-delete-submit'))
+
+    await waitFor(() => expect(screen.getAllByTestId('agent-conversation-item')).toHaveLength(1))
+    expect(screen.getByTestId('agent-conversation-item')).toHaveTextContent('新对话')
+  })
+
+  it('重命名返回 404 时移除该行并落到新建', async () => {
+    setupFetch(makeRun(), [userMessage, assistantMessage], { renameStatus: 404 })
+    renderPage()
+
+    await screen.findByTestId('agent-conversation-item')
+    await userEvent.click(screen.getByRole('button', { name: '知识库问题 会话操作' }))
+    await userEvent.click(await screen.findByRole('menuitem', { name: '重命名' }))
+    const input = await screen.findByTestId('agent-rename-input')
+    await userEvent.clear(input)
+    await userEvent.type(input, '已被删除的对话')
+    await userEvent.click(screen.getByTestId('agent-rename-submit'))
+
+    await waitFor(() => expect(screen.getAllByTestId('agent-conversation-item')).toHaveLength(1))
+    expect(screen.getByTestId('agent-conversation-item')).toHaveTextContent('新对话')
   })
 })
 
