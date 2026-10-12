@@ -60,7 +60,8 @@
 
 ## Risks / Trade-offs
 
-- [生产 MySQL 会话时区核对需要人工执行] → 核对命令与判定标准写进 `design.md` 与 `tasks.md`，收尾报告列为未验证项，等用户在变更窗口执行。
+- [生产 MySQL 会话时区核对（已完成）] → 2026-10-12 在生产执行 `SELECT @@global.time_zone, @@session.time_zone, @@system_time_zone, NOW(), UTC_TIMESTAMP();`，输出 `SYSTEM  SYSTEM  UTC  <同一时刻>  <同一时刻>`：系统时区为 UTC 且两个时间函数完全相等，库口径等价于 UTC，未做参数变更。宿主与容器时区本就是 UTC，因此没有再显式覆盖 `default-time-zone`；若后续更换宿主、容器镜像或迁移实例，需要重跑该核对命令确认。
+- [归档器不允许在同一需求内删除场景] → 主规格「Source 处理状态与触发」中已废弃的「开始处理」场景保留原场景名、改写为新口径（等待处理不再提供手动「开始处理」），需求正文同步删掉「对等待处理提供「开始处理」」的老表述；保留场景名是归档器的约束，语义以改写后的正文与场景内容为准。
 - [通配校验器让请求模型一并继承] → 当前请求模型没有 datetime 字段，行为差异为零；测试断言模型继承关系与四类行为，防止未来无声变化。
 - [pydantic 在响应序列化时报错会变成 500] → 归一化失败先记 warning 再抛出，日志可定位；不静默返回裸串是刻意的取舍。
 - [Web 测试的等待处理样例缺 `has_processing_task` 会翻转成「处理未启动」] → 同步更新既有 fixture（`SourceList.test.tsx` 的 `baseSource`、`InboxPage.test.tsx` 的等待处理样例），并把该字段设为 `SourcePayload` 必填，避免漏传。

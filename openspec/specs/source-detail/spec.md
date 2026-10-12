@@ -5,7 +5,7 @@ TBD - created by archiving change add-source-detail-view. Update Purpose after a
 ## Requirements
 ### Requirement: 来源详情查看
 
-系统 MUST 提供来源详情弹窗：展示来源标题、采集说明、处理状态、所属项目、候选数、正式知识数与创建时间；MUST 展示全部附件原始材料（图片可点击放大查看原图，文字/OCR 全文完整显示）；MUST 提供候选列表（无候选时显示空状态），并保留候选证据高亮与切换定位。
+系统 MUST 提供来源详情弹窗：展示来源标题、采集说明、处理状态、所属项目、候选数、正式知识数与创建时间；MUST 展示全部附件原始材料（图片可点击放大查看原图，文字/OCR 全文完整显示）；MUST 提供候选列表（无候选时显示空状态），并保留候选证据高亮与切换定位。来源处于等待处理且 `has_processing_task` 为 false 时，详情 MUST 显示「处理未启动」说明并提供就地「重试处理」入口，调用 `POST /api/sources/{id}/process`；服务端 409 MUST 视为状态本身正常，只刷新详情与列表状态，MUST NOT 提示为失败；未启动判定 MUST NOT 使用等待时长阈值。
 
 #### Scenario: 查看来源详情
 
@@ -21,6 +21,16 @@ TBD - created by archiving change add-source-detail-view. Update Purpose after a
 
 - **WHEN** 来源没有候选（如失败或未处理）
 - **THEN** 详情仍可打开，候选区显示空状态，材料区正常展示
+
+#### Scenario: 详情显示处理未启动并可重试
+
+- **WHEN** 用户打开一个等待处理且 `has_processing_task` 为 false 的来源详情
+- **THEN** 详情显示「处理未启动」说明与「重试处理」入口，点击后触发处理并刷新详情状态
+
+#### Scenario: 详情重试命中 409
+
+- **WHEN** 详情内重试触发时服务端返回 409
+- **THEN** 详情与列表只刷新状态，不显示失败提示
 
 ### Requirement: 来源列表查看入口
 
