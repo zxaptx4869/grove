@@ -5,6 +5,7 @@
  */
 
 import type { Project } from "@/src/api";
+import { parseServerTime } from "@/src/serverTime";
 import type { BadgeTone } from "@/src/knowledge-agent/components/ui";
 import type { SourceIconName } from "@/src/sources/components/SourceIcon";
 import type { CandidateOut, SourceOut } from "@/src/sources/types";
@@ -145,15 +146,6 @@ function isSameDay(left: Date, right: Date): boolean {
     left.getMonth() === right.getMonth() &&
     left.getDate() === right.getDate()
   );
-}
-
-/**
- * 服务端时间串解析：SQLite 下 `created_at` 存的是 UTC，序列化后却不带 `Z`，
- * 直接 `new Date()` 会按本地时区解析，东八区整整差 8 小时（真机走查：几分钟前采集的显示成 7:23）。
- * 与 Web 的 ReviewPage 同一口径：缺时区就补 `Z`。
- */
-function parseServerTime(value: string): Date {
-  return new Date(/(?:Z|[+-]\d{2}:?\d{2})$/.test(value) ? value : `${value}Z`);
 }
 
 /** 列表时间文案：今天 10:12 / 昨天 18:05 / 9 月 20 日 15:20 / 2025 年 9 月 20 日。 */

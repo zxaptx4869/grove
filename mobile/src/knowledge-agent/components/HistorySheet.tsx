@@ -6,10 +6,12 @@ import type {
   KnowledgeConversation,
   RunStatus,
 } from "@/src/knowledge-agent/types";
+import { parseServerTime } from "@/src/serverTime";
 import { theme } from "@/src/theme";
 
 function relativeTime(iso: string): string {
-  const value = new Date(iso).getTime();
+  // 解析统一走 @/src/serverTime：裸串按 UTC，刚结束的对话不会显示成「8 小时前」
+  const value = parseServerTime(iso).getTime();
   if (Number.isNaN(value)) return "";
   const diffMinutes = Math.round((Date.now() - value) / 60000);
   if (diffMinutes < 1) return "刚刚";
@@ -19,7 +21,7 @@ function relativeTime(iso: string): string {
   const diffDays = Math.round(diffHours / 24);
   if (diffDays === 1) return "昨天";
   if (diffDays < 7) return `${diffDays} 天前`;
-  return new Date(iso).toLocaleDateString();
+  return parseServerTime(iso).toLocaleDateString();
 }
 
 const RUN_STATUS_LABELS: Record<RunStatus, string> = {

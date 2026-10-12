@@ -11,6 +11,7 @@ import { classifyKnowledgeAgentError } from "@/src/knowledge-agent/errors";
 import { useReducedMotion } from "@/src/knowledge-agent/hooks/useReducedMotion";
 import { knowledgeAgentKeys } from "@/src/knowledge-agent/queryKeys";
 import type { KnowledgeEntryCurrent } from "@/src/knowledge-agent/types";
+import { parseServerTime } from "@/src/serverTime";
 import { theme } from "@/src/theme";
 
 export interface EntryDetailTarget {
@@ -30,7 +31,8 @@ type EntryDetailViewState =
   | { kind: "ready"; current: KnowledgeEntryCurrent };
 
 function formatTime(value: string): string {
-  const date = new Date(value);
+  // 解析统一走 @/src/serverTime：服务端时间串的时区口径只在一处维护
+  const date = parseServerTime(value);
   return Number.isNaN(date.getTime()) ? "时间未知" : date.toLocaleString();
 }
 

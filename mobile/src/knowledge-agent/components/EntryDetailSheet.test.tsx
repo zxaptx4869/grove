@@ -120,6 +120,26 @@ test("底部详情首次打开只读取单个 Entry，关闭不触发消息或�
   expect(api.submitMessage).not.toHaveBeenCalled();
 });
 
+test("更新时间按 UTC 解析服务端不带时区的时间串", async () => {
+  api.getEntryCurrent.mockResolvedValue({ ...ENTRY_DETAIL, updatedAt: "2026-09-29T07:23:51" });
+  const client = new QueryClient({
+    defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
+  });
+  clients.push(client);
+  const rendered = await render(
+    <QueryClientProvider client={client}>
+      <EntryDetailSheet
+        target={{ entryId: 8, title: "闭水试验", projectName: null, nodePath: null }}
+        onClose={jest.fn()}
+      />
+    </QueryClientProvider>,
+  );
+
+  // 不补时区会按本地时间解析，东八区下整体差 8 小时
+  const expected = `更新于 ${new Date("2026-09-29T07:23:51Z").toLocaleString()}`;
+  await waitFor(() => expect(rendered.getByText(expected)).toBeTruthy());
+});
+
 test("快速读取完成前不打开空弹层，正文就绪后一次呈现", async () => {
   let resolveEntry!: (value: typeof ENTRY_DETAIL) => void;
   api.getEntryCurrent.mockImplementation(

@@ -106,6 +106,14 @@ test("不带时区的服务端时间按 UTC 解析，不再整体差一个时区
   expect(formatSourceTime("不是时间", now)).toBe("不是时间");
 });
 
+test("共用解析口径：裸串、Z 与 +00:00 是同一时刻", () => {
+  const now = new Date("2026-09-29T12:00:00Z");
+  const bare = formatSourceTime("2026-09-29T07:23:51", now);
+  expect(bare).toBe(formatSourceTime("2026-09-29T07:23:51Z", now));
+  expect(bare).toBe(formatSourceTime("2026-09-29T07:23:51+00:00", now));
+  expect(bare).toContain("15:23");
+});
+
 test("附件图片缓存名带上版本串，库重置后不会复用上一代的同号文件", () => {
   const base = { sourceId: 138, attachmentId: 154, fileName: "88452349-2a41.jpg" };
   const first = attachmentCacheFileName({ ...base, cacheVersion: "2026-09-29T07:23:51" });

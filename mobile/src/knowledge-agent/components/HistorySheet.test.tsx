@@ -55,6 +55,18 @@ test("历史未加载或加载失败时仍可立即新建对话", async () => {
   expect(failedProps.onRetry).toHaveBeenCalledTimes(1);
 });
 
+test("不带时区的服务端时间按 UTC 解析：刚结束的对话显示刚刚", async () => {
+  const now = Date.now();
+  const naive = new Date(now - 20 * 1000);
+  const iso = naive.toISOString().replace("Z", "");
+  const rendered = await render(
+    <HistorySheet {...props({ conversations: [{ ...conversation(1), lastActivityAt: iso }] })} />,
+  );
+
+  // 不补时区会按本地时间解析，东八区下显示成「8 小时前」
+  expect(rendered.getByText("刚刚")).toBeTruthy();
+});
+
 test("大量历史摘要使用有限首批的非嵌套虚拟列表", async () => {
   const conversations = Array.from({ length: 240 }, (_, index) => conversation(index + 1));
   const rendered = await render(<HistorySheet {...props({ conversations })} />);
