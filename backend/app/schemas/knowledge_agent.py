@@ -5,9 +5,9 @@
 """
 
 from datetime import datetime
-from typing import Annotated, Literal
+from typing import Annotated, Any, Literal
 
-from pydantic import ConfigDict, Field
+from pydantic import ConfigDict, Field, field_validator
 
 from app.schemas.base import ApiModel
 
@@ -111,6 +111,23 @@ class KnowledgeConversationCreate(ApiModel):
 
     scope_type: KnowledgeScopeType = "workspace"
     project_id: int | None = None
+
+
+class KnowledgeConversationRenameRequest(ApiModel):
+    """重命名知识对话：标题去除首尾空白后必须非空且不超过 255 字符。"""
+
+    title: str = Field(min_length=1, max_length=255)
+
+    @field_validator("title", mode="before")
+    @classmethod
+    def _strip_title(cls, value: Any) -> Any:
+        """提交前去除首尾空白；只剩空白字符视为非法输入。"""
+        if isinstance(value, str):
+            stripped = value.strip()
+            if not stripped:
+                raise ValueError("标题不能为空")
+            return stripped
+        return value
 
 
 class KnowledgeConversationOut(ApiModel):

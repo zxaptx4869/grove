@@ -49,6 +49,7 @@ from app.models.knowledge_agent import (
     RUN_PROCESSING,
     RUN_TERMINAL_STATUSES,
     RUN_WAITING,
+    TITLE_SOURCE_AUTO,
 )
 from app.schemas.knowledge_agent import (
     FallbackSummaryOut,
@@ -339,7 +340,10 @@ async def submit_message(
 
     run.assistant_message_id = assistant_message.id
     user_message.run_id = run.id
-    if conversation.title == DEFAULT_CONVERSATION_TITLE:
+    if (
+        conversation.title_source == TITLE_SOURCE_AUTO
+        and conversation.title == DEFAULT_CONVERSATION_TITLE
+    ):
         # 首条问题确定性截断生成标题，不引入额外模型调用
         title = message_text[:30]
         conversation.title = title + ("…" if len(message_text) > 30 else "")
@@ -367,7 +371,7 @@ async def get_owned_run(
     user_id: int,
     run_id: int,
 ) -> KnowledgeAgentRun:
-    """按用户与 Workspace 读取 Run（经对话归属校验），越权一律 404。"""
+    """按用户与 Workspace 读取 Run（经对话归属校验），越权或对话已软删一律 404。"""
     run = await db.get(KnowledgeAgentRun, run_id)
     if run is None or run.workspace_id != workspace_id or run.owner_user_id != user_id:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Run 不存在")
@@ -376,6 +380,7 @@ async def get_owned_run(
         conversation is None
         or conversation.workspace_id != workspace_id
         or conversation.owner_user_id != user_id
+        or conversation.deleted_at is not None
     ):
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Run 不存在")
     return run

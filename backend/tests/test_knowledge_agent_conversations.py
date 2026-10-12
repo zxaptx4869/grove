@@ -5,10 +5,13 @@ from unittest.mock import AsyncMock
 
 import pytest
 from fastapi import HTTPException
+from pydantic import ValidationError
 from sqlalchemy import event, func, select
 
 from app.db.session import async_session_factory, engine
 from app.models import (
+    KnowledgeCandidateDraft,
+    KnowledgeEntryRevisionDraft,
     KnowledgeMessage,
     Project,
     User,
@@ -18,28 +21,38 @@ from app.models import (
 from app.models.knowledge_agent import (
     BASIS_MODE_AUTO,
     BASIS_MODE_KNOWLEDGE_ONLY,
+    DRAFT_GENERATING,
     MESSAGE_TYPE_SCOPE_CHANGE,
     MESSAGE_TYPE_USER,
     RESULT_MODE_ANSWER,
     RESULT_MODE_ENTRIES,
+    REVISION_DRAFT_GENERATING,
     RUN_CANCELLED,
     RUN_COMPLETED,
     RUN_WAITING,
     SCOPE_PROJECT,
     SCOPE_WORKSPACE,
+    TITLE_SOURCE_AUTO,
+    TITLE_SOURCE_USER,
 )
 from app.schemas.knowledge_agent import (
     KnowledgeConversationCreate,
+    KnowledgeConversationRenameRequest,
     KnowledgeRunSubmitRequest,
     KnowledgeScopeChangeRequest,
 )
+from app.services.knowledge_agent.candidate import get_owned_draft
 from app.services.knowledge_agent.conversations import (
+    DEFAULT_CONVERSATION_TITLE,
     change_scope,
     create_conversation,
+    delete_conversation,
     get_owned_conversation,
     list_conversations,
     list_messages,
+    rename_conversation,
 )
+from app.services.knowledge_agent.entry_revision import get_owned_revision_draft
 from app.services.knowledge_agent.runs import (
     cancel_run,
     get_owned_run,
@@ -911,3 +924,295 @@ async def test_list_conversations_ordered_by_activity() -> None:
         other = await _user(db, "他空间")
         other_ws = await _workspace_for(db, other)
         assert await list_conversations(db, other_ws.id, other.id) == []
+
+
+async def _draft_rows(
+    db, conversation, run
+) -> tuple[KnowledgeCandidateDraft, KnowledgeEntryRevisionDraft]:
+    """为对话直接写入候选草稿与修订草稿，覆盖「按 id 直读草稿」的过滤路径。"""
+    candidate_draft = KnowledgeCandidateDraft(
+        workspace_id=conversation.workspace_id,
+        owner_user_id=conversation.owner_user_id,
+        conversation_id=conversation.id,
+        operation_run_id=run.id,
+        status=DRAFT_GENERATING,
+    )
+    revision_draft = KnowledgeEntryRevisionDraft(
+        workspace_id=conversation.workspace_id,
+        owner_user_id=conversation.owner_user_id,
+        conversation_id=conversation.id,
+        operation_run_id=run.id,
+        instruction="把持续时长改成 48 小时",
+        base_entry_json="{}",
+        base_entry_fingerprint="fingerprint",
+        status=REVISION_DRAFT_GENERATING,
+    )
+    db.add(candidate_draft)
+    db.add(revision_draft)
+    await db.flush()
+    return candidate_draft, revision_draft
+
+
+@pytest.mark.asyncio
+async def test_rename_conversation_updates_title_and_source_only() -> None:
+    """重命名只改标题与命名归属：最近活动时间、范围与消息保持不变。"""
+    async with async_session_factory() as db:
+        user = await _user(db, "重命名")
+        workspace = await _workspace_for(db, user)
+        conversation = await create_conversation(
+            db,
+            workspace.id,
+            user.id,
+            KnowledgeConversationCreate(scope_type="workspace"),
+        )
+        await submit_message(
+            db,
+            conversation,
+            KnowledgeRunSubmitRequest(client_message_id="rename-1", message="首条问题"),
+        )
+        await db.commit()
+        last_activity = conversation.last_activity_at
+        message_count = (
+            await db.execute(
+                select(func.count())
+                .select_from(KnowledgeMessage)
+                .where(KnowledgeMessage.conversation_id == conversation.id)
+            )
+        ).scalar_one()
+
+        renamed = await rename_conversation(
+            db,
+            conversation,
+            KnowledgeConversationRenameRequest(title="  自定义标题  "),
+        )
+        await db.commit()
+        assert renamed.title == "自定义标题"
+        assert renamed.title_source == TITLE_SOURCE_USER
+        assert renamed.last_activity_at == last_activity
+        assert renamed.scope_type == SCOPE_WORKSPACE
+        assert renamed.project_id is None
+        remaining = (
+            await db.execute(
+                select(func.count())
+                .select_from(KnowledgeMessage)
+                .where(KnowledgeMessage.conversation_id == conversation.id)
+            )
+        ).scalar_one()
+        assert remaining == message_count
+
+
+@pytest.mark.asyncio
+async def test_rename_rejects_blank_and_overlong_title() -> None:
+    """空白、只有空白字符与超长标题在请求 schema 层即被拒绝。"""
+    with pytest.raises(ValidationError):
+        KnowledgeConversationRenameRequest(title="")
+    with pytest.raises(ValidationError):
+        KnowledgeConversationRenameRequest(title="   \n ")
+    with pytest.raises(ValidationError):
+        KnowledgeConversationRenameRequest(title="长" * 256)
+    assert KnowledgeConversationRenameRequest(title=" 合法 ").title == "合法"
+
+
+@pytest.mark.asyncio
+async def test_user_title_not_overwritten_by_first_message() -> None:
+    """用户命名后，首条消息不再改写标题；改回默认标题同样受保护。"""
+    async with async_session_factory() as db:
+        user = await _user(db, "命名优先")
+        workspace = await _workspace_for(db, user)
+        conversation = await create_conversation(
+            db,
+            workspace.id,
+            user.id,
+            KnowledgeConversationCreate(scope_type="workspace"),
+        )
+        await rename_conversation(
+            db,
+            conversation,
+            KnowledgeConversationRenameRequest(title="自定义标题"),
+        )
+        _, first_run = await submit_message(
+            db,
+            conversation,
+            KnowledgeRunSubmitRequest(client_message_id="named-1", message="首条问题"),
+        )
+        await db.commit()
+        assert conversation.title == "自定义标题"
+
+        await rename_conversation(
+            db,
+            conversation,
+            KnowledgeConversationRenameRequest(title=DEFAULT_CONVERSATION_TITLE),
+        )
+        await db.commit()
+        assert conversation.title == DEFAULT_CONVERSATION_TITLE
+
+        await cancel_run(db, first_run)
+        await db.commit()
+        await submit_message(
+            db,
+            conversation,
+            KnowledgeRunSubmitRequest(client_message_id="named-2", message="第二条问题"),
+        )
+        await db.commit()
+        assert conversation.title == DEFAULT_CONVERSATION_TITLE
+        assert conversation.title_source == TITLE_SOURCE_USER
+
+
+@pytest.mark.asyncio
+async def test_auto_title_applies_before_user_naming() -> None:
+    """从未被用户命名的对话仍按首条消息前 30 字自动命名。"""
+    async with async_session_factory() as db:
+        user = await _user(db, "自动命名")
+        workspace = await _workspace_for(db, user)
+        conversation = await create_conversation(
+            db,
+            workspace.id,
+            user.id,
+            KnowledgeConversationCreate(scope_type="workspace"),
+        )
+        message = "闭水试验通常持续多久，以及验收前需要注意哪些细节问题与准备工作流程"
+        await submit_message(
+            db,
+            conversation,
+            KnowledgeRunSubmitRequest(client_message_id="auto-1", message=message),
+        )
+        await db.commit()
+        assert conversation.title == message[:30] + "…"
+        assert conversation.title_source == TITLE_SOURCE_AUTO
+
+
+@pytest.mark.asyncio
+async def test_rename_conversation_allowed_during_active_run() -> None:
+    """活动 Run 期间重命名照常保存，不打断 Run。"""
+    async with async_session_factory() as db:
+        user = await _user(db, "活动重命名")
+        workspace = await _workspace_for(db, user)
+        conversation = await create_conversation(
+            db,
+            workspace.id,
+            user.id,
+            KnowledgeConversationCreate(scope_type="workspace"),
+        )
+        _, run = await submit_message(
+            db,
+            conversation,
+            KnowledgeRunSubmitRequest(client_message_id="active-rename-1", message="进行中的问题"),
+        )
+        await db.commit()
+
+        renamed = await rename_conversation(
+            db,
+            conversation,
+            KnowledgeConversationRenameRequest(title="活动期间的新标题"),
+        )
+        await db.commit()
+        assert renamed.title == "活动期间的新标题"
+        assert run.status == RUN_WAITING
+
+
+@pytest.mark.asyncio
+async def test_delete_conversation_hides_all_read_paths_and_keeps_rows() -> None:
+    """软删后列表、详情、Run 直读与草稿直读一律 404，记录本身保留。"""
+    async with async_session_factory() as db:
+        user = await _user(db, "软删")
+        workspace = await _workspace_for(db, user)
+        conversation = await create_conversation(
+            db,
+            workspace.id,
+            user.id,
+            KnowledgeConversationCreate(scope_type="workspace"),
+        )
+        _, run = await submit_message(
+            db,
+            conversation,
+            KnowledgeRunSubmitRequest(client_message_id="delete-1", message="要删除的问题"),
+        )
+        candidate_draft, revision_draft = await _draft_rows(db, conversation, run)
+        await db.commit()
+        await cancel_run(db, run)
+        await db.commit()
+
+        conversation_id = conversation.id
+        run_id = run.id
+        await delete_conversation(db, conversation)
+        await db.commit()
+        assert conversation.deleted_at is not None
+
+        assert await list_conversations(db, workspace.id, user.id) == []
+        for call in (
+            lambda: get_owned_conversation(db, workspace.id, user.id, conversation_id),
+            lambda: get_owned_run(db, workspace.id, user.id, run_id),
+            lambda: get_owned_draft(db, workspace.id, user.id, candidate_draft.id),
+            lambda: get_owned_revision_draft(db, workspace.id, user.id, revision_draft.id),
+        ):
+            with pytest.raises(HTTPException) as exc_info:
+                await call()
+            assert exc_info.value.status_code == 404
+
+        # 记录保留：消息、Run、草稿都未被物理删除
+        message_count = (
+            await db.execute(
+                select(func.count())
+                .select_from(KnowledgeMessage)
+                .where(KnowledgeMessage.conversation_id == conversation_id)
+            )
+        ).scalar_one()
+        assert message_count == 2
+        assert (await db.get(type(run), run_id)) is not None
+        assert (await db.get(KnowledgeCandidateDraft, candidate_draft.id)) is not None
+        assert (await db.get(KnowledgeEntryRevisionDraft, revision_draft.id)) is not None
+
+
+@pytest.mark.asyncio
+async def test_delete_conversation_conflicts_with_active_run() -> None:
+    """存在 waiting Run 时删除返回 409 且不写删除时间。"""
+    async with async_session_factory() as db:
+        user = await _user(db, "删冲突")
+        workspace = await _workspace_for(db, user)
+        conversation = await create_conversation(
+            db,
+            workspace.id,
+            user.id,
+            KnowledgeConversationCreate(scope_type="workspace"),
+        )
+        await submit_message(
+            db,
+            conversation,
+            KnowledgeRunSubmitRequest(client_message_id="active-delete-1", message="进行中的问题"),
+        )
+        await db.commit()
+
+        with pytest.raises(HTTPException) as exc_info:
+            await delete_conversation(db, conversation)
+        assert exc_info.value.status_code == 409
+        assert conversation.deleted_at is None
+        assert await list_conversations(db, workspace.id, user.id) != []
+
+
+@pytest.mark.asyncio
+async def test_delete_conversation_is_idempotent_and_owner_scoped() -> None:
+    """重复删除幂等成功；越权删除返回 404 且不改动对话。"""
+    async with async_session_factory() as db:
+        user = await _user(db, "删幂等")
+        workspace = await _workspace_for(db, user)
+        conversation = await create_conversation(
+            db,
+            workspace.id,
+            user.id,
+            KnowledgeConversationCreate(scope_type="workspace"),
+        )
+        await db.commit()
+
+        other = await _user(db, "删越权")
+        other_ws = await _workspace_for(db, other)
+        with pytest.raises(HTTPException) as exc_info:
+            await get_owned_conversation(db, other_ws.id, other.id, conversation.id)
+        assert exc_info.value.status_code == 404
+
+        await delete_conversation(db, conversation)
+        await db.commit()
+        deleted_at = conversation.deleted_at
+        assert deleted_at is not None
+        await delete_conversation(db, conversation)
+        await db.commit()
+        assert conversation.deleted_at == deleted_at

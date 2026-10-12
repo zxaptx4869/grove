@@ -22,11 +22,13 @@ from app.models.knowledge_agent import (
     RUN_ACTIVE_STATUSES,
     SCOPE_PROJECT,
     SCOPE_WORKSPACE,
+    TITLE_SOURCE_USER,
 )
 from app.schemas.knowledge_agent import (
     KnowledgeAnswerBasisOut,
     KnowledgeConversationCreate,
     KnowledgeConversationOut,
+    KnowledgeConversationRenameRequest,
     KnowledgeMessageOut,
     KnowledgeScopeChangeRequest,
 )
@@ -57,13 +59,15 @@ def answer_basis_out(raw: str | None) -> KnowledgeAnswerBasisOut | None:
     return KnowledgeAnswerBasisOut.model_validate(data)
 
 
-async def get_owned_conversation(
+async def _load_owned_conversation(
     db: AsyncSession,
     workspace_id: int,
     user_id: int,
     conversation_id: int,
+    *,
+    include_deleted: bool,
 ) -> KnowledgeConversation:
-    """按用户与 Workspace 读取对话；不存在或越权一律 404。"""
+    """按用户与 Workspace 读取对话行；越权一律 404，软删是否命中由调用方决定。"""
     conversation = await db.get(KnowledgeConversation, conversation_id)
     if (
         conversation is None
@@ -71,7 +75,37 @@ async def get_owned_conversation(
         or conversation.owner_user_id != user_id
     ):
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="对话不存在")
+    if not include_deleted and conversation.deleted_at is not None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="对话不存在")
     return conversation
+
+
+async def get_owned_conversation(
+    db: AsyncSession,
+    workspace_id: int,
+    user_id: int,
+    conversation_id: int,
+) -> KnowledgeConversation:
+    """按用户与 Workspace 读取对话；不存在、越权或已软删一律 404。"""
+    return await _load_owned_conversation(
+        db, workspace_id, user_id, conversation_id, include_deleted=False
+    )
+
+
+async def get_owned_conversation_for_delete(
+    db: AsyncSession,
+    workspace_id: int,
+    user_id: int,
+    conversation_id: int,
+) -> KnowledgeConversation:
+    """删除入口的归属加载：允许命中已软删对话，用于幂等重复删除。
+
+    软删过滤仍集中在本模块加载器；删除是唯一需要看见已删记录的路径，其余读路径
+    与列表一律按不存在处理。越权仍然 404。
+    """
+    return await _load_owned_conversation(
+        db, workspace_id, user_id, conversation_id, include_deleted=True
+    )
 
 
 def _project_label(project_name: str | None) -> str:
@@ -104,13 +138,14 @@ async def list_conversations(
     workspace_id: int,
     user_id: int,
 ) -> list[KnowledgeConversationOut]:
-    """按当前 Workspace 与用户列出对话，按最近活动时间排序。"""
+    """按当前 Workspace 与用户列出未删除对话，按最近活动时间排序。"""
     rows = (
         await db.execute(
             select(KnowledgeConversation)
             .where(
                 KnowledgeConversation.workspace_id == workspace_id,
                 KnowledgeConversation.owner_user_id == user_id,
+                KnowledgeConversation.deleted_at.is_(None),
             )
             .order_by(
                 KnowledgeConversation.last_activity_at.desc(),
@@ -252,6 +287,43 @@ async def create_conversation(
     # MySQL 不会像 SQLite 一样可靠返回服务端默认时间，响应前显式加载这些字段。
     await db.refresh(conversation)
     return conversation
+
+
+async def rename_conversation(
+    db: AsyncSession,
+    conversation: KnowledgeConversation,
+    payload: KnowledgeConversationRenameRequest,
+) -> KnowledgeConversation:
+    """重命名对话：只写标题与命名归属，不动最近活动时间、范围、消息与工作集。
+
+    标题合法性（去空白后非空、≤255）由请求 schema 校验；命名为用户归属后
+    不再被首条消息的自动命名覆盖，`updated_at` 由 `onupdate` 自动刷新。
+    """
+    conversation.title = payload.title
+    conversation.title_source = TITLE_SOURCE_USER
+    await db.flush()
+    return conversation
+
+
+async def delete_conversation(
+    db: AsyncSession,
+    conversation: KnowledgeConversation,
+) -> None:
+    """软删对话：只记录删除时间，消息、Run、工作集版本与草稿全部保留。
+
+    存在 waiting/processing Run 时按范围切换同口径返回 409；对已删除对话重复
+    调用幂等成功，不物理删除记录、不依赖数据库级联。
+    """
+    if conversation.deleted_at is not None:
+        return
+    active = await active_run_for_conversation(db, conversation.id)
+    if active is not None:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="对话存在进行中的问答，请等待完成或取消后再删除",
+        )
+    conversation.deleted_at = datetime.now(UTC)
+    await db.flush()
 
 
 def _encode_cursor(message_id: int) -> str:

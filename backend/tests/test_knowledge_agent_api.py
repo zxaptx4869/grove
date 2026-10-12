@@ -10,8 +10,8 @@ import pytest
 from app.db.session import async_session_factory
 from app.knowledge_agent_worker import process_one_run
 from app.main import create_app
-from app.models import KnowledgeAgentRun
-from app.models.knowledge_agent import SCOPE_WORKSPACE
+from app.models import Candidate, KnowledgeAgentRun, KnowledgeCandidateDraft
+from app.models.knowledge_agent import DRAFT_GENERATING, SCOPE_PROJECT, SCOPE_WORKSPACE
 from app.services.knowledge_agent.tools import RunToolContext
 from app.services.knowledge_agent.working_set import (
     get_active_context_version,
@@ -96,6 +96,8 @@ async def test_api_requires_auth(client: httpx.AsyncClient) -> None:
         ("POST", "/api/knowledge-agent/conversations"),
         ("GET", "/api/knowledge-agent/conversations/1/messages"),
         ("GET", "/api/knowledge-agent/runs/1"),
+        ("PATCH", "/api/knowledge-agent/conversations/1"),
+        ("DELETE", "/api/knowledge-agent/conversations/1"),
     ]:
         response = await client.request(method, path)
         assert response.status_code == 401, (method, path)
@@ -759,3 +761,188 @@ async def test_conversation_times_are_utc_with_offset(client: httpx.AsyncClient)
     for field in ("created_at", "last_activity_at"):
         parsed = datetime.fromisoformat(conversation[field])
         assert parsed.utcoffset() == timedelta(0), (field, conversation[field])
+
+
+@pytest.mark.asyncio
+async def test_conversation_rename_via_api(client: httpx.AsyncClient) -> None:
+    """重命名端点返回新标题、只改标题；非法输入 422，越权与已删对话 404。"""
+    await _register(client)
+    conversation = await _conversation(client)
+    before = (await client.get(f"/api/knowledge-agent/conversations/{conversation['id']}")).json()
+
+    renamed = await client.patch(
+        f"/api/knowledge-agent/conversations/{conversation['id']}",
+        json={"title": "  施工验收笔记  "},
+    )
+    assert renamed.status_code == 200
+    body = renamed.json()
+    assert body["title"] == "施工验收笔记"
+    assert body["last_activity_at"] == before["last_activity_at"]
+    assert body["created_at"] == before["created_at"]
+
+    for payload in ({"title": ""}, {"title": "   "}, {"title": "长" * 256}):
+        rejected = await client.patch(
+            f"/api/knowledge-agent/conversations/{conversation['id']}",
+            json=payload,
+        )
+        assert rejected.status_code == 422, payload
+    still = (await client.get(f"/api/knowledge-agent/conversations/{conversation['id']}")).json()
+    assert still["title"] == "施工验收笔记"
+
+    other = httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=create_app()), base_url="http://test"
+    )
+    async with other:
+        await _register(other)
+        forbidden = await other.patch(
+            f"/api/knowledge-agent/conversations/{conversation['id']}",
+            json={"title": "越权改名"},
+        )
+        assert forbidden.status_code == 404
+
+    assert (
+        await client.delete(f"/api/knowledge-agent/conversations/{conversation['id']}")
+    ).status_code == 200
+    assert (
+        await client.patch(
+            f"/api/knowledge-agent/conversations/{conversation['id']}",
+            json={"title": "删除后改名"},
+        )
+    ).status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_conversation_delete_via_api_hides_all_reads(client: httpx.AsyncClient) -> None:
+    """删除返回 ok、软删后列表与所有读路径 404、草稿直读 404、重复删除幂等。"""
+    await _register(client)
+    conversation = await _conversation(client)
+    submitted = await client.post(
+        f"/api/knowledge-agent/conversations/{conversation['id']}/messages",
+        json={"client_message_id": "delete-api-1", "message": "要删除的问题"},
+    )
+    run_id = submitted.json()["run"]["id"]
+
+    async with async_session_factory() as db:
+        run = await db.get(KnowledgeAgentRun, run_id)
+        draft = KnowledgeCandidateDraft(
+            workspace_id=run.workspace_id,
+            owner_user_id=run.owner_user_id,
+            conversation_id=conversation["id"],
+            operation_run_id=run_id,
+            status=DRAFT_GENERATING,
+        )
+        db.add(draft)
+        await db.commit()
+        draft_id = draft.id
+
+    conflict = await client.delete(
+        f"/api/knowledge-agent/conversations/{conversation['id']}"
+    )
+    assert conflict.status_code == 409
+
+    assert (
+        await client.post(f"/api/knowledge-agent/runs/{run_id}/cancel")
+    ).status_code == 200
+
+    deleted = await client.delete(f"/api/knowledge-agent/conversations/{conversation['id']}")
+    assert deleted.status_code == 200
+    assert deleted.json() == {"ok": True}
+
+    assert (await client.get("/api/knowledge-agent/conversations")).json() == []
+    for method, path in [
+        ("GET", f"/api/knowledge-agent/conversations/{conversation['id']}"),
+        ("GET", f"/api/knowledge-agent/conversations/{conversation['id']}/messages"),
+        ("GET", f"/api/knowledge-agent/runs/{run_id}"),
+        ("GET", f"/api/knowledge-agent/runs/{run_id}/observability"),
+        ("POST", f"/api/knowledge-agent/runs/{run_id}/cancel"),
+        ("GET", f"/api/knowledge-agent/drafts/{draft_id}"),
+    ]:
+        response = await client.request(method, path)
+        assert response.status_code == 404, (method, path)
+    scope_changed = await client.patch(
+        f"/api/knowledge-agent/conversations/{conversation['id']}/scope",
+        json={"scope_type": "workspace"},
+    )
+    assert scope_changed.status_code == 404
+
+    repeated = await client.delete(f"/api/knowledge-agent/conversations/{conversation['id']}")
+    assert repeated.status_code == 200
+    assert repeated.json() == {"ok": True}
+
+
+@pytest.mark.asyncio
+async def test_delete_conversation_keeps_confirmed_candidate_and_entry(
+    client: httpx.AsyncClient,
+) -> None:
+    """删除曾确认候选草稿的对话后，Candidate 与 Entry 保持可用且来源可追溯。"""
+    await _register(client)
+    project = await _project(client, "删对话项目")
+    node = await _node(client, project["id"], "施工")
+    entry = await _entry(client, project["id"], node["id"], "闭水试验通常持续 24 小时")
+    conversation = (
+        await client.post(
+            "/api/knowledge-agent/conversations",
+            json={"scope_type": "project", "project_id": project["id"]},
+        )
+    ).json()
+    submitted = await client.post(
+        f"/api/knowledge-agent/conversations/{conversation['id']}/messages",
+        json={"client_message_id": "keep-1", "message": "闭水试验通常持续多久？"},
+    )
+    run_id = submitted.json()["run"]["id"]
+    async with async_session_factory() as db:
+        await _cancel_other_waiting_runs(db, keep_run_id=run_id)
+        run = await db.get(KnowledgeAgentRun, run_id)
+        ctx = RunToolContext(
+            run_id=run_id,
+            workspace_id=run.workspace_id,
+            owner_user_id=run.owner_user_id,
+            scope_type=SCOPE_PROJECT,
+            project_id=project["id"],
+            project_name=None,
+        )
+        verified = await evidence_for_run(db, ctx)
+        assert verified
+        await complete_answer_run(
+            db,
+            run,
+            KnowledgeAnswerDraft(
+                answer="闭水试验通常持续 24 小时，验收前不得放水。",
+                citations=[KnowledgeCitationDraft(evidence_handle=verified[0].evidence_handle)],
+                core_question_answered=True,
+                coverage_complete=True,
+            ),
+        )
+        await db.commit()
+
+    action = await client.post(
+        f"/api/knowledge-agent/conversations/{conversation['id']}/drafts",
+        json={"client_message_id": "keep-action-1", "source_run_id": run_id},
+    )
+    assert action.status_code == 201, action.text
+    draft_id = action.json()["draft"]["id"]
+    async with async_session_factory() as db:
+        await _cancel_other_waiting_runs(db, keep_run_id=action.json()["run"]["id"])
+    assert await process_one_run() is True
+    confirmed = await client.post(
+        f"/api/knowledge-agent/drafts/{draft_id}/confirm",
+        json={"client_operation_id": "keep-op-1"},
+    )
+    assert confirmed.status_code == 200, confirmed.text
+    candidate_id = confirmed.json()["candidate"]["id"]
+
+    assert (
+        await client.delete(f"/api/knowledge-agent/conversations/{conversation['id']}")
+    ).status_code == 200
+
+    async with async_session_factory() as db:
+        candidate = await db.get(Candidate, candidate_id)
+    assert candidate is not None
+    assert candidate.status == "pending"
+    entries = (
+        await client.get(
+            f"/api/projects/{project['id']}/entries",
+            params={"node_id": node["id"]},
+        )
+    ).json()
+    assert [row["id"] for row in entries] == [entry["id"]]

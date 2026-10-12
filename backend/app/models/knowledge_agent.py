@@ -443,6 +443,11 @@ TOOL_STATUSES = (
 EVIDENCE_PURPOSE_ANSWER = "answer"
 EVIDENCE_PURPOSE_CONFLICT = "conflict"
 
+# ---- 对话标题来源：auto 为服务端自动命名，user 为用户显式命名 ----
+TITLE_SOURCE_AUTO = "auto"
+TITLE_SOURCE_USER = "user"
+TITLE_SOURCE_VALUES = (TITLE_SOURCE_AUTO, TITLE_SOURCE_USER)
+
 
 class KnowledgeConversation(Base):
     """Workspace 内的知识对话，归属创建用户。"""
@@ -463,6 +468,13 @@ class KnowledgeConversation(Base):
         BigInteger, ForeignKey("projects.id", ondelete="SET NULL"), index=True, nullable=True
     )
     title: Mapped[str] = mapped_column(String(255), nullable=False)
+    # 命名归属：auto 时允许首条消息自动命名，user 后不再被自动命名覆盖
+    title_source: Mapped[str] = mapped_column(
+        String(16),
+        default=TITLE_SOURCE_AUTO,
+        server_default=TITLE_SOURCE_AUTO,
+        nullable=False,
+    )
     last_activity_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )
@@ -472,6 +484,8 @@ class KnowledgeConversation(Base):
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False
     )
+    # 软删标记：非空表示对话已删除，记录与关联数据保留，读路径按不存在处理
+    deleted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
     workspace: Mapped["Workspace"] = relationship()
     owner: Mapped["User"] = relationship()

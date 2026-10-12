@@ -30,6 +30,7 @@ from app.models import (
     KnowledgeAgentEvidence,
     KnowledgeAgentRun,
     KnowledgeCandidateDraft,
+    KnowledgeConversation,
     KnowledgeMessage,
     Project,
     Source,
@@ -57,6 +58,7 @@ from app.models.knowledge_agent import (
     STEP_DRAFT_GENERATE,
     STEP_DRAFT_VALIDATE,
     STEP_DRAFT_VERIFY_EVIDENCE,
+    TITLE_SOURCE_AUTO,
 )
 from app.schemas.knowledge_agent import (
     CandidateReceiptOut,
@@ -413,12 +415,20 @@ async def get_owned_draft(
     user_id: int,
     draft_id: int,
 ) -> KnowledgeCandidateDraft:
-    """按用户与 Workspace 读取 Draft；越权一律 404。"""
+    """按用户与 Workspace 读取 Draft；越权或所属对话已软删一律 404。"""
     draft = await db.get(KnowledgeCandidateDraft, draft_id)
     if (
         draft is None
         or draft.workspace_id != workspace_id
         or draft.owner_user_id != user_id
+    ):
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="草稿不存在")
+    conversation = await db.get(KnowledgeConversation, draft.conversation_id)
+    if (
+        conversation is None
+        or conversation.workspace_id != workspace_id
+        or conversation.owner_user_id != user_id
+        or conversation.deleted_at is not None
     ):
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="草稿不存在")
     return draft
@@ -604,7 +614,10 @@ async def submit_draft_candidate(
 
     run.assistant_message_id = assistant_message.id
     user_message.run_id = run.id
-    if conversation.title == DEFAULT_CONVERSATION_TITLE:
+    if (
+        conversation.title_source == TITLE_SOURCE_AUTO
+        and conversation.title == DEFAULT_CONVERSATION_TITLE
+    ):
         conversation.title = (
             user_message.content[:30]
             + ("…" if len(user_message.content) > 30 else "")

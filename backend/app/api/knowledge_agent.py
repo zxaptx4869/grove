@@ -30,6 +30,7 @@ from app.schemas.knowledge_agent import (
     KnowledgeCandidateDraftOut,
     KnowledgeConversationCreate,
     KnowledgeConversationOut,
+    KnowledgeConversationRenameRequest,
     KnowledgeDraftActionOut,
     KnowledgeDraftActionRequest,
     KnowledgeDraftConfirmOut,
@@ -70,11 +71,14 @@ from app.services.knowledge_agent.conversations import (
     change_scope,
     conversation_out,
     create_conversation,
+    delete_conversation,
     get_owned_conversation,
+    get_owned_conversation_for_delete,
     list_conversations,
     list_messages,
     message_out,
     recent_runs_for_conversations,
+    rename_conversation,
 )
 from app.services.knowledge_agent.entry_revision import (
     cancel_revision_draft,
@@ -381,6 +385,41 @@ async def change_scope_endpoint(
         conversation.id
     )
     return conversation_out(conversation, project_name, recent_run=recent_run)
+
+
+@router.patch("/conversations/{conversation_id}", response_model=KnowledgeConversationOut)
+async def rename_conversation_endpoint(
+    conversation_id: int,
+    payload: KnowledgeConversationRenameRequest,
+    db: DbSession,
+    user: CurrentUser,
+    workspace: CurrentWorkspace,
+) -> KnowledgeConversationOut:
+    """重命名对话：只改标题与更新时间，活动 Run 期间照常可用。"""
+    conversation = await get_owned_conversation(db, workspace.id, user.id, conversation_id)
+    await rename_conversation(db, conversation, payload)
+    await db.commit()
+    project_name = await _project_name(db, workspace.id, conversation.project_id)
+    recent_run = (await recent_runs_for_conversations(db, [conversation.id])).get(
+        conversation.id
+    )
+    return conversation_out(conversation, project_name, recent_run=recent_run)
+
+
+@router.delete("/conversations/{conversation_id}")
+async def delete_conversation_endpoint(
+    conversation_id: int,
+    db: DbSession,
+    user: CurrentUser,
+    workspace: CurrentWorkspace,
+) -> dict[str, bool]:
+    """软删对话：内容保留、全部读路径按不存在处理；活动 Run 期间返回 409。"""
+    conversation = await get_owned_conversation_for_delete(
+        db, workspace.id, user.id, conversation_id
+    )
+    await delete_conversation(db, conversation)
+    await db.commit()
+    return {"ok": True}
 
 
 @router.post(
