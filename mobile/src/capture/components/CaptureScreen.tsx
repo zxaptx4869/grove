@@ -3,7 +3,7 @@
 import { useQuery } from "@tanstack/react-query";
 import { useCallback, useRef, useState } from "react";
 import { Platform, RefreshControl, ScrollView, StyleSheet, Text, View } from "react-native";
-import { SafeAreaView, useSafeAreaInsets } from "react-native-safe-area-context";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { getProjects } from "@/src/api";
 import { useAuth } from "@/src/auth";
@@ -408,10 +408,13 @@ export function CaptureScreen() {
       : "未归属";
 
   return (
-    <SafeAreaView style={styles.page} edges={["top"]}>
+    <View style={styles.page}>
       {page === "entry" ? (
         <ScrollView
-          contentContainerStyle={[styles.content, { paddingBottom: insets.bottom + 24 }]}
+          contentContainerStyle={[
+            styles.content,
+            { paddingTop: insets.top + 12, paddingBottom: insets.bottom + 24 },
+          ]}
           keyboardShouldPersistTaps="handled"
           refreshControl={
             <RefreshControl
@@ -462,7 +465,7 @@ export function CaptureScreen() {
 
       {page === "form" && draft ? (
         <View style={styles.fill}>
-          <CaptureHeader title={FORM_TITLE[draft.kind]} onBack={backToEntry} />
+          <CaptureHeader title={FORM_TITLE[draft.kind]} onBack={backToEntry} topInset={insets.top} />
           <ScrollView
             contentContainerStyle={[
               styles.content,
@@ -508,7 +511,11 @@ export function CaptureScreen() {
 
       {page === "permission" && notice ? (
         <View style={styles.fill}>
-          <CaptureHeader title={permissionTitle(notice)} onBack={backToEntry} />
+          <CaptureHeader
+            title={permissionTitle(notice)}
+            onBack={backToEntry}
+            topInset={insets.top}
+          />
           <ScrollView
             contentContainerStyle={[styles.content, { paddingBottom: insets.bottom + 24 }]}
             keyboardShouldPersistTaps="handled"
@@ -567,7 +574,7 @@ export function CaptureScreen() {
           onClose={closeSubmission}
         />
       ) : null}
-    </SafeAreaView>
+    </View>
   );
 }
 

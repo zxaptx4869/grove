@@ -5,9 +5,20 @@ import { Pressable, StyleSheet, Text, View } from "react-native";
 import { CaptureIcon } from "@/src/capture/components/CaptureIcon";
 import { theme } from "@/src/theme";
 
-export function CaptureHeader({ title, onBack }: { title: string; onBack: () => void }) {
+/** 顶栏上下内边距；上方再追加状态栏高度，让白底顶栏铺到状态栏区域。 */
+const HEADER_PADDING = 8;
+
+export function CaptureHeader({
+  title,
+  onBack,
+  topInset = 0,
+}: {
+  title: string;
+  onBack: () => void;
+  topInset?: number;
+}) {
   return (
-    <View style={styles.header}>
+    <View style={[styles.header, { paddingTop: HEADER_PADDING + topInset }]}>
       <View style={styles.slot}>
         <Pressable
           accessibilityRole="button"
@@ -31,7 +42,8 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     alignItems: "center",
     gap: 8,
-    paddingVertical: 8,
+    paddingTop: HEADER_PADDING,
+    paddingBottom: HEADER_PADDING,
     paddingHorizontal: 12,
     borderBottomWidth: 1,
     borderBottomColor: theme.border,
