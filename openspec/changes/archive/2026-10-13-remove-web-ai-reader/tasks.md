@@ -29,10 +29,10 @@
 - [x] 5.1 全量命令：`cd backend && .venv/bin/ruff check . && .venv/bin/pytest -q`（仅既有基线噪声失败）、`cd frontend && npm run typecheck && npm run lint && npm run test:run`（188 用例全绿）。
 - [x] 5.2 后端冒烟：未重启服务，沿用运行中的开发后端（`--reload` 已加载新代码）实测：旧端点 `POST /api/projects/1/reader/ask`、`/reader/save-candidate` 均返回 404，`GET /api/knowledge-agent/conversations` 返回 401；另经 `app.openapi()` 核对 reader 路由为 0 条、知识 Agent 路由 18 条。
 - [x] 5.3 `openspec validate --all --strict` 收尾再执行一次并记录结果：68 项 0 失败。
-- [ ] 5.4 提供 Web 走查清单交用户验收：项目内导航无「AI 阅读」、`?view=ai-read` 重定向到项目首页、知识空间 / 确认台 / 知识 Agent / 移动端不受影响。手动验收结论由用户给出，AI 不代下结论。
+- [x] 5.4 提供 Web 走查清单交用户验收：项目内导航无「AI 阅读」、`?view=ai-read` 重定向到项目首页、知识空间 / 确认台 / 知识 Agent / 移动端不受影响。验收记录（2026-10-13）：用户反馈可见改动只有导航项消失、无其他可走查项，并据此批准归档；Agent 未受影响由 diff 与 `test_knowledge_agent_*` 全绿佐证。
 
 ## 6. 收尾
 
 - [x] 6.1 每完成一段可验证修改（工件、后端、Web、文档）即做本地阶段提交。
-- [ ] 6.2 归档前逐条比对主规格 `product-shell` 与 `answer-to-candidate`，并同步 `answer-to-candidate` 的 Purpose 措辞（原文绑定「AI 阅读回答」）。
-- [ ] 6.3 归档、推送与合并须用户明确批准；未通过自动化验证与用户走查前不归档。
+- [x] 6.2 归档前逐条比对主规格 `product-shell` 与 `answer-to-candidate`。归档结果：`answer-to-candidate` 由 7 条需求收敛为 2 条（+1/-6），`product-shell` 两处 MODIFIED；`answer-to-candidate` 的 Purpose 已同步为知识 Agent 口径。
+- [x] 6.3 归档、推送与合并须用户明确批准。记录（2026-10-13）：用户批准并按 `openspec archive remove-web-ai-reader -y` 归档为 `2026-10-13-remove-web-ai-reader`；推送与合并尚未批准。
