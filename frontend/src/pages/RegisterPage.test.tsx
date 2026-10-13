@@ -18,11 +18,10 @@ describe('RegisterPage', () => {
       </QueryClientProvider>,
     )
 
-    expect(screen.getByRole('heading', { name: '欢迎来到 Grove' })).toBeInTheDocument()
+    expect(screen.getByRole('heading', { name: '创建账号' })).toBeInTheDocument()
     expect(screen.getByLabelText('账号')).toBeInTheDocument()
     expect(screen.getByLabelText('密码')).toBeInTheDocument()
     expect(screen.getByLabelText('确认密码')).toBeInTheDocument()
-    expect(screen.getByRole('tab', { name: '注册' })).toHaveAttribute('aria-selected', 'true')
     expect(screen.getByRole('button', { name: '注册' })).toBeInTheDocument()
   })
 
@@ -66,8 +65,11 @@ describe('RegisterPage', () => {
     await userEvent.click(screen.getByRole('button', { name: '注册' }))
     expect(await screen.findByRole('alert')).toHaveTextContent('账号已存在')
     expect(screen.getByLabelText('账号')).toHaveValue('existing_user')
-    expect(screen.getByRole('tab', { name: '登录' })).toBeEnabled()
-    await userEvent.click(screen.getByRole('tab', { name: '登录' }))
+    expect(screen.getByRole('link', { name: '去登录' })).not.toHaveAttribute(
+      'aria-disabled',
+      'true',
+    )
+    await userEvent.click(screen.getByRole('link', { name: '去登录' }))
     expect(screen.queryByRole('alert')).not.toBeInTheDocument()
     expect(screen.queryByLabelText('确认密码')).not.toBeInTheDocument()
   })
@@ -96,8 +98,7 @@ describe('RegisterPage', () => {
     await userEvent.type(screen.getByLabelText('确认密码'), 'test_password')
     await userEvent.click(screen.getByRole('button', { name: '注册' }))
     expect(screen.getByRole('button', { name: '注册中…' })).toBeDisabled()
-    expect(screen.getByRole('tab', { name: '登录' })).toBeDisabled()
-    expect(screen.getByRole('tab', { name: '注册' })).toBeDisabled()
+    expect(screen.getByRole('link', { name: '去登录' })).toHaveAttribute('aria-disabled', 'true')
     expect(fetchMock).toHaveBeenCalledExactlyOnceWith(
       '/api/auth/register',
       expect.objectContaining({

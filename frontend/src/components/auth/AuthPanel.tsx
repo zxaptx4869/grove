@@ -1,37 +1,37 @@
 import { useIsMutating } from '@tanstack/react-query'
-import { Tabs } from 'radix-ui'
-import { useNavigate } from 'react-router-dom'
+import { Link } from 'react-router-dom'
 import { LoginForm } from '@/components/auth/LoginForm'
 import { RegisterForm } from '@/components/auth/RegisterForm'
 
-/** URL 驱动认证标签；提交期间禁止切换，避免交错提交。 */
+/** 保留原表单样式，通过底部链接在同一卡片切换认证模式。 */
 export function AuthPanel({ mode }: { mode: 'login' | 'register' }) {
-  const navigate = useNavigate()
   const pending = useIsMutating({ mutationKey: ['auth', 'access'] }) > 0
+  const login = mode === 'login'
 
   return (
-    <section className="intro-auth-panel">
-      <h2>欢迎来到 Grove</h2>
-      <Tabs.Root
-        value={mode}
-        activationMode="manual"
-        onValueChange={(value) => {
-          if (!pending && value !== mode)
-            navigate(value === 'register' ? '/register' : '/login', { preventScrollReset: true })
-        }}
-      >
-        <Tabs.List className="intro-auth-selector" aria-label="登录或注册">
-          <Tabs.Trigger value="login" disabled={pending}>
-            登录
-          </Tabs.Trigger>
-          <Tabs.Trigger value="register" disabled={pending}>
-            注册
-          </Tabs.Trigger>
-        </Tabs.List>
-        <Tabs.Content value={mode} className="intro-auth-content">
-          {mode === 'login' ? <LoginForm /> : <RegisterForm />}
-        </Tabs.Content>
-      </Tabs.Root>
+    <section className="intro-auth-panel space-y-6" aria-labelledby="intro-auth-title">
+      <div className="space-y-1">
+        <h2 id="intro-auth-title">{login ? '登录' : '创建账号'}</h2>
+        <p className="text-body text-muted-foreground">
+          {login ? '进入你的知识工作台。' : '注册后自动登录，开始整理知识。'}
+        </p>
+      </div>
+      {login ? <LoginForm /> : <RegisterForm />}
+      <p className="text-body-sm text-muted-foreground">
+        {login ? '没有账号？' : '已有账号？'}{' '}
+        <Link
+          to={login ? '/register' : '/login'}
+          preventScrollReset
+          className="intro-auth-switch text-primary underline-offset-4 hover:underline"
+          aria-disabled={pending || undefined}
+          tabIndex={pending ? -1 : undefined}
+          onClick={(event) => {
+            if (pending) event.preventDefault()
+          }}
+        >
+          {login ? '去注册' : '去登录'}
+        </Link>
+      </p>
     </section>
   )
 }

@@ -102,13 +102,13 @@ describe('公开介绍与桌面业务边界', () => {
     open('/login')
     await screen.findByLabelText('账号')
     await userEvent.click(screen.getByRole('tab', { name: 'AI 目录共创' }))
-    await userEvent.click(screen.getByRole('tab', { name: '注册' }))
+    await userEvent.click(screen.getByRole('link', { name: '去注册' }))
     expect(screen.getByLabelText('确认密码')).toBeInTheDocument()
     expect(screen.getByRole('tab', { name: 'AI 目录共创' })).toHaveAttribute(
       'aria-selected',
       'true',
     )
-    await userEvent.click(screen.getByRole('tab', { name: '登录' }))
+    await userEvent.click(screen.getByRole('link', { name: '去登录' }))
     expect(screen.queryByLabelText('确认密码')).not.toBeInTheDocument()
     expect(screen.getByRole('tab', { name: 'AI 目录共创' })).toHaveAttribute(
       'aria-selected',
@@ -117,22 +117,19 @@ describe('公开介绍与桌面业务边界', () => {
     expect(fetchMock).not.toHaveBeenCalled()
   })
 
-  it('认证切换与浏览器历史同步，方向键只移动焦点', async () => {
+  it('认证底部链接与浏览器历史同步，支持键盘激活', async () => {
     resize(1440)
     vi.stubGlobal('fetch', vi.fn())
     open('/login', true)
-    await screen.findByRole('tab', { name: '登录' })
-    await userEvent.click(screen.getByRole('tab', { name: '注册' }))
+    await screen.findByRole('heading', { name: '登录' })
+    await userEvent.click(screen.getByRole('link', { name: '去注册' }))
     expect(screen.getByLabelText('测试当前地址')).toHaveTextContent('/register')
     await userEvent.click(screen.getByRole('button', { name: '测试后退' }))
     expect(screen.getByLabelText('测试当前地址')).toHaveTextContent('/login')
-    expect(screen.getByRole('tab', { name: '登录' })).toHaveAttribute('aria-selected', 'true')
+    expect(screen.getByRole('heading', { name: '登录' })).toBeInTheDocument()
     await userEvent.click(screen.getByRole('button', { name: '测试前进' }))
     expect(screen.getByLabelText('测试当前地址')).toHaveTextContent('/register')
-    await userEvent.click(screen.getByRole('tab', { name: '注册' }))
-    await userEvent.keyboard('{ArrowLeft}')
-    expect(screen.getByRole('tab', { name: '登录' })).toHaveFocus()
-    expect(screen.getByRole('tab', { name: '注册' })).toHaveAttribute('aria-selected', 'true')
+    screen.getByRole('link', { name: '去登录' }).focus()
     await userEvent.keyboard('{Enter}')
     expect(screen.getByLabelText('测试当前地址')).toHaveTextContent('/login')
     expect(screen.queryByLabelText('确认密码')).not.toBeInTheDocument()
