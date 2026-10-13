@@ -1,7 +1,6 @@
 import { useMemo, useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import {
-  BookOpen,
   Check,
   ChevronDown,
   FolderKanban,
@@ -128,9 +127,8 @@ function ProjectNavigation({ project, projects }: { project?: ProjectPayload; pr
   const currentProject = projects?.find((item) => item.id === projectId) ?? project
   const isDirectory = new URLSearchParams(location.search).get('view') === 'directory'
   const isSources = new URLSearchParams(location.search).get('view') === 'sources'
-  const isAiRead = new URLSearchParams(location.search).get('view') === 'ai-read'
   const isReview = /^\/projects\/\d+\/review$/.test(location.pathname)
-  const isHome = !isDirectory && !isSources && !isReview && !isAiRead
+  const isHome = !isDirectory && !isSources && !isReview
 
   // 非归档项目按状态分组：组内按名称排序，当前项目置顶并带选中标识
   const projectGroups = PROJECT_STATUSES.filter((status) => status !== 'archived').map((status) => ({
@@ -217,13 +215,6 @@ function ProjectNavigation({ project, projects }: { project?: ProjectPayload; pr
           className={`flex min-h-[38px] items-center gap-[9px] rounded-md px-2.5 text-body ${isDirectory ? 'bg-brand-soft font-semibold text-brand' : 'text-muted-foreground hover:bg-muted hover:text-foreground'}`}
         >
           <FolderTree className="size-4" />知识空间
-        </Link>
-        <Link
-          to={`/projects/${projectId}?view=ai-read`}
-          aria-current={isAiRead ? 'page' : undefined}
-          className={`flex min-h-[38px] items-center gap-[9px] rounded-md px-2.5 text-body ${isAiRead ? 'bg-brand-soft font-semibold text-brand' : 'text-muted-foreground hover:bg-muted hover:text-foreground'}`}
-        >
-          <BookOpen className="size-4" />AI 阅读
         </Link>
         <Link
           to={`/projects/${projectId}/review`}

@@ -49,7 +49,6 @@ import { CaptureDialog } from '@/components/features/CaptureDialog'
 import { DirectoryDraftDialog } from '@/components/features/DirectoryDraftDialog'
 import { EmbeddingIndexLine } from '@/components/features/EmbeddingIndexStatus'
 import { ProjectContextPanel } from '@/components/features/ProjectContextPanel'
-import { ReaderView } from '@/components/features/ReaderView'
 import { KnowledgeOverviewView } from '@/components/features/KnowledgeOverviewView'
 import { SimilarEntriesDrawer } from '@/components/features/SimilarEntriesDrawer'
 import { useGroveMutation } from '@/hooks/useGroveMutation'
@@ -189,7 +188,6 @@ export function ProjectPage() {
   const id = Number(projectId)
   const isDirectoryView = searchParams.get('view') === 'directory'
   const isSourcesView = searchParams.get('view') === 'sources'
-  const isAiReadView = searchParams.get('view') === 'ai-read'
   const isMindMapView = searchParams.get('view') === 'mindmap'
   const isOverviewView = searchParams.get('view') === 'overview'
   // 思维导图「在知识空间中打开」通过 node 参数定位目录节点，URL 作为选中来源
@@ -526,12 +524,14 @@ export function ProjectPage() {
   if (isOverviewView) {
     return <KnowledgeOverviewView projectId={id} projectName={project.name} />
   }
+  // 旧「AI 阅读」视图已移除并收敛到全局「知识 Agent」入口，旧链接回落到项目首页
+  if (searchParams.get('view') === 'ai-read') {
+    return <Navigate to={`/projects/${id}`} replace />
+  }
 
   return (
     <section
-      className={`w-full px-6 pb-[30px] pt-[22px] ${
-        isDirectoryView || isAiReadView ? 'flex h-full flex-col' : ''
-      }`}
+      className={`w-full px-6 pb-[30px] pt-[22px] ${isDirectoryView ? 'flex h-full flex-col' : ''}`}
     >
       <header className="mb-5 flex min-h-[60px] items-start justify-between gap-6">
         <div className="min-w-0">
@@ -541,11 +541,9 @@ export function ProjectPage() {
                 ? '采集与来源'
                 : isDirectoryView
                 ? '知识空间'
-                : isAiReadView
-                ? 'AI 阅读'
                 : project.name}
             </h1>
-            {!isDirectoryView && !isSourcesView && !isAiReadView ? (
+            {!isDirectoryView && !isSourcesView ? (
               <Badge variant="outline" className="shrink-0">
                 {PROJECT_STATUSES.find(({ key }) => key === project.status)?.label}
               </Badge>
@@ -556,8 +554,6 @@ export function ProjectPage() {
               ? `${project.name} · 管理这个项目的原始材料。`
               : isDirectoryView
               ? `${project.name} · 按目录浏览和维护项目知识。`
-              : isAiReadView
-              ? `${project.name} · 基于已确认知识提问，回答附引用。`
               : project.description || '尚未填写项目目标与背景'}
           </p>
         </div>
@@ -989,8 +985,6 @@ export function ProjectPage() {
             </div>
           </div>
         </div>
-      ) : isAiReadView ? (
-        <ReaderView projectId={id} />
       ) : (
         <div className="grid min-h-[604px] grid-cols-[minmax(0,1.4fr)_minmax(280px,.8fr)] gap-7">
           <div className="min-w-0">

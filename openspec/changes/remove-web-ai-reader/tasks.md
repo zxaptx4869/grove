@@ -13,11 +13,11 @@
 
 ## 3. Web 移除 AI 阅读
 
-- [ ] 3.1 删除 `frontend/src/components/features/ReaderView.tsx` 与 `frontend/src/components/features/EntryPreviewDialog.tsx`。
-- [ ] 3.2 `frontend/src/lib/api.ts` 移除 `Reader*` 类型与 `askReader` / `saveReaderAnswer`；`frontend/src/lib/queryKeys.ts` 移除 `readerPreview`。
-- [ ] 3.3 `frontend/src/components/layout/AppShell.tsx` 移除「AI 阅读」导航项与 `isAiRead` 判定，`isHome` 判定同步更新。
-- [ ] 3.4 `frontend/src/pages/ProjectPage.tsx` 移除 `isAiReadView` 分支、标题/描述与 `ReaderView` 渲染，并对 `?view=ai-read` 做 `replace` 重定向到该项目的项目首页。
-- [ ] 3.5 验收：`cd frontend && npm run typecheck && npm run lint && npm run test:run` 通过；`rg -n "Reader|ai-read|readerPreview" frontend/src` 无残留。
+- [x] 3.1 删除 `frontend/src/components/features/ReaderView.tsx` 与 `frontend/src/components/features/EntryPreviewDialog.tsx`。
+- [x] 3.2 `frontend/src/lib/api.ts` 移除 `Reader*` 类型与 `askReader` / `saveReaderAnswer`；`frontend/src/lib/queryKeys.ts` 移除 `readerPreview`。
+- [x] 3.3 `frontend/src/components/layout/AppShell.tsx` 移除「AI 阅读」导航项与 `isAiRead` 判定（含未再使用的 `BookOpen` 图标导入），`isHome` 判定同步更新。
+- [x] 3.4 `frontend/src/pages/ProjectPage.tsx` 移除 `isAiReadView` 分支、标题/描述与 `ReaderView` 渲染，并对 `?view=ai-read` 做 `<Navigate replace>` 重定向到该项目的项目首页。
+- [x] 3.5 验收：`npm run typecheck` 通过；`npm run lint` 仅剩 `DirectoryDraftDialog.tsx` 2 条既有 warning；`npm run test:run` 33 文件 188 用例全绿；`rg -n "Reader|ai-read|readerPreview" frontend/src` 仅剩重定向判断。
 
 ## 4. 文档同步
 
