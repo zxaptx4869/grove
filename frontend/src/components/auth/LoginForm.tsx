@@ -48,7 +48,7 @@ export function LoginForm() {
     <section className="w-full space-y-6">
       <div className="space-y-1">
         <h2 className="text-[22px] font-[650] leading-[30px]">登录</h2>
-        <p className="text-body text-muted-foreground">进入你的 Workspace，继续整理项目。</p>
+        <p className="text-body text-muted-foreground">进入你的知识工作台。</p>
       </div>
 
       <Form {...form}>

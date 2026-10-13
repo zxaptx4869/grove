@@ -112,7 +112,7 @@ describe('LoginPage', () => {
     await userEvent.click(screen.getByRole('button', { name: '知识 Agent 协助' }))
     expect(screen.getByRole('region', { name: '知识 Agent 协助' })).toHaveTextContent('回答示例')
     expect(
-      screen.getByText('示例用于说明流程，不是真实用户数据或现场 AI 运行结果。'),
+      within(screen.getByRole('region', { name: '知识 Agent 协助' })).getByText('示例'),
     ).toBeInTheDocument()
     expect(fetchMock).not.toHaveBeenCalled()
   })
