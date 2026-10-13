@@ -1,11 +1,13 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
-import { render, screen } from '@testing-library/react'
+import { act, render, screen, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { MemoryRouter } from 'react-router-dom'
-import { describe, expect, it, vi } from 'vitest'
+import { MemoryRouter, Route, Routes } from 'react-router-dom'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import { LoginPage } from './LoginPage'
 
 describe('LoginPage', () => {
+  afterEach(() => vi.unstubAllGlobals())
+
   it('渲染登录表单且无报错', () => {
     const queryClient = new QueryClient()
     render(
@@ -20,18 +22,26 @@ describe('LoginPage', () => {
     expect(screen.getByLabelText('账号')).toBeInTheDocument()
     expect(screen.getByLabelText('密码')).toBeInTheDocument()
     expect(screen.getByRole('button', { name: '登录' })).toBeInTheDocument()
+    expect(screen.getByRole('heading', { level: 1 })).toHaveTextContent(
+      '让零散知识找得到，让陌生领域学得有方向。',
+    )
   })
 
   it('登录失败时在表单附近显示接口错误', async () => {
-    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
-      ok: false,
-      status: 401,
-      json: async () => ({ detail: '账号或密码错误' }),
-    }))
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockResolvedValue({
+        ok: false,
+        status: 401,
+        json: async () => ({ detail: '账号或密码错误' }),
+      }),
+    )
     const queryClient = new QueryClient({ defaultOptions: { mutations: { retry: false } } })
     render(
       <QueryClientProvider client={queryClient}>
-        <MemoryRouter><LoginPage /></MemoryRouter>
+        <MemoryRouter>
+          <LoginPage />
+        </MemoryRouter>
       </QueryClientProvider>,
     )
 
@@ -40,6 +50,70 @@ describe('LoginPage', () => {
     await userEvent.click(screen.getByRole('button', { name: '登录' }))
 
     expect(await screen.findByRole('alert')).toHaveTextContent('账号或密码错误')
-    vi.unstubAllGlobals()
+  })
+
+  it('成功提交真实凭据，等待时阻止重复提交，成功后进入工作台入口', async () => {
+    let resolveResponse!: (response: Response) => void
+    const fetchMock = vi.fn().mockImplementation(
+      () =>
+        new Promise<Response>((resolve) => {
+          resolveResponse = resolve
+        }),
+    )
+    vi.stubGlobal('fetch', fetchMock)
+    render(
+      <QueryClientProvider client={new QueryClient()}>
+        <MemoryRouter initialEntries={['/login']}>
+          <Routes>
+            <Route path="/login" element={<LoginPage />} />
+            <Route path="/" element={<h1>项目工作台</h1>} />
+          </Routes>
+        </MemoryRouter>
+      </QueryClientProvider>,
+    )
+    await userEvent.type(screen.getByLabelText('账号'), 'grove_user')
+    await userEvent.type(screen.getByLabelText('密码'), 'test_password')
+    await userEvent.click(screen.getByRole('button', { name: '登录' }))
+    expect(screen.getByRole('button', { name: '登录中…' })).toBeDisabled()
+    expect(fetchMock).toHaveBeenCalledExactlyOnceWith(
+      '/api/auth/login',
+      expect.objectContaining({
+        method: 'POST',
+        credentials: 'include',
+        body: JSON.stringify({ username: 'grove_user', password: 'test_password' }),
+      }),
+    )
+    await act(async () =>
+      resolveResponse(
+        new Response(JSON.stringify({ id: 1, username: 'grove_user' }), { status: 200 }),
+      ),
+    )
+    expect(await screen.findByRole('heading', { name: '项目工作台' })).toBeInTheDocument()
+  })
+
+  it('切换 AI 能力仅展示说明，保持候选、目录草稿与回答的语义边界', async () => {
+    const fetchMock = vi.fn()
+    vi.stubGlobal('fetch', fetchMock)
+    render(
+      <QueryClientProvider client={new QueryClient()}>
+        <MemoryRouter>
+          <LoginPage />
+        </MemoryRouter>
+      </QueryClientProvider>,
+    )
+    expect(screen.getByText('AI 候选 · 待确认')).toBeInTheDocument()
+    await userEvent.click(screen.getByRole('button', { name: 'AI 目录共创' }))
+    const directory = screen.getByRole('region', { name: 'AI 目录共创' })
+    expect(within(directory).getByText('AI 目录草稿 · 待确认')).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'AI 目录共创' })).toHaveAttribute(
+      'aria-pressed',
+      'true',
+    )
+    await userEvent.click(screen.getByRole('button', { name: '知识 Agent 协助' }))
+    expect(screen.getByRole('region', { name: '知识 Agent 协助' })).toHaveTextContent('回答示例')
+    expect(
+      screen.getByText('示例用于说明流程，不是真实用户数据或现场 AI 运行结果。'),
+    ).toBeInTheDocument()
+    expect(fetchMock).not.toHaveBeenCalled()
   })
 })

@@ -1,11 +1,12 @@
-import { lazy, Suspense, useEffect, useState, type ReactNode } from 'react'
-import { Navigate, Route, Routes } from 'react-router-dom'
+import { lazy, Suspense, type ReactNode } from 'react'
+import { Navigate, Route, Routes, useLocation } from 'react-router-dom'
 import { AppShell } from '@/components/layout/AppShell'
 import { AuthLayout } from '@/components/layout/AuthLayout'
 import { ProtectedRoute } from '@/components/auth/ProtectedRoute'
 import { Toaster } from '@/components/ui/sonner'
 import { TooltipProvider } from '@/components/ui/tooltip'
 import { HealthPage } from '@/pages/HealthPage'
+import { useDesktopViewport } from '@/hooks/useDesktopViewport'
 
 // 业务页面按需加载，避免首屏主包过大
 const ProjectsPage = lazy(() =>
@@ -47,13 +48,12 @@ function PageFallback() {
 }
 
 function DesktopBoundary({ children }: { children: ReactNode }) {
-  const [blocked, setBlocked] = useState(() => window.innerWidth < 1024)
-  useEffect(() => {
-    const update = () => setBlocked(window.innerWidth < 1024)
-    window.addEventListener('resize', update)
-    return () => window.removeEventListener('resize', update)
-  }, [])
-  if (blocked) return <main className="flex min-h-screen items-center justify-center bg-muted/30 px-6"><div className="max-w-md text-center"><div className="mx-auto mb-5 flex size-12 items-center justify-center rounded-xl bg-foreground text-background">G</div><h1 className="text-heading font-semibold">请在电脑端打开 Grove</h1><p className="mt-2 text-body-sm leading-6 text-muted-foreground">Grove 是面向桌面的知识整理工作台，当前浏览器宽度不足以安全完成项目和目录管理。</p></div></main>
+  const desktop = useDesktopViewport()
+  const { pathname } = useLocation()
+  const path = pathname.replace(/\/+$/, '') || '/'
+  if (path === '/login') return <>{children}</>
+  if (!desktop && path === '/') return <Navigate to="/login" replace />
+  if (!desktop) return <main className="flex min-h-screen items-center justify-center bg-muted/30 px-6"><div className="max-w-md text-center"><div className="mx-auto mb-5 flex size-12 items-center justify-center rounded-xl bg-foreground text-background">G</div><h1 className="text-heading font-semibold">请在电脑端打开 Grove</h1><p className="mt-2 text-body-sm leading-6 text-muted-foreground">Grove 是面向桌面的知识整理工作台，当前浏览器宽度不足以安全完成项目和目录管理。</p></div></main>
   return <>{children}</>
 }
 
@@ -82,7 +82,7 @@ export default function App() {
           <Route path="/settings/ai" element={<Suspense fallback={<PageFallback />}><AISettingsPage /></Suspense>} />
         </Route>
 
-        <Route path="/login" element={<AuthLayout><Suspense fallback={<PageFallback />}><LoginPage /></Suspense></AuthLayout>} />
+        <Route path="/login" element={<Suspense fallback={<PageFallback />}><LoginPage /></Suspense>} />
         <Route path="/register" element={<AuthLayout><Suspense fallback={<PageFallback />}><RegisterPage /></Suspense></AuthLayout>} />
 
         {/* 开发调试页：不进产品导航，可直接访问 */}
