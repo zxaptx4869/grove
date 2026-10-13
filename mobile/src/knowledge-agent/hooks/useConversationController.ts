@@ -181,6 +181,9 @@ export function useConversationController(
     queryFn: () =>
       knowledgeAgentApi.getConversation(token as string, selectedConversationId as number),
     enabled: Boolean(token && selectedConversationId),
+    // 对话已被删除时按不存在处理，不重试；其余错误沿用全局默认的一次重试
+    retry: (failureCount, error) =>
+      classifyKnowledgeAgentError(error).kind === "not_found" ? false : failureCount < 1,
   });
   const activeConversation = activeConversationQuery.data ?? null;
   const isDraft = selectedConversationId === null;

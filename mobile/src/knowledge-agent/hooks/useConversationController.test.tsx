@@ -232,6 +232,7 @@ async function setup(
   pages: Record<number, KnowledgeMessagePage> = { 1: page() },
   runLoader?: (runId: number) => Promise<KnowledgeRun>,
   conversationLoader?: (conversationId: number) => Promise<KnowledgeConversation>,
+  queryRetry: number | false = false,
 ) {
   api.listConversations.mockResolvedValue(conversations);
   api.getConversation.mockImplementation(
@@ -251,7 +252,7 @@ async function setup(
   });
   const client = new QueryClient({
     defaultOptions: {
-      queries: { retry: false, gcTime: Infinity },
+      queries: { retry: queryRetry, retryDelay: 0, gcTime: Infinity },
       mutations: { retry: false, gcTime: Infinity },
     },
   });
@@ -448,6 +449,21 @@ test("服务端恢复失败时保留明确错误并可重试", async () => {
   });
   await waitFor(() => expect(rendered.result.current.activeConversation?.id).toBe(1));
   expect(rendered.result.current.recoveryError).toBeNull();
+});
+
+test("对话查询 404 不重试：即使全局允许重试也只请求一次", async () => {
+  const rendered = await setup(
+    [conversation(1)],
+    { 1: page() },
+    undefined,
+    async () => {
+      throw Object.assign(new Error("对话不存在"), { status: 404 });
+    },
+    1,
+  );
+
+  await waitFor(() => expect(rendered.result.current.isDraft).toBe(true));
+  expect(api.getConversation).toHaveBeenCalledTimes(1);
 });
 
 test("离开期间完成的活动 Run 恢复终态结果", async () => {
