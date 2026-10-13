@@ -21,18 +21,18 @@
 
 ## 4. 文档同步
 
-- [ ] 4.1 `docs/产品蓝图/目录与知识空间.md`：项目层导航清单移除「AI 阅读」条目，并把「现有项目页入口可在统一对话入口接入前作为过渡保留」改为已收敛到统一「知识 Agent」入口。
-- [ ] 4.2 `docs/prototypes/` 保持不动（历史原型，不代表当前能力）。
+- [x] 4.1 `docs/产品蓝图/目录与知识空间.md`：项目层导航清单移除「AI 阅读」条目，并把「现有项目页入口可在统一对话入口接入前作为过渡保留」改为已收敛到统一「知识 Agent」入口；同时去掉「知识全景与知识空间目录浏览、AI 阅读平级」中的过期引用。
+- [x] 4.2 `docs/prototypes/` 保持不动（历史原型，不代表当前能力）。
 
 ## 5. 验证与走查
 
-- [ ] 5.1 全量命令：`cd backend && .venv/bin/ruff check . && .venv/bin/pytest -q`、`cd frontend && npm run typecheck && npm run lint && npm run test:run`。
-- [ ] 5.2 后端冒烟：重启后端后 `curl` 两个旧 Reader 端点应返回 404（路由已移除），`/api/knowledge-agent/*` 返回既有 401/200。
-- [ ] 5.3 `openspec validate --all --strict` 收尾再执行一次并记录结果。
+- [x] 5.1 全量命令：`cd backend && .venv/bin/ruff check . && .venv/bin/pytest -q`（仅既有基线噪声失败）、`cd frontend && npm run typecheck && npm run lint && npm run test:run`（188 用例全绿）。
+- [x] 5.2 后端冒烟：未重启服务，沿用运行中的开发后端（`--reload` 已加载新代码）实测：旧端点 `POST /api/projects/1/reader/ask`、`/reader/save-candidate` 均返回 404，`GET /api/knowledge-agent/conversations` 返回 401；另经 `app.openapi()` 核对 reader 路由为 0 条、知识 Agent 路由 18 条。
+- [x] 5.3 `openspec validate --all --strict` 收尾再执行一次并记录结果：68 项 0 失败。
 - [ ] 5.4 提供 Web 走查清单交用户验收：项目内导航无「AI 阅读」、`?view=ai-read` 重定向到项目首页、知识空间 / 确认台 / 知识 Agent / 移动端不受影响。手动验收结论由用户给出，AI 不代下结论。
 
 ## 6. 收尾
 
-- [ ] 6.1 每完成一段可验证修改（工件、后端、Web、文档）即做本地阶段提交。
+- [x] 6.1 每完成一段可验证修改（工件、后端、Web、文档）即做本地阶段提交。
 - [ ] 6.2 归档前逐条比对主规格 `product-shell` 与 `answer-to-candidate`，并同步 `answer-to-candidate` 的 Purpose 措辞（原文绑定「AI 阅读回答」）。
 - [ ] 6.3 归档、推送与合并须用户明确批准；未通过自动化验证与用户走查前不归档。
