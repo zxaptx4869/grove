@@ -56,7 +56,10 @@ from app.schemas.knowledge_agent import (
     KnowledgeDraftActionRequest,
     KnowledgeRunCitationOut,
 )
-from app.services.candidate_creation import create_candidate_from_answer
+from app.services.candidate_creation import (
+    SOURCE_KIND_KNOWLEDGE_AGENT,
+    create_candidate_from_answer,
+)
 from app.services.knowledge_agent.candidate import (
     confirm_draft,
     execute_draft_candidate_run,
@@ -1407,9 +1410,10 @@ async def test_shared_creation_rolls_back_on_transaction_failure() -> None:
                 main_type="knowledge",
                 info_nature=None,
                 evidence_refs=[],
-                provider="reader",
-                model="reader",
+                provider="knowledge_agent",
+                model="draft_confirmed",
                 prompt_version="v1",
+                source_kind=SOURCE_KIND_KNOWLEDGE_AGENT,
             )
             raise RuntimeError("模拟提交失败")
         except RuntimeError:

@@ -6,7 +6,7 @@
   客户端对象 ID / quote / Evidence handle 不进入可信输入；
 - 模型只生成 Draft；Source/Attachment/Extraction/Candidate 只在用户确认后
   由应用服务创建，任何路径不创建或修改正式 Entry；
-- 普通 answer Run、旧 Reader 与移动只读流程不受影响。
+- 普通 answer Run 与移动只读流程不受影响。
 """
 
 import json

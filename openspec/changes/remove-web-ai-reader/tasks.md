@@ -1,15 +1,15 @@
 ## 1. 工件与前置校验
 
 - [x] 1.1 建立 `codex/remove-web-ai-reader` 特性分支并 `openspec new change remove-web-ai-reader`。
-- [ ] 1.2 写 proposal / specs / design / tasks，`openspec validate --all --strict` 通过后再动业务代码。
+- [x] 1.2 写 proposal / specs / design / tasks，`openspec validate --all --strict` 通过后再动业务代码。验收：四类工件齐备，`openspec validate --all --strict` 68 项 0 失败。
 
 ## 2. 后端移除旧 Reader 链路
 
-- [ ] 2.1 删除 `backend/app/api/reader.py`、`backend/app/services/reader.py`、`backend/app/agents/reader.py`、`backend/app/schemas/reader.py`、`backend/tests/test_reader.py`。
-- [ ] 2.2 `backend/app/main.py` 摘除 `reader_router` 的 import 与 `app.include_router(reader_router)`。
-- [ ] 2.3 确认保留共享底座：`backend/app/agents/semantic.py`、`backend/app/services/vector_search.py`、`backend/app/services/candidate_creation.py`（含 `SOURCE_KIND_READER` 常量与 `_SOURCE_TITLE_PREFIX` 的 reader 映射）。验收：`rg -n "reader" backend/app` 仅剩共享常量与既有中文注释。
-- [ ] 2.4 清理 `backend/tests/test_knowledge_agent_candidate_drafts.py` 共享服务回滚用例（`test_shared_creation_rolls_back_on_transaction_failure`）中的 `provider="reader"` / `model="reader"` 字面量，用例保留并改为知识 Agent 语境。
-- [ ] 2.5 验收：`cd backend && .venv/bin/ruff check .` 与 `.venv/bin/pytest -q` 通过。
+- [x] 2.1 删除 `backend/app/api/reader.py`、`backend/app/services/reader.py`、`backend/app/agents/reader.py`、`backend/app/schemas/reader.py`、`backend/tests/test_reader.py`。
+- [x] 2.2 `backend/app/main.py` 摘除 `reader_router` 的 import 与 `app.include_router(reader_router)`。
+- [x] 2.3 确认保留共享底座：`backend/app/agents/semantic.py`、`backend/app/services/vector_search.py`、`backend/app/services/candidate_creation.py`（含 `SOURCE_KIND_READER` 常量与 `_SOURCE_TITLE_PREFIX` 的 reader 映射）。验收：`rg -n "reader" backend/app` 仅剩 `candidate_creation.py` 的共享常量与映射，其余为 sqlite 局部变量。顺手清理 `knowledge_agent/candidate.py` 与 `candidate_creation.py` 中指向旧 Reader 的注释。
+- [x] 2.4 清理 `backend/tests/test_knowledge_agent_candidate_drafts.py` 共享服务回滚用例（`test_shared_creation_rolls_back_on_transaction_failure`）中的 `provider="reader"` / `model="reader"` 字面量，用例保留并改为知识 Agent 语境（`provider="knowledge_agent"`、`model="draft_confirmed"`、显式 `source_kind=SOURCE_KIND_KNOWLEDGE_AGENT`）。
+- [x] 2.5 验收：`cd backend && .venv/bin/ruff check .` 通过；`.venv/bin/pytest -q` 仅 `tests/test_embedding_retrieval.py::test_backfill_creates_missing_rows` 失败（既有基线噪声，单跑通过），`test_knowledge_agent_candidate_drafts.py` 全绿。
 
 ## 3. Web 移除 AI 阅读
 

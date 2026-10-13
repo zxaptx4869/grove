@@ -1,8 +1,8 @@
 """共享候选创建服务：虚拟 Source / Attachment / Extraction / pending Candidate。
 
 只接受调用方已完成校验的参数，不自行解析客户端引用；调用方负责
-Workspace、项目与引用校验。旧 Web Reader 与知识 Agent Draft 确认接口
-共用本服务，不通过内部 HTTP 互相代理。
+Workspace、项目与引用校验。知识 Agent Draft 确认接口调用本服务，
+不通过内部 HTTP 互相代理。
 
 约束：
 - 不创建、修改或删除正式 Entry；
