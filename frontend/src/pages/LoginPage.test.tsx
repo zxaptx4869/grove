@@ -101,7 +101,11 @@ describe('LoginPage', () => {
         </MemoryRouter>
       </QueryClientProvider>,
     )
-    expect(screen.getByText('AI 候选 · 待确认')).toBeInTheDocument()
+    expect(
+      within(screen.getByRole('tabpanel', { name: 'AI 提取与归属推荐' })).getByText(
+        'AI 候选 · 待确认',
+      ),
+    ).toBeInTheDocument()
     await userEvent.click(screen.getByRole('tab', { name: 'AI 目录共创' }))
     const directory = screen.getByRole('tabpanel', { name: 'AI 目录共创' })
     expect(within(directory).getByText('AI 目录草稿 · 待确认')).toBeInTheDocument()
