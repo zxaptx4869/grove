@@ -102,18 +102,43 @@ describe('LoginPage', () => {
       </QueryClientProvider>,
     )
     expect(screen.getByText('AI 候选 · 待确认')).toBeInTheDocument()
-    await userEvent.click(screen.getByRole('button', { name: 'AI 目录共创' }))
-    const directory = screen.getByRole('region', { name: 'AI 目录共创' })
+    await userEvent.click(screen.getByRole('tab', { name: 'AI 目录共创' }))
+    const directory = screen.getByRole('tabpanel', { name: 'AI 目录共创' })
     expect(within(directory).getByText('AI 目录草稿 · 待确认')).toBeInTheDocument()
-    expect(screen.getByRole('button', { name: 'AI 目录共创' })).toHaveAttribute(
-      'aria-pressed',
+    expect(screen.getByRole('tab', { name: 'AI 目录共创' })).toHaveAttribute(
+      'aria-selected',
       'true',
     )
-    await userEvent.click(screen.getByRole('button', { name: '知识 Agent 协助' }))
-    expect(screen.getByRole('region', { name: '知识 Agent 协助' })).toHaveTextContent('回答示例')
+    await userEvent.click(screen.getByRole('tab', { name: '知识 Agent 协助' }))
+    expect(screen.getByRole('tabpanel', { name: '知识 Agent 协助' })).toHaveTextContent('回答示例')
     expect(
-      within(screen.getByRole('region', { name: '知识 Agent 协助' })).getByText('示例'),
+      within(screen.getByRole('tabpanel', { name: '知识 Agent 协助' })).getByText('示例'),
     ).toBeInTheDocument()
     expect(fetchMock).not.toHaveBeenCalled()
+  })
+
+  it('键盘切换标签时同步焦点、选中态和对应示例', async () => {
+    render(
+      <QueryClientProvider client={new QueryClient()}>
+        <MemoryRouter>
+          <LoginPage />
+        </MemoryRouter>
+      </QueryClientProvider>,
+    )
+    await userEvent.click(screen.getByRole('tab', { name: 'AI 提取与归属推荐' }))
+    await userEvent.keyboard('{ArrowRight}')
+    expect(screen.getByRole('tab', { name: 'AI 目录共创' })).toHaveFocus()
+    expect(screen.getByRole('tab', { name: 'AI 目录共创' })).toHaveAttribute(
+      'aria-selected',
+      'true',
+    )
+    expect(screen.getByRole('tabpanel', { name: 'AI 目录共创' })).toHaveTextContent('新房装修')
+    await userEvent.keyboard('{End}')
+    expect(screen.getByRole('tab', { name: '知识 Agent 协助' })).toHaveFocus()
+    expect(screen.getByRole('tabpanel', { name: '知识 Agent 协助' })).toHaveTextContent('回答示例')
+    await userEvent.keyboard('{Home}')
+    expect(screen.getByRole('tab', { name: 'AI 提取与归属推荐' })).toHaveFocus()
+    await userEvent.tab()
+    expect(screen.getByRole('tabpanel', { name: 'AI 提取与归属推荐' })).toHaveFocus()
   })
 })

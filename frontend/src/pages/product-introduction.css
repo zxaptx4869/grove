@@ -1,19 +1,20 @@
 /* 公开介绍使用现有主题；展示型标题与工作台密度分开。 */
-.public-intro { background: var(--background); color: var(--foreground); font-size: 15px; line-height: 1.8; }
+.public-intro { --intro-header-height: 72px; --intro-section-gap: 72px; background: var(--background); color: var(--foreground); font-size: 15px; line-height: 1.8; }
 .intro-container { width: calc(100% - 80px); max-width: 1200px; margin-inline: auto; }
 .public-intro a, .public-intro button { transition: background-color 120ms, color 120ms; }
 .public-intro a:focus-visible, .public-intro button:focus-visible { outline: 2px solid var(--ring); outline-offset: 5px; }
-.public-intro section[id], .public-intro aside[id], #intro-main { scroll-margin-top: 24px; }
-.intro-skip-link { position: absolute; top: -100px; left: 20px; z-index: 10; padding: 8px 16px; background: var(--card); }
+.public-intro:focus { outline: none; }
+.public-intro section[id] { scroll-margin-top: calc(var(--intro-header-height) + 16px - var(--intro-section-gap)); }
+.public-intro aside[id], #intro-main { scroll-margin-top: calc(var(--intro-header-height) + 16px); }
+.intro-skip-link { position: fixed; top: -100px; left: 20px; z-index: 30; padding: 8px 16px; background: var(--card); }
 .intro-skip-link:focus { top: 12px; }
-.intro-header { height: 72px; border-bottom: 1px solid var(--border); background: var(--card); }
+.intro-header { position: sticky; top: 0; z-index: 20; height: var(--intro-header-height); border-bottom: 1px solid var(--border); background: var(--card); }
 .intro-header-inner { display: flex; align-items: center; justify-content: space-between; height: 100%; gap: 24px; }
 .intro-brand { display: inline-flex; align-items: center; gap: 10px; font-size: 19px; font-weight: 650; letter-spacing: -.4px; }
 .intro-brand > svg { width: 28px; height: 28px; color: var(--brand); stroke-width: 1.8; }
 .intro-brand-english { margin-left: 4px; font-weight: 500; }
 .intro-header nav { display: flex; gap: 32px; font-size: 14px; color: var(--muted-foreground); }
 .intro-header nav a:hover { color: var(--brand); }
-.intro-header-login { display: inline-flex; align-items: center; gap: 8px; font-size: 14px; font-weight: 600; color: var(--brand); }
 .intro-hero { display: grid; grid-template-columns: minmax(0, 1fr) 410px; align-items: center; gap: 64px; padding-block: 76px 64px; }
 .intro-eyebrow { display: flex; align-items: center; gap: 8px; color: var(--brand); font-size: 13px; font-weight: 600; letter-spacing: 1px; }
 .intro-eyebrow > span { width: 6px; height: 6px; border-radius: 50%; background: var(--brand); }
@@ -25,18 +26,18 @@
 .intro-mobile-notice { display: flex; align-items: flex-start; gap: 12px; padding: 18px; border: 1px solid var(--border); border-radius: 8px; background: var(--card); }
 .intro-mobile-notice > svg { flex-shrink: 0; margin-top: 4px; color: var(--brand); }
 .intro-mobile-notice strong { font-size: 14px; font-weight: 600; }
-.intro-section { padding-top: 72px; }
+.intro-section { padding-top: var(--intro-section-gap); }
 .intro-section-heading h2 { margin-top: 0; font-size: 32px; font-weight: 600; line-height: 1.4; letter-spacing: -.8px; text-wrap: balance; }
 .intro-section-heading > p:last-child:not(.intro-eyebrow) { margin-top: 12px; color: var(--muted-foreground); }
 .intro-scenarios { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); margin-top: 32px; gap: 64px; }
 .intro-scenarios article { padding: 28px 0 0; border-top: 2px solid var(--border); }
 .intro-scenarios h3 { margin-top: 0; font-size: 26px; font-weight: 600; line-height: 1.5; letter-spacing: -.5px; }
 .intro-scenarios article > p { max-width: 510px; margin-top: 16px; color: var(--muted-foreground); }
-.intro-capability-selector { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; margin-top: 32px; }
-.intro-capability-selector button { display: flex; align-items: center; gap: 10px; padding: 17px 20px; border: 1px solid var(--border); border-radius: 8px; text-align: left; font-size: 14px; font-weight: 600; cursor: pointer; }
-.intro-capability-selector button > svg:last-child { margin-left: auto; }
-.intro-capability-selector button:hover { background: var(--secondary); }
-.intro-capability-selector button[aria-pressed="true"] { border-color: var(--brand); background: var(--brand-soft); color: var(--brand); }
+.intro-capability-selector { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 6px; margin-top: 32px; padding: 6px; border: 1px solid var(--border); border-radius: 12px; background: var(--secondary); }
+.intro-capability-selector button { display: flex; align-items: center; justify-content: center; gap: 10px; min-height: 54px; padding: 12px 16px; border: 1px solid transparent; border-radius: 8px; color: var(--muted-foreground); text-align: center; font-size: 14px; font-weight: 600; cursor: pointer; }
+.intro-capability-selector button:hover { background: var(--card); color: var(--brand); }
+.intro-capability-selector button[data-state="active"] { border-color: var(--brand); background: var(--brand); color: var(--primary-foreground); box-shadow: var(--shadow-card); }
+.intro-capability-board:focus-visible { outline: 2px solid var(--ring); outline-offset: 4px; }
 .intro-capability-board { min-height: 360px; margin-top: 18px; border: 1px solid var(--border); border-radius: 12px; background: var(--card); overflow: hidden; }
 .intro-board-heading { display: flex; align-items: flex-start; justify-content: space-between; gap: 20px; padding: 28px 32px 24px; border-bottom: 1px solid var(--border); }
 .intro-board-heading p { max-width: 880px; margin-top: 0; color: var(--muted-foreground); font-size: 14px; }
@@ -108,7 +109,6 @@
   .intro-mobile-notice { max-width: 520px; }
   .intro-scenarios { gap: 32px; }
   .intro-capability-selector button { padding: 14px; font-size: 13px; }
-  .intro-capability-selector button > svg:last-child { display: none; }
   .intro-organize-example { gap: 18px; }
   .intro-devices { gap: 24px; }
   .intro-devices h3 { font-size: 19px; }
@@ -117,24 +117,22 @@
 }
 @media (max-width: 639px) {
   .intro-container { width: calc(100% - 40px); }
-  .intro-header { height: 64px; }
+  .public-intro { --intro-header-height: 64px; --intro-section-gap: 56px; }
   .intro-header nav { display: none; }
   .intro-header-inner { gap: 12px; }
   .intro-brand { font-size: 17px; }
-  .intro-header-login { font-size: 12px; }
-  .intro-header-login > svg { display: none; }
   .intro-hero { padding-top: 36px; gap: 28px; }
   .intro-hero h1 { font-size: clamp(26px, 8vw, 34px); line-height: 1.25; letter-spacing: -1px; }
   .intro-hero-description { font-size: 16px; }
-  .intro-section { padding-top: 56px; }
+
   .intro-section-heading h2 { font-size: 26px; }
   .intro-section-heading > p:last-child:not(.intro-eyebrow) { font-size: 14px; }
   .intro-scenarios { grid-template-columns: minmax(0, 1fr); gap: 32px; margin-top: 24px; }
   .intro-scenarios h3 { font-size: 23px; }
   .intro-scenarios article > p { font-size: 14px; }
-  .intro-capability-selector { grid-template-columns: minmax(0, 1fr); gap: 8px; margin-top: 24px; }
-  .intro-capability-selector button { padding: 12px 16px; }
-  .intro-capability-selector button > svg:last-child { display: block; }
+  .intro-capability-selector { gap: 4px; padding: 4px; margin-top: 24px; }
+  .intro-capability-selector button { flex-direction: column; gap: 6px; min-height: 88px; padding: 10px 6px; font-size: 12px; line-height: 1.5; }
+  .intro-capability-selector button > span { min-height: 36px; text-wrap: balance; }
   .intro-board-heading { flex-direction: column-reverse; gap: 8px; padding: 20px; }
   .intro-organize-example { grid-template-columns: minmax(0, 1fr); gap: 20px; padding: 20px; }
   .intro-source-paper { padding: 16px; }

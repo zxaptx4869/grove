@@ -1,5 +1,6 @@
 import { useState, type ReactNode } from 'react'
 import { Link } from 'react-router-dom'
+import { Tabs } from 'radix-ui'
 import {
   ArrowDown,
   ArrowRight,
@@ -163,11 +164,11 @@ export function ProductIntroduction({ login }: { login: ReactNode }) {
   const capability = capabilities[selected]
 
   return (
-    <div className="public-intro">
+    <div id="intro-top" className="public-intro" tabIndex={-1}>
       <a className="intro-skip-link" href="#intro-main">
         跳到产品介绍
       </a>
-      <header id="intro-top" className="intro-header" tabIndex={-1}>
+      <header className="intro-header">
         <div className="intro-container intro-header-inner">
           <Link to="/login" aria-label="知林 Grove 首页">
             <Brand />
@@ -178,10 +179,6 @@ export function ProductIntroduction({ login }: { login: ReactNode }) {
             <a href="#devices">多端协作</a>
             <a href="#engineering">设计原则</a>
           </nav>
-          <a className="intro-header-login" href="#login">
-            {login ? '登录工作台' : '电脑端使用'}
-            <ArrowRight size={15} aria-hidden="true" />
-          </a>
         </div>
       </header>
 
@@ -256,41 +253,38 @@ export function ProductIntroduction({ login }: { login: ReactNode }) {
           <div className="intro-section-heading">
             <h2 id="capabilities-title">AI 帮你整理、共创和查找。</h2>
           </div>
-          <div className="intro-capability-selector" role="group" aria-label="选择 AI 能力示例">
-            {capabilities.map((item, index) => (
-              <button
-                key={item.id}
-                type="button"
-                aria-pressed={selected === index}
-                aria-controls="capability-example"
-                onClick={() => setSelected(index)}
-              >
-                <item.icon size={18} aria-hidden="true" />
-                {item.label}
-                <ArrowRight size={15} aria-hidden="true" />
-              </button>
-            ))}
-          </div>
-          <div
-            id="capability-example"
-            className="intro-capability-board"
-            role="region"
-            aria-label={capability.label}
+          <Tabs.Root
+            className="intro-capability-tabs"
+            value={capability.id}
+            onValueChange={(value) => {
+              const index = capabilities.findIndex((item) => item.id === value)
+              if (index >= 0) setSelected(index)
+            }}
           >
-            <div className="intro-board-heading">
-              <div>
-                <p>{capability.description}</p>
+            <Tabs.List className="intro-capability-selector" aria-label="选择 AI 能力示例">
+              {capabilities.map((item) => (
+                <Tabs.Trigger key={item.id} value={item.id}>
+                  <item.icon size={18} aria-hidden="true" />
+                  <span>{item.label}</span>
+                </Tabs.Trigger>
+              ))}
+            </Tabs.List>
+            <Tabs.Content value={capability.id} className="intro-capability-board">
+              <div className="intro-board-heading">
+                <div>
+                  <p>{capability.description}</p>
+                </div>
+                <span className="intro-example-badge">示例</span>
               </div>
-              <span className="intro-example-badge">示例</span>
-            </div>
-            {selected === 0 ? (
-              <RecommendationExample />
-            ) : selected === 1 ? (
-              <DirectoryExample />
-            ) : (
-              <AgentExample />
-            )}
-          </div>
+              {selected === 0 ? (
+                <RecommendationExample />
+              ) : selected === 1 ? (
+                <DirectoryExample />
+              ) : (
+                <AgentExample />
+              )}
+            </Tabs.Content>
+          </Tabs.Root>
         </section>
 
         <section id="devices" className="intro-section" aria-labelledby="devices-title">
