@@ -58,9 +58,9 @@ function RecommendationExample() {
         <span className="intro-example-label">
           <FileText size={15} aria-hidden="true" /> 原始材料
         </span>
-        <h3>关于 React 重复渲染的笔记</h3>
-        <p>先用 Profiler 定位渲染开销，再决定是否优化。</p>
-        <p>memo 的效果取决于 props 是否稳定。每次创建新的对象或函数，可能让缓存失效。</p>
+        <h3>闭水试验注意事项</h3>
+        <p>试验时查看楼下对应位置有没有渗漏，并记录检查结果。</p>
+        <p>拍照记录开始和结束时的水位，保留现场影像，方便验收时核对。</p>
         <div className="intro-paper-lines" aria-hidden="true">
           <span />
           <span />
@@ -71,18 +71,19 @@ function RecommendationExample() {
         <span className="intro-example-label intro-ai-label">
           <Sparkles size={15} aria-hidden="true" /> AI 候选 · 待确认
         </span>
-        <h3>优化前，先定位渲染开销</h3>
-        <p>使用 Profiler 找到耗时的渲染，再判断是否需要优化。</p>
+        <h3>闭水试验要检查渗漏并留存记录</h3>
+        <p>检查楼下对应位置，记录水位与检查结果，保留现场影像。</p>
         <div className="intro-recommendation">
           <span>推荐项目</span>
           <strong>
-            <Folder size={14} aria-hidden="true" /> 前端学习
+            <Folder size={14} aria-hidden="true" /> 新房装修
           </strong>
         </div>
         <div className="intro-recommendation">
           <span>推荐目录</span>
           <strong>
-            React <ChevronRight size={12} aria-hidden="true" /> 性能优化
+            施工与验收 <ChevronRight size={12} aria-hidden="true" /> 防水
+            <ChevronRight size={12} aria-hidden="true" /> 闭水试验
           </strong>
         </div>
       </div>
@@ -97,24 +98,24 @@ function DirectoryExample() {
         <span className="intro-example-label">
           <MessageSquare size={15} aria-hidden="true" /> 你的学习目标
         </span>
-        <p>“我想了解家庭装修，几乎没有基础。先关注开工前准备，材料选购以后再细化。”</p>
+        <p>“我准备装修新房，但没有经验。帮我梳理从前期准备到施工验收需要了解的内容。”</p>
       </div>
       <div className="intro-directory-tree">
         <span className="intro-example-label intro-ai-label">
           <FolderTree size={15} aria-hidden="true" /> AI 目录草稿 · 待确认
         </span>
         <strong>
-          <Folder size={16} aria-hidden="true" /> 我的装修准备
+          <Folder size={16} aria-hidden="true" /> 新房装修
         </strong>
         <ul>
           <li>
             01 <span>需求与预算</span>
           </li>
           <li>
-            02 <span>流程与协作</span>
+            02 <span>设计与选材</span>
           </li>
           <li>
-            03 <span>开工前检查</span>
+            03 <span>施工与验收</span>
           </li>
         </ul>
       </div>
@@ -127,28 +128,28 @@ function AgentExample() {
     <div className="intro-agent-example">
       <div className="intro-agent-question">
         <span>你</span>
-        <p>我之前收藏的 React 性能优化经验里，哪些与重复渲染有关？</p>
+        <p>我之前收藏的闭水试验注意事项有哪些？</p>
       </div>
       <div className="intro-agent-answer">
         <span className="intro-example-label">
           <Sparkles size={15} aria-hidden="true" /> Grove · 回答示例
         </span>
-        <p>可以先从这两个方面检查：</p>
+        <p>你收藏的材料里，主要提到两点：</p>
         <ol>
           <li>
-            <strong>定位渲染开销。</strong>先用 Profiler 找到耗时的渲染，判断优化是否必要。
+            <strong>检查渗漏。</strong>查看楼下对应位置有没有渗漏，记录检查结果。
             <sup>［1］</sup>
           </li>
           <li>
-            <strong>检查 props 稳定性。</strong>传入新建的对象或函数，可能影响 memo 的效果。
+            <strong>保留记录。</strong>拍照记录开始和结束时的水位，保存现场影像，方便验收核对。
             <sup>［2］</sup>
           </li>
         </ol>
         <div className="intro-citation-example">
           <BookOpen size={16} aria-hidden="true" />
           <div>
-            <strong>引用：React 重复渲染笔记</strong>
-            <span>来源材料：React 学习笔记</span>
+            <strong>引用：闭水试验检查与记录</strong>
+            <span>来源材料：闭水试验注意事项</span>
           </div>
           <span className="intro-citation-count">2 条引用</span>
         </div>
