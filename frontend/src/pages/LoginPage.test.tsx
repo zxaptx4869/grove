@@ -121,6 +121,38 @@ describe('LoginPage', () => {
     expect(fetchMock).not.toHaveBeenCalled()
   })
 
+  it('截图可用键盘切换、放大，关闭后焦点回到原入口', async () => {
+    render(
+      <QueryClientProvider client={new QueryClient()}>
+        <MemoryRouter>
+          <LoginPage />
+        </MemoryRouter>
+      </QueryClientProvider>,
+    )
+    const trigger = screen.getByRole('button', { name: '放大查看知识对话截图' })
+    await userEvent.click(trigger)
+    const dialog = screen.getByRole('dialog', { name: '知识对话' })
+    expect(within(dialog).getByRole('img')).toHaveAttribute(
+      'alt',
+      expect.stringContaining('App 知识 Agent'),
+    )
+    await userEvent.keyboard('{Escape}')
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+    expect(trigger).toHaveFocus()
+    await userEvent.click(screen.getByRole('tab', { name: '知识 Agent', exact: true }))
+    await userEvent.keyboard('{End}')
+    expect(screen.getByRole('tab', { name: '确认台', exact: true })).toHaveAttribute(
+      'aria-selected',
+      'true',
+    )
+    expect(screen.getByRole('button', { name: '放大查看确认台截图' })).toBeInTheDocument()
+    await userEvent.keyboard('{Home}{ArrowRight}')
+    expect(screen.getByRole('tab', { name: '收集箱', exact: true })).toHaveAttribute(
+      'aria-selected',
+      'true',
+    )
+  })
+
   it('键盘切换标签时同步焦点、选中态和对应示例', async () => {
     render(
       <QueryClientProvider client={new QueryClient()}>

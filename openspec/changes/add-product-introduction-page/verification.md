@@ -96,3 +96,23 @@
 - 相关三个测试文件 22/22 通过。原有全页面唯一文本查询改为在 AI 标签面板内查询，避免示意图使用同一候选文字导致测试歧义。lint 无错误，保留既有 DirectoryDraftDialog 的两条依赖警告；build 通过。
 - 本地证据：`artifacts/product-introduction/device-illustrations/`（不入版本管理），包含桌面区块截图、手机实际视口截图及计算样式 `results.json`。全库 OpenSpec 严格校验在规划后与收尾执行。
 - 页面与自动化验证完成，等待用户视觉审阅；当前 change 尚未归档或推送。
+
+## 真实截图与 App 去调试图标（2026-10-13）
+
+- 用户最新反馈覆盖此前示意图方案。每个端独立成行，扩展展示框选与快采面板，App 并排展示对话与收集箱，Web 使用可键盘切换的三个截图标签展示 Agent、收集箱、确认台。所有图片支持点击放大，截图内部的业务控件只属于图片。
+- 展示资源位于 `frontend/src/assets/introduction/`：用户提供的 `extension-capture.png`、`extension-panel.png`、`web-inbox.png`、`web-review.png`；从已登录演示账号实际取得的 `web-agent.jpg`；去齿轮后的 `mobile-agent-clean.png`、`mobile-inbox-clean.png`。App 编辑非覆盖原图，最终输出尺寸分别为 862×1824、860×1828；人工逐项核对正文、标签、卡片和底部导航，未发现文字改写或缺失。
+- 主视口 1440px：左右列 240px/912px、间距 48px；App 图片约 238×504/506px，Web 图区约 910×475px；图片圆角 12px、语义边框与主题卡片阴影。浏览器检查 1280/1600/1024/1023/390px，390px 改为纵向端介绍、App 两图并排；图片均加载成功，无横向溢出。小屏不挂载认证输入。截图通过明确尺寸及 lazy 加载保留布局。
+- 验证 Web 标签的 End/Home/方向键、图片放大、Esc 与关闭按钮、焦点归还。1440px Web 对话框约 1392×787px；390px App 对话框宽 366px、两侧各 12px，图片完整可见，没有溢出。浏览器错误日志为空，测试覆盖认证、路由边界与新截图交互，23/23 通过。lint 无错误，保留 DirectoryDraftDialog 既有两条依赖警告，build 通过。
+- 本地走查证据位于 `artifacts/product-introduction/screenshot-gallery/`（不入版本管理），含各视口图片、App 与 Web 放大界面、`app-gallery-final.jpg` 及 `results.json`。全库 OpenSpec 严格校验收尾通过；用户视觉审阅与归档批准仍待完成。
+
+### 内置 imagegen 编辑提示词
+
+使用内置图片编辑工具，不使用 CLI/API。两张原图均只要求移除灰色齿轮；完整调用提示词如下，供复核：
+
+**收集箱：**
+
+> Use case: precise-object-edit. Edit target: the attached real Grove mobile App inbox screenshot. Remove ONLY the floating grey circular debugging gear at the TOP RIGHT near the 收集箱 heading. Fill its entire circle and soft grey shadow with the same flat very light grey background as the surrounding header. Preserve exact image framing, original portrait aspect ratio, all Chinese text, all cards, icons, colors, borders, spacing, bottom navigation, and all other pixels unchanged. This is surgical retouching of a real screenshot, not a redesign. Do not remove the refresh icon under the header; remove only the large floating grey gear. No new elements, no text rewriting, no cropping.
+
+**对话：**
+
+> Use case: precise-object-edit. Edit target: the attached real Grove mobile conversation screenshot. Remove ONLY the large floating grey circular debugging gear at the lower right, in the blank grey area BETWEEN the AI answer card and the composer input. Fill the circle and its shadow with exactly the surrounding flat very light grey background. Preserve original full portrait framing, aspect ratio, ALL Chinese text and typography exactly, all cards, logos, icons, UI spacing, colors and bottom navigation unchanged. This is surgical screenshot retouching, not a redesign. Do not alter the top-right conversation icon, question, answer text, input field or bottom toolbar. No new elements, no text rewriting, no cropping.

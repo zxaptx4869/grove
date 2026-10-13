@@ -18,7 +18,7 @@ import {
   Trees,
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
-import { BrowserIllustration, DesktopIllustration, MobileIllustration } from './DeviceIllustrations'
+import { DeviceScreenshots } from './DeviceScreenshots'
 
 const capabilities = [
   {
@@ -288,29 +288,10 @@ export function ProductIntroduction({ authentication }: { authentication: ReactN
         </section>
 
         <section id="devices" className="intro-section" aria-labelledby="devices-title">
-          <div className="intro-section-heading intro-devices-heading">
+          <div className="intro-section-heading">
             <h2 id="devices-title">三个端，连接同一份知识。</h2>
-            <span className="intro-example-badge">界面示意</span>
           </div>
-          <div className="intro-devices">
-            <article>
-              <BrowserIllustration />
-              <h3>浏览器扩展</h3>
-              <p>浏览网页时框选截图，单张或批量发送到收集箱。</p>
-              <small>Chrome / Edge · 本地加载</small>
-            </article>
-            <article>
-              <MobileIllustration />
-              <h3>移动 App</h3>
-              <p>随手拍照、选图或记录文字，也能通过 Agent 查找和理解知识。</p>
-              <small>开发体验阶段</small>
-            </article>
-            <article>
-              <DesktopIllustration />
-              <h3>桌面 Web</h3>
-              <p>集中审阅 AI 候选、共创目录，浏览、搜索和维护项目知识。</p>
-            </article>
-          </div>
+          <DeviceScreenshots />
         </section>
 
         <section
