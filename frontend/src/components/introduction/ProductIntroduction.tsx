@@ -166,7 +166,7 @@ export function ProductIntroduction({ login }: { login: ReactNode }) {
       <a className="intro-skip-link" href="#intro-main">
         跳到产品介绍
       </a>
-      <header className="intro-header">
+      <header id="intro-top" className="intro-header" tabIndex={-1}>
         <div className="intro-container intro-header-inner">
           <Link to="/login" aria-label="知林 Grove 首页">
             <Brand />
@@ -358,7 +358,7 @@ export function ProductIntroduction({ login }: { login: ReactNode }) {
       </main>
       <footer className="intro-footer intro-container">
         <Brand />
-        <a href="#intro-main">
+        <a href="#intro-top">
           回到顶部
           <ArrowRight size={14} aria-hidden="true" />
         </a>
