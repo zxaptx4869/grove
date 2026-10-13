@@ -496,9 +496,12 @@ export function KnowledgeAgentPage() {
   }
 
   /** 删除或发现对话已不存在后落到「新建」：直接创建并选中，不经过 refresh 的空列表自动创建分支。 */
-  async function fallBackToNewConversation(remaining: KnowledgeConversationPayload[]) {
+  async function fallBackToNewConversation(excludeId: number) {
     const created = await createKnowledgeConversation()
-    setConversations([created, ...remaining])
+    setConversations((current) => [
+      created,
+      ...current.filter((item) => item.id !== excludeId),
+    ])
     setMessage('')
     selectedIdRef.current = created.id
     setSelectedId(created.id)
@@ -539,11 +542,10 @@ export function KnowledgeAgentPage() {
   }
 
   async function dropMissingConversation(conversationId: number) {
-    const remaining = conversations.filter((item) => item.id !== conversationId)
     if (selectedIdRef.current === conversationId) {
-      await fallBackToNewConversation(remaining)
+      await fallBackToNewConversation(conversationId)
     } else {
-      setConversations(remaining)
+      setConversations((current) => current.filter((item) => item.id !== conversationId))
     }
   }
 
