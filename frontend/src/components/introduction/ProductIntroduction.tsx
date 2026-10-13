@@ -226,7 +226,7 @@ export function ProductIntroduction({ login }: { login: ReactNode }) {
 
         <section id="scenarios" className="intro-section" aria-labelledby="scenarios-title">
           <div className="intro-section-heading">
-            <h2 id="scenarios-title">两种方式，积累自己的知识。</h2>
+            <h2 id="scenarios-title">你是否也有这样的经历</h2>
           </div>
           <div className="intro-scenarios">
             <article>
