@@ -153,6 +153,7 @@ export function Sheet({
   presentation = "fade",
   reduceMotion = false,
   onPresented,
+  bottomOffset = 0,
 }: {
   visible: boolean;
   title: string;
@@ -163,6 +164,8 @@ export function Sheet({
   presentation?: "fade" | "bottom";
   reduceMotion?: boolean;
   onPresented?: () => void;
+  /** bottom 弹层距屏幕底部的额外偏移，用于让出键盘高度。 */
+  bottomOffset?: number;
 }) {
   const renderContent = (closeHandler: () => void) => (
     <View
@@ -202,6 +205,7 @@ export function Sheet({
         onClose={onClose}
         reduceMotion={reduceMotion}
         onPresented={onPresented}
+        offset={bottomOffset}
       >
         {(requestClose) => renderContent(requestClose)}
       </BottomSheetMotion>
@@ -233,12 +237,14 @@ function BottomSheetMotion({
   onClose,
   reduceMotion,
   onPresented,
+  offset,
   children,
 }: {
   visible: boolean;
   onClose: () => void;
   reduceMotion: boolean;
   onPresented?: () => void;
+  offset: number;
   children: (requestClose: () => void) => ReactNode;
 }) {
   const [scrimOpacity] = useState(() => new Animated.Value(0));
@@ -434,6 +440,7 @@ function BottomSheetMotion({
           onLayout={handlePanelLayout}
           style={[
             styles.bottomPanel,
+            offset > 0 && { marginBottom: offset },
             { opacity: panelOpacity, transform: [{ translateY }] },
           ]}
         >

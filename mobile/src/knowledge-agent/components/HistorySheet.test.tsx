@@ -1,4 +1,4 @@
-import { cleanup, fireEvent, render, waitFor } from "@testing-library/react-native";
+import { cleanup, fireEvent, render, waitFor, within } from "@testing-library/react-native";
 import { HistorySheet } from "@/src/knowledge-agent/components/HistorySheet";
 import type { KnowledgeConversation } from "@/src/knowledge-agent/types";
 
@@ -135,6 +135,20 @@ test("操作小窗提供重命名、删除与取消入口", async () => {
 
   await fireEvent.press(rendered.getByLabelText("取消"));
   expect(base.onActionChange).toHaveBeenCalledWith(null);
+});
+
+test("重命名与删除表单放在独立底部弹层，不占用历史列表顶部", async () => {
+  const rendered = await render(
+    <HistorySheet
+      {...props({
+        conversations: [conversation(1)],
+        action: { type: "rename", conversation: conversation(1) },
+      })}
+    />,
+  );
+
+  const bottomSheet = rendered.getByTestId("bottom-sheet-panel");
+  expect(within(bottomSheet).getByTestId("conversation-rename-input")).toBeTruthy();
 });
 
 test("重命名非法输入就地提示且不发请求", async () => {
