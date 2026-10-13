@@ -446,7 +446,6 @@ EVIDENCE_PURPOSE_CONFLICT = "conflict"
 # ---- 对话标题来源：auto 为服务端自动命名，user 为用户显式命名 ----
 TITLE_SOURCE_AUTO = "auto"
 TITLE_SOURCE_USER = "user"
-TITLE_SOURCE_VALUES = (TITLE_SOURCE_AUTO, TITLE_SOURCE_USER)
 
 
 class KnowledgeConversation(Base):

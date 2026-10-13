@@ -10,8 +10,18 @@ import pytest
 from app.db.session import async_session_factory
 from app.knowledge_agent_worker import process_one_run
 from app.main import create_app
-from app.models import Candidate, KnowledgeAgentRun, KnowledgeCandidateDraft
-from app.models.knowledge_agent import DRAFT_GENERATING, SCOPE_PROJECT, SCOPE_WORKSPACE
+from app.models import (
+    Candidate,
+    KnowledgeAgentRun,
+    KnowledgeCandidateDraft,
+    KnowledgeEntryRevisionDraft,
+)
+from app.models.knowledge_agent import (
+    DRAFT_GENERATING,
+    REVISION_DRAFT_GENERATING,
+    SCOPE_PROJECT,
+    SCOPE_WORKSPACE,
+)
 from app.services.knowledge_agent.tools import RunToolContext
 from app.services.knowledge_agent.working_set import (
     get_active_context_version,
@@ -831,9 +841,21 @@ async def test_conversation_delete_via_api_hides_all_reads(client: httpx.AsyncCl
             operation_run_id=run_id,
             status=DRAFT_GENERATING,
         )
+        revision_draft = KnowledgeEntryRevisionDraft(
+            workspace_id=run.workspace_id,
+            owner_user_id=run.owner_user_id,
+            conversation_id=conversation["id"],
+            operation_run_id=run_id,
+            instruction="把持续时长改成 48 小时",
+            base_entry_json="{}",
+            base_entry_fingerprint="fingerprint",
+            status=REVISION_DRAFT_GENERATING,
+        )
         db.add(draft)
+        db.add(revision_draft)
         await db.commit()
         draft_id = draft.id
+        revision_draft_id = revision_draft.id
 
     conflict = await client.delete(
         f"/api/knowledge-agent/conversations/{conversation['id']}"
@@ -856,6 +878,7 @@ async def test_conversation_delete_via_api_hides_all_reads(client: httpx.AsyncCl
         ("GET", f"/api/knowledge-agent/runs/{run_id}/observability"),
         ("POST", f"/api/knowledge-agent/runs/{run_id}/cancel"),
         ("GET", f"/api/knowledge-agent/drafts/{draft_id}"),
+        ("GET", f"/api/knowledge-agent/entry-revision-drafts/{revision_draft_id}"),
     ]:
         response = await client.request(method, path)
         assert response.status_code == 404, (method, path)

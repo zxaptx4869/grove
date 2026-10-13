@@ -971,6 +971,8 @@ async def test_rename_conversation_updates_title_and_source_only() -> None:
             KnowledgeRunSubmitRequest(client_message_id="rename-1", message="首条问题"),
         )
         await db.commit()
+        # 从数据库重新读取基线，避免只比较内存对象（expire_on_commit=False 不会自动刷新）
+        await db.refresh(conversation)
         last_activity = conversation.last_activity_at
         message_count = (
             await db.execute(
@@ -986,6 +988,7 @@ async def test_rename_conversation_updates_title_and_source_only() -> None:
             KnowledgeConversationRenameRequest(title="  自定义标题  "),
         )
         await db.commit()
+        await db.refresh(renamed)
         assert renamed.title == "自定义标题"
         assert renamed.title_source == TITLE_SOURCE_USER
         assert renamed.last_activity_at == last_activity
