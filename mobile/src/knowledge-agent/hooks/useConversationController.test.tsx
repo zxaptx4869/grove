@@ -946,6 +946,59 @@ test("重复删除返回 404 时仍按删除成功处理", async () => {
   expect(rendered.result.current.isDraft).toBe(true);
 });
 
+test("有待恢复输入时对话 404 不静默清理，保留恢复错误与退出入口", async () => {
+  mockSessionInitial = { ...mockSessionInitial, input: "待恢复输入" };
+  const rendered = await setup(
+    [conversation(1)],
+    { 1: page() },
+    undefined,
+    async () => {
+      throw Object.assign(new Error("对话不存在"), { status: 404 });
+    },
+  );
+
+  await waitFor(() => expect(rendered.result.current.recoveryError).not.toBeNull());
+  // 有本地待恢复工作时必须保留可见错误，不得回落到空白新对话或清空输入
+  expect(rendered.result.current.isDraft).toBe(false);
+  expect(rendered.result.current.activeConversation).toBeNull();
+  expect(rendered.result.current.input).toBe("待恢复输入");
+
+  await act(async () => {
+    await rendered.result.current.exitRecovery();
+  });
+  expect(rendered.result.current.isDraft).toBe(true);
+  expect(rendered.result.current.recoveryError).toBeNull();
+});
+
+test("有 pending 提交时对话 404 不静默清理待恢复状态", async () => {
+  mockSessionInitial = {
+    ...mockSessionInitial,
+    choice: 1,
+    pending: attachConversation(
+      createPendingSubmission({
+        text: "待确认的问题",
+        contextMode: "auto",
+        random: () => "client-guard",
+      }),
+      1,
+    ),
+    pendingState: "result_unknown",
+  };
+  const rendered = await setup(
+    [conversation(1)],
+    { 1: page() },
+    undefined,
+    async () => {
+      throw Object.assign(new Error("对话不存在"), { status: 404 });
+    },
+  );
+
+  await waitFor(() => expect(rendered.result.current.recoveryError).not.toBeNull());
+  expect(rendered.result.current.isDraft).toBe(false);
+  expect(rendered.result.current.pending).not.toBeNull();
+  expect(rendered.result.current.submissionResultUnknown).toBe(true);
+});
+
 test("对话查询返回 404 时按不存在处理并失效历史列表", async () => {
   const rendered = await setup(
     [conversation(1)],

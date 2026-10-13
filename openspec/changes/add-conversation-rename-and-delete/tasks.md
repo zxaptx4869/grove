@@ -35,6 +35,8 @@
 - [x] 5.6 对话查询返回 `not_found` 时按不存在处理：回到空白新对话并失效历史列表，不反复重试；网络与鉴权分支保持现状。
 - [x] 5.7 测试：`HistorySheet.test.tsx`、`useConversationController.test.tsx`、`ConversationScreen.test.tsx` 补用例覆盖行操作、重命名成功与非法输入、删除确认、删除当前对话回空白态与本地状态清理、409 与 404 分支。
 
+- [x] 5.8 （复核阶段缺陷修复）对话 404 回落加守卫：本地存在未发送输入、pending 提交或待恢复 Run 时不得静默清理，保留恢复错误与重试/退出入口；仅无可恢复工作时才回空白新对话。验收：`useConversationController.test.tsx` 新增两条用例，移动端全量用例通过。
+
 ## 6. 验证、走查与交付
 
 - [x] 6.1 共享验证命令：`cd backend && .venv/bin/pytest -q`、`cd backend && .venv/bin/ruff check .`、`cd frontend && npm run typecheck && npm run lint && npm run test:run`、`cd mobile && npm run typecheck && npm run lint && npm test`。测试尾部出现 `A worker process has failed to exit gracefully` 属既有 `useSourceLibrary` 测试隔离问题，非本次回归。

@@ -526,7 +526,13 @@ export function useConversationController(
     if (classifyKnowledgeAgentError(activeConversationQuery.error).kind !== "not_found") {
       return;
     }
-    // 对话已被删除：按不存在处理，回到空白新对话并失效历史列表，不反复重试
+    // 存在本地待恢复工作时不得静默清理：保留恢复错误与重试/退出入口，由用户显式退出，
+    // 避免未发送输入、pending 提交或待恢复 Run 随 404 一起消失。
+    const hasLocalRecoveryWork = Boolean(
+      session.pending || session.recoveryRun || session.input.trim(),
+    );
+    if (hasLocalRecoveryWork) return;
+    // 对话已被删除且无可恢复工作：按不存在处理，回到空白新对话并失效历史列表，不反复重试
     let cancelled = false;
     queueMicrotask(() => {
       if (cancelled) return;
@@ -540,6 +546,9 @@ export function useConversationController(
     activeConversationQuery.isError,
     forgetConversation,
     selectedConversationId,
+    session.input,
+    session.pending,
+    session.recoveryRun,
   ]);
 
   const loadOlderMessages = useCallback(async () => {
