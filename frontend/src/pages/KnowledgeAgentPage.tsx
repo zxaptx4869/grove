@@ -636,7 +636,7 @@ export function KnowledgeAgentPage() {
             return (
               <div
                 key={conversation.id}
-                className={`mb-1 flex min-h-11 w-full items-center gap-0.5 rounded-md pr-1 transition-colors ${isSelected ? 'bg-brand-soft text-brand' : 'text-muted-foreground hover:bg-muted hover:text-foreground'}`}
+                className={`group mb-1 flex min-h-11 w-full items-center gap-0.5 rounded-md pr-1 transition-colors ${isSelected ? 'bg-brand-soft text-brand' : 'text-muted-foreground hover:bg-muted hover:text-foreground'}`}
               >
                 <button
                   type="button"
@@ -656,7 +656,7 @@ export function KnowledgeAgentPage() {
                     <Button
                       size="icon-sm"
                       variant="ghost"
-                      className="size-7 shrink-0"
+                      className="size-7 shrink-0 opacity-0 transition-opacity duration-150 group-hover:opacity-100 group-focus-within:opacity-100 focus-visible:opacity-100 data-[state=open]:opacity-100"
                       title="会话操作"
                       aria-label={`${displayTitle} 会话操作`}
                       data-testid="agent-conversation-menu"
