@@ -82,24 +82,59 @@ test("大量历史摘要使用有限首批的非嵌套虚拟列表", async () =>
   expect(list.props.removeClippedSubviews).toBe(true);
 });
 
-test("每行提供可读屏的重命名与删除入口，切换操作保持可用", async () => {
+test("长按某行弹出操作小窗，切换操作保持可用", async () => {
   const base = props({ conversations: [conversation(1)], activeConversationId: 1 });
   const rendered = await render(<HistorySheet {...base} />);
 
   await fireEvent.press(rendered.getByLabelText("切换到对话：对话 1"));
   expect(base.onSelect).toHaveBeenCalledWith(1);
 
-  await fireEvent.press(rendered.getByLabelText("重命名对话：对话 1"));
+  await fireEvent(rendered.getByLabelText("切换到对话：对话 1"), "longPress");
+  expect(base.onActionChange).toHaveBeenCalledWith({
+    type: "menu",
+    conversation: expect.objectContaining({ id: 1 }),
+  });
+});
+
+test("读屏自定义操作可直接触发重命名与删除", async () => {
+  const base = props({ conversations: [conversation(1)] });
+  const rendered = await render(<HistorySheet {...base} />);
+  const row = rendered.getByLabelText("切换到对话：对话 1");
+
+  await fireEvent(row, "accessibilityAction", { nativeEvent: { actionName: "rename" } });
   expect(base.onActionChange).toHaveBeenCalledWith({
     type: "rename",
     conversation: expect.objectContaining({ id: 1 }),
   });
 
-  await fireEvent.press(rendered.getByLabelText("删除对话：对话 1"));
+  await fireEvent(row, "accessibilityAction", { nativeEvent: { actionName: "delete" } });
   expect(base.onActionChange).toHaveBeenCalledWith({
     type: "delete",
     conversation: expect.objectContaining({ id: 1 }),
   });
+});
+
+test("操作小窗提供重命名、删除与取消入口", async () => {
+  const base = props({
+    conversations: [conversation(1)],
+    action: { type: "menu", conversation: conversation(1) },
+  });
+  const rendered = await render(<HistorySheet {...base} />);
+
+  await fireEvent.press(rendered.getByLabelText("重命名"));
+  expect(base.onActionChange).toHaveBeenCalledWith({
+    type: "rename",
+    conversation: expect.objectContaining({ id: 1 }),
+  });
+
+  await fireEvent.press(rendered.getByLabelText("删除"));
+  expect(base.onActionChange).toHaveBeenCalledWith({
+    type: "delete",
+    conversation: expect.objectContaining({ id: 1 }),
+  });
+
+  await fireEvent.press(rendered.getByLabelText("取消"));
+  expect(base.onActionChange).toHaveBeenCalledWith(null);
 });
 
 test("重命名非法输入就地提示且不发请求", async () => {

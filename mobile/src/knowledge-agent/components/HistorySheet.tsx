@@ -1,6 +1,7 @@
 import { useState } from "react";
 import {
   FlatList,
+  Modal,
   Pressable,
   StyleSheet,
   Text,
@@ -16,7 +17,7 @@ import type {
   RunStatus,
 } from "@/src/knowledge-agent/types";
 import { parseServerTime } from "@/src/serverTime";
-import { theme } from "@/src/theme";
+import { popShadow, theme } from "@/src/theme";
 
 function relativeTime(iso: string): string {
   // 解析统一走 @/src/serverTime：裸串按 UTC，刚结束的对话不会显示成「8 小时前」
@@ -52,7 +53,8 @@ function conversationStatus(conversation: KnowledgeConversation): string {
 }
 
 export interface HistoryAction {
-  type: "rename" | "delete";
+  /** menu 为长按后的操作小窗；rename/delete 为对应的表单或确认面板。 */
+  type: "menu" | "rename" | "delete";
   conversation: KnowledgeConversation;
 }
 
@@ -195,7 +197,7 @@ export function HistorySheet({
   return (
     <Sheet visible={visible} title="对话历史" onClose={onClose} scrollable={false}>
       <View style={styles.body}>
-        {action ? (
+        {action !== null && action.type !== "menu" ? (
           <ConversationActionPanel
             key={`${action.type}-${action.conversation.id}`}
             action={action}
@@ -254,8 +256,23 @@ export function HistorySheet({
               <Pressable
                 accessibilityRole="button"
                 accessibilityLabel={`切换到对话：${conversation.title}`}
+                accessibilityHint="长按可重命名或删除该对话"
                 accessibilityState={{ selected }}
+                accessibilityActions={[
+                  { name: "rename", label: `重命名对话：${conversation.title}` },
+                  { name: "delete", label: `删除对话：${conversation.title}` },
+                ]}
+                onAccessibilityAction={(event) => {
+                  const name = event.nativeEvent.actionName;
+                  if (name === "rename") {
+                    onActionChange({ type: "rename", conversation });
+                  } else if (name === "delete") {
+                    onActionChange({ type: "delete", conversation });
+                  }
+                }}
                 onPress={() => onSelect(conversation.id)}
+                onLongPress={() => onActionChange({ type: "menu", conversation })}
+                delayLongPress={300}
                 style={({ pressed }) => [styles.rowSwitch, pressed && styles.pressed]}
               >
                 <View style={styles.rowTop}>
@@ -276,26 +293,51 @@ export function HistorySheet({
                   {conversationStatus(conversation)}
                 </Text>
               </Pressable>
-              <View style={styles.rowActions}>
-                <AppButton
-                  label="重命名"
-                  variant="ghost"
-                  accessibilityLabel={`重命名对话：${conversation.title}`}
-                  icon={<AgentIcon name="edit" size={14} color={theme.green} />}
-                  onPress={() => onActionChange({ type: "rename", conversation })}
-                />
-                <AppButton
-                  label="删除"
-                  variant="ghost"
-                  accessibilityLabel={`删除对话：${conversation.title}`}
-                  onPress={() => onActionChange({ type: "delete", conversation })}
-                />
-              </View>
             </View>
           );
           }}
         />
       </View>
+      <Modal
+        visible={action !== null && action.type === "menu"}
+        transparent
+        animationType="fade"
+        statusBarTranslucent
+        navigationBarTranslucent
+        onRequestClose={() => onActionChange(null)}
+      >
+        <View style={styles.menuOverlay}>
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel="关闭操作菜单"
+            style={styles.menuBackdrop}
+            onPress={() => onActionChange(null)}
+          />
+          {action !== null && action.type === "menu" ? (
+            <View style={styles.menuCard}>
+              <Text style={styles.menuTitle} numberOfLines={1}>
+                {action.conversation.title}
+              </Text>
+              <AppButton
+                label="重命名"
+                variant="ghost"
+                icon={<AgentIcon name="edit" size={15} color={theme.green} />}
+                onPress={() =>
+                  onActionChange({ type: "rename", conversation: action.conversation })
+                }
+              />
+              <AppButton
+                label="删除"
+                variant="danger"
+                onPress={() =>
+                  onActionChange({ type: "delete", conversation: action.conversation })
+                }
+              />
+              <AppButton label="取消" variant="ghost" onPress={() => onActionChange(null)} />
+            </View>
+          ) : null}
+        </View>
+      </Modal>
     </Sheet>
   );
 }
@@ -347,13 +389,35 @@ const styles = StyleSheet.create({
     borderBottomWidth: 1,
     borderBottomColor: theme.border,
   },
-  rowSwitch: { paddingTop: 12, paddingBottom: 4 },
-  rowActions: {
-    flexDirection: "row",
-    justifyContent: "flex-end",
-    gap: 8,
-    paddingBottom: 8,
+  rowSwitch: { paddingTop: 12, paddingBottom: 12 },
+  menuOverlay: {
+    position: "absolute",
+    top: 0,
+    right: 0,
+    bottom: 0,
+    left: 0,
+    alignItems: "center",
+    justifyContent: "center",
+    paddingHorizontal: 28,
   },
+  menuBackdrop: {
+    position: "absolute",
+    top: 0,
+    right: 0,
+    bottom: 0,
+    left: 0,
+    backgroundColor: theme.scrim,
+  },
+  menuCard: {
+    width: "100%",
+    maxWidth: 320,
+    gap: 8,
+    padding: 14,
+    borderRadius: 14,
+    backgroundColor: theme.surface,
+    ...popShadow,
+  },
+  menuTitle: { marginBottom: 2, color: theme.muted, fontSize: 12 },
   rowTop: {
     flexDirection: "row",
     alignItems: "center",
