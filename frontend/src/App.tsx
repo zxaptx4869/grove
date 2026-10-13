@@ -1,7 +1,6 @@
 import { lazy, Suspense, type ReactNode } from 'react'
 import { Navigate, Route, Routes, useLocation } from 'react-router-dom'
 import { AppShell } from '@/components/layout/AppShell'
-import { AuthLayout } from '@/components/layout/AuthLayout'
 import { ProtectedRoute } from '@/components/auth/ProtectedRoute'
 import { Toaster } from '@/components/ui/sonner'
 import { TooltipProvider } from '@/components/ui/tooltip'
@@ -33,11 +32,8 @@ const SearchPage = lazy(() =>
 const AISettingsPage = lazy(() =>
   import('@/pages/AISettingsPage').then((module) => ({ default: module.AISettingsPage })),
 )
-const LoginPage = lazy(() =>
-  import('@/pages/LoginPage').then((module) => ({ default: module.LoginPage })),
-)
-const RegisterPage = lazy(() =>
-  import('@/pages/RegisterPage').then((module) => ({ default: module.RegisterPage })),
+const AuthPage = lazy(() =>
+  import('@/pages/AuthPage').then((module) => ({ default: module.AuthPage })),
 )
 const BasicsPage = lazy(() =>
   import('@/pages/BasicsPage').then((module) => ({ default: module.BasicsPage })),
@@ -51,14 +47,14 @@ function DesktopBoundary({ children }: { children: ReactNode }) {
   const desktop = useDesktopViewport()
   const { pathname } = useLocation()
   const path = pathname.replace(/\/+$/, '') || '/'
-  if (path === '/login') return <>{children}</>
+  if (path === '/login' || path === '/register') return <>{children}</>
   if (!desktop && path === '/') return <Navigate to="/login" replace />
   if (!desktop) return <main className="flex min-h-screen items-center justify-center bg-muted/30 px-6"><div className="max-w-md text-center"><div className="mx-auto mb-5 flex size-12 items-center justify-center rounded-xl bg-foreground text-background">G</div><h1 className="text-heading font-semibold">请在电脑端打开 Grove</h1><p className="mt-2 text-body-sm leading-6 text-muted-foreground">Grove 是面向桌面的知识整理工作台，当前浏览器宽度不足以安全完成项目和目录管理。</p></div></main>
   return <>{children}</>
 }
 
 /**
- * 应用根组件：登录/注册为独立全屏页；登录后进入应用壳
+ * 应用根组件：登录/注册共用介绍页和认证区域；登录后进入应用壳
  * （桌面左侧导航 + 右侧内容区，参考 KnowStruct 布局）。
  */
 export default function App() {
@@ -82,8 +78,8 @@ export default function App() {
           <Route path="/settings/ai" element={<Suspense fallback={<PageFallback />}><AISettingsPage /></Suspense>} />
         </Route>
 
-        <Route path="/login" element={<Suspense fallback={<PageFallback />}><LoginPage /></Suspense>} />
-        <Route path="/register" element={<AuthLayout><Suspense fallback={<PageFallback />}><RegisterPage /></Suspense></AuthLayout>} />
+        <Route path="/login" element={<Suspense fallback={<PageFallback />}><AuthPage /></Suspense>} />
+        <Route path="/register" element={<Suspense fallback={<PageFallback />}><AuthPage defaultMode="register" /></Suspense>} />
 
         {/* 开发调试页：不进产品导航，可直接访问 */}
         <Route path="/health" element={<HealthPage />} />

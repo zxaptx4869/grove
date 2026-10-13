@@ -1,7 +1,7 @@
 import { zodResolver } from '@hookform/resolvers/zod'
 import { useState } from 'react'
 import { useForm } from 'react-hook-form'
-import { Link, useNavigate } from 'react-router-dom'
+import { useNavigate } from 'react-router-dom'
 import { toast } from 'sonner'
 import { z } from 'zod'
 import { Button } from '@/components/ui/button'
@@ -46,11 +46,6 @@ export function LoginForm() {
 
   return (
     <section className="w-full space-y-6">
-      <div className="space-y-1">
-        <h2 className="text-[22px] font-[650] leading-[30px]">登录</h2>
-        <p className="text-body text-muted-foreground">进入你的知识工作台。</p>
-      </div>
-
       <Form {...form}>
         <form className="space-y-4" onSubmit={form.handleSubmit(onSubmit)}>
           {submitError ? (
@@ -103,13 +98,6 @@ export function LoginForm() {
           </Button>
         </form>
       </Form>
-
-      <p className="text-body-sm text-muted-foreground">
-        还没有账号？{' '}
-        <Link to="/register" className="text-primary underline-offset-4 hover:underline">
-          注册一个
-        </Link>
-      </p>
     </section>
   )
 }

@@ -21,6 +21,7 @@ export function useMe() {
 
 export function useLogin() {
   return useGroveMutation({
+    mutationKey: ['auth', 'access', 'login'],
     mutationFn: (payload: CredentialsPayload) => loginUser(payload),
     invalidates: [queryKeys.me],
   })
@@ -28,6 +29,7 @@ export function useLogin() {
 
 export function useRegister() {
   return useGroveMutation({
+    mutationKey: ['auth', 'access', 'register'],
     mutationFn: (payload: CredentialsPayload) => registerUser(payload),
     invalidates: [queryKeys.me],
   })

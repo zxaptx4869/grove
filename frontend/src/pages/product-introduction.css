@@ -15,7 +15,7 @@
 .intro-brand-english { margin-left: 4px; font-weight: 500; }
 .intro-header nav { display: flex; gap: 32px; font-size: 14px; color: var(--muted-foreground); }
 .intro-header nav a:hover { color: var(--brand); }
-.intro-hero { display: grid; grid-template-columns: minmax(0, 1fr) 410px; align-items: center; gap: 64px; padding-block: 76px 64px; }
+.intro-hero { display: grid; grid-template-columns: minmax(0, 1fr) 410px; align-items: start; gap: 64px; padding-block: 76px 64px; }
 .intro-eyebrow { display: flex; align-items: center; gap: 8px; color: var(--brand); font-size: 13px; font-weight: 600; letter-spacing: 1px; }
 .intro-eyebrow > span { width: 6px; height: 6px; border-radius: 50%; background: var(--brand); }
 .intro-hero h1 { margin-block: 20px 24px; font-size: 52px; font-weight: 650; line-height: 1.2; letter-spacing: -2px; }
@@ -23,6 +23,13 @@
 .intro-hero-description { font-size: 18px; line-height: 1.8; }
 .intro-hero-action { margin-top: 26px; height: 42px; }
 .intro-login-card { width: 410px; padding: 24px; border: 1px solid var(--border); border-radius: 12px; background: var(--card); box-shadow: var(--shadow-card); }
+.intro-auth-panel > h2 { font-size: 22px; font-weight: 650; line-height: 30px; }
+.intro-auth-selector { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 4px; margin-block: 20px 24px; padding: 4px; border: 1px solid var(--border); border-radius: 8px; background: var(--secondary); }
+.intro-auth-selector button { min-height: 36px; border-radius: 5px; color: var(--muted-foreground); font-size: 14px; font-weight: 600; cursor: pointer; }
+.intro-auth-selector button:hover { color: var(--brand); }
+.intro-auth-selector button[data-state="active"] { background: var(--card); color: var(--brand); box-shadow: var(--shadow-card); }
+.intro-auth-selector button:disabled { cursor: default; opacity: .6; }
+.intro-auth-content:focus-visible { outline: 2px solid var(--ring); outline-offset: 4px; }
 .intro-mobile-notice { display: flex; align-items: flex-start; gap: 12px; padding: 18px; border: 1px solid var(--border); border-radius: 8px; background: var(--card); }
 .intro-mobile-notice > svg { flex-shrink: 0; margin-top: 4px; color: var(--brand); }
 .intro-mobile-notice strong { font-size: 14px; font-weight: 600; }

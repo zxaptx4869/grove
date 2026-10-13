@@ -18,7 +18,7 @@ describe('LoginPage', () => {
       </QueryClientProvider>,
     )
 
-    expect(screen.getByRole('heading', { name: '登录' })).toBeInTheDocument()
+    expect(screen.getByRole('heading', { name: '欢迎来到 Grove' })).toBeInTheDocument()
     expect(screen.getByLabelText('账号')).toBeInTheDocument()
     expect(screen.getByLabelText('密码')).toBeInTheDocument()
     expect(screen.getByRole('button', { name: '登录' })).toBeInTheDocument()

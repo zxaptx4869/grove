@@ -159,7 +159,7 @@ function AgentExample() {
   )
 }
 
-export function ProductIntroduction({ login }: { login: ReactNode }) {
+export function ProductIntroduction({ authentication }: { authentication: ReactNode }) {
   const [selected, setSelected] = useState(0)
   const capability = capabilities[selected]
 
@@ -206,11 +206,11 @@ export function ProductIntroduction({ login }: { login: ReactNode }) {
           </div>
           <aside
             id="login"
-            className={login ? 'intro-login-card' : 'intro-mobile-notice'}
-            aria-label={login ? '登录工作台' : '电脑端使用提示'}
+            className={authentication ? 'intro-login-card' : 'intro-mobile-notice'}
+            aria-label={authentication ? '登录与注册' : '电脑端使用提示'}
           >
-            {login ? (
-              <>{login}</>
+            {authentication ? (
+              <>{authentication}</>
             ) : (
               <>
                 <Monitor size={22} aria-hidden="true" />
