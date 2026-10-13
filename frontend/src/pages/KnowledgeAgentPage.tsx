@@ -656,7 +656,7 @@ export function KnowledgeAgentPage() {
                     <Button
                       size="icon-sm"
                       variant="ghost"
-                      className="size-7 shrink-0 opacity-0 transition-opacity duration-150 group-hover:opacity-100 group-focus-within:opacity-100 focus-visible:opacity-100 data-[state=open]:opacity-100"
+                      className="size-7 shrink-0 opacity-0 transition-opacity duration-150 group-hover:opacity-100 group-focus-within:opacity-100 focus-visible:opacity-100 data-[state=open]:opacity-100 motion-reduce:transition-none"
                       title="会话操作"
                       aria-label={`${displayTitle} 会话操作`}
                       data-testid="agent-conversation-menu"
