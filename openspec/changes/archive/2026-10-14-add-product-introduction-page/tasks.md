@@ -27,6 +27,6 @@
 - [x] 3.1 相关前端测试、lint、build 通过，验证登录成功、失败和提交状态。
 - [x] 3.2 完成 1440/1280/1600/1023/1024/390px 截图与计算样式检查，验证锚点、键盘与小屏阻断。
 - [x] 3.3 记录验证结果，全库 OpenSpec 严格校验通过并本地提交；打开页面供用户审阅。
-- [ ] 3.4 用户审阅页面后，展示规格同步差异并获得归档批准，再执行归档校验与本地收尾提交。
+- [x] 3.4 用户审阅页面后，展示规格同步差异并获得归档批准，再执行归档校验与本地收尾提交。
 
 验证入口：`cd frontend && npm test -- --run src/pages/LoginPage.test.tsx src/pages/RegisterPage.test.tsx src/App.test.tsx && npm run lint && npm run build`；`openspec validate --all --strict`。
