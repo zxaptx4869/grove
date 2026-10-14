@@ -194,7 +194,7 @@ export function ProductIntroduction({ authentication }: { authentication: ReactN
               让想学的领域<span>有方向</span>
             </h1>
             <p className="intro-hero-description">
-              把碎片式收集的内容放进grove，让 AI 提取要点、推荐归属。面对一个新领域，和 AI 共创学习目录，有针对性的积累知识，通过 Agent助手 查找与理解。
+              把碎片式收集的知识放进grove，让 AI 提取要点、推荐归属，想用的时候让 助手AGENT 帮你找。面对一个新领域，没概念、怕踩坑，和 AI 共创项目目录，有针对性的积累知识和经验，让自己从从容容游刃有余。
             </p>
             <Button asChild size="lg" className="intro-hero-action">
               <a href="#scenarios">
