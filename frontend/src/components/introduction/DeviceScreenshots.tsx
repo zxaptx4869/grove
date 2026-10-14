@@ -1,5 +1,7 @@
+import { useLayoutEffect, useRef, useState } from 'react'
 import { Tabs } from 'radix-ui'
-import { ZoomIn } from 'lucide-react'
+import { ZoomIn, ZoomOut } from 'lucide-react'
+import { Button } from '@/components/ui/button'
 import { Dialog, DialogContent, DialogTitle, DialogTrigger } from '@/components/ui/dialog'
 import extensionCapture from '@/assets/introduction/extension-capture.png'
 import extensionPanel from '@/assets/introduction/extension-panel.png'
@@ -73,6 +75,130 @@ const webScreenshots: Screenshot[] = [
   },
 ]
 
+/** 以适应视口的大小为基准缩放，放大后保留真实滚动区域。 */
+function ScreenshotViewer({ screenshot }: { screenshot: Screenshot }) {
+  const viewportRef = useRef<HTMLDivElement>(null)
+  const dragRef = useRef<{ x: number; y: number; left: number; top: number } | null>(null)
+  const [fitScale, setFitScale] = useState(1)
+  const [zoom, setZoom] = useState(1)
+
+  useLayoutEffect(() => {
+    const viewport = viewportRef.current
+    if (!viewport) return
+    const update = () => {
+      if (viewport.clientWidth && viewport.clientHeight) {
+        setFitScale(
+          Math.min(
+            1,
+            viewport.clientWidth / screenshot.width,
+            viewport.clientHeight / screenshot.height,
+          ),
+        )
+      }
+    }
+    update()
+    if (typeof ResizeObserver !== 'undefined') {
+      const observer = new ResizeObserver(update)
+      observer.observe(viewport)
+      return () => observer.disconnect()
+    }
+    window.addEventListener('resize', update)
+    return () => window.removeEventListener('resize', update)
+  }, [screenshot.width, screenshot.height])
+
+  function reset() {
+    setZoom(1)
+    const viewport = viewportRef.current
+    if (viewport) {
+      viewport.scrollLeft = 0
+      viewport.scrollTop = 0
+    }
+  }
+
+  return (
+    <>
+      <div className="intro-screenshot-toolbar" role="group" aria-label="截图缩放">
+        <Button
+          variant="outline"
+          size="icon"
+          aria-label="缩小截图"
+          disabled={zoom === 1}
+          onClick={() => setZoom((value) => Math.max(1, value - 0.5))}
+        >
+          <ZoomOut />
+        </Button>
+        <output aria-label="截图缩放比例">{Math.round(zoom * 100)}%</output>
+        <Button
+          variant="outline"
+          size="icon"
+          aria-label="放大截图"
+          disabled={zoom === 4}
+          onClick={() => setZoom((value) => Math.min(4, value + 0.5))}
+        >
+          <ZoomIn />
+        </Button>
+        <Button variant="ghost" onClick={reset}>
+          适应窗口
+        </Button>
+      </div>
+      <div
+        ref={viewportRef}
+        className="intro-screenshot-full"
+        role="region"
+        aria-label="截图查看区域"
+        tabIndex={0}
+        data-zoomed={zoom > 1}
+        onPointerDown={(event) => {
+          // 触屏保留原生滑动；鼠标拖动使用滚动位置，不改变图片比例。
+          if (event.pointerType !== 'mouse' || event.button !== 0 || zoom === 1) return
+          const viewport = event.currentTarget
+          dragRef.current = {
+            x: event.clientX,
+            y: event.clientY,
+            left: viewport.scrollLeft,
+            top: viewport.scrollTop,
+          }
+          viewport.setPointerCapture(event.pointerId)
+          viewport.dataset.dragging = 'true'
+          event.preventDefault()
+        }}
+        onPointerMove={(event) => {
+          const drag = dragRef.current
+          if (!drag) return
+          event.currentTarget.scrollLeft = drag.left + drag.x - event.clientX
+          event.currentTarget.scrollTop = drag.top + drag.y - event.clientY
+        }}
+        onLostPointerCapture={(event) => {
+          dragRef.current = null
+          delete event.currentTarget.dataset.dragging
+        }}
+        onPointerUp={(event) => {
+          if (event.currentTarget.hasPointerCapture(event.pointerId))
+            event.currentTarget.releasePointerCapture(event.pointerId)
+        }}
+        onPointerCancel={(event) => {
+          dragRef.current = null
+          delete event.currentTarget.dataset.dragging
+        }}
+      >
+        <div className="intro-screenshot-canvas">
+          <img
+            src={screenshot.src}
+            alt={screenshot.alt}
+            width={screenshot.width}
+            height={screenshot.height}
+            draggable={false}
+            style={{
+              width: screenshot.width * fitScale * zoom,
+              height: screenshot.height * fitScale * zoom,
+            }}
+          />
+        </div>
+      </div>
+    </>
+  )
+}
+
 function ScreenshotPreview({ screenshot }: { screenshot: Screenshot }) {
   return (
     <figure className="intro-screenshot">
@@ -98,14 +224,7 @@ function ScreenshotPreview({ screenshot }: { screenshot: Screenshot }) {
         </DialogTrigger>
         <DialogContent className="intro-screenshot-dialog" aria-describedby={undefined}>
           <DialogTitle>{screenshot.title}</DialogTitle>
-          <div className="intro-screenshot-full">
-            <img
-              src={screenshot.src}
-              alt={screenshot.alt}
-              width={screenshot.width}
-              height={screenshot.height}
-            />
-          </div>
+          <ScreenshotViewer screenshot={screenshot} />
         </DialogContent>
       </Dialog>
       <figcaption>{screenshot.title}</figcaption>

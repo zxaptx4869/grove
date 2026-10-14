@@ -6,7 +6,10 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import { LoginPage } from './LoginPage'
 
 describe('LoginPage', () => {
-  afterEach(() => vi.unstubAllGlobals())
+  afterEach(() => {
+    vi.unstubAllGlobals()
+    vi.restoreAllMocks()
+  })
 
   it('渲染登录表单且无报错', () => {
     const queryClient = new QueryClient()
@@ -141,16 +144,50 @@ describe('LoginPage', () => {
     expect(trigger).toHaveFocus()
     await userEvent.click(screen.getByRole('tab', { name: '知识 Agent' }))
     await userEvent.keyboard('{End}')
-    expect(screen.getByRole('tab', { name: '确认台' })).toHaveAttribute(
-      'aria-selected',
-      'true',
-    )
+    expect(screen.getByRole('tab', { name: '确认台' })).toHaveAttribute('aria-selected', 'true')
     expect(screen.getByRole('button', { name: '放大查看确认台截图' })).toBeInTheDocument()
     await userEvent.keyboard('{Home}{ArrowRight}')
-    expect(screen.getByRole('tab', { name: '收集箱' })).toHaveAttribute(
-      'aria-selected',
-      'true',
+    expect(screen.getByRole('tab', { name: '收集箱' })).toHaveAttribute('aria-selected', 'true')
+  })
+
+  it('小屏截图实际变大，缩放有边界并可恢复适应窗口', async () => {
+    // jsdom 无布局引擎，提供查看区域的真实小屏尺寸来验证缩放几何。
+    vi.spyOn(HTMLElement.prototype, 'clientWidth', 'get').mockImplementation(function (
+      this: HTMLElement,
+    ) {
+      return this.classList.contains('intro-screenshot-full') ? 333 : 0
+    })
+    vi.spyOn(HTMLElement.prototype, 'clientHeight', 'get').mockImplementation(function (
+      this: HTMLElement,
+    ) {
+      return this.classList.contains('intro-screenshot-full') ? 500 : 0
+    })
+    render(
+      <QueryClientProvider client={new QueryClient()}>
+        <MemoryRouter>
+          <LoginPage />
+        </MemoryRouter>
+      </QueryClientProvider>,
     )
+    await userEvent.click(screen.getByRole('button', { name: '放大查看知识 Agent截图' }))
+    const dialog = screen.getByRole('dialog', { name: '知识 Agent' })
+    const image = within(dialog).getByRole('img')
+    const originalWidth = parseFloat(image.style.width)
+    expect(originalWidth).toBeCloseTo(333)
+    expect(within(dialog).getByRole('button', { name: '缩小截图' })).toBeDisabled()
+    const enlarge = within(dialog).getByRole('button', { name: '放大截图' })
+    await userEvent.click(enlarge)
+    await userEvent.click(enlarge)
+    expect(parseFloat(image.style.width)).toBeCloseTo(originalWidth * 2)
+    expect(within(dialog).getByLabelText('截图缩放比例')).toHaveTextContent('200%')
+    for (let count = 0; count < 4; count++) await userEvent.click(enlarge)
+    expect(enlarge).toBeDisabled()
+    expect(within(dialog).getByLabelText('截图缩放比例')).toHaveTextContent('400%')
+    await userEvent.click(within(dialog).getByRole('button', { name: '缩小截图' }))
+    expect(within(dialog).getByLabelText('截图缩放比例')).toHaveTextContent('350%')
+    await userEvent.click(within(dialog).getByRole('button', { name: '适应窗口' }))
+    expect(parseFloat(image.style.width)).toBeCloseTo(originalWidth)
+    expect(within(dialog).getByRole('button', { name: '缩小截图' })).toBeDisabled()
   })
 
   it('键盘切换标签时同步焦点、选中态和对应示例', async () => {

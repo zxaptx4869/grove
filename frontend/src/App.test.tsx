@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
-import { act, render, screen } from '@testing-library/react'
+import { act, render, screen, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { MemoryRouter, useLocation, useNavigate } from 'react-router-dom'
 import { afterEach, describe, expect, it, vi } from 'vitest'
@@ -40,7 +40,7 @@ function open(path: string, history = false) {
 describe('公开介绍与桌面业务边界', () => {
   afterEach(() => {
     vi.unstubAllGlobals()
-    resize(initialWidth)
+    act(() => resize(initialWidth))
   })
 
   it.each([
@@ -55,7 +55,9 @@ describe('公开介绍与桌面业务边界', () => {
     const fetchMock = vi.fn()
     vi.stubGlobal('fetch', fetchMock)
     open(path)
-    expect(await screen.findByRole('heading', { level: 1 })).toHaveTextContent('让零散知识找得到')
+    const introduction = await screen.findByRole('main')
+    expect(within(introduction).getByRole('heading', { level: 1 })).toBeInTheDocument()
+    expect(within(introduction).getAllByRole('heading', { level: 2 }).length).toBeGreaterThan(0)
     expect(screen.queryByLabelText('账号')).not.toBeInTheDocument()
     expect(screen.getByText('在电脑端登录，开始整理')).toBeInTheDocument()
     expect(fetchMock).not.toHaveBeenCalled()

@@ -104,8 +104,15 @@
 .intro-web-gallery figcaption { display: none; }
 .intro-screenshot-dialog { display: flex; flex-direction: column; gap: 16px; width: min(1440px, calc(100% - 48px)); max-width: none; max-height: calc(100dvh - 48px); padding: 20px; }
 .intro-screenshot-dialog > h2 { padding-right: 32px; font-size: 16px; line-height: 24px; }
-.intro-screenshot-full { display: flex; align-items: center; justify-content: center; min-height: 0; overflow: auto; }
-.intro-screenshot-full > img { display: block; width: auto; height: auto; max-width: 100%; max-height: calc(100dvh - 130px); object-fit: contain; border-radius: 8px; }
+.intro-screenshot-toolbar { display: flex; align-items: center; gap: 8px; }
+.intro-screenshot-toolbar output { min-width: 46px; text-align: center; font-size: 13px; font-variant-numeric: tabular-nums; }
+.intro-screenshot-toolbar > button:last-child { margin-left: auto; }
+.intro-screenshot-full { height: min(68dvh, calc(100dvh - 180px)); min-height: 0; overflow: auto; overscroll-behavior: contain; border: 1px solid var(--border); border-radius: 8px; background: var(--secondary); }
+.intro-screenshot-full:focus-visible { outline: 2px solid var(--ring); outline-offset: 3px; }
+.intro-screenshot-full[data-zoomed="true"] { cursor: grab; }
+.intro-screenshot-full[data-dragging="true"] { cursor: grabbing; user-select: none; }
+.intro-screenshot-canvas { display: grid; place-items: center; width: max-content; height: max-content; min-width: 100%; min-height: 100%; }
+.intro-screenshot-canvas > img { display: block; max-width: none; flex-shrink: 0; border-radius: 8px; }
 
 
 .intro-engineering { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.3fr); gap: 40px 64px; }
