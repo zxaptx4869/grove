@@ -189,13 +189,12 @@ export function ProductIntroduction({ authentication }: { authentication: ReactN
               <span /> AI 知识共创工具
             </p>
             <h1 id="intro-title">
-              让零散知识<span>找得到，</span>
+              让收藏的知识<span>用得上，</span>
               <br />
-              让陌生领域<span>学得有方向。</span>
+              让想学的领域<span>有方向。</span>
             </h1>
             <p className="intro-hero-description">
-              采集截图与文字，让 AI 提取要点、推荐项目与目录。 与 AI 共创学习框架，再通过知识 Agent
-              查找和使用积累的内容。
+              把碎片式收集的内容放进grove，让 AI 提取要点、推荐归属。面对一个新领域，和 AI 共创学习目录，有针对性的积累知识，通过 Agent助手 查找与理解。
             </p>
             <Button asChild size="lg" className="intro-hero-action">
               <a href="#scenarios">

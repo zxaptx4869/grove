@@ -23,7 +23,7 @@ describe('LoginPage', () => {
     expect(screen.getByLabelText('密码')).toBeInTheDocument()
     expect(screen.getByRole('button', { name: '登录' })).toBeInTheDocument()
     expect(screen.getByRole('heading', { level: 1 })).toHaveTextContent(
-      '让零散知识找得到，让陌生领域学得有方向。',
+      '让收藏的知识用得上，让想学的领域有方向。',
     )
   })
 
