@@ -116,3 +116,9 @@
 **对话：**
 
 > Use case: precise-object-edit. Edit target: the attached real Grove mobile conversation screenshot. Remove ONLY the large floating grey circular debugging gear at the lower right, in the blank grey area BETWEEN the AI answer card and the composer input. Fill the circle and its shadow with exactly the surrounding flat very light grey background. Preserve original full portrait framing, aspect ratio, ALL Chinese text and typography exactly, all cards, logos, icons, UI spacing, colors and bottom navigation unchanged. This is surgical screenshot retouching, not a redesign. Do not alter the top-right conversation icon, question, answer text, input field or bottom toolbar. No new elements, no text rewriting, no cropping.
+
+## 扩展截图顺序与尺寸调整（2026-10-14）
+
+- 按用户要求，快采面板在左、带发送按钮的框选预览在右；DOM、键盘与小屏纵向顺序一致。1440/1280/1600px 下图片区域宽 240px/480px、间距 24px，预览图从约 648px 缩小约 26%；1024px 为 200px/477px，390px 纵向为 200px/335px。原图与放大交互不变。
+- 截图及计算样式确认上述视口无横向溢出，图片完整。局部证据：`artifacts/product-introduction/extension-layout/`（本地，不入 Git），含截图与 `results.json`。
+- 构建发现上一轮新增测试使用了 Testing Library 不支持的 `getByRole` 参数 `exact`。移除三处多余参数，字符串名称查询保持相同匹配行为。相关三个测试文件 23/23 通过，包含截图切换、放大与焦点归还；TypeScript 与 Vite 构建通过。lint 无错误，既有两条依赖警告保持不变；全库 OpenSpec 严格校验通过。

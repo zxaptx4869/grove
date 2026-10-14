@@ -85,7 +85,7 @@
 .intro-device-copy h3 { font-size: 23px; font-weight: 600; }
 .intro-device-copy p { margin-top: 12px; color: var(--muted-foreground); font-size: 14px; }
 .intro-device-copy small { display: block; margin-top: 18px; font-size: 11px; color: var(--muted-foreground); }
-.intro-extension-gallery { display: grid; grid-template-columns: minmax(0, 1fr) 240px; align-items: center; gap: 24px; }
+.intro-extension-gallery { display: grid; grid-template-columns: 240px minmax(0, 1fr); align-items: center; gap: 24px; width: 100%; max-width: 744px; justify-self: center; }
 .intro-mobile-gallery { display: grid; grid-template-columns: repeat(2, minmax(0, 240px)); justify-content: center; gap: 28px; }
 .intro-screenshot { min-width: 0; }
 .intro-screenshot-button { position: relative; display: block; width: 100%; border: 1px solid var(--border); border-radius: 12px; background: var(--card); box-shadow: var(--shadow-card); overflow: hidden; cursor: zoom-in; }
@@ -171,7 +171,7 @@
   .intro-devices { gap: 36px; margin-top: 24px; }
   .intro-device-row { gap: 24px; padding-top: 24px; }
   .intro-extension-gallery { grid-template-columns: minmax(0, 1fr); gap: 24px; }
-  .intro-extension-gallery > figure:last-child { width: 200px; justify-self: center; }
+  .intro-extension-gallery > figure:first-child { width: 200px; justify-self: center; }
   .intro-mobile-gallery { gap: 16px; }
   .intro-screenshot-tabs { gap: 4px; }
   .intro-screenshot-tabs button { padding-inline: 12px; font-size: 12px; }
@@ -181,7 +181,7 @@
 
 @media (min-width: 900px) and (max-width: 1199px) {
   .intro-device-row { grid-template-columns: 200px minmax(0, 1fr); gap: 32px; }
-  .intro-extension-gallery { grid-template-columns: minmax(0, 1fr) 200px; gap: 20px; }
+  .intro-extension-gallery { grid-template-columns: 200px minmax(0, 1fr); max-width: 700px; gap: 20px; }
 }
 @media (max-width: 899px) {
   .intro-device-row { grid-template-columns: minmax(0, 1fr); gap: 28px; }

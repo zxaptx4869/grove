@@ -19,18 +19,18 @@ type Screenshot = {
 
 const extensionScreenshots: Screenshot[] = [
   {
-    title: '框选采集',
-    src: extensionCapture,
-    alt: '扩展框选装修经验后预览截图，可暂存或发送到 Grove。',
-    width: 1030,
-    height: 692,
-  },
-  {
     title: '快采面板',
     src: extensionPanel,
     alt: 'Grove 快采扩展提供截图快捷键、批次暂存与发送到收集箱。',
     width: 648,
     height: 996,
+  },
+  {
+    title: '框选采集',
+    src: extensionCapture,
+    alt: '扩展框选装修经验后预览截图，可暂存或发送到 Grove。',
+    width: 1030,
+    height: 692,
   },
 ]
 const mobileScreenshots: Screenshot[] = [

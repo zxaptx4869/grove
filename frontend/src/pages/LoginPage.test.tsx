@@ -139,15 +139,15 @@ describe('LoginPage', () => {
     await userEvent.keyboard('{Escape}')
     expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
     expect(trigger).toHaveFocus()
-    await userEvent.click(screen.getByRole('tab', { name: '知识 Agent', exact: true }))
+    await userEvent.click(screen.getByRole('tab', { name: '知识 Agent' }))
     await userEvent.keyboard('{End}')
-    expect(screen.getByRole('tab', { name: '确认台', exact: true })).toHaveAttribute(
+    expect(screen.getByRole('tab', { name: '确认台' })).toHaveAttribute(
       'aria-selected',
       'true',
     )
     expect(screen.getByRole('button', { name: '放大查看确认台截图' })).toBeInTheDocument()
     await userEvent.keyboard('{Home}{ArrowRight}')
-    expect(screen.getByRole('tab', { name: '收集箱', exact: true })).toHaveAttribute(
+    expect(screen.getByRole('tab', { name: '收集箱' })).toHaveAttribute(
       'aria-selected',
       'true',
     )
