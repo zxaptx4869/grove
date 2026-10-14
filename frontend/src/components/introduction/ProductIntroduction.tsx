@@ -189,9 +189,9 @@ export function ProductIntroduction({ authentication }: { authentication: ReactN
               <span /> AI 知识共创工具
             </p>
             <h1 id="intro-title">
-              让收藏的知识<span>用得上，</span>
+              让收藏的知识<span>用得上</span>
               <br />
-              让想学的领域<span>有方向。</span>
+              让想学的领域<span>有方向</span>
             </h1>
             <p className="intro-hero-description">
               把碎片式收集的内容放进grove，让 AI 提取要点、推荐归属。面对一个新领域，和 AI 共创学习目录，有针对性的积累知识，通过 Agent助手 查找与理解。
@@ -250,7 +250,7 @@ export function ProductIntroduction({ authentication }: { authentication: ReactN
 
         <section id="capabilities" className="intro-section" aria-labelledby="capabilities-title">
           <div className="intro-section-heading">
-            <h2 id="capabilities-title">AI 帮你整理、共创和查找。</h2>
+            <h2 id="capabilities-title">AI 帮你整理 共创和查找</h2>
           </div>
           <Tabs.Root
             className="intro-capability-tabs"
@@ -288,7 +288,7 @@ export function ProductIntroduction({ authentication }: { authentication: ReactN
 
         <section id="devices" className="intro-section" aria-labelledby="devices-title">
           <div className="intro-section-heading">
-            <h2 id="devices-title">三个端，连接同一份知识。</h2>
+            <h2 id="devices-title">三个端 连接同一份知识</h2>
           </div>
           <DeviceScreenshots />
         </section>
@@ -299,7 +299,7 @@ export function ProductIntroduction({ authentication }: { authentication: ReactN
           aria-labelledby="engineering-title"
         >
           <div className="intro-section-heading">
-            <h2 id="engineering-title">AI 协助，你来决定。</h2>
+            <h2 id="engineering-title">AI 协助 你来决定</h2>
           </div>
           <div className="intro-principles">
             <article>
